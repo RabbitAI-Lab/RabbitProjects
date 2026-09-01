@@ -155,8 +155,9 @@ sequenceDiagram
     A->>D: ① WorkspaceMember WHERE member=me AND is_active
     A->>D: ② SystemAdmin WHERE user=me AND is_active（存在性）
     A->>D: ③ ProjectMember WHERE member=me AND is_active
-    D-->>A: 三段结果（3 条索引查询）
-    A->>A: 组装：workspaces{role} + projects{role, inherited}<br/>inherited = 该项目 workspace 角色 ≥ 15 时置 true
+    A->>D: ④ Project WHERE workspace_id IN (用户所属 ws) AND is_active（隐式成员项目枚举）
+    D-->>A: 四段结果（4 条索引查询）
+    A->>A: 组装：workspaces{role} + projects{role, inherited}<br/>inherited = 用户在该项目无显式 ProjectMember 行 ∧ workspace 角色 ≥ 15 时置 true（rbac §4.1 口径）
     A-->>W: 200 快照（meta.generated_at）
     W->>W: PermissionStore 写入 + SWR 缓存 key="/users/me/permissions/"
 
@@ -251,7 +252,7 @@ export const useCanDeleteIssue = (issue: TIssueRow): boolean => {
 | BR-04 | 前端权限数据**仅用于渲染**，缓存 5 分钟（SWR deduping）；收到 403 `PERM_*` 立即失效重拉 | fail-closed 前提 |
 | BR-05 | `mode` 选择约定：hide=入口类（菜单/主操作）；disable=危险操作（删除/转让，保留可见性以传达能力存在）；fallback=区块降级；路由级用 `PermissionRouteGuard` | UX 约定（§3） |
 | BR-06 | 权限点未登记矩阵即使用 = 构建期失败（后端常量 `KeyError` 于测试暴露 + 前端 ESLint 编译错误） | 防裸字符串 |
-| BR-07 | 快照端点不缓存（`Cache-Control: no-store`）；后端每次实时推导（3 条索引查询，成本可忽略） | 角色变更即时可感知 |
+| BR-07 | 快照端点不缓存（`Cache-Control: no-store`）；后端每次实时推导（4 条索引查询，成本可忽略） | 角色变更即时可感知 |
 | BR-08 | `inherited=true` 仅作展示提示（「继承自工作空间管理员」），**不参与**判定数值——判定统一走「有效角色 = max(显式项目角色, 工作空间推导)」 | 防双口径 |
 | BR-09 | 快照含 `is_system_admin=true` 时，前端 `can()` 短路放行（与后端第二层短路一致）；第三层仍走 `accessible_by` | 三层语义对齐 |
 | BR-10 | fail-closed：Store 未加载 / 加载失败 / resourceId 未知 → `can()` 恒 `false`；宁可少显示，不可错放行 | 安全边界 |
@@ -289,7 +290,7 @@ export const useCanDeleteIssue = (issue: TIssueRow): boolean => {
 | --- | --- | --- |
 | EC-01 | 用户加入 50 工作空间 / 200 项目以内 | 快照全量下发（P1 无分页） |
 | EC-02 | 超过 200 项目 | 端点截断至 200 + `meta.truncated=true`（预警；P2 升级分页或按需查询） |
-| EC-03 | 用户既是显式 `PROJ_CONTRIBUTOR` 又是 `WS_ADMIN` | 快照中该项目 `role=15, inherited=true`；判定取 max → 20（BR-08） |
+| EC-03 | 用户既是显式 `PROJ_CONTRIBUTOR` 又是 `WS_ADMIN` | 快照中该项目 `role=15, inherited=false`（用户是显式成员，inherited 仅在「无显式行」时为 true）；判定取 max → 20（BR-08）；`inherited=true` 仅出现在「无显式 ProjectMember 行 + WS_ADMIN+」的反向场景（rbac §4.1） |
 | EC-04 | Gate 在权限数据未加载时渲染 | 骨架占位，不闪现按钮再消失（防「能力闪烁」） |
 | EC-05 | 降权后 5 分钟窗口内用户仍见旧按钮 | 点击得 403 → 自动重拉 → 按钮收敛（§2.2 被动路径；P2 推送化） |
 | EC-06 | `resourceId` 拼写错误 / 项目已删除 | Store 无该键 → fail-closed 判否（BR-10） |
@@ -464,9 +465,10 @@ erDiagram
 | `ProjectMember (member, project, role)` | 快照查询 ③：同上 | ✅ 核心 |
 | `ProjectMember (member, workspace)` | （P2 行级过滤子查询用） | ⭕ 复用 |
 | `SystemAdmin (user, is_active)` | 快照查询 ② 存在性 | ✅ 核心 |
+| `Project (workspace, status)` | 快照查询 ④：`WHERE workspace_id IN (用户所属 ws)` 枚举隐式成员项目（命中 `idx_project_ws_status` 前缀列） | ✅ 核心 |
 | `WorkspaceMember (workspace, role)` | 成员列表按角色筛选（`TEAM-002` 消费） | 间接 |
 
-快照端点固定 **3 条查询**，与用户加入的资源数无关（`values_list` 单表扫描），`assertNumQueries(3)` 写入测试（IT-02）。
+快照端点固定 **4 条查询**（WorkspaceMember / SystemAdmin / ProjectMember / Project `values_list` 单表扫描），与用户加入的资源数无关，`assertNumQueries(4)` 写入测试（IT-02）。
 
 ### 4.2 API 定义
 
@@ -478,6 +480,7 @@ erDiagram
 | 限流 | 60/min（已认证用户档，`api-conventions.md` §7.2） |
 | 缓存 | `Cache-Control: no-store`（BR-07：实时性优先） |
 | 权限 | `IsAuthenticatedAndActive`（L0）——本端点不设资源门槛 |
+| 查询参数 | `?workspace_slug=<slug>`：可选，**过滤参数**——仅返回该 workspace 的角色行（其它工作空间忽略；缺省 → 返回当前用户全部 workspace 角色行）。slug 不存在或不归属当前用户 → 静默忽略、不报错（权限数据严格遵循「仅本人可见」）。响应 JSON 字段语义保持不变：`workspaces` 仍是当前用户的角色集合、`projects` 仍是显式/隐式项目行映射、`meta` 仍是生成时间与截断标记——**响应体不含任何「成员候选集」字段**。`projects` 的 `inherited` 计算仍按下方实现要点执行。 |
 
 **成功响应 `200`**
 
@@ -509,10 +512,10 @@ erDiagram
 | --- | --- | --- |
 | `is_system_admin` | bool | `SystemAdmin(user=me, is_active=True)` 存在性（BR-09 前端短路源） |
 | `workspaces` | map<id, {slug, role}> | 全部 active 成员身份；`slug` 供路由上下文 → 工作空间解析 |
-| `projects` | map<id, {workspace_id, role, inherited}> | **仅显式 `ProjectMember` 行**；`inherited=true` 表示该用户在此项目同时具备工作空间 ≥ ADMIN 身份（展示提示，不参与数值判定，BR-08） |
+| `projects` | map<id, {workspace_id, role, inherited}> | 用户所属 workspace 下**全部** Project 行（显式 + 隐式 WS_ADMIN 提升）的并集；`inherited=true` 表示该用户**无显式 `ProjectMember` 行**但因 `workspace 角色 ≥ ADMIN` 而具隐式 `PROJ_ADMIN`（rbac §4.1 口径，展示提示，不参与数值判定，BR-08）。 |
 | `meta.truncated` | bool | 项目数 > 200 时截断（EC-02） |
 
-> **为什么不枚举隐式项目角色**：`WS_ADMIN` 隐式获得**该工作空间下全部项目**的 `PROJ_ADMIN`——逐项目枚举需要扫描项目表且随项目增长膨胀快照。正确做法是下发「推导原料」（workspaces 角色 + slug），前端按 §4.5 的推导函数就地计算（与后端 `get_effective_project_role` 同一语义）。`inherited` 只是对**显式行**的叠加标注。
+> **隐式项目的处理**：`WS_ADMIN+` 对所属 workspace 下全部 `Project` 隐式获得 `PROJ_ADMIN`（rbac §7.4）。快照实现**会**枚举这些隐式项目行（`Project` 单表扫描，索引 `workspace_id`，成本与项目数线性可控，EC-02 通过 200 截断兜底），并以 `inherited=true` 标注——这正是 §3.4 「继承角色提示」徽标的数据来源。前端 `effectiveProjectRole` 仍按 §4.5 推导（max 显式/工作空间推导）做最终判定，与后端 `get_effective_project_role` 同语义。
 
 **错误响应 `401`（未登录）**
 
@@ -528,32 +531,67 @@ erDiagram
 }
 ```
 
-**实现要点**（单请求三查询聚合）：
+**实现要点**（单请求四查询聚合：WorkspaceMember / SystemAdmin / ProjectMember / Project 索引扫描）：
 
 ```python
 # apps/api/plane/account/views.py（节选）
+from plane.db.models import Project, ProjectMember, ProjectRole, SystemAdmin, WorkspaceMember, WorkspaceRole
+
+
 @action(detail=False, methods=["get"], url_path="permissions")
 def permissions(self, request):
     user = request.user
-    ws_rows = (WorkspaceMember.objects.filter(member=user, is_active=True)
-               .values("workspace_id", "workspace__slug", "role"))
+    ws_qs = (WorkspaceMember.objects
+             .filter(member=user, is_active=True)
+             .values("workspace_id", "workspace__slug", "role"))
+    ws_rows = list(ws_qs)
     is_admin = SystemAdmin.objects.filter(user=user, is_active=True).exists()
-    proj_rows = (ProjectMember.objects.filter(member=user, is_active=True)
-                 .values("project_id", "workspace_id", "role"))
+    proj_rows = list(ProjectMember.objects
+                     .filter(member=user, is_active=True)
+                     .values("project_id", "workspace_id", "role"))
     ws_role = {r["workspace_id"]: r["role"] for r in ws_rows}
 
+    # 可选过滤：?workspace_slug=<slug> 仅返回该 workspace 的角色行（推荐方案①）
+    slug_filter = request.query_params.get("workspace_slug")
+    if slug_filter:
+        ws_ids_by_slug = {r["workspace_id"] for r in ws_rows if r["workspace__slug"] == slug_filter}
+        ws_role = {wid: role for wid, role in ws_role.items() if wid in ws_ids_by_slug}
+
+    # ★ 显式成员项目集合：用于 inherited 差集判定（rbac §4.1 / BR-08）
+    explicit_project_ids = {r["project_id"] for r in proj_rows}
+    explicit_role_by_pid = {r["project_id"]: r["role"] for r in proj_rows}
+
+    # 候选项目：遍历用户所属 workspace 下**全部** Project 行
+    # —— WS_ADMIN+ 在该 workspace 下对所有项目隐式 PROJ_ADMIN（rbac §7.4）
+    # —— 此查询负责让「隐式成员项目」也进入 projects 映射并标 inherited=true
+    candidate_projects = (Project.objects
+                          .filter(workspace_id__in=ws_role.keys())
+                          .values_list("id", "workspace_id"))
+
     projects, truncated = {}, False
-    for r in proj_rows[:200]:
-        projects[str(r["project_id"])] = {
-            "workspace_id": str(r["workspace_id"]),
-            "role": r["role"],
-            "inherited": ws_role.get(r["workspace_id"], 0) >= WorkspaceRole.ADMIN,  # BR-08
+    total = 0
+    for project_id, workspace_id in candidate_projects:
+        is_explicit = project_id in explicit_project_ids
+        ws_r = ws_role.get(workspace_id, 0)
+        # ★ inherited 仅在「无显式 ProjectMember 行 ∧ workspace 角色 ≥ 15」时为 true（rbac §4.1 / BR-08）
+        inherited = (not is_explicit) and (ws_r >= WorkspaceRole.ADMIN)
+        if not (is_explicit or inherited):
+            continue                                              # 既无显式成员、ws 角色也 < 15 → 不入快照
+        total += 1
+        if total > 200:                                          # EC-02 截断
+            truncated = True
+            continue
+        role = (explicit_role_by_pid[project_id] if is_explicit else ProjectRole.ADMIN)
+        projects[str(project_id)] = {
+            "workspace_id": str(workspace_id),
+            "role": role,
+            "inherited": inherited,
         }
-    truncated = len(proj_rows) > 200                                            # EC-02
+
     return success_response({
         "is_system_admin": is_admin,
         "workspaces": {str(r["workspace_id"]): {"slug": r["workspace__slug"], "role": r["role"]}
-                       for r in ws_rows},
+                       for r in ws_rows if not slug_filter or r["workspace__slug"] == slug_filter},
         "projects": projects,
     }, meta={"generated_at": timezone.now().isoformat(), "truncated": truncated})
 ```
@@ -853,9 +891,9 @@ export class PermissionStore {
 // apps/web/core/hooks/use-permission.ts
 export const usePermission = (permission: PermissionKey, scope: Scope = "project",
                               resourceId?: string): boolean => {
-  const { root: { permission } } = useStore();
+  const { root: { permission: store } } = useStore();   // 解构重命名，避免与入参 permission 同名遮蔽
   const { workspaceSlug } = useParams();
-  return permission.can(permission, scope, resourceId, { workspaceSlug });
+  return store.can(permission, scope, resourceId, { workspaceSlug });
 };
 
 // apps/web/core/components/permission/permission-gate.tsx
@@ -923,7 +961,7 @@ export const PermissionRouteGuard: React.FC<
 
 | 指标 | 预算 | 验证 |
 | --- | --- | --- |
-| 快照端点 P95 | ≤ 60ms（3 条索引查询 + 序列化） | IT-02 附带计时断言 |
+| 快照端点 P95 | ≤ 60ms（4 条索引查询 + 序列化） | IT-02 附带计时断言 |
 | 快照响应体积 | 200 项目 ≈ 30KB（gzip 后 ≈ 4KB） | 一次性成本，5 分钟复用 |
 | `can()` 单次判定 | ≤ 0.01ms（两次 map 查找 + 整数比较） | MobX computed 缓存，无重复计算 |
 | 权限类后端判定增量 | ≤ 2 条查询/请求（请求级缓存后通常 1 条） | `assertNumQueries`（复用 `rbac` §6.4） |
@@ -956,7 +994,7 @@ export const PermissionRouteGuard: React.FC<
 | 编号 | 场景 | 前置 | 步骤 | 断言 |
 | --- | --- | --- | --- | --- |
 | IT-01 | 直调越权 | `WS_MEMBER` 会话 | curl `POST …/invitations/` | 403 信封 `PERM_ROLE_INSUFFICIENT` + request_id |
-| IT-02 | 快照三查询 | 用户 3 空间 10 项目 | `assertNumQueries(3)`；P95 ≤ 60ms | 查询数与资源数无关 |
+| IT-02 | 快照四查询 | 用户 3 空间 10 项目 | `assertNumQueries(4)`；P95 ≤ 60ms | 查询数与资源数无关 |
 | IT-03 | 降权即时收敛 | 用户 ADMIN→MEMBER（另一会话操作） | 前端 mutate 后渲染 | 管理按钮消失（Playwright 驱动） |
 | IT-04 | 403 触发重拉 | 手工制造角色变更 | 继续点受限按钮 | 收 403 → 自动重拉 → 按钮 hide |
 | IT-05 | 三层集成回归 | `WS_MEMBER` 访问非成员项目 | GET 项目详情 | 404 `RESOURCE_NOT_FOUND`（第三层，`AUTH-003` 契约不回归） |
@@ -1020,7 +1058,7 @@ Ones 的权限治理是「配置中心」形态：管理员在界面按角色**�
 | 类型 | 交付物 |
 | --- | --- |
 | Model / Migration | 无（零 DDL） |
-| API 端点 | `GET /api/v1/users/me/permissions/`（`no-store`，3 查询） |
+| API 端点 | `GET /api/v1/users/me/permissions/`（`no-store`，4 查询） |
 | 后端 | `plane/app/permissions/{base,project,issue,comment,file}.py` 类族、`decorators.py`（`require_permission`）、`plane/constants/permissions.py`（矩阵 + 标签单一数据源）、异常处理器 PERM 收敛 |
 | 前端 | `PermissionStore`、`usePermission`、`PermissionGate`（hide/disable/fallback + 骨架）、`PermissionRouteGuard`、`/403` 页、`useCanDeleteIssue` 组合判定、`@rp/constants` 生成管线 |
 | CI | `gen-permissions.mjs --check`、ESLint `no-unknown-permission` 规则、成对扫描脚本、矩阵参数化测试生成器（C1~C4） |
@@ -1047,7 +1085,7 @@ Ones 的权限治理是「配置中心」形态：管理员在界面按角色**�
 | --- | --- | --- |
 | 三重防护分层与 403/404 分工 | `rbac-permission-model.md` §1.1 | §1.2、§2.1 |
 | 角色等级值（20/15/10/5 × 双域）与整数比较语义 | §2 | §1.3.1 |
-| 快照端点契约（`/users/me/permissions/` 含 `inherited`） | §4.1 | §4.2（含「不枚举隐式角色」的实现论证） |
+| 快照端点契约（`/users/me/permissions/` 含 `inherited`） | §4.1 | §4.2（含「枚举隐式项目 + inherited 差集标注」的实现论证） |
 | 权限矩阵单一数据源 / `PermissionKey` 命名约定（不引入别名） | §4.2 | §1.3.2、§2.4（含命名规范化说明）、§4.4 |
 | `usePermission` / `PermissionGate` 三模式设计稿 | §4.3 / §4.4 | §3.1、§4.5.2 |
 | Permission 类层级 / 基类实现 / 请求级缓存 | §5.1 / §5.2 | §4.3.1~4.3.3 |

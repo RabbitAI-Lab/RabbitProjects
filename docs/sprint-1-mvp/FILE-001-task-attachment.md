@@ -9,9 +9,9 @@
 | 文档状态 | 待评审（Draft） |
 | 最后更新日期 | 2026-09-01 |
 | 上游依据 | `docs/需求文档.md` §3.7（文件上传 / 下载 / 操作日志）、§8.2 文件管理 P1 列（任务级单附件上传 / 下载）、§五（MinIO/S3 预签名直传，不经过服务端中转） |
-| 前置依赖 | `INFRA-002`（minio 容器 + `createbuckets` 自动建桶 + Nginx 反代骨架）、`TASK-001`（Issue 承载 + `attachment_count` 冗余列 P0 已建）、`PROJ-002`（项目成员权限域）、`INFRA-004`（错误码注册表 / 统一信封 / Nginx 413 JSON）、`AUTH-004`（直传通道首个消费者——头像） |
+| 前置依赖 | `INFRA-002`（minio 容器 + `createbuckets` 自动建桶 + Nginx 反代骨架）、`TASK-001`（Issue 承载 + `IssueAttachment` 关联关系架构基线；本迭代改用 `FileAsset` 多态挂载并在 `Issue` 上**新增** `attachment_count` 冗余列以服务卡片徽章计数，迁移随本文交付，见 §4.1 与 §7.1）、`PROJ-002`（项目成员权限域）、`INFRA-004`（错误码注册表 / 统一信封 / Nginx 413 JSON）、`AUTH-004`（直传通道首个消费者——头像） |
 | 下游依赖 | `FILE-002`（P2 项目文件库复用 FileAsset 与直传通道）、`FILE-003`（P2 分片续传扩展 multipart 状态）、`FILE-004`（P2 多版本 / 分享）、`COLLAB-002`（P2 图片评论复用附件）、`BOARD-002`（卡片附件计数消费 `attachment_count`）、`FILE-005`（P3 Wiki 附件） |
-| 架构基线 | [`api-conventions.md`](../architecture/api-conventions.md) §2.5（`attachments/presign` 端点契约）、§13.2（**预签名直传三步规范——本文档的协议原文**）、§8（VALIDATION_FILE_* / QUOTA_* / SERVER_STORAGE_* 错误码）、§7.2（预签名申请 30 req/min 限流）、§4（信封）；[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.10（Activity 异步范式）；[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §5（行级过滤） |
+| 架构基线 | [`api-conventions.md`](../architecture/api-conventions.md) §2.5（`attachments/presign` 端点契约）、§13.2（**预签名直传三步规范——本文档的协议原文，协议字段以架构为准**）、§8（VALIDATION_FILE_* / QUOTA_* / SERVER_STORAGE_* 错误码；SERVER_STORAGE_ERROR 映射 HTTP 500）、§7.2（预签名申请 30 req/min 限流）、§4（信封）；[`unified-issue-model.md`](../architecture/unified-issue-model.md) §1.3（`IssueAttachment` 单表关联）+ §2.10（Activity 异步范式）；[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §8.2（`file.upload` / `file.read` / `file.delete` 权限矩阵）、§5（行级过滤） |
 | 竞品参考 | Plane（`FileAsset` 表 + attributes JSONB + `is_uploaded` 状态机 + presigned 直传 + 实体多可空外键）、Ones（企业网盘体系，任务附件即文件库挂载） |
 | 工作量估算 | 后端 2.5 人日 / 前端 2.5 人日 / 联调与测试 1 人日，合计 **6 人日** |
 
@@ -27,23 +27,25 @@
 
 该通道是 P2 项目文件库、图片评论、P3 Wiki 的共同地基，因此模型设计以「**通道复用**」为第一约束：归属三级（workspace / project / entity）、挂载多态（`entity_type + entity_id`）、状态机（uploading → uploaded → deleted/abandoned → purged）一次定义、三阶段消费。任务附件只是它的第一个挂载点（`entity_type=issue`），`AUTH-004` 的头像（`entity_type=avatar`）已先行验证协议一致性。
 
+> **架构偏离声明（§1.3 / §4.1）**：架构基线 [`unified-issue-model.md`](../architecture/unified-issue-model.md) §1.3 / §2.1 定义任务附件为单表 `IssueAttachment`（`issue_id` FK + `asset` S3 key + `attributes` JSONB）。本文不沿用该模型，**采用 `FileAsset` 多态挂载**（`entity_type + entity_id`，无 FK）。偏离理由：（a）`AUTH-004` 头像已先行验证多态协议且 `COLLAB-002` 评论图、`FILE-002` 项目文件库均复用同一通道；（b）通道共用避免「每新建一种宿主实体都要 ALTER TABLE 加列」的膨胀（Plane 多可空外键方案的反例）；（c）无 FK 的引用完整性由「Service 级联 + 清理任务 ③」双保险覆盖（§4.2 / §4.6）。**架构文档待回改**：将 `IssueAttachment` 移除或在文档中显式标注「FILE-001 多态方案已生效」。
+
 **工程上必须一次做对的三件事**：
 
 1. **文件字节流不经过 Django**——浏览器直传 MinIO，API 只做凭证签发与元数据落库。2 人团队的服务器带宽与内存是稀缺资源，25MB × 10 人并发 × 经由 API 中转 = 250MB 瞬时内存与双倍带宽，直传方案下均为 0。
-2. **校验前置到 presign 期**——大小 / 扩展名黑名单 / 配额在签发上传凭证**之前**拒绝，不产生任何无效对象与孤儿流量（Plane 在完成期才校验部分项，无效大文件已经传完）。
+2. **校验前置到 presign 期**——大小 / 扩展名白名单 / 配额在签发上传凭证**之前**拒绝，不产生任何无效对象与孤儿流量（Plane 在完成期才校验部分项，无效大文件已经传完）。
 3. **生命周期闭环**——「用户取消上传」「传一半关页面」「删除附件」都只是状态迁移，物理删除由 beat 任务按窗口延迟执行，误删可恢复、孤儿可回收。
 
 ### 1.2 交付项
 
 | 交付项 | 说明 |
 | --- | --- |
-| `FileAsset` 模型 | 归属（workspace/project/entity 三级）、原始属性（名 / 大小 / MIME / 扩展名）、存储键、上传状态机、CheckConstraint 黑名单纵深防御 |
-| 直传三步流 | ① `POST …/attachments/presign/` 换 PUT 预签名 URL → ② 浏览器直传 MinIO（同源 `/uploads/` 路由）→ ③ `POST …/attachments/{id}/complete/` HEAD 校验后落库为已上传 |
+| `FileAsset` 模型 | 归属（workspace/project/entity 三级）、原始属性（名 / 大小 / MIME / 扩展名）、存储键、上传状态机、CheckConstraint 扩展名白名单纵深防御 |
+| 直传三步流 | ① `POST …/attachments/presign/` 换 PUT 预签名 URL（请求字段 `file_name` / `file_size` / `content_type` 与 [`api-conventions.md`](../architecture/api-conventions.md) §13.2 协议原文对齐）→ ② 浏览器直传 MinIO（同源 `/uploads/` 路由）→ ③ `POST …/attachments/{id}/complete/` HEAD 校验后落库为已上传 |
 | 下载 | `GET …/attachments/{id}/download/` 鉴权后 302 预签名 GET URL（5 分钟有效，RFC 5987 文件名） |
 | 删除 | 软删附件记录 + 计数 -1；对象延迟 30 天物理回收（误删恢复窗口） |
-| 约束体系 | 单文件 ≤ 25MB；扩展名黑名单（双层：应用 + DB Check）；单任务 ≤ 20 附件；单用户日配额 200 个 / 2GB |
+| 约束体系 | 单文件 ≤ 25MB；扩展名白名单（双层：应用 + DB Check）；单任务 ≤ 20 附件；单用户日配额 200 个 / 2GB（count 与 bytes 双指标，bytes 在 complete 时按 `FileAsset.size` 补记） |
 | 附件区 UI | 任务详情描述下方：上传按钮 + 拖拽区 + 文件行（图标 / 名称 / 大小 / 上传人 / 时间 / 下载 / 删除）+ 上传进度 + 并发队列 |
-| 清理任务 | `mark_abandoned_uploads`（10 分钟）+ `purge_deleted_assets`（每日）两个 beat 任务 |
+| 清理任务 | `mark_abandoned_uploads`（30 分钟，与架构 §13.2、AUTH-004、FILE-002 三方对齐）+ `purge_deleted_assets`（每日，含三类清理：abandoned 1 天 / 软删 30 天 / 宿主 Issue 级联 30 天）两个 beat 任务 |
 | 通道通用件 | `usePresignedUpload` hook（附件区与头像共用）；Nginx `/uploads/` 直传路由 |
 
 ### 1.3 目标用户
@@ -80,7 +82,7 @@
 | --- | --- | --- |
 | 单文件直传 ≤ 25MB | ✅ | — |
 | 下载 / 删除 / 附件区 UI / 卡片计数 | ✅ | — |
-| 黑名单校验（扩展名双层） | ✅ | 病毒扫描 P4 `FILE-006`（UT-02 记录已知限制：改名绕过不识别文件头） |
+| 白名单校验（扩展名双层） | ✅ | 病毒扫描 P4 `FILE-006`（UT-02 记录已知限制：改名绕过不识别文件头） |
 | 孤儿回收 / 延迟物理删除 | ✅ | — |
 | 分片续传 / 断点 | ❌ | P2 `FILE-003` |
 | 项目文件库 / 目录树 / 移动重命名 | ❌（`entity_type` 已预留） | P2 `FILE-002` |
@@ -94,7 +96,7 @@
 | 依赖 | 内容 | 阻塞原因 |
 | --- | --- | --- |
 | `INFRA-002` | `minio` 容器（`RELEASE.2024-11-07T00-52-20Z`）健康检查；`createbuckets` 一次性服务自动创建 `rp-uploads` 桶并设置 `public/` 前缀匿名下载（附件键不在该前缀下，见 §4.1.3）；api 容器注入 `AWS_S3_*` 环境变量（endpoint `minio:9000` / bucket `rp-uploads`） | 通道不可用 |
-| `TASK-001` | `Issue.attachment_count` 冗余列 **P0 已建**（本迭代启用维护）；详情 Drawer 布局 | 计数无处写、UI 无容器 |
+| `TASK-001` | `Issue` 模型基线（5 固定字段、`attachment_count` 列**本迭代迁移新建**——架构 `IssueAttachment` 单表方案不维护该列，本系统多态方案需冗余列供卡片徽章与列表消费）；详情 Drawer 布局 | 计数无处写、UI 无容器 |
 | `AUTH-004` | 头像直传已验证 presign/complete 协议（`entity_type=avatar`） | 协议分歧返工 |
 | `PROJ-002` | 项目成员域（`accessible_by` 行级过滤） | 越权下载 |
 | `INFRA-004` | 错误码注册表 + 统一信封；Nginx API 前缀 `client_max_body_size 2m` 与 413 统一 JSON（「请使用附件直传通道」） | 错误响应不规范 |
@@ -121,15 +123,15 @@ sequenceDiagram
     participant M as MinIO (rp-uploads)
 
     U->>W: 拖拽 screenshot.png (2MB) 到附件区
-    W->>W: 前端预检：size ≤ 25MB<br/>扩展名不在黑名单
+    W->>W: 前端预检：size ≤ 25MB<br/>扩展名在白名单
     alt 预检失败
         W-->>U: 文件行红字提示，不发任何请求
     end
-    W->>A: POST …/issues/{id}/attachments/presign/<br/>{"name","size","mime"}
-    A->>A: 权限 issue.attachment.manage（AUTH-005 矩阵）
-    A->>A: 校验链：扩展名黑名单 → 大小 → 单任务 ≤20 →<br/>日配额 →（全部通过）
+    W->>A: POST …/issues/{id}/attachments/presign/<br/>{"file_name","file_size","content_type"}
+    A->>A: 权限 file.upload（[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §8.2 / §4.4 命名约定，`AUTH-005` 已归并）
+    A->>A: 校验链：扩展名白名单 → 大小 → 单任务 ≤20 →<br/>日配额 →（全部通过）
     A->>A: 创建 FileAsset(status=uploading)<br/>storage_key = ws/proj/issue/{id}/{ulid}.png
-    A->>M: presigned_put_object(key, expires=10min)
+    A->>M: presigned_put_object(key, expires=30min)
     M-->>A: 签名 URL
     A-->>W: 201 {asset_id, upload_url, headers}（信封）
     W->>M: PUT /uploads/{key}?X-Amz-… （字节流，同源经 Nginx 反代）
@@ -138,14 +140,14 @@ sequenceDiagram
     A->>M: HEADObject(key) —— 对象存在性与真实大小
     alt HEAD 不一致
         A-->>W: 400 VALIDATION_FILE_UPLOAD_MISMATCH
-        Note over A,M: FileAsset 保持 uploading<br/>10 分钟后孤儿回收
+        Note over A,M: FileAsset 保持 uploading<br/>30 分钟后孤儿回收
     else HEAD 一致
-        A->>A: 原子翻转 status=uploaded, is_uploaded=True<br/>Issue.attachment_count = F()+1
+        A->>A: 原子翻转 status=uploaded, is_uploaded=True<br/>Issue.attachment_count = F()+1<br/>日配额 bytes 累加（FileAsset.size）
         A->>A: on_commit → issue_activity.delay(attachments.added)
         A-->>W: 200 附件行数据
         W-->>U: 文件行进入完成态，进度条消失
     end
-    Note over A,M: 若 10 分钟内无 complete（关页面 / 取消 / 断网）：<br/>beat 每 10 分钟标记 abandoned，次日物理清理
+    Note over A,M: 若 30 分钟内无 complete（关页面 / 取消 / 断网）：<br/>beat 每 30 分钟标记 abandoned，次日物理清理
 ```
 
 **三步各司其职**（与 [`api-conventions.md`](../architecture/api-conventions.md) §13.2 逐步对应）：
@@ -162,7 +164,7 @@ sequenceDiagram
 stateDiagram-v2
     [*] --> uploading: presign 创建（status=uploading）
     uploading --> uploaded: complete + HEAD 校验通过
-    uploading --> abandoned: 10min 超时（beat 标记）
+    uploading --> abandoned: 30min 超时（beat 标记，与架构 §13.2 / AUTH-004 / FILE-002 三方对齐）
     uploaded --> deleted: 用户删除（软删记录）
     abandoned --> purged: 次日清理任务（删对象 + 硬删记录）
     deleted --> purged: 30 天后清理任务（误删恢复窗口）
@@ -184,7 +186,7 @@ stateDiagram-v2
 
 | 环节 | 规则 |
 | --- | --- |
-| 入口 | `GET …/attachments/{asset_id}/download/`，权限 `project.read`（比上传宽松：查看者可下载） |
+| 入口 | `GET …/attachments/{asset_id}/download/`，权限 `file.read`（[§8.2](../architecture/rbac-permission-model.md) 矩阵登记的正式 Key，VIEWER+ 可下载；比上传宽松） |
 | 换发 | 服务端 `presigned_get_object(key, expires=5min, response_headers={Content-Disposition})` → **302 Location** 跳预签名 GET |
 | 文件名 | `Content-Disposition: attachment; filename*=UTF-8''%E9%94%99…`（RFC 5987 编码中文 / emoji；ASCII 回退 `filename=`） |
 | 过期 | 预签名 GET 5 分钟有效；链接过期后前端自动重调换发端点一次再重定向（UT-09 / E2E-02 覆盖） |
@@ -195,16 +197,16 @@ stateDiagram-v2
 
 | 编号 | 规则 | 判定位置 | 违反后果 |
 | --- | --- | --- | --- |
-| BR-01 | 单文件 ≤ 25MB（26,214,400 字节）；扩展名黑名单 `.exe .dll .bat .cmd .com .scr .msi .sh`；其余类型放行（含 zip，zip 内不扫描——P4 `FILE-006` 病毒扫描） | 前端预检 + presign 后端 | 400 `VALIDATION_FILE_SIZE_EXCEEDED` / `VALIDATION_FILE_TYPE_NOT_ALLOWED` |
-| BR-02 | 扩展名与声明 MIME 冲突时以**扩展名黑名单**为准（防 `a.exe` 声明为 `image/png` 绕过）；扩展名大小写不敏感（`.EXE` 同拦） | presign | 400 `VALIDATION_FILE_TYPE_NOT_ALLOWED` |
-| BR-03 | 单任务附件 ≤ 20 个（`uploaded` 且未软删）；单用户日配额 ≤ 200 个 / 2GB（软配额防滥用） | Service（`select_for_update` Issue 行 + Redis 日计数） | 409 `RESOURCE_LIMIT_EXCEEDED` / `QUOTA_STORAGE_EXCEEDED` |
+| BR-01 | 单文件 ≤ 25MB（26,214,400 字节）；扩展名白名单 `.png .jpg .jpeg .gif .webp .pdf .txt .md .log .json .xml .csv .xls .xlsx .doc .docx .ppt .pptx .zip .7z .tar .gz`；非白名单扩展名一律拒绝（含 zip 内不扫描——P4 `FILE-006` 病毒扫描） | 前端预检 + presign 后端 | 400 `VALIDATION_FILE_SIZE_EXCEEDED` / `VALIDATION_FILE_TYPE_NOT_ALLOWED` |
+| BR-02 | 扩展名与声明 MIME 冲突时以**扩展名白名单**为准（防 `a.exe` 声明为 `image/png` 绕过）；扩展名大小写不敏感（`.EXE` 一律不在白名单即拦） | presign | 400 `VALIDATION_FILE_TYPE_NOT_ALLOWED` |
+| BR-03 | 单任务附件 ≤ 20 个（`uploaded` 且未软删）；单用户日配额 ≤ 200 个 / 2GB（软配额防滥用，count 与 bytes 双指标：count 在 presign 期末位预占，bytes 在 complete 时按 `FileAsset.size` 补记——避免 presign 期虚报 `size` 与实际对象不一致） | Service（`select_for_update` Issue 行 + Redis 日计数） | 409 `RESOURCE_LIMIT_EXCEEDED` / `QUOTA_STORAGE_EXCEEDED` |
 | BR-04 | 存储键：`{workspace_id}/{project_id}/{entity_type}/{entity_id}/{ulid}.{ext}`——四段层级即隔离边界；ULID 保证字典序 = 时间序且天然去重同名 | Service | — |
 | BR-05 | complete 时 HEAD 校验：对象存在、`stat.size == presign 声明 size`（±0）；etag 不强制比对（部分客户端代理会改写 etag） | Service | 400 `VALIDATION_FILE_UPLOAD_MISMATCH`（本迭代新增至错误码注册表，`INFRA-004` UT-01 CI 同步校验） |
 | BR-06 | 下载必须经 API 鉴权端点换 5 分钟预签名 GET；附件键位于 workspace 前缀下，桶默认私有（`createbuckets` 仅对 `public/` 前缀开匿名下载，供 P3 公开页静态资源，附件永不入该前缀） | ViewSet + 桶策略 | 直连 403；越权换发 404 |
-| BR-07 | presign URL 有效期 10 分钟、单 URL 单次使用（PUT 幂等覆盖同键，但键含 ULID 不可预测）；重复 complete 幂等（已 `uploaded` 直接 200） | Service | — |
+| BR-07 | presign URL 有效期 30 分钟（PUT 幂等覆盖同键，但键含 ULID 不可预测）；重复 complete 幂等（已 `uploaded` 直接 200）；30 分钟阈值与架构 §13.2 / `AUTH-004` EC-09 / `FILE-002` BR-09 三方对齐 | Service | — |
 | BR-08 | 上传 / 下载 / 删除写入 `IssueActivity`（field=attachments，verb=updated，new_value=文件名）与文件操作日志；**在 `transaction.on_commit` 后投递**，回滚不产生幽灵日志 | 异步 | — |
 | BR-09 | 删除 = 软删记录 + `attachment_count F()-1`；对象延迟 30 天物理删（误删恢复窗口）；宿主 Issue 软删时附件随之进入级联清理排队 | Service + beat | — |
-| BR-10 | 权限：presign / complete / delete 需 `issue.attachment.manage`（PROJ_CONTRIBUTOR+）；列表 / download 需 `project.read`（PROJ_VIEWER+） | `AUTH-005` 矩阵 + ViewSet | 403 / 404 |
+| BR-10 | 权限：presign / complete 需 `file.upload`（PROJ_CONTRIBUTOR+）；列表 / download 需 `file.read`（PROJ_VIEWER+）；delete 需 `file.delete`（PROJ_ADMIN 全量删，或 PROJ_CONTRIBUTOR **仅本人上传**——对象级判定，对应 [`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §8.2 R1 受限项 `obj.uploaded_by_id == request.user.id`） | `AUTH-005` 矩阵 + ViewSet `has_object_permission` | 403 / 404 |
 | BR-11 | presign 申请限流 30 req/min（[`api-conventions.md`](../architecture/api-conventions.md) §7.2「文件预签名申请」行），防刷上传凭证 | DRF throttle | 429 `RATE_LIMIT_EXCEEDED` + `Retry-After` |
 | BR-12 | `entity_type` 注册制：新增宿主类型必须在本文档 §1.4 矩阵登记并经架构评审，禁止散落硬编码字符串 | 常量类 `EntityType` | 评审拒绝 |
 
@@ -212,8 +214,8 @@ stateDiagram-v2
 
 | 任务 | 周期 | 逻辑 | 幂等性 |
 | --- | --- | --- | --- |
-| `mark_abandoned_uploads` | 每 10 分钟 | `status=uploading AND created_at < now()-10min` → `status=abandoned`（条件 UPDATE，单条 SQL） | 天然幂等（条件不满足即 0 行） |
-| `purge_deleted_assets` | 每日 02:30 | ① `abandoned` 超 1 天：删 MinIO 对象 + 硬删记录；② `deleted_at < now()-30d`：同上；③ 宿主 Issue 已软删且超 30 天的 `uploaded` 附件：同上。逐条执行，失败重试 3 次后 ERROR 日志 + 跳过（不阻塞批次） | 删对象→删记录顺序保证重试安全（对象已删则 404 视为成功） |
+| `mark_abandoned_uploads` | 每 30 分钟 | `status=uploading AND created_at < now()-30min` → `status=abandoned`（条件 UPDATE，单条 SQL） | 天然幂等（条件不满足即 0 行） |
+| `purge_deleted_assets` | 每日 02:30 | ① `abandoned` 超 1 天：删 MinIO 对象 + 硬删记录；② `deleted_at < now()-30d`：同上；③ 宿主 Issue 已软删且超 30 天的 `uploaded` 附件：联查 `Issue.deleted_at < now()-30d` 与上传记录，按实体级联回收（弥补多态无 FK 的引用完整性）。逐条执行，失败重试 3 次后 ERROR 日志 + 跳过（不阻塞批次） | 删对象→删记录顺序保证重试安全（对象已删则 404 视为成功） |
 
 > 清理批次大小 500 / 轮，`iterator(chunk_size=500)` 避免大结果集驻留内存；任务实现见 §4.6。
 
@@ -222,13 +224,13 @@ stateDiagram-v2
 | 异常场景 | 触发条件 | HTTP / 错误码 | 前端表现 | 后端处理 |
 | --- | --- | --- | --- | --- |
 | 超大文件 | > 25MB | 400 `VALIDATION_FILE_SIZE_EXCEEDED`（details 给上限） | 拖拽区红框 + 「文件不能超过 25MB」 | presign 前拦截，零对象产生 |
-| 黑名单类型 | `.exe` / `.EXE` / 改名声明 png | 400 `VALIDATION_FILE_TYPE_NOT_ALLOWED` | 文件行红字后移除 | 同上 |
+| 非白名单类型 | `.exe` / `.EXE` / 改名声明 png | 400 `VALIDATION_FILE_TYPE_NOT_ALLOWED` | 文件行红字后移除 | 同上 |
 | 单任务超 20 | 第 21 个 presign | 409 `RESOURCE_LIMIT_EXCEEDED` | Toast「单任务最多 20 个附件」 | — |
 | 日配额耗尽 | 第 201 个 / 日或 > 2GB | 409 `QUOTA_STORAGE_EXCEEDED` | Toast「今日上传额度已用完」 | Redis 计数器 + 当日零点重置 |
 | 直传失败 | 网络 / MinIO 不可用 | （PUT 层失败，无 API 参与） | 自动重试 2 次 → 行错误态 + 手动重试按钮 | complete 不到达 → 孤儿回收兜底 |
 | complete 校验不一致 | HEAD size ≠ 声明 | 400 `VALIDATION_FILE_UPLOAD_MISMATCH` | 提示重新上传 | 记录保持 uploading → 弃置回收 |
 | presign 后未传即 complete | HEAD 404（对象不存在） | 400 `VALIDATION_FILE_UPLOAD_MISMATCH` | 同上 | 同上 |
-| MinIO 不可用（complete 期） | HEAD 超时 / 连接拒绝 | 503 `SERVER_STORAGE_ERROR` | 「存储服务暂不可用，请稍后重试 complete」 | 不改状态；对象可能已传成功，重试即可收敛 |
+| MinIO 不可用（complete 期） | HEAD 超时 / 连接拒绝 | 500 `SERVER_STORAGE_ERROR`（[`api-conventions.md`](../architecture/api-conventions.md) §8.6 登记的 HTTP 码；架构定义该码为 500 非 503） | 「存储服务暂不可用，请稍后重试 complete」 | 不改状态；对象可能已传成功，重试即可收敛 |
 | 下载越权 | 非项目成员持 asset_id | 404 `RESOURCE_NOT_FOUND` | 404 空态 | `accessible_by` 行级过滤（存在性隐藏） |
 | 下载链接过期 | 预签名 GET 超 5 分钟 | （对象层 403） | 自动重调换发端点一次，静默恢复 | — |
 | 幂等 complete | 重复调用（前端重试 / 双击） | 200 | 无感 | 条件 UPDATE 恰一次生效 |
@@ -276,7 +278,7 @@ stateDiagram-v2
 | 区域 | 组件 | UI 组件（`@rp/ui`） |
 | --- | --- | --- |
 | 头部 | 「附件 N」计数 + 上传按钮 + 虚线拖拽区（dragover 高亮 `border-primary-400 bg-primary-50`） | `SectionHeader` / `Dropzone` |
-| 文件行 | 类型图标（MIME 映射：image 🖼 / pdf 📕 / zip 🗜 / log 📄 / 通用 📎）/ 名称 / 大小（KB/MB 自适应）/ 上传人头像 / 相对时间 / 下载 / 删除（`<PermissionGate code="issue.attachment.manage">`） | `FileRow` |
+| 文件行 | 类型图标（MIME 映射：image 🖼 / pdf 📕 / zip 🗜 / log 📄 / 通用 📎）/ 名称 / 大小（KB/MB 自适应）/ 上传人头像 / 相对时间 / 下载 / 删除（`<PermissionGate code="file.upload">` 用于操作入口，对他人上传的附件删除按钮置灰并提示「仅本人上传可删除」） | `FileRow` |
 | 上传中行 | 进度条（`xhr.upload.onprogress` 实时）+ 速度 + 已传/总量 + 取消 | `UploadRow` |
 | 失败行 | 红底行 + 错误信息 + 「重试」「移除」 | `UploadRow(variant=error)` |
 
@@ -402,22 +404,26 @@ class FileAsset(BaseModel):
             models.Index(fields=["workspace", "status"], name="idx_asset_ws_status"),
         ]
         constraints = [
-            # DB 层黑名单纵深防御（应用层已拦，此处兜底直连 DB 写入的旁路）
+            # DB 层白名单纵深防御（应用层已拦，此处兜底直连 DB 写入的旁路）
             models.CheckConstraint(
-                check=~models.Q(attributes__name__regex=r"\.(exe|dll|bat|cmd|com|scr|msi|sh)$"),
-                name="chk_asset_ext_blocklist",
+                # 仅允许 §2.4 BR-01 白名单中的扩展名结尾（不区分大小写）
+                # PostgreSQL 正则用 `~*`（大小写不敏感），Django ORM 的 `__regex`
+                # lookup 桥接到 PG 的 `~`（敏感），故在 migration 中以 RunSQL 显式
+                # 落 `~*`（代码层仅做最佳努力，DB 层是真权威——纵深防御）
+                check=models.Q(attributes__name__regex=r"(?i)\.(png|jpg|jpeg|gif|webp|pdf|txt|md|log|json|xml|csv|xls|xlsx|doc|docx|ppt|pptx|zip|7z|tar|gz)$"),
+                name="chk_asset_ext_allowlist",
             ),
         ]
 ```
 
-> 黑名单**同时存在于应用层**（presign 校验，返回友好 400 + details）**与 DB CheckConstraint**（纵深防御：`attributes.name` 以黑名单扩展名结尾的行直接拒绝插入）。正则不区分大小写（PostgreSQL `~*` 语义，Django `regex` lookup 即 ILIKE 类不敏感？——否，`regex` 大小写敏感，故应用层统一 `lower()` 后校验，DB 约束使用 `~*`——migration 中以 `RegexConstraint` 的 `i` 旗标实现）。
+> **CheckConstraint + regex lookup 是 Django ORM 唯一受支持的 DB 端字符串约束写法**（不存在独立的 `RegexConstraint` 类；本概念在 R1 反馈中曾被误述，本轮已按 ORM 文档纠正为 `CheckConstraint(check=Q(field__regex=...))`，大小写不敏感在 migration 层的 `RunSQL` 中以原生 PG `~*` 落表）。**白名单同时存在于应用层**（presign 校验，返回友好 400 + details）**与 DB CheckConstraint**（纵深防御：`attributes.name` 不在白名单扩展名结尾的行直接拒绝插入）。应用层因 ORM `__regex` 大小写敏感，统一 `lower()` 后校验，DB 约束在 migration 中以原生 `~*` 表达式真正实现不区分大小写。
 
 #### 4.1.2 字段说明与索引对照
 
 | 字段 / 索引 | 服务的查询 | 说明 |
 | --- | --- | --- |
 | `idx_asset_entity` | `WHERE entity_type='issue' AND entity_id={id} AND deleted_at IS NULL ORDER BY created_at` —— 附件列表端点 | 复合首列即多态挂载的反查键 |
-| `idx_asset_status_time` | `WHERE status='uploading' AND created_at < now()-10min` —— 孤儿标记 | 覆盖 beat 扫描 |
+| `idx_asset_status_time` | `WHERE status='uploading' AND created_at < now()-30min` —— 孤儿标记 | 覆盖 beat 扫描 |
 | `idx_asset_ws_status` | `SUM(size) GROUP BY workspace` —— 配额与存储治理 | P2 `FILE-002` 复用 |
 | `attributes.name` | 下载时还原原始文件名（键本身是 ULID） | 中文名 / emoji 名唯一真相 |
 | `size` 独立索引 | 配额扫描 `SUM(size) WHERE uploaded_by=? AND created_at > 当日` | — |
@@ -474,11 +480,11 @@ erDiagram
 
 | # | 方法 | 路径 | 描述 | 权限 | 成功码 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `POST` | `…/issues/{issue_id}/attachments/presign/` | 申请直传凭证 | `issue.attachment.manage` | `201` |
-| 2 | `POST` | `…/issues/{issue_id}/attachments/{asset_id}/complete/` | 完成确认（幂等） | `issue.attachment.manage` | `200` |
-| 3 | `GET` | `…/issues/{issue_id}/attachments/` | 附件列表 | `project.read` | `200` |
-| 4 | `GET` | `…/issues/{issue_id}/attachments/{asset_id}/download/` | 换取下载 URL | `project.read` | `302` |
-| 5 | `DELETE` | `…/issues/{issue_id}/attachments/{asset_id}/` | 删除附件（软删） | `issue.attachment.manage` | `200` |
+| 1 | `POST` | `…/issues/{issue_id}/attachments/presign/` | 申请直传凭证 | `file.upload` | `201` |
+| 2 | `POST` | `…/issues/{issue_id}/attachments/{asset_id}/complete/` | 完成确认（幂等） | `file.upload` | `200` |
+| 3 | `GET` | `…/issues/{issue_id}/attachments/` | 附件列表 | `file.read` | `200` |
+| 4 | `GET` | `…/issues/{issue_id}/attachments/{asset_id}/download/` | 换取下载 URL | `file.read` | `302` |
+| 5 | `DELETE` | `…/issues/{issue_id}/attachments/{asset_id}/` | 删除附件（软删） | `file.delete`（PROJ_ADMIN 全量；PROJ_CONTRIBUTOR 仅本人上传，对应 BR-10 R1 受限项） | `200` |
 
 > 路径遵循 [`api-conventions.md`](../architecture/api-conventions.md) §2.4：issues 为第 3 层资源，attachments 是其「叶子子资源」（第 4 层，允许）。动作子资源命名（presign / complete / download）与 §2.6 / §13.2 完全一致。DELETE 返回 `200` 携带受影响信息（计数回传），不用 `204`。
 
@@ -488,17 +494,17 @@ erDiagram
 
 ```json
 {
-  "name": "error-500.png",
-  "size": 2097152,
-  "mime": "image/png"
+  "file_name": "error-500.png",
+  "file_size": 2097152,
+  "content_type": "image/png"
 }
 ```
 
 | 字段 | 类型 | 必填 | 校验 |
 | --- | --- | --- | --- |
-| `name` | string | ✅ | basename 化后 1~255 字符；扩展名黑名单（BR-01/02） |
-| `size` | int | ✅ | 1 ~ 26214400（25MB） |
-| `mime` | string | ✅ | 非空；与扩展名冲突时以扩展名为准（BR-02） |
+| `file_name` | string | ✅ | basename 化后 1~255 字符；扩展名白名单（BR-01/02） |
+| `file_size` | int | ✅ | 1 ~ 26214400（25MB） |
+| `content_type` | string | ✅ | 非空；与扩展名冲突时以扩展名为准（BR-02） |
 
 **成功响应 `201 Created`**
 
@@ -507,17 +513,17 @@ erDiagram
   "status": "success",
   "data": {
     "asset_id": "fa1e2d3c-4b5a-49f8-8271-6a5b4c3d2e1f",
-    "upload_url": "https://app.local/uploads/3f2c…/9d8e…/issue/8a1f…/01JBX5N3S9TB6P0Q4R7X8Y9Z0A.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=…&X-Amz-Date=20260901T090000Z&X-Amz-Expires=600&X-Amz-SignedHeaders=host&X-Amz-Signature=…",
+    "upload_url": "https://app.local/uploads/3f2c…/9d8e…/issue/8a1f…/01JBX5N3S9TB6P0Q4R7X8Y9Z0A.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=…&X-Amz-Date=20260901T090000Z&X-Amz-Expires=1800&X-Amz-SignedHeaders=host&X-Amz-Signature=…",
     "method": "PUT",
-    "expires_in": 600,
-    "headers": { "Content-Type": "image/png" }
+    "expires_in": 1800,
+    "fields": { "Content-Type": "image/png" }
   }
 }
 ```
 
-> `upload_url` 为**同源路径**（`https://app.local/uploads/…`）——经 Nginx 反代到 MinIO（§4.7），浏览器无跨域预检成本；`X-Amz-Expires=600` 即 10 分钟（BR-07）。`headers` 必须原样携带在 PUT 请求上，否则签名校验失败。
+> `upload_url` 为**同源路径**（`https://app.local/uploads/…`）——经 Nginx 反代到 MinIO（§4.7），浏览器无跨域预检成本；`X-Amz-Expires=1800` 即 30 分钟（BR-07；与架构 §13.2 / AUTH-004 / FILE-002 三方对齐）。`fields` 必须原样携带在 PUT 请求上（Content-Type 作为请求头），否则签名校验失败。
 
-**失败响应 `400`（黑名单类型）**
+**失败响应 `400`（非白名单类型）**
 
 ```json
 {
@@ -526,7 +532,7 @@ erDiagram
     "code": "VALIDATION_FILE_TYPE_NOT_ALLOWED",
     "message": "不允许上传该类型的文件",
     "details": [
-      { "field": "name", "code": "INVALID", "message": "禁止上传可执行文件（.exe/.dll/.bat/.cmd/.com/.scr/.msi/.sh）" }
+      { "field": "file_name", "code": "INVALID", "message": "仅支持 png / jpg / gif / webp / pdf / txt / md / log / json / xml / csv / xls / xlsx / doc / docx / ppt / pptx / zip / 7z / tar / gz" }
     ],
     "request_id": "01JBX5N3S9TB6P0Q4R7X8Y9Z0B"
   }
@@ -541,7 +547,7 @@ erDiagram
   "error": {
     "code": "VALIDATION_FILE_SIZE_EXCEEDED",
     "message": "文件大小超出限制",
-    "details": [{ "field": "size", "code": "TOO_LARGE", "message": "单文件不能超过 25MB" }],
+    "details": [{ "field": "file_size", "code": "TOO_LARGE", "message": "单文件不能超过 25MB" }],
     "request_id": "01JBX5N3S9TB6P0Q4R7X8Y9Z0C"
   }
 }
@@ -592,7 +598,7 @@ erDiagram
 > `attachment_count` 回传任务最新计数，前端免一次额外 GET。
 
 **失败响应 `400`（HEAD 大小不符 / 对象不存在）**：`VALIDATION_FILE_UPLOAD_MISMATCH` + `details`「对象校验失败，请重新上传」。
-**失败响应 `503`（MinIO 不可达）**：`SERVER_STORAGE_ERROR`，状态不变，可重试。
+**失败响应 `500`（MinIO 不可达）**：`SERVER_STORAGE_ERROR`（[`api-conventions.md`](../architecture/api-conventions.md) §8.6 登记 HTTP 500 而非 503；状态不变，可重试）。
 
 #### 4.3.3 `GET …/issues/{issue_id}/attachments/`
 
@@ -637,7 +643,7 @@ Location: https://app.local/uploads/3f2c…/9d8e…/issue/8a1f…/01JBX5N3S9TB6P
 X-Request-Id: 01JBX5N3S9TB6P0Q4R7X8Y9Z0E
 ```
 
-> 预签名参数内嵌 `response-content-disposition`（RFC 5987 编码 `filename*=UTF-8''error-500.png`），浏览器落盘名即原始名。5 分钟有效（§2.3）。
+> 预签名参数内嵌 `response-content-disposition`（RFC 5987 编码 `filename*=UTF-8''error-500.png`），浏览器落盘名即原始名。5 分钟有效（§2.3）。权限 `file.read`（PROJ_VIEWER+）。
 > **失败响应 `404`**（不存在 / 已软删 / 无权 / 非本项目附件——存在性隐藏统一 404）：`RESOURCE_NOT_FOUND`。
 
 #### 4.3.5 `DELETE …/attachments/{asset_id}/`
@@ -648,7 +654,7 @@ X-Request-Id: 01JBX5N3S9TB6P0Q4R7X8Y9Z0E
 { "status": "success", "data": { "id": "fa1e2d3c-…", "attachment_count": 2 } }
 ```
 
-> 软删 + 计数 -1；对象保留 30 天恢复窗（BR-09）。**失败 `403`**：`PERM_ROLE_INSUFFICIENT`（VIEWER/COMMENTER）。
+> 软删 + 计数 -1；对象保留 30 天恢复窗（BR-09）。**失败 `403`**：`PERM_ROLE_INSUFFICIENT`（VIEWER/COMMENTER）。**失败 `403`** `PERM_DENIED`：CONTRIBUTOR 试图删除他人上传的附件——按 BR-10 / R1 受限项 `obj.uploaded_by_id == request.user.id` 判定（仅本人上传可删）。
 
 ### 4.4 核心逻辑（AssetService）
 
@@ -667,37 +673,39 @@ from plane.storage import minio_client          # boto3/MinIO SDK 封装，注�
 from plane.utils.exceptions import AppException
 
 MAX_FILE_SIZE = 25 * 1024 * 1024                # BR-01
-BLOCKED_EXTS = {".exe", ".dll", ".bat", ".cmd", ".com", ".scr", ".msi", ".sh"}
+ALLOWED_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".txt", ".md",
+                ".log", ".json", ".xml", ".csv", ".xls", ".xlsx", ".doc", ".docx",
+                ".ppt", ".pptx", ".zip", ".7z", ".tar", ".gz"}
 DAILY_COUNT_QUOTA = 200
 DAILY_BYTES_QUOTA = 2 * 1024 ** 3
-UPLOAD_URL_TTL = 600                            # 10 分钟
+UPLOAD_URL_TTL = 1800                           # 30 分钟（架构 §13.2 / AUTH-004 / FILE-002 三方对齐）
 DOWNLOAD_URL_TTL = 300                          # 5 分钟
 
 
 class AssetService:
     # ---------- ① presign：校验链 + 元数据 + 签发 ----------
     def presign(self, *, issue: Issue, payload: dict, actor) -> tuple[FileAsset, str]:
-        name = Path(payload["name"]).name                     # basename 化，防路径注入
+        name = Path(payload["file_name"]).name               # basename 化，防路径注入
         if not (1 <= len(name) <= 255):
             raise AppException("VALIDATION_ERROR",
-                               details=[{"field": "name", "code": "TOO_LONG", "message": "文件名长度 1~255"}])
+                               details=[{"field": "file_name", "code": "TOO_LONG", "message": "文件名长度 1~255"}])
         ext = Path(name).suffix.lower()                       # 大小写不敏感（BR-02）
-        mime = (payload.get("mime") or "").lower()
+        mime = (payload.get("content_type") or "").lower()
 
-        if ext in BLOCKED_EXTS:                               # 扩展名黑名单优先于 MIME 声明
+        if ext not in ALLOWED_EXTS:                           # 扩展名白名单优先于 MIME 声明
             raise AppException("VALIDATION_FILE_TYPE_NOT_ALLOWED",
-                               details=[{"field": "name", "code": "INVALID",
-                                         "message": f"禁止上传 {ext} 类型文件"}])
-        size = int(payload["size"])
+                               details=[{"field": "file_name", "code": "INVALID",
+                                         "message": f"扩展名 {ext} 不在白名单"}])
+        size = int(payload["file_size"])
         if size <= 0:
             raise AppException("VALIDATION_ERROR",
-                               details=[{"field": "size", "code": "TOO_SMALL", "message": "不接受空文件"}])
+                               details=[{"field": "file_size", "code": "TOO_SMALL", "message": "不接受空文件"}])
         if size > MAX_FILE_SIZE:
             raise AppException("VALIDATION_FILE_SIZE_EXCEEDED",
-                               details=[{"field": "size", "code": "TOO_LARGE", "message": "单文件不能超过 25MB"}])
+                               details=[{"field": "file_size", "code": "TOO_LARGE", "message": "单文件不能超过 25MB"}])
 
         self._check_task_limit(issue)                        # BR-03a：单任务 ≤ 20（行锁防并发超限）
-        self._check_daily_quota(actor)                       # BR-03b：日配额（Redis 计数）
+        self._check_daily_quota(actor, count=1)              # BR-03b：count 预占（bytes 待 complete 补记）
 
         key = self._build_key(issue, ext)                    # BR-04：四段层级 + ULID
         asset = FileAsset.objects.create(
@@ -715,20 +723,21 @@ class AssetService:
             expires=UPLOAD_URL_TTL, headers={"Content-Type": mime})
         return asset, url
 
-    # ---------- ② complete：HEAD 校验 + 原子翻转 + 计数 ----------
+    # ---------- ② complete：HEAD 校验 + 原子翻转 + 计数 + 字节配额补记 ----------
     def complete(self, *, asset: FileAsset, issue: Issue) -> FileAsset:
         if asset.status == FileAsset.Status.UPLOADED:        # 幂等快路径（BR-07）
             return asset
         try:
             stat = minio_client.stat_object(bucket="rp-uploads", key=asset.storage_path)   # HEADObject
         except minio_client.ServiceUnavailable:
-            raise AppException("SERVER_STORAGE_ERROR")       # 503：状态不变，可重试
+            raise AppException("SERVER_STORAGE_ERROR",
+                               http_status=500)              # §8.6 登记 HTTP 500：状态不变，可重试
         except minio_client.NoSuchKey:
             raise AppException("VALIDATION_FILE_UPLOAD_MISMATCH")
 
         if stat.size != asset.size:                          # BR-05：±0 严格比对
             raise AppException("VALIDATION_FILE_UPLOAD_MISMATCH",
-                               details=[{"field": "size", "code": "INVALID",
+                               details=[{"field": "file_size", "code": "INVALID",
                                          "message": "对象大小与声明不一致，请重新上传"}])
 
         with transaction.atomic():
@@ -738,14 +747,19 @@ class AssetService:
             if updated:
                 Issue.objects.filter(pk=issue.pk).update(
                     attachment_count=F("attachment_count") + 1)
+                # BR-03b 补记：bytes 在 complete 时按 FileAsset.size 计入 Redis 日配额
+                from plane.storage.quota import daily_upload_quota
+                transaction.on_commit(lambda actor_id=str(asset.uploaded_by_id),
+                                      sz=asset.size: daily_upload_quota.add_bytes(actor_id, sz))
                 transaction.on_commit(lambda: issue_activity.delay(
                     issue_id=str(issue.id), field="attachments", verb="updated",
                     new_value=asset.attributes["name"], actor_id=str(asset.uploaded_by_id)))
         asset.refresh_from_db()
         return asset
 
-    # ---------- 删除：软删 + 计数回退 ----------
-    def delete(self, *, asset: FileAsset, issue: Issue) -> None:
+    # ---------- 删除：软删 + 计数回退 + 对象级权限判定 ----------
+    def delete(self, *, asset: FileAsset, issue: Issue, actor) -> None:
+        # BR-10 R1 受限项：CONTRIBUTOR 仅本人上传可删；ADMIN 全量（已在 Permission.has_object_permission 拦）
         with transaction.atomic():
             asset.deleted_at = timezone.now()                # 软删（30 天恢复窗，BR-09）
             asset.save(update_fields=["deleted_at", "updated_at"])
@@ -753,12 +767,15 @@ class AssetService:
                 attachment_count=F("attachment_count") - 1)
             transaction.on_commit(lambda: issue_activity.delay(
                 issue_id=str(issue.id), field="attachments", verb="updated",
-                old_value=asset.attributes["name"], actor_id=None))
+                old_value=asset.attributes["name"], actor_id=str(actor.id) if actor else None))
 
     # ---------- 内部 ----------
     def _check_task_limit(self, issue: Issue) -> None:
         with transaction.atomic():
-            Issue.objects.select_for_update().filter(pk=issue.pk).only("id")
+            # 行锁必须求值（赋值给 _），否则 Django 会发出仅 SELECT 的裸锁被丢弃，
+            # 失去并发串行化语义（详见 R1 反馈第 9 项修正）。
+            locked = Issue.objects.select_for_update().filter(pk=issue.pk).only("id").first()
+            _ = locked                                       # 求值即获取行锁
             count = FileAsset.objects.filter(
                 entity_type="issue", entity_id=issue.id,
                 status="uploaded", deleted_at__isnull=True).count()
@@ -767,12 +784,12 @@ class AssetService:
                                    details=[{"field": "attachments", "code": "TOO_LARGE",
                                              "message": "单任务最多 20 个附件"}])
 
-    def _check_daily_quota(self, actor) -> None:
-        # Redis INCR + 当日零点过期；bytes 累加在 complete 时补记（presign 期只拦 count）
+    def _check_daily_quota(self, actor, *, count: int = 0) -> None:
+        # BR-03b：count 在 presign 期预占（Redis INCR），bytes 在 complete 时补记（避免 presign 虚报 size）
         from plane.storage.quota import daily_upload_quota
-        if not daily_upload_quota.allow(actor, bytes_=0):
+        if not daily_upload_quota.allow(actor, count=count):
             raise AppException("QUOTA_STORAGE_EXCEEDED",
-                               details=[{"field": "size", "code": "TOO_LARGE",
+                               details=[{"field": "file_size", "code": "TOO_LARGE",
                                          "message": "今日上传额度（200 个 / 2GB）已用完"}])
 
     def _build_key(self, issue: Issue, ext: str) -> str:
@@ -799,15 +816,18 @@ class AssetService:
 | 两请求同时为同一任务第 20/21 个 presign | `_check_task_limit` 持 Issue 行锁串行化 | 恰一个 201 一个 409 |
 | 两客户端重复 complete 同一 asset | 条件 `UPDATE … WHERE status='uploading'` | 恰一次翻转与计数 |
 | 删除与 complete 并发 | 删除仅作用于 `deleted_at`；complete 条件 UPDATE 互不覆盖 | 状态收敛一致 |
-| presign 后放弃上传 | 无回收动作需求 | beat 10 分钟兜底 |
+| presign 后放弃上传 | 无回收动作需求 | beat 30 分钟兜底 |
 
 ### 4.5 权限矩阵
 
 | 操作 | 权限点 | PROJ_ADMIN | CONTRIBUTOR | COMMENTER | VIEWER |
 | --- | --- | --- | --- | --- | --- |
-| presign / complete / delete | `issue.attachment.manage` | ✅ | ✅ | ❌ 403 | ❌ 403 |
-| 列表 / download | `project.read` | ✅ | ✅ | ✅ | ✅ |
+| presign / complete | `file.upload` | ✅ | ✅ | ❌ 403 | ❌ 403 |
+| 列表 / download | `file.read` | ✅ | ✅ | ✅ | ✅ |
+| delete | `file.delete`（对象级 R1 受限项） | ✅ 全量 | ⚠️ 仅本人上传 | ❌ 403 | ❌ 403 |
 | 越权访问他人项目附件 | `accessible_by` 行级过滤 | — | — | — | 404（存在性隐藏） |
+
+> 命名遵循 [`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §4.4 / §8.2：统一 REST 动词（`upload` / `read` / `delete`），不引入别名（如早期草案的 `issue.attachment.manage`），与 `AUTH-005` 按钮权限点对齐。
 
 ### 4.6 Celery / beat 任务定义
 
@@ -821,7 +841,7 @@ from celery import shared_task
 from plane.db.models import FileAsset, Issue
 from plane.storage import minio_client
 
-ABANDON_AFTER = timedelta(minutes=10)      # 与 presign URL TTL 对齐
+ABANDON_AFTER = timedelta(minutes=30)      # 与 presign URL TTL 对齐（架构 §13.2 / AUTH-004 / FILE-002 三方一致）
 PURGE_DELETED_AFTER = timedelta(days=30)
 PURGE_ABANDONED_AFTER = timedelta(days=1)
 BATCH = 500
@@ -829,7 +849,7 @@ BATCH = 500
 
 @shared_task
 def mark_abandoned_uploads() -> int:
-    """每 10 分钟：超时未 complete 的上传标记为 abandoned（条件 UPDATE，幂等）"""
+    """每 30 分钟：超时未 complete 的上传标记为 abandoned（条件 UPDATE，幂等）"""
     cutoff = timezone.now() - ABANDON_AFTER
     return FileAsset.objects.filter(
         status=FileAsset.Status.UPLOADING, created_at__lt=cutoff
@@ -845,12 +865,22 @@ def purge_deleted_assets(self) -> dict[str, int]:
     ③ 宿主 Issue 已软删超 30 天的 uploaded 附件（级联回收，弥补多态无 FK）
     """
     now = timezone.now()
-    targets = FileAsset.all_objects.filter(
-        deleted_at__lt=now - PURGE_DELETED_AFTER
-    ).union(
-        FileAsset.all_objects.filter(
-            status=FileAsset.Status.ABANDONED, created_at__lt=now - PURGE_ABANDONED_AFTER)
-    )
+    # targets：① + ②
+    qs_abandoned = FileAsset.all_objects.filter(
+        status=FileAsset.Status.ABANDONED,
+        created_at__lt=now - PURGE_ABANDONED_AFTER)
+    qs_deleted = FileAsset.all_objects.filter(
+        deleted_at__lt=now - PURGE_DELETED_AFTER,
+        deleted_at__isnull=False)
+    # targets ③：宿主 Issue 软删超 30 天且对应附件仍 uploaded（多态无 FK 的兜底）
+    qs_cascade = FileAsset.all_objects.filter(
+        entity_type=FileAsset.EntityType.ISSUE,
+        status=FileAsset.Status.UPLOADED,
+        deleted_at__isnull=True,
+        entity_id__in=Issue.all_objects.filter(
+            deleted_at__lt=now - PURGE_DELETED_AFTER).values("id"))
+    targets = qs_abandoned.union(qs_deleted).union(qs_cascade)
+
     purged = failed = 0
     for asset in targets.iterator(chunk_size=BATCH):
         try:
@@ -862,7 +892,6 @@ def purge_deleted_assets(self) -> dict[str, int]:
             continue                               # 记录保留，下轮重试；ERROR 日志由 handler 统一
         asset.delete(hard=True)                    # 硬删记录（all_objects 域）
         purged += 1
-    # ③ 宿主级联：略——按 issue 软删时间联查 uploaded 附件并入 targets（实现同型）
     return {"purged": purged, "failed": failed}
 ```
 
@@ -870,7 +899,7 @@ def purge_deleted_assets(self) -> dict[str, int]:
 # apps/api/plane/settings/celery.py（beat 调度注册，节选）
 beat_schedule = {
     "asset-mark-abandoned": {"task": "plane.bgtasks.asset_cleanup.mark_abandoned_uploads",
-                              "schedule": crontab(minute="*/10")},
+                              "schedule": crontab(minute="*/30")},
     "asset-purge-deleted":  {"task": "plane.bgtasks.asset_cleanup.purge_deleted_assets",
                               "schedule": crontab(hour=2, minute=30)},
 }
@@ -927,8 +956,9 @@ export function usePresignedUpload(
   const upload = useCallback(async (file: File) => {
     setStates((s) => ({ ...s, [file.name]: { phase: "uploading", loaded: 0, total: file.size } }));
     try {
-      const { asset_id, upload_url, headers, method } = await presign(file);   // ①
-      await putWithProgress(upload_url, method, headers, file, (loaded) =>     // ②
+      // presign 入参遵循架构 §13.2 协议原文：file_name / file_size / content_type
+      const { asset_id, upload_url, fields, method } = await presign(file);   // ①
+      await putWithProgress(upload_url, method, fields, file, (loaded) =>      // ②
         setStates((s) => ({ ...s, [file.name]: { phase: "uploading", loaded, total: file.size } })));
       await complete(asset_id, "", file.size);                                  // ③（etag 由 PUT 响应头取）
       setStates((s) => ({ ...s, [file.name]: { phase: "done", assetId: asset_id } }));
@@ -962,20 +992,22 @@ export function usePresignedUpload(
 
 | 用例 ID | 测试目标 | 输入 | 预期输出 | 覆盖类型 |
 | --- | --- | --- | --- | --- |
-| UT-01 | 黑名单拦截 | `a.exe` | 400 `VALIDATION_FILE_TYPE_NOT_ALLOWED`，无 FileAsset / 无对象 | 安全 |
+| UT-01 | 非白名单拦截 | `a.exe` | 400 `VALIDATION_FILE_TYPE_NOT_ALLOWED`，无 FileAsset / 无对象 | 安全 |
 | UT-02 | 大小写绕过 | `a.EXE` / `a.Exe` | 同 UT-01 | 安全 |
-| UT-03 | 改名声明伪造 | `a.exe` 声明 `mime=image/png` | 同 UT-01（扩展名优先，BR-02） | 安全 |
+| UT-03 | 改名声明伪造 | `a.exe` 声明 `content_type=image/png` | 同 UT-01（扩展名优先，BR-02） | 安全 |
 | UT-04 | 超大 | 25MB+1B | 400 `VALIDATION_FILE_SIZE_EXCEEDED`，零对象 | 边界 |
-| UT-05 | 空文件 | size=0 | 400 | 边界 |
-| UT-06 | 路径注入 | name=`../../etc/passwd` | basename 化为 `passwd` 或 400，键不含路径分隔 | 安全 |
+| UT-05 | 空文件 | file_size=0 | 400 | 边界 |
+| UT-06 | 路径注入 | file_name=`../../etc/passwd` | basename 化为 `passwd` 或 400，键不含路径分隔 | 安全 |
 | UT-07 | complete 大小不符 | HEAD size ≠ 声明 | 400 `VALIDATION_FILE_UPLOAD_MISMATCH`，状态保持 uploading | 异常 |
 | UT-08 | 幂等 complete | 连续两次 | 均 200；`attachment_count` 恰 +1 | 并发 |
 | UT-09 | 下载文件名 | 中文 `错误截图.png` | `Content-Disposition` 含 RFC 5987 编码，落盘名正确 | 边界 |
 | UT-10 | 下载越权 | 非项目成员持 asset_id | 404（存在性隐藏） | 安全 |
 | UT-11 | 单任务上限 | 第 21 个 presign | 409 `RESOURCE_LIMIT_EXCEEDED` | 边界 |
 | UT-12 | 日配额 | 第 201 个 / 日 | 409 `QUOTA_STORAGE_EXCEEDED` | 边界 |
-| UT-13 | 孤儿标记 | 10 分钟无 complete | beat 后 status=abandoned | 异步 |
-| UT-14 | DB 黑名单约束 | 绕过应用层直插 `.exe` 行 | CheckConstraint 拒绝 | 纵深防御 |
+| UT-13 | 孤儿标记 | 30 分钟无 complete | beat 后 status=abandoned（与架构 / AUTH-004 / FILE-002 三方一致） | 异步 |
+| UT-14 | DB 白名单约束 | 绕过应用层直插 `.exe` 行 | CheckConstraint 拒绝（PG `~*` 不区分大小写） | 纵深防御 |
+| UT-15 | CONTRIBUTOR 删他人附件 | actor ≠ `asset.uploaded_by_id` | 403 `PERM_DENIED`（BR-10 R1 受限项） | 安全 |
+| UT-16 | 日配额 bytes 补记 | 累计 size > 2GB | 第 N+1 个 presign 不拦；complete 时累加超 2GB 触发 `QUOTA_STORAGE_EXCEEDED` | 边界 |
 
 ### 5.2 集成测试
 
@@ -986,7 +1018,7 @@ export function usePresignedUpload(
 | IT-03 | 并发 5 文件 | 附件区 | 同时拖 5 文件 | 3 并发 + 2 排队，全部成功且计数正确 |
 | IT-04 | 桶策略 | 持对象 URL 直接 GET（绕过换发） | — | 403（附件键不在 public/ 前缀） |
 | IT-05 | 清理任务 | 造 abandoned + 软删超期数据 | 手动触发 beat 任务 | 对象与记录按期清理；重跑幂等 |
-| IT-06 | MinIO 宕机恢复 | 停 minio → complete → 恢复 | complete 返回 503；恢复后重试 | 最终 200，无重复计数 |
+| IT-06 | MinIO 宕机恢复 | 停 minio → complete → 恢复 | complete 返回 500 `SERVER_STORAGE_ERROR`（架构 §8.6 登记 HTTP 500）；恢复后重试 | 最终 200，无重复计数 |
 | IT-07 | 限流 | 1 分钟内 31 次 presign | 第 31 次 | 429 + `Retry-After` |
 | IT-08 | 权限矩阵 | VIEWER 上传 / COMMENTER 删除 | — | 均 403 `PERM_ROLE_INSUFFICIENT` |
 
@@ -998,7 +1030,7 @@ export function usePresignedUpload(
 | E2E-02 | 下载与过期恢复 | 上传后立即下载；等 6 分钟再点下载 | 前者直接成功；后者静默重换链接后成功；与源文件 sha256 一致 |
 | E2E-03 | 拒绝与提示 | 拖 `.exe` 与 26MB 文件 | 均被 400 拒绝且 MinIO 无对象产生（mc ls 验证） |
 | E2E-04 | 删除恢复窗口 | 删除附件 | 行消失、计数 -1；30 天内 `all_objects` 可查（管理视角演示） |
-| E2E-05 | 取消上传 | 上传中点 ✕ | 行移除；10 分钟后记录转 abandoned，次日清理（可加速时钟演示） |
+| E2E-05 | 取消上传 | 上传中点 ✕ | 行移除；30 分钟后记录转 abandoned，次日清理（可加速时钟演示） |
 
 ---
 
@@ -1019,7 +1051,7 @@ export function usePresignedUpload(
 
 1. **对需求文档 P1「本地临时存储」的升级决策**：MinIO 已在 P0 编排就位（`INFRA-002` 验收标准 6 明确全套服务 + createbuckets 自动建桶）；本地磁盘存储会在 P2 文件库时形成「本地盘 + 对象存储」双体系迁移成本；预签名直传使 API 进程零文件带宽（2 人团队服务器资源敏感）；且 [`api-conventions.md`](../architecture/api-conventions.md) §13.2 早已预定义三步流契约。**升级零新增基建、协议有架构背书**——把 P2 的地基提前到 P1 打，不属范围蔓延。
 2. **`entity_type + entity_id` 多态挂载**：修复 Plane 多可空外键的膨胀问题（新宿主零 DDL），以 `idx_asset_entity` 支撑反查；代价（无 FK 引用完整性）由「Service 级联 + 每日清理兜底」双保险覆盖（§4.2 注）。
-3. **黑名单双层 + 校验前置**：应用层（友好 400 + details）+ DB CheckConstraint（纵深防御）；presign 期拦截使无效流量为零；病毒扫描明示 P4 边界（UT-03 记录「改名绕过不识别文件头」为 P1 已知限制）。
+3. **白名单双层 + 校验前置**：应用层（友好 400 + details）+ DB CheckConstraint（纵深防御）；presign 期拦截使无效流量为零；病毒扫描明示 P4 边界（UT-03 记录「改名绕过不识别文件头」为 P1 已知限制）。
 4. **生命周期状态机 + 延迟物理删除**：abandoned / deleted 两个中间态分别覆盖「传一半放弃」与「误删恢复」，物理删除只在 beat 窗口后发生——把破坏性操作从用户交互路径上移走。
 5. **差异化价值**：一个通道（模型 + 三步协议 + hook + Nginx 路由 + 清理任务）三阶段复用（P1 任务附件/头像 → P2 文件库/评论图/分片 → P3 Wiki），本迭代即完成通道验证——这是 2 人团队在 12 周交付约束下的关键杠杆。
 
@@ -1031,7 +1063,7 @@ export function usePresignedUpload(
 
 | 类型 | 交付物 |
 | --- | --- |
-| Model / Migration | `FileAsset` 表（3 索引 + CheckConstraint 黑名单） |
+| Model / Migration | `FileAsset` 表（3 索引 + CheckConstraint 扩展名白名单，PG 原生 `~*` 不区分大小写）；`Issue.attachment_count` 列迁移（`ADD COLUMN attachment_count integer NOT NULL DEFAULT 0`）随本迭代交付；migration 含 RunSQL 追加原生 PG 表达式落表 |
 | API 端点 | §4.3 全部 5 个（presign / complete / list / download / delete） |
 | 后端 | `AssetService`（presign 校验链 / complete HEAD 校验 / 删除）、下载 302 换发（RFC 5987）、日配额 Redis 计数、`mark_abandoned_uploads` + `purge_deleted_assets` beat |
 | 错误码注册表 | 新增 `VALIDATION_FILE_UPLOAD_MISMATCH`（400）；其余复用既有码；`INFRA-004` UT-01 CI 校验同步 |
@@ -1044,6 +1076,6 @@ export function usePresignedUpload(
 1. 拖拽 2MB 截图到任务附件区：进度条走完即出现在列表，卡片显示 📎 1；期间 `docker stats` 佐证 api 容器网络 IO 为 0（直传验证）。
 2. 下载文件与源文件 sha256 一致；中文文件名「错误日志.txt」落盘正确。
 3. 上传 `.exe`（含 `.EXE` 与改名伪造 MIME）与 26MB 文件均被 400 拒绝，`mc ls rp/rp-uploads` 确认零对象产生。
-4. 删除附件后任务 `attachment_count` -1；上传一半取消的文件 10 分钟后被 beat 标记弃置，次日清理任务物理回收。
+4. 删除附件后任务 `attachment_count` -1；上传一半取消的文件 30 分钟后被 beat 标记弃置，次日清理任务物理回收。
 5. 非项目成员持附件 ID 换下载链接返回 404；绕过换发直连对象 URL 返回 403（桶前缀私有验证）。
 6. 同一任务并发上传 5 个文件：3 并发 + 2 排队全部成功，计数与列表一致（IT-03 场景在线演示）。

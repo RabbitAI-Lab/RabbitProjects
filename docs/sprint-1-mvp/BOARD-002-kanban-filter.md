@@ -116,7 +116,7 @@ flowchart TD
     J --> K
 ```
 
-**关键点：筛选态下的数据契约与 P0 完全同构**。`data` 的键仍覆盖项目全部 `State`（含空列），每组的 `results` 仍按 `sort_order` 升序——筛选只是收窄了每组的成员集合与 `total_results`。`BOARD-001` 建立的四条分组契约（§4.2.2）在筛选态下不变，前端列渲染代码零分支。
+**关键点：筛选态下的数据契约与 P0 完全同构**。`data` 的键仍覆盖项目全部 `State`（含空列），每组的 `results` 仍按 `sort_order` 升序——筛选只是收窄了每组的成员集合与 `total_results`。`TASK-001` 建立的四条分组契约（§4.2.3）在筛选态下不变，前端列渲染代码零分支。
 
 ### 2.2 筛选与拖拽共存规则
 
@@ -184,7 +184,7 @@ stateDiagram-v2
 | 「已完成」列内排序 | 不变 | **不刷新**（保持首次完成时间） | 同列 PATCH 不触发派生 |
 | 拖入「已取消」列 | `*` → `cancelled` | **不写入**（保持 null 或已有值不变） | 只有 completed 组触发写入 |
 | 已取消 → 已完成 | `cancelled` → `completed` | **补写当下** | 取消后复活完成，以复活时间为准 |
-| 已完成 → 拖出 | `completed` → 其他 | 清空为 `null`（`BOARD-001` BE-4 契约） | 退回未完成语义 |
+| 已完成 → 拖出 | `completed` → 其他 | **保留**（不刷新、不清空） | 首次完成时间语义（`TASK-001` BR-11 / `unified-issue-model.md` §4.3 `save()` 仅在 `None` 时写入、从不清空） |
 
 > 「已取消」任务的卡片半透明（60% opacity）视觉降权，但**可正常拖出恢复**——取消是可逆的软状态，不是删除。
 
@@ -193,16 +193,16 @@ stateDiagram-v2
 | 编号 | 规则 | 判定位置 | 违反后果 |
 | --- | --- | --- | --- |
 | BR-01 | 看板筛选参数域 = `TASK-003` 全集减 `state_id`；语义同参 OR / 跨参 AND，与列表零差异（`IssueFilterSet` 单点复用，禁止复制实现） | FilterSet 复用 | 400（值域非法时）；CI 导入检查守护单点 |
-| BR-02 | 分组响应结构遵循 [`api-conventions.md`](../architecture/api-conventions.md) §4.1 分组信封：`data` 键覆盖项目**全部** `State`（含空列与筛选后 0 命中列），每组 `results`（≤25）+ `total_results` | 序列化 | — |
+| BR-02 | 分组响应结构遵循 [`api-conventions.md`](../architecture/api-conventions.md) §4.1 分组信封（与 `TASK-001` §4.2.3 同构）：`data` 键以项目 State UUID 为键覆盖**全部** `State`（含空列与筛选后 0 命中列），每组 `results`（≤25）+ `total_results`（筛选后）+ `unfiltered_total_results`（筛选前，供列头 tooltip） | 序列化 | — |
 | BR-03 | 四列渲染顺序固定：`unstarted → started → completed → cancelled`；列 = 项目 `State` 表中对应 `group` 的种子行，列名 / 颜色取 `State.name` / `State.color` 不硬编码 | 前端 | — |
 | BR-04 | 拖入「已取消」列写入该列 `state_id`，`completed_at` **不**写入；拖出 cancelled 至 completed 时补写（§2.4 全表） | Service（`Issue.save()`） | — |
-| BR-05 | 筛选态下列头计数显示 `total_results`（筛选后计数）；hover 列头 tooltip 显示全量计数（「共 N 个任务，当前筛选命中 M」） | 前端 | — |
+| BR-05 | 筛选态下列头计数显示 `total_results`（筛选后计数）；hover 列头 tooltip 显示「共 N 个任务，当前筛选命中 M」，N 取 `unfiltered_total_results`（每组响应同位置给出，M 取 `total_results`） | 前端 | — |
 | BR-06 | peek 层数据由列表载荷自带（列表默认字段集已含全部 peek 字段），**禁止 peek 触发任何请求** | 前端 | 性能红线 |
 | BR-07 | 筛选态 URL 同步与列表页一致（`?assignee_id=…&priority=…`），列表 ⇄ 看板切换共享同一 query 源，筛选保持 | 前端（路由层） | — |
 | BR-08 | 「已取消」列卡片 60% 半透明视觉降权；可正常拖出恢复 | 前端 | — |
 | BR-09 | `PROJ_VIEWER`(5) 下拖拽禁用（列渲染正常，卡片不可拖）；绕过 UI 强拖接口返回 `403 PERM_ROLE_INSUFFICIENT` | `AUTH-005` 联动 + Permission 类 | 403 |
 | BR-10 | `meta.applied` 回显服务端实际生效的筛选（含 `me` 展开后的用户 ID），供前端 Chip 精确展示；与 `TASK-003` 同构 | 序列化 | — |
-| BR-11 | 组内游标互相独立：A 组翻页不影响 B 组的游标与结果；游标解码失败仅该组回首页（整页 400 仅当游标参数整体损坏） | 分页器 | 400 `VALIDATION_INVALID_CURSOR` |
+| BR-11 | 组内游标互相独立：A 组翻页不影响 B 组的游标与结果；任一组游标解码失败（含整体损坏与单组过期）均返回 `400 VALIDATION_INVALID_CURSOR`，前端 toast + 仅该组自动重拉首页（其他组不受影响） | 分页器 | 400 `VALIDATION_INVALID_CURSOR` |
 | BR-12 | 软删除（`deleted_at`）与归档（`archived_at`，防御式）的任务不出现在任何分组，无论筛选与否 | ORM 基线过滤 | — |
 
 ### 2.6 异常处理表
@@ -226,7 +226,7 @@ stateDiagram-v2
 | 列宽与列数 | 4 列最小视口 1280px | < 1280px 横向滚动（列固定宽 280px，`scroll-snap`） |
 | peek 内容高度 | 320px | 内部滚动；描述 200 字截断 +「展开」 |
 | 卡片标签显示 | 3 个 +「+N」 | 全量标签在 peek 层展示 |
-| 筛选参数单值多选数 | ≤ 20（`TASK-003` 边界同源） | 400 `TOO_MANY` |
+| 筛选参数单值多选数 | ≤ 20（`TASK-003` 边界同源） | 400 `VALIDATION_ERROR` + 子码 `TOO_LARGE`（`api-conventions.md` §8.4 / §8.8） |
 | `q` 关键词长度 | ≤ 64 | 400 `TOO_LONG` |
 | 筛选 + 每组 25 条的 SQL 预算 | ≤ 10 条（4 组 count + 4 组取数 + 权限 + 计数） | `assertNumQueries` 门禁（IT-05） |
 
@@ -427,8 +427,7 @@ Cookie: sessionid=…
 {
   "status": "success",
   "data": {
-    "state:a1b2c3d4-0001-4000-8000-000000000001": {
-      "state": { "id": "a1b2c3d4-0001-4000-8000-000000000001", "name": "待办", "group": "unstarted", "color": "#9CA3AF" },
+    "a1b2c3d4-0001-4000-8000-000000000001": {
       "results": [
         {
           "id": "8a1f9c2e-6b3d-4a7e-9f11-2c4d5e6f7a8b",
@@ -442,22 +441,23 @@ Cookie: sessionid=…
           "created_by": "6c7d…", "created_at": "2026-08-20T03:12:45.120Z", "updated_at": "2026-09-01T07:00:00.000Z"
         }
       ],
-      "total_results": 1
+      "total_results": 1,
+      "unfiltered_total_results": 3
     },
-    "state:a1b2c3d4-0002-4000-8000-000000000002": {
-      "state": { "id": "a1b2c3d4-0002-4000-8000-000000000002", "name": "进行中", "group": "started", "color": "#3B82F6" },
+    "a1b2c3d4-0002-4000-8000-000000000002": {
       "results": [],
-      "total_results": 0
+      "total_results": 0,
+      "unfiltered_total_results": 5
     },
-    "state:a1b2c3d4-0003-4000-8000-000000000003": {
-      "state": { "id": "a1b2c3d4-0003-4000-8000-000000000003", "name": "已完成", "group": "completed", "color": "#10B981" },
+    "a1b2c3d4-0003-4000-8000-000000000003": {
       "results": [],
-      "total_results": 0
+      "total_results": 0,
+      "unfiltered_total_results": 2
     },
-    "state:a1b2c3d4-0004-4000-8000-000000000004": {
-      "state": { "id": "a1b2c3d4-0004-4000-8000-000000000004", "name": "已取消", "group": "cancelled", "color": "#6B7280" },
+    "a1b2c3d4-0004-4000-8000-000000000004": {
       "results": [],
-      "total_results": 0
+      "total_results": 0,
+      "unfiltered_total_results": 1
     }
   },
   "meta": {
@@ -507,7 +507,8 @@ GET …/issues/?group_by=state_id&group_id=a1b2c3d4-0001-4000-8000-000000000001&
 {
   "status": "success",
   "data": [ { "id": "…", "issue_key": "RBT-7", "name": "…", "sort_order": 196605.0, "…": "…" } ],
-  "meta": { "next_cursor": "NTA6Mjow", "next_page_results": false, "count": 17,
+  "meta": { "next_cursor": "NTA6Mjow", "prev_cursor": "NTA6MTow", "next_page_results": false,
+            "prev_page_results": true, "count": 17,
             "total_count": 42, "total_pages": 2, "page": 2, "per_page": 25 }
 }
 ```
@@ -573,17 +574,19 @@ class KanbanGroupView(ProjectScopedAPIView):
         if group_id:
             return self._group_page(request, base_qs, group_id)
 
-        # ③ 全组聚合：每 State 有键（含空列 / 0 命中列）
+        # ③ 全组聚合：每 State 有键（含空列 / 0 命中列），与 TASK-001 §4.2.3 同构
         states = (State.objects.filter(project=self.project, deleted_at__isnull=True)
                   .order_by("sort_order"))
         data, group_meta = {}, {}
         for st in states:
             group_qs = base_qs.filter(state_id=st.id)
             page = self._paginate_within_group(request, group_qs, st)
-            data[f"state:{st.id}"] = {
-                "state": {"id": str(st.id), "name": st.name, "group": st.group, "color": st.color},
+            # unfiltered_qs 在筛选参数为空时等价于 group_qs；筛选态下保留全量计数供列头 hover tooltip
+            unfiltered_total = base_qs.filter(state_id=st.id).count() if base_qs.query.where else page["total"]
+            data[str(st.id)] = {
                 "results": page["results"],
                 "total_results": page["total"],
+                "unfiltered_total_results": unfiltered_total,
             }
             group_meta[str(st.id)] = {"next_cursor": page["next_cursor"]}
 
@@ -613,7 +616,7 @@ class KanbanGroupView(ProjectScopedAPIView):
         state = State.objects.filter(id=group_id, project=self.project).first()
         if state is None:
             raise ValidationError({"group_id": "所选分组无效"})
-        offset = self._decode_group_cursor(request, state.id)   # 损坏 → 0 并提示
+        offset = self._decode_group_cursor(request, state.id)   # 损坏 → 400 VALIDATION_INVALID_CURSOR，客户端自动重拉该组首页
         ...
 ```
 
@@ -632,7 +635,7 @@ def _encode_group_cursor(self, offset: int, state_id) -> str:
     return base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
 ```
 
-> 与 [`api-conventions.md`](../architecture/api-conventions.md) §6.2 的 `value:offset:is_prev` 全局游标格式并存：**组内游标是它的作用域限定变体**（多绑定了组与筛选指纹），解码失败的处理策略一致（400 → 前端回组首页）。
+> 与 [`api-conventions.md`](../architecture/api-conventions.md) §6.2 的 `value:offset:is_prev` 全局游标格式并存：**组内游标是它的作用域限定变体**（多绑定了组与筛选指纹），解码失败的处理策略一致（400 `VALIDATION_INVALID_CURSOR` → 前端 toast + 自动重拉该组首页）。
 
 #### 4.3.3 性能分析
 
@@ -815,7 +818,7 @@ export const BOARD_KEY = (slug: string, pid: string, filterQuery: string) =>
 | --- | --- | --- | --- |
 | BE-1 | 分组 + 负责人筛选 | `assignee_id=me` | 每组仅含该成员卡片；`meta.applied.assignee_id` 为展开后的 UUID |
 | BE-2 | 分组 + 多参 AND | `assignee_id=me&priority=high,urgent` | 跨参 AND、同参 OR，与列表同查询结果集一致（对拍断言） |
-| BE-3 | 空列契约 | 项目四态、筛选命中 1 卡 | 四个 `state:*` 键齐全，未命中组 `results=[]`、`total_results=0`（BR-02） |
+| BE-3 | 空列契约 | 项目四态、筛选命中 1 卡 | 四个 State UUID 键齐全（与 `TASK-001` §4.2.3 同构），未命中组 `results=[]`、`total_results=0`，命中组含 `unfiltered_total_results`（BR-02 / BR-05） |
 | BE-4 | cancelled 拖入不写 `completed_at` | PATCH 到取消列 | `completed_at` 保持 `null`（BR-04） |
 | BE-5 | cancelled → completed 补写 | 从取消列拖回已完成 | `completed_at` 写入当下时间 |
 | BE-6 | 已完成列内排序 | 同列 PATCH `sort_order` | `completed_at` 不刷新（保持首次） |

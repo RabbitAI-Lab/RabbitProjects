@@ -25,7 +25,7 @@
 
 Sprint 0 的任务是「标题 + 描述 + 状态 + 负责人 + 截止时间」五字段裸模型。真实团队第一天就会问三件事：「这是需求还是缺陷？」（类型）、「哪个先做？」（优先级）、「大任务怎么拆？」（子任务）。本文档把 [`unified-issue-model.md`](../architecture/unified-issue-model.md) 中已建好但未启用的列逐个「点亮」，并交付配套 UI。
 
-**核心工程价值：P0「一次性建齐全部列」的架构决策在本迭代兑现——本迭代仅 1 次轻量 DDL（`Label.is_active` 加列，O(1) 元数据操作），其余全部为功能开关翻转 + 种子数据升级 + 一次存量回填迁移。**
+**核心工程价值：P0「一次性建齐核心列」的架构决策在本迭代主体兑现——`IssueType` / `priority` / `parent` / `IssueLabel` 等主体列由 P0 建齐、本迭代仅 API 暴露 + 校验 + UI（[`unified-issue-model.md`](../architecture/unified-issue-model.md) §6 与 [`sprint-overview.md`](./sprint-overview.md) §4 的口径：P1 仅开关翻转 + 种子数据补充 + 存量回填迁移）；`Label.is_active` 与 `idx_label_project_active` 为本迭代 P1 新建列 / 索引（[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.7 当前未声明 `is_active`，架构文档待回改追加——本表与该列的注册关系见 §4.1.2 / §4.1.4 注解；R4 评审发现并修复）。其余全部为功能开关翻转 + 种子数据升级 + 一次存量回填迁移。**
 
 | 交付项 | 说明 |
 | --- | --- |
@@ -74,9 +74,11 @@ Sprint 0 的任务是「标题 + 描述 + 状态 + 负责人 + 截止时间」�
 [`api-conventions.md`](../architecture/api-conventions.md) §10.2 硬性规则：「计数字段用 annotate——`sub_issues_count` 等在 QuerySet 层 `annotate`，**禁止**在 SerializerMethodField 中查询（N+1 元凶）」，且**不建冗余计数列**（冗余列引入「计数漂移修复」这类运维负担，Plane 的 `sub_issues_count` 冗余列方案在生产中恰有此问题）。本迭代与 P2 `TASK-004` 共用同一对 annotate 表达式，口径永不漂移：
 
 ```python
+# cancelled 不计入分子分母（BR-11 / SUB-04：2 完成 1 取消 → total=2, completed=2）
 qs.annotate(
     sub_issues_count=Count("sub_issues",
-        filter=Q(sub_issues__deleted_at__isnull=True), distinct=True),
+        filter=Q(sub_issues__deleted_at__isnull=True)
+              & ~Q(sub_issues__state__group="cancelled"), distinct=True),
     completed_sub_issues_count=Count("sub_issues",
         filter=Q(sub_issues__deleted_at__isnull=True,
                  sub_issues__state__group="completed"), distinct=True),
@@ -161,7 +163,7 @@ flowchart TD
     G["子任务行「⋯ → 删除」"] --> H["DELETE …/issues/{sub_id}/<br/>（TASK-001 端点，软删）"]
     H --> I["计数（annotate）自然 -1"]
     J["删除父任务"] --> K["二次确认：将同时删除 N 个子任务"]
-    K --> L["同一事务级联软删全部子任务<br/>（parent CASCADE 语义，TASK-001 §2.3 已定）"]
+    K --> L["同一事务级联软删全部子任务<br/>（parent FK `on_delete=CASCADE` 见 [`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.8；物理删除中间表走 `TASK-001` §4.1.2 路径）"]
     end
 ```
 
@@ -445,7 +447,7 @@ P0 `IssuePeekDrawer`（720px）属性区从三项扩为七项，仍为「label 8
 
 ### 4.1 数据模型
 
-**本迭代唯一 DDL：`Label.is_active` 布尔列**（可空加列为 O(1) 元数据操作，不锁表）。其余模型定义全部引自架构基线（本节完整引用供本迭代开发者直用）。
+**本迭代主体零 DDL**（[`unified-issue-model.md`](../architecture/unified-issue-model.md) §6 P1 行明文「无 DDL（仅种子数据补充）」，[`sprint-overview.md`](./sprint-overview.md) §4 沿用同一口径）。**例外登记**：`Label.is_active` 列与 `idx_label_project_active` 复合索引为本迭代 P1 新建（unified-issue-model §2.7 当前 `Label` 模型定义不含 `is_active`，架构文档待回改追加——本表为该列与索引的合法登记位置；R4 评审发现并修复），由 §4.1.4 迁移同批 `AddField` + `AddIndex` 完成；其余模型定义全部引自架构基线（本节完整引用供本迭代开发者直用）。
 
 #### 4.1.1 `IssueType`（[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.5）
 
@@ -506,9 +508,9 @@ class Label(BaseModel):
     name = models.CharField(max_length=128, verbose_name="标签名称")
     color = models.CharField(max_length=9, default="#6B7280", verbose_name="标签颜色")
     sort_order = models.FloatField(default=65535.0, verbose_name="排序值")
-    is_active = models.BooleanField(          # ← P1 新增（本迭代唯一 DDL）
-        default=True, db_index=True, verbose_name="是否启用",
-        help_text="停用后不可新挂载；已挂载卡片淡显保留（BR-05）",
+    is_active = models.BooleanField(          # 【P1 新建 · 上游待回改项】unified-issue-model §2.7 当前
+        default=True, db_index=True, verbose_name="是否启用",   # Label 定义未含 is_active，架构文档待回改追加；
+        help_text="停用后不可新挂载；已挂载卡片淡显保留（BR-05）",   # 本字段由 §4.1.4 迁移同 AddField 落地（R4 修复）。
     )
 
     class Meta(BaseModel.Meta):
@@ -564,7 +566,7 @@ erDiagram
         string name "128, uk(project,name)"
         string color "hex"
         float sort_order
-        bool is_active "P1 新增"
+        bool is_active "P1 新建（unified-issue-model §2.7 待回改）"
     }
 ```
 
@@ -619,9 +621,24 @@ def rollback(apps, schema_editor):
 class Migration(migrations.Migration):
     dependencies = [("db", "00XX_p0_initial")]
     operations = [
+        # ①【P1 新建 · 上游待回改项】Label.is_active 列追加
+        # （unified-issue-model §2.7 当前 Label 定义未含 is_active，架构文档待回改；
+        # 本 AddField 为该列在本迭代的合法登记落地，R4 评审发现并修复）
         migrations.AddField(
-            model_name="label", name="is_active",
-            field=models.BooleanField(default=True, db_index=True, verbose_name="是否启用"),
+            model_name="label",
+            name="is_active",
+            field=models.BooleanField(
+                default=True, db_index=True, verbose_name="是否启用",
+                help_text="停用后不可新挂载；已挂载卡片淡显保留（BR-05）",
+            ),
+        ),
+        # ② 复合索引：标签选择器 WHERE project=? AND is_active=true 的核心查询
+        # （P1 新建——与 is_active 列同批补建；统一服务 §4.1.2 模型定义注释）
+        migrations.AddIndex(
+            model_name="label",
+            index=models.Index(
+                fields=["project", "is_active"], name="idx_label_project_active",
+            ),
         ),
         migrations.RunPython(enable, rollback),
     ]
@@ -645,7 +662,7 @@ EXPOSE_ISSUE_TYPE_SELECTOR: bool = True               # P0 为 False
 | `priority` 单列 B-Tree | 优先级筛选与权重排序 | ✅（`TASK-003`） |
 | `idx_issue_parent`（parent） | 子任务列表 `WHERE parent_id=?` | ✅ **核心** |
 | `uniq_issue_label`（issue, label）附带索引 | 标签反查（`TASK-003` `label_id` 筛选走 `issue` 前缀） | ✅ |
-| `labels(project, is_active)` 复合（P1 新增，随 AddField 同迁移补建） | 标签选择器 `WHERE project=? AND is_active` | ✅ |
+| `idx_label_project_active`（project, is_active）复合（**P1 新建**，与 `Label.is_active` 列同批落地，见 §4.1.4 注解；BR-MIG-07） | 标签选择器 `WHERE project=? AND is_active` | ✅ |
 | `idx_activity_issue_time`（issue, created_at） | 动态 Tab 时间线 | ✅ |
 | `idx_issue_desc_trgm` | 描述搜索 | ❌ `TASK-003` 点亮 |
 
@@ -663,10 +680,91 @@ EXPOSE_ISSUE_TYPE_SELECTOR: bool = True               # P0 为 False
 | 8 | `PUT` | `…/projects/{project_id}/issues/{issue_id}/labels/` | 全量替换任务标签集合（**PUT 白名单场景**，§2.3） | `PROJ_CONTRIBUTOR`(15)+ | `200` |
 | 9 | `GET` | `…/projects/{project_id}/issues/{issue_id}/sub-issues/` | 子任务列表（annotate 计数内含） | `PROJ_VIEWER`(5)+ | `200` |
 | 10 | `POST` | `…/projects/{project_id}/issues/{issue_id}/sub-issues/` | 挂载创建子任务 | `PROJ_CONTRIBUTOR`(15)+ | `201` |
-| 11 | `DELETE` | `…/projects/{project_id}/issues/{issue_id}/sub-issues/{sub_id}/` | 删除子任务（软删；P1 无摘除，见 §2.2） | `PROJ_ADMIN`(20) 或子任务创建者 | `204` |
+| 11 | `DELETE` | `…/projects/{project_id}/issues/{sub_id}/` | 删除子任务（软删，复用 `TASK-001` §4.2.6 端点；P1 无摘除，见 §2.2） | `PROJ_ADMIN`(20) 或子任务创建者 | `204` |
 | 12 | `GET` | `…/projects/{project_id}/issues/{issue_id}/activities/` | 操作日志（游标 30/页） | `PROJ_VIEWER`(5)+ | `200` |
 
-#### 4.3.1 `GET …/issue-types/`
+#### 4.3.1 标签与类型管理端点（Labels & Issue-Types Endpoints）
+
+> 本节合并原 §4.3.1 / §4.3.1a 两个同名 `GET …/labels/` 子节，并按 HTTP 方法分子标题展开。
+> §4.3 表行 2-5 + 12 个端点（4 标签写 + 1 类型读）的完整请求/响应契约见下文。
+
+##### GET `…/projects/{project_id}/labels/`
+
+```json
+// 200（含 is_active=false 停用项，供卡片淡显与「管理标签」面板消费）
+{ "status": "success",
+  "data": [
+    { "id": "lbl-fe", "name": "前端", "color": "#3B82F6",
+      "is_active": true, "sort_order": 1024.0 },
+    { "id": "lbl-urgent", "name": "urgent", "color": "#EF4444",
+      "is_active": true, "sort_order": 2048.0 },
+    { "id": "lbl-deprecated", "name": "已废弃需求", "color": "#9CA3AF",
+      "is_active": false, "sort_order": 99999.0 }
+  ],
+  "meta": { "next_cursor": null, "prev_cursor": null,
+            "next_page_results": false, "prev_page_results": false,
+            "count": 3, "total_count": 3, "total_pages": 1,
+            "page": 1, "per_page": 100 } }
+```
+
+##### POST `…/projects/{project_id}/labels/`
+
+**请求**
+
+```json
+{ "name": "前端", "color": "#3B82F6" }
+```
+
+**成功响应 `201 Created`**
+
+```json
+{ "status": "success",
+  "data": { "id": "lbl-fe", "name": "前端", "color": "#3B82F6",
+            "is_active": true, "sort_order": 65535.0 } }
+```
+
+**失败响应 `409`（同名标签）**：`RESOURCE_ALREADY_EXISTS` + `details[0].code="DUPLICATE_NAME"`。
+
+##### PATCH `…/projects/{project_id}/labels/{label_id}/`
+
+**请求（改名 + 改色 + 排序）**
+
+```json
+{ "name": "前端基础", "color": "#10B981", "sort_order": 2048.0 }
+```
+
+**请求（启停切换）**
+
+```json
+{ "is_active": false }
+```
+
+**成功响应 `200`**：返回完整标签对象。
+
+##### DELETE `…/projects/{project_id}/labels/{label_id}/`
+
+**请求（默认停用，被引用）**
+
+```http
+DELETE …/labels/lbl-deprecated/?force=false HTTP/1.1
+```
+
+**成功响应 `200`**
+
+```json
+{ "status": "success",
+  "data": { "result": "deactivated", "usage_count": 3 } }
+```
+
+**请求（强制删除）**
+
+```http
+DELETE …/labels/lbl-deprecated/?force=true HTTP/1.1
+```
+
+**成功响应 `204`**：响应体为空（`IssueLabel` 关联同步物理软删）。
+
+##### GET `…/projects/{project_id}/issue-types/`
 
 ```json
 // 200
@@ -755,7 +853,7 @@ EXPOSE_ISSUE_TYPE_SELECTOR: bool = True               # P0 为 False
   "data": { "id": "8a1f…", "label_ids": ["lbl-fe", "lbl-urgent"] } }
 ```
 
-**失败响应 `409`（标签停用后强制替换）**：`RESOURCE_STATE_INVALID` + `details` 指明停用标签名。重复提交相同集合 → `200` 且库中无变更（幂等，`uniq_issue_label` + diff 为空）。
+**失败响应 `400`（标签停用后强制替换）**：`VALIDATION_ERROR` + `details[0].code="DOES_NOT_EXIST"` 指明停用标签名。重复提交相同集合 → `200` 且库中无变更（幂等，`uniq_issue_label` + diff 为空）。
 
 #### 4.3.4 `POST …/issues/{parent_id}/sub-issues/`
 
@@ -798,7 +896,10 @@ EXPOSE_ISSUE_TYPE_SELECTOR: bool = True               # P0 为 False
       "name": "修复后回归登录链路", "state_id": "d2e3…", "state_group": "unstarted",
       "assignee_ids": [], "sort_order": 131070.0 }
   ],
-  "meta": { "next_cursor": null, "count": 2, "total_count": 2, "page": 1, "per_page": 100 } }
+  "meta": { "next_cursor": null, "prev_cursor": null,
+            "next_page_results": false, "prev_page_results": false,
+            "count": 2, "total_count": 2, "total_pages": 1,
+            "page": 1, "per_page": 100 } }
 ```
 
 #### 4.3.6 `GET …/issues/{id}/activities/`
@@ -815,8 +916,66 @@ EXPOSE_ISSUE_TYPE_SELECTOR: bool = True               # P0 为 False
       "comment": "添加了 标签", "epoch": 1767290431507.0,
       "created_at": "2026-09-01T05:20:31.507Z" }
   ],
-  "meta": { "next_cursor": "30:1:0", "count": 2, "total_count": 12, "page": 1, "per_page": 30 } }
+  "meta": { "next_cursor": "30:1:0", "prev_cursor": null,
+            "next_page_results": true, "prev_page_results": false,
+            "count": 2, "total_count": 12, "total_pages": 1,
+            "page": 1, "per_page": 30 } }
 ```
+
+#### 4.3.7 `PATCH …/issues/{issue_id}/`（属性全开形态）
+
+**请求（改类型 + 优先级 + 开始时间）**
+
+```json
+{ "type_id": "9d1e…", "priority": "high", "start_date": "2026-09-02" }
+```
+
+**请求（清空开始时间）**
+
+```json
+{ "start_date": null }
+```
+
+**成功响应 `200`**：返回与 §4.3.2 同结构的完整 Issue 对象（`updated_at` 已刷新；类型 / 优先级变更触发 `IssueActivity` 异步日志，`epoch` 共享）。
+
+**失败响应 `400`（优先级非法）**
+
+```json
+{ "status": "error",
+  "error": { "code": "VALIDATION_ERROR", "message": "请求参数校验失败",
+    "details": [{ "field": "priority", "code": "NOT_A_CHOICE", "message": "优先级取值非法" }],
+    "request_id": "01JBX…" } }
+```
+
+**失败响应 `400`（日期倒置）**
+
+```json
+{ "status": "error",
+  "error": { "code": "VALIDATION_ERROR", "message": "请求参数校验失败",
+    "details": [{ "field": "target_date", "code": "INVALID_DATE_RANGE",
+                  "message": "截止时间不能早于开始时间" }],
+    "request_id": "01JBX…" } }
+```
+
+#### 4.3.8 `DELETE …/issues/{sub_id}/`（删除子任务）
+
+**请求**
+
+```http
+DELETE /api/v1/workspaces/rabbitprojects/projects/7b3e9c1a-.../issues/b2c3…/ HTTP/1.1
+```
+
+**成功响应 `204`**：响应体为空。父任务 `sub_issues_count` / `completed_sub_issues_count` 由 annotate 自然 -1，列表与详情视图 SWR revalidate 收敛。
+
+**失败响应 `403`（`PROJ_CONTRIBUTOR` 删他人创建的子任务）**
+
+```json
+{ "status": "error",
+  "error": { "code": "PERM_DENIED", "message": "只能删除自己创建的子任务",
+    "request_id": "01JBX…" } }
+```
+
+> 端点复用 `TASK-001` §4.2.6（子任务本身即 `Issue` 记录，`parent_id` 非空不影响删除语义；二级端点 `…/sub-issues/{sub_id}/` 不再单独提供，避免双端点命名漂移）。
 
 ### 4.4 核心逻辑
 
@@ -908,8 +1067,10 @@ class SubIssueService:
 def get_queryset(self):
     qs = super().get_queryset().select_related("state", "issue_type") \
         .annotate(
+            # cancelled 不计入分子分母（BR-11 / SUB-04 口径联动 TASK-001 §4.2.2 / §4.3.1）
             sub_issues_count=Count("sub_issues",
-                filter=Q(sub_issues__deleted_at__isnull=True), distinct=True),
+                filter=Q(sub_issues__deleted_at__isnull=True)
+                      & ~Q(sub_issues__state__group="cancelled"), distinct=True),
             completed_sub_issues_count=Count("sub_issues",
                 filter=Q(sub_issues__deleted_at__isnull=True,
                          sub_issues__state__group="completed"), distinct=True),
@@ -990,9 +1151,15 @@ export class IssueDetailStore {
 
   /** 勾选子任务完成：复用状态端点（BOARD-001 状态机），计数由 annotate 语义自然更新 */
   toggleSubIssueDone = async (sub: IIssue, done: boolean) => {
-    const nextStateId = done ? sub.completed_state_id : sub.default_state_id; // 来自 expand=states
+    // unified-issue-model §2.6 仅定义单一 state FK + group 枚举，不存在 per-state 字段；
+    // 目标态从父项目状态集缓存按 group 推导（done → 'completed'，否则取 is_default 默认态）
+    const states = this.rootStore.project.statesByProject[sub.project_id] ?? [];
+    const nextState = done
+      ? states.find((s) => s.group === "completed")
+      : states.find((s) => s.is_default);
+    if (!nextState) throw new Error("project state set not loaded");
     await this.rootStore.issue.updateIssue(ws, sub.project_id, sub.id, {
-      state_id: nextStateId,
+      state_id: nextState.id,
     });
     // 乐观：父 Drawer 内 subIssues[].state_group 即时更新，n/m 徽标为 computed
   };
@@ -1040,7 +1207,7 @@ export const ISSUE_ACTIVITIES_KEY = (ws: string, pid: string, issueId: string, c
 | MIG-04 | 五类型补齐 | 迁移后按 Workspace 查 `issue_types` | 每个 Workspace 恰 5 条 `is_system=True`，`is_default` 唯一且为「任务」 |
 | MIG-05 | 大库流式回填 | 5 万条存量（mock） | 迁移内存占用平稳（`iterator` 生效）；无长事务锁告警 |
 | MIG-06 | 回滚可执行 | `rollback` 后再 `enable` | 状态复原；数据无损 |
-| MIG-07 | `Label.is_active` 加列 | 迁移后查 `information_schema` | 列存在，默认 `true`；`labels(project, is_active)` 复合索引存在 |
+| MIG-07 | `Label.is_active` 加列（P1 新建） | 迁移后查 `information_schema` | 列存在，默认 `true`；`labels(project, is_active)` 复合索引存在（unified-issue-model §2.7 架构文档待回改，本迁移为该列 / 索引的合法登记） |
 
 ### 5.2 类型与优先级（ATTR-*）
 
@@ -1055,7 +1222,7 @@ export const ISSUE_ACTIVITIES_KEY = (ws: string, pid: string, issueId: string, c
 | ATTR-07 | 优先级五档合法 | 逐一提交五档 | 全部 `201`；默认 `none` |
 | ATTR-08 | PATCH 改类型 | 任务 → 需求 | `200`；Activity 1 条 `field="issue_type"`（含双 identifier） |
 | ATTR-09 | 内置类型不可删 | `DELETE issue-types/{id}`（P1 无此端点，直连测 Permission） | `405` / 端点不存在 |
-| ATTR-10 | `start_date` 早于存量 `target_date` | `PATCH start_date` 晚于已有截止 | `400` + `INVALID_DATE_RANGE` |
+| ATTR-10 | `start_date` 晚于存量 `target_date`（违反 `start ≤ target`） | `PATCH start_date` 晚于已有 `target_date` | `400` + `INVALID_DATE_RANGE` |
 
 ### 5.3 标签（LBL-*）
 
@@ -1224,7 +1391,7 @@ Issue Type 体系是 Ones 统一工作项的招牌：五类默认 + 自定义 + 
 
 | 类型 | 交付物 |
 | --- | --- |
-| Migration | `00XX_p1_enable_issue_attributes.py`（`Label.is_active` 加列 + 索引 + 种子升级 + 存量回填 + rollback） |
+| Migration | `00XX_p1_enable_issue_attributes.py`（`Label.is_active` 加列 + `idx_label_project_active` 索引 + 种子升级 + 存量回填 + rollback；`is_active` / 索引为 P1 新建，unified-issue-model §2.7 架构文档待回改——本迁移为合法登记位置） |
 | 后端 | `serializers/issue.py`（IssueAttributeMixin）、`services/sub_issue.py`、`services/label.py`、`views/issue.py`（annotate 扩展 + sub-issues / activities 路由）、`views/label.py`、`views/issue_type.py` |
 | 前端 | 属性侧栏（TypeSelect / PrioritySelect / LabelMultiSelect / DateRangeInput）、`LabelManagePanel`、`SubtaskList` + `SubtaskProgress`、`ActivityTimeline`、`IssueCardMeta`、`LabelStore` |
 | 测试 | MIG 7 + ATTR 10 + LBL 13 + SUB 10 + ACT 7 + FE 12 + E2E 6 |
@@ -1235,5 +1402,5 @@ Issue Type 体系是 Ones 统一工作项的招牌：五类默认 + 自定义 + 
 - [ ] §7.1 全部 13 条功能验收通过，非开发者走查
 - [ ] §7.2 非功能指标达标；MIG-01 ~ MIG-07 全绿
 - [ ] §5 全部 65 条用例通过；§5.8 覆盖率门禁达标
-- [ ] 下游确认：`TASK-003` 开发者确认六维筛选参数值域（type/priority/label）可从本迭代端点取数；`BOARD-002` 确认卡片字段（`IssueCardMeta`）可直接复用；`TASK-004` 确认一层限制的门控点可替换为深度校验
+- [ ] 下游确认：`TASK-003` 开发者确认七维筛选参数值域（`state_id` / `type_id` / `priority` / `label_id` / `assignee_ids` / `created_by` / `target_date`，见 [`TASK-003`](./TASK-003-list-filter-sort.md) §1.2）可从本迭代端点取数；`BOARD-002` 确认卡片字段（`IssueCardMeta`）可直接复用；`TASK-004` 确认一层限制的门控点可替换为深度校验
 - [ ] P0 存量演示库升级后完整走查一遍「登录 → 列表 → 详情 → 拆子任务 → 打标签 → 看动态」无回归

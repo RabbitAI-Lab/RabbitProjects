@@ -10,7 +10,7 @@
 | 最后更新日期 | 2026-09-01 |
 | 上游依据 | `docs/需求文档.md` §3.1（个人信息修改、头像、昵称、个人简介配置；密码加密存储、忘记密码 / 重置密码）、§8.2 账号权限 P1 列 |
 | 前置依赖 | `AUTH-001`（注册 / 登录 / Session 体系、`User` 模型基线、Argon2id 哈希器与密码校验器）、`INFRA-004`（异常信封 / 日志 / SMTP 降级）、`INFRA-002`（Celery + RabbitMQ、MinIO、Valkey Session） |
-| 下游依赖 | `TEAM-002`（邀请邮件复用发信通道与 SMTP 降级约定）、`FILE-001`（头像上传复用其 MinIO 预签名直传通道）、`AUTH-006`（P2 行级安全收尾含账号禁用/启用联动，禁用时吊销全部会话复用本文会话吊销工具）、`AUTH-009`（P3 SSO 登录后资料联动）、`AUTH-010`（S8/P3 全站审计日志，消费本文 `password.changed` 等安全审计事件） |
+| 下游依赖 | `TEAM-002`（邀请邮件复用发信通道与 SMTP 降级约定）、`FILE-001`（头像上传复用其 MinIO 预签名直传通道）、`AUTH-006`（P2 数据库行级隔离与成员权限分配，复用本文会话吊销工具做行级访问控制维度的会话失效）、`AUTH-009`（P3 SSO 单点登录；账号级禁用/启用联动需在 AUTH-009 中承接，禁用时吊销全部会话复用本文会话吊销工具——架构文档待回改）、`AUTH-010`（S8/P3 全站审计日志，消费本文 `password.changed` 等安全审计事件） |
 | 架构基线 | [`api-conventions.md`](../architecture/api-conventions.md) §2.5（`PATCH /users/me/`、`forgot-password/`、`reset-password/` 契约已预定义）、§4（响应信封）、§7.2（认证端点限流）、§8.2（AUTH_* 错误码）、§9.2（Session 体系）；[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §3.2（成员模型，本文权限判定只涉及「已登录」）；[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.2（BaseModel） |
 | 竞品参考 | Plane（`accounts/` 端点族：profile 修改 + onboarding 状态 + 密码修改；头像走 FileAsset 关联）、Ones（企业密码策略：有效期 / 历史密码 / 强度配置 + 管理员代发重置） |
 | 工作量估算 | 后端 2.5 人日 / 前端 2.5 人日 / 联调与测试 1 人日，合计 **6 人日** |
@@ -233,7 +233,7 @@ stateDiagram-v2
 | --- | --- | --- | --- |
 | 修改密码（本迭代） | 该用户全部会话**除当前** | 当前 session | `PasswordService.change_password` |
 | 重置密码（本迭代） | 该用户**全部**会话 + 全部未用重置令牌 | 无 | `PasswordService.reset_password` |
-| 账号禁用（P2 `AUTH-006` 账号禁用/启用联动） | 全部会话 + 全部 API Key | 无 | 复用本工具，另加 Key 吊销 |
+| 账号禁用（`AUTH-009` SSO 承接账号生命周期，含禁用/启用联动——架构文档待回改） | 全部会话 + 全部 API Key | 无 | 复用本工具，另加 Key 吊销 |
 | 主动退出（`AUTH-001`） | 仅当前会话 | — | 已有实现，不走本工具 |
 
 ### 2.6 业务规则表
@@ -1022,8 +1022,6 @@ class PasswordService:
 #### 4.3.3 `PasswordService.forgot_password` — 防枚举 + 旧令牌作废
 
 ```python
-    DUMMY_HASH = "argon2id$v=19$m=65536,t=3,p=4$…$…"   # 预生成的一次真实 Argon2 编码串
-
     @staticmethod
     def forgot_password(*, email: str, ip: str | None) -> None:
         """申请重置。无论邮箱是否存在都执行等价计算量，恒定 202（防枚举三件套）。"""
@@ -1031,7 +1029,8 @@ class PasswordService:
         user = User.objects.filter(email=email, is_active=True).first()
 
         if user is None:
-            # 时序抹平：对 dummy 令牌执行与真实路径相同的生成与哈希运算，仅丢弃结果
+            # 时序抹平：执行一次 token_urlsafe(PasswordResetToken.TOKEN_BYTES) 与一次 sha256 哈希
+            # （恒定时间比对策略），仅丢弃结果——与真实签发路径的 IO 形态一致即可，UT-07 断言 < 30ms
             secrets.token_urlsafe(PasswordResetToken.TOKEN_BYTES)
             hashlib.sha256(secrets.token_urlsafe(8).encode()).hexdigest()
             return

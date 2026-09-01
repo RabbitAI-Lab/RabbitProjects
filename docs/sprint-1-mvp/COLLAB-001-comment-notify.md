@@ -9,9 +9,9 @@
 | 文档状态 | 待评审（Draft） |
 | 最后更新日期 | 2026-09-01 |
 | 上游依据 | `docs/需求文档.md` §3.8（任务详情评论、评论@成员提醒、站内通知中心、已读/未读标记、全部已读）、§8.2 协作通知 P1 列 |
-| 前置依赖 | `TASK-001/002`（Issue / 属性 / `IssueActivity` 异步写入范式）、`PROJ-002`（成员域 = @ 候选与通知接收域）、`AUTH-005`（`issue.comment` 权限点 + 按钮级 Gate）、`INFRA-004`（错误码注册表 / Celery 基础 / 日志）、`INFRA-002`（Celery worker + beat + Redis） |
+| 前置依赖 | `TASK-001/002`（Issue / 属性 / `IssueActivity` 异步写入范式）、`PROJ-002`（成员域 = @ 候选与通知接收域）、`AUTH-005`（`comment.create` 权限点 + 按钮级 Gate）、`INFRA-004`（错误码注册表 / Celery 基础 / 日志）、`INFRA-002`（Celery worker + beat + Redis） |
 | 下游依赖 | `COLLAB-002`（P2 楼中楼 / 表情 / 图片评论——消费 `parent_id` 与 `accessory` 预留列）、`COLLAB-003`（P2 项目动态流——复用 Activity/通知管道）、`COLLAB-004`（P2 WebSocket 把 30s 轮询升级为推送）、`RPT-001`（工作台通知摘要卡消费未读数）、`TASK-007`（P2 多执行人事件源扩展） |
-| 架构基线 | [`api-conventions.md`](../architecture/api-conventions.md) §2.5（comments 端点）、§4（信封 / 游标）、§8（错误码）、§10.5（`on_commit` 副作用纪律）；[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §5.5（Notification 行级隔离：`filter(receiver=user)`）；[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.1 ER（IssueComment 基线：issue / actor / **parent_id 楼中楼预留** / comment_json / comment_html）、§2.10（Activity 异步范式） |
+| 架构基线 | [`api-conventions.md`](../architecture/api-conventions.md) §2.5（comments 端点）、§4（信封 / 游标）、§8（错误码 + `EDIT_WINDOW_EXPIRED` 字段级子码待登记，见 §7 交付物）、§10.5（`on_commit` 副作用纪律）；[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §5.3（`IssueCommentPermission` 对象级：本人或项目管理员）、§5.5（统一 403 `PERM_DENIED`）、§6.2（Notification Manager：`filter(receiver=user)` 行级隔离 / `notification.read` 权限点位于 §8.2）、§8.2（项目级权限矩阵：`comment.create` / `comment.update.own` / `comment.delete.own` / `notification.read` 全量条目）；[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.1 ER（IssueComment 基线：issue / actor / **parent_id 楼中楼预留** / comment_json / comment_html）、§2.2（`BaseModel` 基类含 `deleted_at` + SoftDeleteManager / `all_objects` 物理清理）、§2.10（Activity 异步范式） |
 | 竞品参考 | Plane（IssueComment：comment_html/stripped + accessory JSONB；@mention 以 ProseMirror 节点 id 存储；Notification 表 + unread 计数端点 + 前端轮询）、Ones（企业消息中心：站内/邮件/IM 多通道 + 通知粒度权限 + 静默时段） |
 | 工作量估算 | 后端 3 人日 / 前端 3 人日 / 联调与测试 1.5 人日，合计 **7.5 人日** |
 
@@ -90,7 +90,7 @@
 | --- | --- | --- |
 | `TASK-001/002` | Issue 属性（通知文案需类型 / 状态名）；`IssueActivity` 的 `on_commit → Celery` 写入范式（本文档管道与之同构） | 文案无语义、管道无参照 |
 | `PROJ-002` | 项目成员域（@ 候选集与通知接收域的判定基础） | @ 越界、通知泄密 |
-| `AUTH-005` | `issue.comment` 权限点（PROJ_COMMENTER+）与 `<PermissionGate>` | 越权评论 |
+| `AUTH-005` | `comment.create` 权限点（PROJ_COMMENTER+）与 `<PermissionGate>` | 越权评论 |
 | `INFRA-004` | 错误码注册表、统一信封、Celery + RabbitMQ 可用、结构化日志 | 规范与运行时 |
 | `RPT-001` | 工作台「通知摘要卡」消费 `unread-count`（并行交付，接口互锁） | 未读数双口径 |
 
@@ -123,7 +123,7 @@ sequenceDiagram
     W->>W: 选中 → 编辑器插入<span data-mention-id="6c7d…">@梁工</span>
     U->>W: ⌘Enter 提交
     W->>API: POST …/issues/{id}/comments/ {comment_html, comment_json}
-    API->>API: 权限 issue.comment（COMMENTER+）
+    API->>API: 权限 comment.create（COMMENTER+）
     API->>API: Serializer：Bleach 白名单净化（BR-03）<br/>stripped 提取 → 长度 1~5000 校验（BR-02）
     alt 校验失败
         API-->>W: 400 VALIDATION_ERROR（details 逐字段）
@@ -169,7 +169,7 @@ flowchart TD
 | `issue.commented` | 新评论 | 指派人 ∪ 创建者 − 操作者 − **已 @ 者**（@ 已单独通知，去重） | 「{actor} 评论了 {RBT-128}」 | 同上 + `comment_id` |
 | `issue.updated` | 关键属性变更（state / priority / target_date / assignees 增删） | 指派人 ∪ 创建者 − 操作者 | 「{actor} 更新了 {RBT-128}：状态 待办 → 已完成」 | 同上 + `changes` 摘要数组 |
 
-**epoch 批量合并**：`BOARD-001` 看板批量拖拽 50 个任务（共享同一 `epoch`）时，同一操作者对同一接收人产生 50 个同型事件——`dedup_key` 含 epoch 会生成 50 条。P1 约定：批量路径的 `notify_issue_event` 先在 worker 内**按 (event, actor, receiver) 归并 title 为「更新了 50 个任务」单条**（epoch 相同），再落库。归并发生在生成侧而非查询侧，列表端不聚合。
+**epoch 批量合并**：`BOARD-004` 任务批量操作（看板多选拖拽 50 个任务）走 `PATCH …/issues/bulk/` 共享同一 `epoch`（Sprint 3 BOARD-004 / Sprint 2 TASK-009 归档与批量操作均消费此机制）时，同一操作者对同一接收人跨 50 个 issue 产生 50 个同型事件。P1 约定：批量路径的 `notify_issue_event_batch` 在 worker 内**按 (event, actor, receiver, issue) 维度归并 title 为「{actor} 更新了 50 个任务」单条文案**（同一 receiver 跨 50 个 issue 共用同一 title，每个 issue 仍独立落一行 Notification），`data.merged_count / merged_keys` 携带归并上下文供前端跳转，再落库——`dedup_key = sha256(event+issue_id+actor_id+epoch+receiver_id)` 含 issue_id 使每个 issue 各自独立（避免跨 issue 隐式合并丢失指向），50 个 issue 即 50 条 Notification 行，title 跨 issue 共享。归并发生在生成侧而非查询侧，列表端不聚合。批量归属的精准文档归属为 `BOARD-004`（任务批量操作）；本文 §6.1 引用的「批量拖拽」在 BOARD-001 中仅指单卡片跨列拖拽（恰好 1 行 UPDATE），不涉及本条 epoch 合并。
 
 ### 2.4 通知已读状态机
 
@@ -194,13 +194,13 @@ stateDiagram-v2
 
 | 编号 | 规则 | 判定位置 | 违反后果 |
 | --- | --- | --- | --- |
-| BR-01 | 评论权限 `issue.comment`（PROJ_COMMENTER+）；编辑 / 删除仅**本人**评论（对象级校验） | `AUTH-005` 矩阵 + ViewSet | 403 `PERM_ROLE_INSUFFICIENT` / `PERM_DENIED` |
+| BR-01 | 评论权限 `comment.create`（PROJ_COMMENTER+）；编辑 / 删除仅**本人或项目管理员**（对象级校验，rbac §5.3） | `AUTH-005` 矩阵 + ViewSet | 403 `PERM_ROLE_INSUFFICIENT` / `PERM_DENIED` |
 | BR-02 | 评论长度：`comment_stripped` 去除空白后 1~5000 字符；空评论（仅空白 / 仅 @）拒绝 | Serializer | 400 `VALIDATION_ERROR` + `REQUIRED`/`TOO_LONG` |
 | BR-03 | HTML 净化白名单：标签 `span(data-mention-id) / a(href) / strong / em / code / br / p`；其余标签与**全部**属性剥离（Bleach） | Serializer | 静默净化（200，净化后内容） |
-| BR-04 | @ 候选域 = 当前项目成员 ∪ 隐式 WS_OWNER/WS_ADMIN；锚点 `data-mention-id` 必须在域内，域外锚点净化为纯文本（不产生通知） | 解析器 | 静默降级 |
+| BR-04 | @ 候选域 = 当前项目成员 ∪ 隐式 WS_OWNER/WS_ADMIN；锚点 `data-mention-id` 必须在域内，域外锚点保留原文但不触发通知 | 解析器 | 静默降级 |
 | BR-05 | 编辑窗口：发表后 **15 分钟**内可 PATCH；编辑写 `IssueActivity(updated, comments)` 与 `is_edited=True`，**不重复通知** | Service | 超窗 409 `RESOURCE_STATE_INVALID`（details 提示可删除重发） |
 | BR-06 | 同一评论内「被 @ 者」只收 `mentioned` 一条（即便他同时是指派人 / 创建者）——事件分派互斥 | Worker | — |
-| BR-07 | 通知接收域剔除：操作者本人、非项目成员、软删用户 | Worker | — |
+| BR-07 | 通知接收域剔除：操作者本人、非项目成员、软删用户；批量事件的接收人 fanout 必须 `& member_ids` 收敛（§4.4.3 `notify_issue_event` / `notify_issue_event_batch` 内已实现） | Worker | — |
 | BR-08 | 幂等键 `dedup_key = sha256(event + issue_id + actor_id + epoch + receiver_id)`；`(receiver, dedup_key)` 唯一约束 + `bulk_create(ignore_conflicts)`——worker 重试 / MQ 重投零重复 | DB + Worker | — |
 | BR-09 | 通知保留：已读 90 天、未读 180 天（beat 物理清理） | beat | — |
 | BR-10 | 未读计数展示 99+；`unread-count` 端点走 `idx_notif_receiver_unread` 索引 O(1)，与列表分页端点分离 | 前端 / ORM | — |
@@ -214,12 +214,12 @@ stateDiagram-v2
 
 | 异常场景 | 触发条件 | HTTP / 错误码 | 前端表现 | 后端处理 |
 | --- | --- | --- | --- | --- |
-| XSS 注入 | `<script>` / `<img onerror>` / 伪协议链接 | 200（净化后） | 内容按净化结果展示，无脚本执行 | 白名单净化（BR-03）；注入样本入库用于回归（UT-01） |
+| XSS 注入 | `<script>` / `<img onerror>` / 伪协议链接 | `POST` 发表 `201` / `PATCH` 编辑 `200`（净化后内容） | 内容按净化结果展示，无脚本执行 | 白名单净化（BR-03）；注入样本入库用于回归（UT-01） |
 | 空评论 | 仅空白 / 仅 @ | 400 `VALIDATION_ERROR` + `REQUIRED` | 输入框红框「评论不能为空」 | — |
 | 超长 | stripped > 5000 | 400 + `TOO_LONG` | 字数统计红字 + 截断提示 | — |
 | @ 数超限 | 单条评论 @ > 20 人 | 409 `RESOURCE_LIMIT_EXCEEDED` | Toast「单条评论最多 @ 20 人」 | — |
 | 编辑超窗 | > 15 分钟 PATCH | 409 `RESOURCE_STATE_INVALID` | 行内「已超编辑窗口，可删除重发」 | — |
-| 编辑他人评论 | 非本人 | 403 `PERM_DENIED` | Toast | 对象级校验 |
+| 编辑他人评论 | 非本人且非项目管理员 | 403 `PERM_DENIED` | Toast | 对象级校验（rbac §5.3） |
 | worker 失败重试 | MQ 抖动 / DB 瞬断 | — | 通知延迟到达（≤ 重试窗） | `max_retries=3` 指数退避；`ignore_conflicts` 保证重跑幂等 |
 | 通知实体失效 | 点击时任务已删 / 已被移出项目 | — | Toast「原任务已不可访问」 | 通知已标已读，不删除记录 |
 | 轮询失败 | 网络中断 | — | 保留上次计数 | 指数退避 30s→60s→120s 封顶，恢复即同步 |
@@ -232,7 +232,7 @@ stateDiagram-v2
 | 单评论 @ 数 | 20 | 409（BR 见 §2.6） |
 | 单任务评论数 | 无硬限 | 首屏 30 条 + 向上加载（游标 `before`） |
 | 未读通知堆积 | 无硬限（180 天清理） | 99+ 封顶展示；「仅看未读」过滤 |
-| 同 epoch 批量 | 生成侧归并为 1 条 / (event, actor, receiver) | 「更新了 50 个任务」单条 |
+| 同 epoch 批量 | 按 (event, actor, receiver, issue) 归并 title，跨 issue 共享；每 issue 一行 Notification | 「更新了 50 个任务」单条 title，每 issue 各一行 |
 | 通知 title 长度 | 200 字符 | 截断 + 省略号（实体名优先保留） |
 | 评论内链接数 | 无限制（净化后 a[href] 合法即留） | — |
 | 自己 @ 自己 | 允许插入锚点 | 接收域剔除操作者，不产生通知 |
@@ -323,7 +323,7 @@ stateDiagram-v2
 | 抽屉 | 右侧滑入 420px；`role="dialog"`；打开时自动拉取列表（不全量预取） |
 | 分组 | 今天 / 昨天 / 更早（`date-fns` `isToday/isYesterday`） |
 | 事件图标 | `issue.assigned` 👤 / `mentioned` @ / `commented` 💬 / `updated` ✏️（蓝点同时存在，图标非唯一信号） |
-| 「仅看未读」 | 开关态同步 URL query（`?unread_only=true`），刷新保持 |
+| 「仅看未读」 | 开关态同步 URL query（`?unread=true`，与 `RPT-001` 通知摘要端点参数一致），刷新保持 |
 | 「全部已读」 | 确认 Toast「已将 N 条标为已读」；徽标动画归零 |
 | 空态 | 「没有新消息」插画 + 「去协作」引导按钮 |
 
@@ -368,7 +368,7 @@ stateDiagram-v2
 # apps/api/plane/db/models/comment.py
 from django.db import models
 
-from plane.db.models.base import BaseModel
+from plane.db.models.base import BaseModel, SoftDeleteManager
 
 
 class IssueComment(BaseModel):
@@ -376,6 +376,10 @@ class IssueComment(BaseModel):
 
     扁平单层（P1）；P2 COLLAB-002 启用 parent 楼中楼与 accessory 表情/图片。
     列一次建齐（unified-issue-model.md §2.1 ER 基线 + P0 全列原则），P2 零 DDL。
+
+    软删：复用 BaseModel.deleted_at 列（unified-issue-model.md §2.2 `BaseModel` 基类），
+    默认 Manager `objects = SoftDeleteManager()` 自动 `filter(deleted_at__isnull=True)`，
+    物理清理走 `all_objects.filter(deleted_at__isnull=False)`（unified-issue-model.md §2.2 `BaseModel` 基类）。
     """
 
     class Source(models.TextChoices):
@@ -409,7 +413,9 @@ class IssueComment(BaseModel):
     )
 
     is_edited = models.BooleanField(default=False, verbose_name="是否编辑过")
-    deleted_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="软删时间")
+    # 注：deleted_at 不在此处重复声明——BaseModel 已含
+    # （unified-issue-model.md §2.2 BaseModel 基类：deleted_at + SoftDeleteManager / all_objects 物理清理），
+    # Manager 默认过滤 deleted_at IS NULL；物理清理 / 占位行检索走 all_objects。
 
     class Meta(BaseModel.Meta):
         db_table = "issue_comments"
@@ -544,16 +550,16 @@ erDiagram
 | # | 方法 | 路径 | 描述 | 权限 | 成功码 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `GET` | `…/issues/{issue_id}/comments/?cursor=&before=` | 评论列表（正序游标） | `project.read` | `200` |
-| 2 | `POST` | `…/issues/{issue_id}/comments/` | 发表评论 | `issue.comment` | `201` |
-| 3 | `PATCH` | `…/issues/{issue_id}/comments/{comment_id}/` | 编辑（15 分钟窗口） | 本人 + `issue.comment` | `200` |
-| 4 | `DELETE` | `…/issues/{issue_id}/comments/{comment_id}/` | 删除（软删占位） | 本人 | `200` |
-| 5 | `GET` | `/api/v1/users/me/notifications/?unread_only=&cursor=` | 通知列表 | 本人 | `200` |
+| 2 | `POST` | `…/issues/{issue_id}/comments/` | 发表评论 | `comment.create` | `201` |
+| 3 | `PATCH` | `…/issues/{issue_id}/comments/{comment_id}/` | 编辑（15 分钟窗口） | 本人/项目管理员 + `comment.create` | `200` |
+| 4 | `DELETE` | `…/issues/{issue_id}/comments/{comment_id}/` | 删除（软删占位） | 本人/项目管理员 + `comment.create` | `200` |
+| 5 | `GET` | `/api/v1/users/me/notifications/?unread=&cursor=` | 通知列表（`?unread=true` 与 `RPT-001` 通知摘要卡对齐） | 本人 | `200` |
 | 6 | `GET` | `/api/v1/users/me/notifications/unread-count/` | 未读计数 | 本人 | `200` |
 | 7 | `POST` | `/api/v1/users/me/notifications/{id}/read/` | 单条已读（幂等） | 本人 | `200` |
 | 8 | `POST` | `/api/v1/users/me/notifications/read-all/` | 全部已读（本人域） | 本人 | `200` |
-| 9 | `GET` | `/api/v1/workspaces/{slug}/members/search/?q=` | @ 候选搜索 | `project.read` | `200` |
+| 9 | — | （@ 候选搜索走 `PROJ-002` 既有项目成员 + 工作空间成员列表：前端本地差集 + 缓存，详见 §4.6.2 与 `PROJ-002` §1.1 BR-01；本迭代不引入 `members/search/` 端点以免与 `PROJ-002` 机制两套并存） | — | — |
 
-> 通知端点挂在 `/users/me/`（不嵌套 workspace——通知跨项目聚合，与 `RPT-001` 的「我的待办」同设计理由）；行级隔离由 `filter(receiver=request.user)` 在 `get_queryset` 收口。
+> 通知端点挂在 `/users/me/`（不嵌套 workspace——通知跨项目聚合，与 `RPT-001` 的「我的待办」同设计理由）；行级隔离由 `filter(receiver=request.user)` 在 `get_queryset` 收口。@ 候选集由 `PROJ-002` 既有项目成员 + 工作空间成员列表供应，前端本地差集实现（PROJ-002 §1.1 BR-01），不再单独提供 `members/search/` 端点。
 
 #### 4.3.1 `POST …/issues/{issue_id}/comments/` — 发表
 
@@ -616,7 +622,7 @@ erDiagram
 **请求**
 
 ```http
-GET /api/v1/workspaces/acme/projects/9d8e…/issues/8a1f…/comments/?per_page=30 HTTP/1.1
+GET /api/v1/workspaces/acme/projects/9d8e…/issues/8a1f…/comments/?per_page=2 HTTP/1.1
 ```
 
 **成功响应 `200`（正序；翻历史用 `?before=<cursor>`）**
@@ -628,9 +634,10 @@ GET /api/v1/workspaces/acme/projects/9d8e…/issues/8a1f…/comments/?per_page=3
     {
       "id": "cm0a1b2c-…",
       "actor": { "id": "e4f5…", "display_name": "张三", "avatar_url": null },
-      "comment_html": null,
-      "comment_stripped": null,
-      "is_deleted": true,
+      "comment_html": "<p>老王看下</p>",
+      "comment_stripped": "老王看下",
+      "is_edited": false,
+      "is_deleted": false,
       "created_at": "2026-08-31T08:00:00.000Z"
     },
     {
@@ -645,14 +652,16 @@ GET /api/v1/workspaces/acme/projects/9d8e…/issues/8a1f…/comments/?per_page=3
     }
   ],
   "meta": {
-    "next_cursor": "30:1:0", "prev_cursor": "30:0:1",
-    "next_page_results": false, "prev_page_results": true,
-    "count": 2, "total_count": 17, "total_pages": 1, "page": 1, "per_page": 30
+    "next_cursor": "2:1:0",
+    "prev_cursor": null,
+    "count": 2,
+    "total_count": 17,
+    "total_pages": 9
   }
 }
 ```
 
-> 软删行返回 `is_deleted: true` + 内容置 null（占位渲染所需的最小信息）；不可编辑不可删除。
+> 注：列表查询走 `IssueComment.objects`（SoftDeleteManager 默认过滤 `deleted_at IS NULL`），软删行不出现在列表响应中；物理清理 / 管理后台审计走 `IssueComment.all_objects.all()`。
 
 #### 4.3.3 `PATCH …/comments/{comment_id}/` — 编辑
 
@@ -681,9 +690,9 @@ GET /api/v1/workspaces/acme/projects/9d8e…/issues/8a1f…/comments/?per_page=3
 }
 ```
 
-> `EDIT_WINDOW_EXPIRED` 作为 `details[].code` 子码（字段级子码不占用全局错误码注册表），HTTP 层复用 `RESOURCE_STATE_INVALID`——「资源当前状态不允许该操作」的既有语义。
+> `EDIT_WINDOW_EXPIRED` 作为 `details[].code` 子码（字段级子码不占用全局错误码注册表，由 [`api-conventions.md`](../architecture/api-conventions.md) §8.8「字段级子码」承载；本迭代交付时需在 §8.8 补登 `EDIT_WINDOW_EXPIRED` 子码条目——**架构文档待回改登记**），HTTP 层复用 `RESOURCE_STATE_INVALID`——「资源当前状态不允许该操作」的既有语义。
 
-**失败响应 `403`（编辑他人评论）**：`PERM_DENIED` +「只能编辑自己发表的评论」。
+**失败响应 `403`（编辑他人评论）**：`PERM_DENIED` +「只能编辑自己发表的评论，或项目管理员可编辑他人评论」（rbac §5.3 `IssueCommentPermission.has_object_permission`：ADMIN 全放行；其余仅本人）。
 
 #### 4.3.4 `DELETE …/comments/{comment_id}/`
 
@@ -700,7 +709,7 @@ GET /api/v1/workspaces/acme/projects/9d8e…/issues/8a1f…/comments/?per_page=3
 **请求**
 
 ```http
-GET /api/v1/users/me/notifications/?unread_only=false&per_page=20 HTTP/1.1
+GET /api/v1/users/me/notifications/?unread=false&per_page=20 HTTP/1.1
 ```
 
 **成功响应 `200`**
@@ -736,13 +745,13 @@ GET /api/v1/users/me/notifications/?unread_only=false&per_page=20 HTTP/1.1
   "meta": {
     "next_cursor": "20:1:0", "prev_cursor": null,
     "next_page_results": true, "prev_page_results": false,
-    "count": 2, "total_count": 15, "total_pages": 1, "page": 1, "per_page": 20,
+    "count": 2, "total_count": 20, "total_pages": 1, "page": 1, "per_page": 20,
     "unread_count": 3
   }
 }
 ```
 
-> `meta.unread_count` 顺带回传（打开抽屉即同步，省一次计数请求）；`?unread_only=true` 切换过滤。
+> `meta.unread_count` 顺带回传（打开抽屉即同步，省一次计数请求）；`?unread=true` 切换过滤（参数命名与 `RPT-001` 工作台摘要卡的 `GET /users/me/notifications/?unread=true` 对齐）。
 
 #### 4.3.6 `GET /users/me/notifications/unread-count/`
 
@@ -781,7 +790,7 @@ ALLOWED_ATTRS = {
     "a": ["href"],                       # rel/target 由 bleach 强制补齐
     "span": ["data-mention-id", "class"],
 }
-MENTION_RE = re.compile(r'data-mention-id="([0-9a-fA-F-]{36})"')
+MENTION_RE = re.compile(r'data-mention-id="([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"')
 
 
 def sanitize_comment(html: str) -> str:
@@ -840,8 +849,13 @@ class CommentService:
         return comment, sorted(mentions)
 
     def update(self, *, comment: IssueComment, actor, payload: dict) -> IssueComment:
-        if comment.actor_id != actor.id:
-            raise AppException("PERM_DENIED", message="只能编辑自己发表的评论")
+        # rbac §5.3：本人或项目管理员可编辑；其余 403
+        from plane.app.permissions.issue import IssueCommentPermission
+        project_role = self._resolve_project_role(actor, comment.issue.project_id)
+        is_owner = comment.actor_id == actor.id
+        is_admin = project_role is not None and project_role >= ProjectRole.ADMIN
+        if not (is_owner or is_admin):
+            raise AppException("PERM_DENIED", message="只能编辑自己发表的评论，或项目管理员可编辑他人评论")
         if comment.deleted_at:
             raise AppException("RESOURCE_NOT_FOUND")
         if timezone.now() - comment.created_at > EDIT_WINDOW:      # BR-05
@@ -901,30 +915,91 @@ def notify_comment(self, comment_id: str) -> int:
 def notify_issue_event(self, *, event: str, issue_id: str, actor_id: str | None,
                        epoch: str, changes: list[dict] | None = None,
                        new_assignee_ids: list[str] | None = None) -> int:
-    """assigned / updated / 描述新增 mention 的通用事件任务
+    """assigned / updated / 描述新增 mention 的通用事件任务（单 issue 入口）
 
     - assigned：仅新增被指派人（new_assignee_ids 差集）
-    - updated：指派人 ∪ 创建者收 changes 摘要；同 epoch 批量在调用侧预归并
+    - updated：指派人 ∪ 创建者收 changes 摘要；同 epoch 批量走 `notify_issue_event_batch` 入口
     """
     issue = Issue.objects.select_related("project", "project__workspace").get(pk=issue_id)
-    actor = issue.project.workspace.members.filter(id=actor_id).first() if actor_id else None
+    actor = _resolve_actor(actor_id, issue.project) if actor_id else None
     epoch = epoch or f"{timezone.now().timestamp()}"
 
+    member_ids = set(issue.project.member_ids())
     rows = []
     if event == "issue.assigned":
-        for uid in set(new_assignee_ids or []) - {actor_id}:
+        for uid in (set(new_assignee_ids or []) & member_ids) - {actor_id}:    # BR-07 域过滤
             rows.append(_build(uid, event, issue, actor, None, epoch))
     elif event == "issue.updated":
-        fanout = set(issue.assignee_ids) | {issue.created_by_id}
+        fanout = (set(issue.assignee_ids) | {issue.created_by_id}) & member_ids  # BR-07 域过滤
         summary = "；".join(f"{c['field']} {c['old']} → {c['new']}" for c in (changes or []))
         for uid in fanout - {actor_id} - {None}:
             n = _build(uid, event, issue, actor, None, epoch)
-            n.title = f"{actor.display_name} 更新了 {issue.issue_key}：{summary}"[:200]
+            n.title = f"{(actor.display_name if actor else '系统')} 更新了 {issue.issue_key}：{summary}"[:200]
             n.data["changes"] = changes or []
             rows.append(n)
 
     Notification.objects.bulk_create(rows, ignore_conflicts=True)
     return len(rows)
+
+
+@shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=True)
+def notify_issue_event_batch(self, *, event: str, issue_ids: list[str],
+                             actor_id: str | None, epoch: str,
+                             changes: list[dict] | None = None) -> int:
+    """批量入口：同 epoch 多 issue title 合并（BOARD-004 批量操作 / TASK-009 归档）
+
+    合并载荷（merged payload）：
+      - `merged_count`：本 epoch 涉及 issue 数（如 50）
+      - `merged_keys`：受影响的 issue_key 列表（前 10 条 + 「等 N 个」截断，超 200 字符截断）
+      - `title`：归并为「{actor} 更新了 {merged_count} 个任务」单条文案（跨 issue 共享）
+      - `changes`：合并后的字段变更摘要数组（跨 issue 同字段去重）
+    归并发生在此处而非查询侧——按 (event, actor, receiver, issue) 维度落 Notification
+    （dedup_key 含 issue_id 使每个 issue 各自独立，避免跨 issue 隐式合并丢失指向），
+    同一 receiver 跨 N 个 issue 共用同一 title 但保留 N 条 Notification 行；data 携带
+    merged_count / merged_keys，前端按 issue 跳转。
+    """
+    epoch = epoch or f"{timezone.now().timestamp()}"
+    issues = (Issue.objects
+              .select_related("project", "project__workspace")
+              .filter(pk__in=issue_ids))
+    if not issues.exists():
+        return 0
+    actor = _resolve_actor(actor_id, issues.first().project) if actor_id else None
+    actor_name = actor.display_name if actor else "系统"
+    merged_count = len(issues)
+    keys = [i.issue_key for i in issues[:10]]
+    keys_suffix = f" 等 {merged_count} 个" if merged_count > 10 else ""
+    summary = "；".join(f"{c['field']} {c['old']} → {c['new']}" for c in (changes or []))
+    title = f"{actor_name} 更新了 {merged_count} 个任务{keys_suffix}：{summary}"[:200]
+
+    rows = []
+    for issue in issues:
+        member_ids = set(issue.project.member_ids())
+        fanout = (set(issue.assignee_ids) | {issue.created_by_id}) & member_ids  # BR-07 域过滤
+        for uid in fanout - {actor_id} - {None}:
+            n = Notification(
+                receiver_id=uid, event=event, title=title, data={
+                    "merged_count": merged_count, "merged_keys": keys,
+                    "issue_id": str(issue.id), "project_id": str(issue.project_id),
+                    "workspace_slug": issue.project.workspace.slug,
+                    "issue_key": issue.issue_key, "actor": actor_name,
+                    "changes": changes or [],
+                },
+                dedup_key=Notification.build_dedup_key(
+                    event=event, issue_id=issue.id,
+                    actor_id=actor_id or "system", epoch=epoch, receiver_id=uid),
+            )
+            rows.append(n)
+    Notification.objects.bulk_create(rows, ignore_conflicts=True)
+    return len(rows)
+
+
+def _resolve_actor(actor_id: str | None, project):
+    """BR-07 成员域过滤：操作者必须在项目成员或工作空间 Admin 内；否则返 None（系统操作）。"""
+    if not actor_id:
+        return None
+    actor = project.workspace.members.filter(id=actor_id).first()
+    return actor  # 已删 / 已退出 / 域外的 actor → None（系统替身，下游文案「系统」）
 
 
 def _build(receiver_id, event, issue, actor, comment, epoch) -> Notification:
@@ -965,11 +1040,19 @@ UNREAD_RETENTION = timedelta(days=180)
 
 @shared_task
 def purge_expired_notifications() -> dict[str, int]:
-    """每日 03:00：已读超 90 天、未读超 180 天物理清理（BR-09）"""
+    """每日 03:00：已读超 90 天、未读超 180 天物理清理（BR-09 / IT-06）
+
+    实现要点：必须用 ``Notification.all_objects`` 绕过 ``SoftDeleteManager``
+    ——``Notification.objects`` 是 ``SoftDeleteManager``，默认 ``filter(deleted_at IS NULL)``，
+    其 ``QuerySet.delete(soft=True)`` 等价于 ``update(deleted_at=now)``，是软删而非物理删。
+    BR-09 / IT-06 / §1.2 交付项明确要求「物理清理」，故此处改走基类 ``Manager``
+    （``BaseModel.all_objects``，unified-issue-model.md §2.2）直接 ``DELETE FROM``，
+    与「评论软删不物理清理」（§2.2）形成对照：通知是**过期即丢**、评论是**软删占位**。
+    """
     now = timezone.now()
-    read_purged = Notification.objects.filter(
+    read_purged = Notification.all_objects.filter(
         read_at__lt=now - READ_RETENTION).delete()[0] or 0
-    unread_purged = Notification.objects.filter(
+    unread_purged = Notification.all_objects.filter(
         read_at__isnull=True, created_at__lt=now - UNREAD_RETENTION).delete()[0] or 0
     return {"read_purged": read_purged, "unread_purged": unread_purged}
 ```
@@ -978,10 +1061,10 @@ def purge_expired_notifications() -> dict[str, int]:
 
 | 操作 | 权限点 | PROJ_ADMIN | CONTRIBUTOR | COMMENTER | VIEWER |
 | --- | --- | --- | --- | --- | --- |
-| 读评论 / 通知（本人） | `project.read` / 本人域 | ✅ | ✅ | ✅ | ✅ |
-| 发表评论 | `issue.comment` | ✅ | ✅ | ✅ | ❌ 403 |
-| 编辑 / 删除评论 | 本人 + `issue.comment` | 仅自己的 | 仅自己的 | 仅自己的 | ❌ 403 |
-| 通知已读 / 全部已读 | `receiver == request.user` | 本人 | 本人 | 本人 | 本人 |
+| 读评论 / 通知（本人） | `project.read` / `notification.read` / 本人域 | ✅ | ✅ | ✅ | ✅ |
+| 发表评论 | `comment.create` | ✅ | ✅ | ✅ | ❌ 403 |
+| 编辑 / 删除评论 | 本人/项目管理员 + `comment.create` | 仅自己的 / 项目管理员 | 仅自己的 | 仅自己的 | ❌ 403 |
+| 通知已读 / 全部已读 | `notification.read`（rbac §8.2 全四档 ✅） + `receiver == request.user` | 本人 | 本人 | 本人 | 本人 |
 
 ### 4.6 前端实现
 
@@ -1056,7 +1139,7 @@ const MentionExt = Mention.configure({
 
 | 用例 ID | 测试目标 | 输入 | 预期输出 | 覆盖类型 |
 | --- | --- | --- | --- | --- |
-| UT-01 | XSS 净化 | `<script>alert(1)</script>` / `<img src=x onerror=…>` / `javascript:` 链接 | 标签与危险属性全剥离、正文文本保留；返回 200 | 安全 |
+| UT-01 | XSS 净化 | `<script>alert(1)</script>` / `<img src=x onerror=…>` / `javascript:` 链接 | 标签与危险属性全剥离、正文文本保留；发表 `POST` 返回 `201`，内容为净化后 | 安全 |
 | UT-02 | 白名单保真 | 合法 strong/a/span 锚点 | 原样保留 | 正常 |
 | UT-03 | 空评论 | 仅空格 / 仅 @ 锚点 | 400 `VALIDATION_ERROR` | 边界 |
 | UT-04 | 超长 | stripped 5001 字符 | 400 + `TOO_LONG` | 边界 |
@@ -1067,7 +1150,7 @@ const MentionExt = Mention.configure({
 | UT-09 | @ 与评论互斥 | 评论 @ 了指派人（同 1 人） | 该人仅收 `mentioned` 1 条 | 正常 |
 | UT-10 | 幂等重试 | worker 同 comment_id 跑两次 | 通知零重复（唯一约束 + ignore_conflicts） | 并发 |
 | UT-11 | 全部已读域隔离 | A read-all 后查 B | B 未读不变；A 归零 | 安全 |
-| UT-12 | 软删占位 | 删除评论后取列表 | 返回 `is_deleted: true` + null 内容；不可再编辑 | 正常 |
+| UT-12 | 软删过滤 | 删除评论后取列表 | 默认 Manager 过滤掉该行；走 `IssueComment.all_objects.all()` 仍可查得 `deleted_at` 非空；不可再编辑（404） | 正常 |
 | UT-13 | parent_id 拒绝 | 带非空 `parent` 提交 | 400（P1 锁定扁平） | 契约 |
 | UT-14 | 计数性能 | 10 万通知 | `unread-count` 走索引 < 5ms（`assertNumQueries`=1） | 性能 |
 | UT-15 | title 截断 | 200+ 字符摘要 | 恰 200 + 省略号，实体名保留 | 边界 |
@@ -1078,7 +1161,7 @@ const MentionExt = Mention.configure({
 | --- | --- | --- | --- | --- |
 | IT-01 | 指派通知 | A 派 B | B 轮询 +1 | title 含 issue_key 与操作者 |
 | IT-02 | @ 闭环 | A 评论 @B | B 铃铛 → 点击 → 落任务页 `#comment-{id}` 高亮 | 已读状态持久（刷新仍已读） |
-| IT-03 | 批量归并 | 批量改 50 任务状态（同 epoch） | 负责人收到的通知数 | 每接收人恰 1 条「更新了 50 个任务」 |
+| IT-03 | 批量归并 | 批量改 50 任务状态（同 epoch） | 负责人收到的通知数 | 每接收人恰 50 条，title 共享为「{actor} 更新了 50 个任务」；data 携带 merged_count=50、merged_keys 前 10 条 |
 | IT-04 | 描述 @ 触发 | 描述编辑新增锚点 | 被 @ 者收 `mentioned`（无 comment_id） | — |
 | IT-05 | 已删实体跳转 | 删任务后点通知 | Toast 降级 + 通知已读 | — |
 | IT-06 | 通知清理 | 造 91 天前已读 / 181 天前未读 | 手动触发 beat | 按期物理删；重跑幂等 |
@@ -1141,4 +1224,4 @@ const MentionExt = Mention.configure({
 3. 自己评论自己的任务不产生任何通知；同一条评论中 @ 与指派为同一人时仅一条 `mentioned` 提醒。
 4. 评论 15 分钟内可编辑（显示「已编辑」徽标，Activity 留痕且不重发通知）；超时编辑被 409 拒绝但可删除；删除后显示灰字占位行。
 5. 注入 `<script>alert(1)</script>` 与 `<img onerror>` 的评论被净化为纯文本，页面无脚本执行；「全部已读」后徽标归零且他人通知不受影响。
-6. 批量拖拽 50 个任务状态后，负责人各收到 1 条归并通知（非 50 条）；worker 手动重投同一任务两次，通知零重复。
+6. `BOARD-004` 任务批量操作（多选拖拽 50 个任务状态）后，负责人各收到恰 50 条 Notification 行（title 跨 issue 共享为「{actor} 更新了 50 个任务」，data.merged_count=50、data.merged_keys 前 10 条 + 「等 N 个」截断）；worker 手动重投同一任务两次，通知零重复。

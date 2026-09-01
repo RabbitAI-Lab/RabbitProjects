@@ -10,8 +10,8 @@
 | 最后更新日期 | 2026-09-01 |
 | 上游依据 | `docs/需求文档.md` §3.2（批量添加成员、移除成员、退出团队、团队内角色分配）、§8.2 团队管理 P1 列 |
 | 前置依赖 | `TEAM-001`（Workspace 模型 / slug / 默认团队 / `WorkspaceMember` 基线）、`AUTH-001`（注册登录 / 注册钩子）、`AUTH-003`（`accessible_by()` 行级过滤）、`AUTH-004`（Celery 邮件通道与 SMTP 降级）、`AUTH-005`（权限矩阵与按钮守护）、`INFRA-004`（错误信封 / 全局异常） |
-| 下游消费 | `PROJ-002`（项目成员候选集 = 工作空间成员）、`TASK-002`（指派人选择器）、`COLLAB-001`（消费本文档落库的 4 类成员变动 Notification）、`RPT-001`（按成员聚合统计）、`TEAM-003`（P2 团队归档与全局配置，其中「解散团队」承接本文档留出的末位成员场景） |
-| 关联架构文档 | [`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §2.2（WS_* 角色等级）、§7（层级保护 / 末位 Owner / GUEST 限制 / 转让规则）、§8.1（权限矩阵）、[`api-conventions.md`](../architecture/api-conventions.md) §2.5（invitations / members 端点契约）、§2.6（动作子资源）、§4（信封）、§8（错误码）、[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.2（BaseModel 软删除） |
+| 下游消费 | `PROJ-002`（项目成员候选集 = 工作空间成员）、`TASK-002`（指派人选择器）、`COLLAB-001`（消费本文档落库的 3 类成员变动 Notification：`workspace.member.added` / `workspace.member.removed` / `workspace.member.role_changed`；本文档不产生 `member.joined` 事件，详见 §2.6 注释）、`RPT-001`（按成员聚合统计）、`TEAM-003`（P2 团队归档与全局配置，其中「解散团队」承接本文档留出的末位成员场景） |
+| 关联架构文档 | [`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §2.2（WS_* 角色等级）、§7（层级保护 / 末位 Owner / GUEST 限制 / 转让规则；其 §7.5 提及 `TEAM-004` 系旧编号，按 README §4 实际为本文档）、§8.1（权限矩阵；其 §5.5 列出的 `PERM_ROLE_HIERARCHY` / `PERM_LAST_OWNER` 为架构文档待回改码，本文统一使用 §8.3 已注册的 `PERM_ROLE_INSUFFICIENT` 与 §8.5 已注册的 `RESOURCE_STATE_INVALID`）、[`api-conventions.md`](../architecture/api-conventions.md) §2.5（invitations / members 端点契约）、§2.6（动作子资源）、§4（信封）、§8（错误码）、§10.5（事务与一致性约定；批量邀请端点豁免见 §1.1）、[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.2（BaseModel 软删除） |
 | 对标基线 | Plane `WorkspaceMemberInvite`（token 状态机 pending/accepted/revoked + 邮件确认） · Ones 企业通讯录导入 / 审批制入队 |
 | 工作量估算 | 后端 2.5 人日 / 前端 3 人日 / 联调与测试 1.5 人日，合计 **7 人日** |
 
@@ -32,6 +32,8 @@ Sprint 0 的团队是「一人孤岛」——POC 排除清单明确砍掉成员�
 
 工程上本功能确立两个可复用范式，供 `PROJ-002` 直接沿袭：**「批量操作逐条分拣 + 逐条结果返回」**（一次 POST 返回 added / invited / skipped 逐条结果）与**「软删除 + 级联清理收口在同一 Service 事务」**（管理面立即失效、数据面立即不可见）。
 
+> **批量邀请端点对 `api-conventions.md` §10.5「批量端点全成全败」约定的豁免声明**：本端点不采用「全成或全败、单事务」语义。原因：邀请是对多目标用户的友好操作（一次邀请 20 人），任一条邮箱非法（如格式错误）不应让其余 19 条合法邀请被整体回退；强制全成全败会显著放大误操作成本。改为「整体 200、`data[]` 逐条分态返回」：成功落库（`added` / `invited`）、业务跳过（`skipped`：`already_member` / `duplicate_in_request`）、单条异常（`failed`：附 `message`）。但**结构性校验**（`emails` 字段缺失、超过 20 邮箱、预设角色非法）仍走 400 整请求拒绝（`VALIDATION_ERROR`），不豁免；只有「邮箱格式 / 重复 / 是否已注册 / 邀请上限」等业务级失败允许逐条 `failed`。该豁免与 `PROJ-002` 项目成员批量添加、`BOARD-004` 任务批量操作复用同一范式，但与 `TASK-005` 任务依赖批量创建等「结构强一致」批量端点不同——后者仍走 §10.5 全成全败。
+
 ### 1.2 关键约定矩阵（能力 × 迭代）
 
 > ⚠️ **邀请 token 是本功能最重要的安全设计**：邀请链接泄露也不能被他人冒用（token 存哈希 + 邮箱绑定校验，BR-03 / BR-04）。
@@ -44,7 +46,7 @@ Sprint 0 的团队是「一人孤岛」——POC 排除清单明确砍掉成员�
 | 角色调整 | ❌ | ✅ MEMBER↔ADMIN | 自定义角色 P3 `AUTH-008` |
 | 移除 / 退出 | ❌ | ✅（软删 + 级联） | — |
 | 所有权转让 | ❌ | ✅（双重确认 + 原子互换） | — |
-| 成员上限 | 不限 | **100 软限**（标准版） | 席位计费 `QUOTA_MEMBER_EXCEEDED` P4 |
+| 成员上限 | 不限 | **100 软限**（标准版，超过则逐条 `failed(member_limit)`，详见 §2.8） | 席位计费 P4（按计费维度走 `QUOTA_MEMBER_EXCEEDED`，与本文档软限分属两套语义） |
 | 解散团队 | ❌ | ❌（末位成员禁退，规避无主状态） | `TEAM-003` |
 | 成员活跃度统计 | ❌ | ❌ | `TEAM-003` |
 
@@ -114,8 +116,8 @@ flowchart TD
     C2 --> R
     E1 --> R["200 + 逐条结果数组"]
     F2 --> R
-    R --> H["前端逐条结果列表<br/>（added / invited / skipped 三色）"]
-    H --> I["SMTP 降级模式：meta.invite_link 回显<br/>（仅 dev / 未配置 SMTP）"]
+    R --> H["前端逐条结果列表<br/>（added / invited / skipped / failed 四色）"]
+    H --> I["SMTP 降级模式：meta.invite_links 回显<br/>（仅 dev / 未配置 SMTP，复数 key）"]
 ```
 
 **分拣算法要点**（完整实现见 §4.3.1）：
@@ -166,7 +168,15 @@ sequenceDiagram
     end
 ```
 
-① **注册钩子的实现位置**：与 `TEAM-001` §2.2「注册自动初始化默认工作空间」同一决策——在注册视图事务内**显式调用**，不用 `post_save` signal（测试工厂造用户不产生副作用、事务边界可读）。
+① **注册钩子的实现位置与调用顺序**：与 `TEAM-001` §2.2「注册自动初始化默认工作空间」同一决策——在注册视图事务内**显式调用**，不用 `post_save` signal（测试工厂造用户不产生副作用、事务边界可读）。**调用顺序硬性约定**：
+```python
+perform_sign_up（事务内）：
+    1. serializer.save()                                   # INSERT user
+    2. create_default_workspace(user)                      # TEAM-001：插入默认 Workspace + OWNER Membership
+    3. accept_pending_invites(user)                        # 本文档：按 email 匹配 pending 邀请逐一转 accepted
+    4. transaction.on_commit(lambda: send_welcome_email.delay(str(user.id)))
+```
+**为何 `accept_pending_invites` 在 `create_default_workspace` 之后**：① 新用户必须先有可访问的工作空间上下文（即使 invite 接受成功但无 Workspace 视图，前端也无落脚点）；② 接受邀请是「基于已有用户身份」的动作，依赖 user.id / email 已落库；③ 二者必须同一事务，全成功或全回滚（避免「邀请已接受但默认工作空间未建」导致用户列表无 Workspace 显示）。`TEAM-001` §2.2 与本文 §4.3.2 `accept_pending_invites` 实现对齐。
 
 **并发接受防护**：同一 token 被并发提交两次时，`UPDATE ... WHERE status='pending'` 的原子翻转保证恰有一个请求更新成功（`rowcount == 1`）；落败方读到 `status='accepted'` 后返回 400（token 已使用）。见 §4.3.2。
 
@@ -188,8 +198,8 @@ stateDiagram-v2
         active --> active: 角色调整（10↔15，层级保护）
         active --> removed: 被移除（软删 + 级联 ProjectMember）
         active --> left: 主动退出（软删 + 级联）
-        removed --> active: 重新邀请（新建行）
-        left --> active: 重新邀请（新建行）
+        removed --> active: 重新邀请（复活软删行）
+        left --> active: 重新邀请（复活软删行）
     }
 ```
 
@@ -200,9 +210,11 @@ stateDiagram-v2
 | pending → expired | beat 定时 | `expires_at < now` | 无（行保留） |
 | active → removed | ADMIN+ | `workspace.member.remove`；不可移 OWNER（末位保护 §7.2） | 级联软删 `ProjectMember`；通知被移者 |
 | active → left | 本人 | `workspace.member.leave`；OWNER 禁退；末位成员禁退 | 级联软删 `ProjectMember` |
-| removed/left → active | ADMIN+ 重新邀请 | 同新建 | **新建 `WorkspaceMember` 行**，不复活旧行 |
+| removed/left → active | ADMIN+ 重新邀请 | 复活既有行 | **复活软删行**（`is_active=True` + `deleted_at=NULL`，同步刷 `updated_at`/`updated_by`），**不可 INSERT 新行** |
 
-> **重新邀请新建行而非复活软删行**：保留历史痕迹（审计友好），且 `created_at` 语义准确反映「本次加入时间」（成员列表「加入时间」列与 `RPT-001` 活跃度统计依赖它）。唯一约束 `unique_together("workspace","member")` 基于 `SoftDeleteManager` 的可见集合判定，软删行不阻塞新行插入（同 `INFRA-003` 软删除口径）。
+> **重新邀请必须复活软删行（UPDATE 而非 INSERT）**：依据 `INFRA-003` §4.4 与 [`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §3.2，`WorkspaceMember` 的 `unique_together = ("workspace", "member")` **不带** `condition=Q(deleted_at__isnull=True)` 偏条件（即「裸唯一约束」），且 `unique_together` 不支持偏条件——其语义对软删行同样生效。**任何 INSERT 新行都会被 DB 唯一约束拦截**（`IntegrityError`），故移除/退出后的成员必须以 UPDATE 复活（`is_active=True`、`deleted_at=NULL`、刷 `updated_at`/`updated_by`）。
+>
+> 此约束是 `INFRA-003` §4.4 显式选择的「刻意保留」（「同一人在同一团队的成员关系本质是单例」），目的是确保「成员历史」始终是同一条记录的字段变化而非多行历史。复活后 `created_at` 保留为首次加入时间（供历史追溯），`updated_at` 记录本次复活时点；成员列表「加入时间」列与 `RPT-001` 活跃度统计需读取 `joined_at`（来自 `created_at` 注解）以保留语义一致。
 
 ### 2.4 移除成员的级联清理时序
 
@@ -274,7 +286,7 @@ sequenceDiagram
 | BR-08 | 转让：仅 OWNER；目标必须为 active `WS_ADMIN`；`confirm_name` 精确等于工作空间名 | Service | 403 / 400 `VALIDATION_ERROR`（`details.field=confirm_name`） |
 | BR-09 | 被移除 / 退出成员的既有 Session **不强制吊销**：数据面由 `accessible_by()` 立即过滤（下次请求 404），管理面（成员表不在集内）立即失效。不吊销的理由：Session 可能同时承载其**其他**工作空间的合法上下文，整体吊销属过度执行 | DB 行级过滤 | 404 `RESOURCE_NOT_FOUND` |
 | BR-10 | 成员列表仅 `workspace.member.read`（WS_MEMBER+）可见；GUEST 不可见 | Permission | 403 `PERM_NOT_WORKSPACE_MEMBER` / `PERM_ROLE_INSUFFICIENT` |
-| BR-11 | 每次成员 / 角色变更产生 `Notification`（被操作人）与工作空间动态记录（本迭代仅落库，`COLLAB-001` 消费） | `transaction.on_commit` | — |
+| BR-11 | 每次成员 / 角色变更产生 `Notification`（被操作人）与工作空间动态记录（本迭代仅落库，`COLLAB-001` 消费）；本文档落库的 3 类 `event = workspace.member.{added, removed, role_changed}`，`ownership_transferred` 经 `transfer_ownership` 同事务落 `workspace.member.role_changed ×2` + 工作空间动态，**不另设 `member.joined` 事件**（`member.joined` 是 `COLLAB-001` 注释中标注 P2+ 的占位事件，本文档不产生） | `transaction.on_commit` | — |
 | BR-12 | 移除操作限流：每管理员 30 次 / 小时（防误触批量踢人）；邀请 10 次 / 分钟（批量端点，对齐 `api-conventions.md` §7.2） | Throttle | 429 `RATE_LIMIT_EXCEEDED` |
 | BR-13 | 同邮箱同时只允许一条 pending 邀请（`uniq_pending_invite_per_email` 偏条件唯一约束兜底） | DB 约束 | 409 `RESOURCE_ALREADY_EXISTS`（并发竞态时） |
 | BR-14 | 邀请结果响应不泄露「该邮箱是否已注册于系统」：`invited` 与 `added` 的区分仅返回给操作的管理员（管理员本就有权知道），对外部不可枚举 | API 设计 | — |
@@ -290,14 +302,15 @@ sequenceDiagram
 | token 抢用 | 登录邮箱 ≠ 邀请邮箱 | 403 | `PERM_DENIED` | 「该邀请不属于当前账号」 | — |
 | 邮箱大小写变体 | `Li@x.com` 已是成员再邀 `li@ex.com` | 200 | skipped | — | 归一化比较 |
 | 移除 OWNER | target.role == 20 | 409 | `RESOURCE_STATE_INVALID` | Toast「所有者不可移除，请先转让所有权」 | — |
-| 移除 / 降级同级及以上 | target.role ≥ operator.role | 403 | `PERM_ROLE_INSUFFICIENT` | Toast「不能管理权限等级不低于自己的成员」 | rbac §7.1 |
+| 移除 / 降级同级及以上 | target.role ≥ operator.role | 403 | `PERM_ROLE_INSUFFICIENT` | Toast「不能管理权限等级不低于自己的成员」 | rbac §7.1（架构文档 §5.5 的 `PERM_ROLE_HIERARCHY` 未在 api-conventions §8.3 注册，本文统一用 `PERM_ROLE_INSUFFICIENT`，语义同） |
 | 并发转让 | 两请求竞争（理论仅一 OWNER，防御性） | 409 | `RESOURCE_CONFLICT` | Toast 重试 | `select_for_update` + 角色断言 |
 | 转让给自己 | new_owner = 自己 | 400 | `VALIDATION_ERROR` + `INVALID` | — | — |
 | confirm_name 不匹配 | 输入 ≠ 工作空间名 | 400 | `VALIDATION_ERROR` + `details.field=confirm_name, code=INVALID` | 输入框标红 | — |
-| 末位成员退出 | active 成员数 == 1 | 409 | `RESOURCE_STATE_INVALID` | 「团队仅剩你一人，转让或等待解散能力（TEAM-003）」 | — |
+| 末位成员退出 | active 成员数 == 1 | 409 | `RESOURCE_STATE_INVALID` | 「团队仅剩你一人，转让或等待解散能力（TEAM-003）」 | rbac §7.2（架构文档 §5.5 的 `PERM_LAST_OWNER` 未在 api-conventions §8.3 注册；本文统一用已注册的 `RESOURCE_STATE_INVALID`，409 由资源状态而非权限语义触发） |
 | OWNER 退出 | role == 20 | 409 | `RESOURCE_STATE_INVALID` | 「请先转让所有权」 | — |
-| 成员上限 | 第 101 个成员 | 409 | `QUOTA_MEMBER_EXCEEDED` | 升级引导文案（标准版软限） | Service 前置断言 |
-| SMTP 降级模式 | 未配置 `SMTP_HOST`（`INFRA-004` 降级口径） | 200 | — | 提示「邮件通道未配置，请复制邀请链接」 | 邀请照常创建；`meta.invite_links` 回显（仅 dev / 降级时）；邮件投递降级为日志 |
+| 成员上限 | 第 101 个成员（单条失败） | 200 | 该条 `data[].status="failed"` + `reason=member_limit`（**不**返回 409；不混用 `QUOTA_MEMBER_EXCEEDED`——后者语义为许可席位 / 计费） | Toast「已达标准版成员上限」+ 升级引导 | Service 前置断言（详见 §2.8） |
+| 接受时达上限（并发竞态） | 已 100 active，被邀者点击接受链接 / 注册钩子接受 | 409 | `RESOURCE_LIMIT_EXCEEDED`（不混用 `QUOTA_MEMBER_EXCEEDED`；message「工作空间已达标准版成员上限（100），无法接受该邀请」） | 失效页「该邀请无法生效：团队已达成员上限，请联系管理员清理后再试」 | `_do_accept` 入口二次校验 `active_count + 1 > 100`（§4.3.2 / §2.8），复活 + 新建两条路径均覆盖 |
+| SMTP 降级模式 | 未配置 `SMTP_HOST`（`INFRA-004` 降级口径） | 200 | — | 提示「邮件通道未配置，请复制邀请链接」 | 邀请照常创建；`meta.invite_links` 回显（仅 dev / 降级时，复数 key）；邮件投递降级为日志 |
 | 触发限流 | 1 小时移除 > 30 次 / 1 分钟邀请 > 10 次 | 429 | `RATE_LIMIT_EXCEEDED` | Toast + `Retry-After` | Throttle 层 |
 
 > **token 失效为何用 400 而非 401 `AUTH_TOKEN_*`**：`api-conventions.md` §8.9 规定前端对 `AUTH_*`（401）统一执行「清用户态 → 跳登录」。而邀请接受的主体是**已登录用户**，业务性 token 失效不应触发登出跳转，否则形成「登录 → 跳回 → 再登录」死循环。因此邀请 token 按请求参数校验失败处理（400 `VALIDATION_ERROR` + `details.field=token`），文案区分四种失效原因。
@@ -307,7 +320,7 @@ sequenceDiagram
 | 边界场景 | 限制值 | 超出处理方式 |
 | --- | --- | --- |
 | 单次邀请邮箱数 | 20 | 400 `VALIDATION_ERROR` + `TOO_LONG`（message 给出上限） |
-| 工作空间成员上限（P1 标准版软限） | 100 | 第 101 个邀请该条 `failed`（reason=`member_limit`）或整请求 409 `QUOTA_MEMBER_EXCEEDED`（当 20 条全部越限时）；文案引导 |
+| 工作空间成员上限（P1 标准版软限） | 100 | **邀请路径逐条 `failed`**：Service 前置判定 `would_exceed = (active_count + len(emails_to_add)) > 100`，请求中任意邮箱若「加入后将导致总数 > 100」则该条 `data[].status="failed"` + `reason="member_limit"`；其余可加入的邮箱照常 `added` / `invited`。**不**返回 409、**不**使用 `QUOTA_MEMBER_EXCEEDED`（后者语义为许可席位数，与软限不同；P4 `QUOTA_*` 错误码族按计费维度另行触发）。文案：Toast「已达标准版成员上限（100）」+ 升级引导。<br/>**接受路径二次校验**：`_do_accept` 入口前置 `active_count = WorkspaceMember.objects.filter(...).count()`，若 `active_count + 1 > 100` → 抛 `ResourceLimitExceededError`（HTTP **409** `RESOURCE_LIMIT_EXCEEDED`，message「工作空间已达标准版成员上限（100），无法接受该邀请」）。该二次校验覆盖复活 + 新建两条分支（避免并发接受 + 邀请阶段配额耗尽时复活绕过软限） |
 | pending 邀请堆积 | 同邮箱仅 1 条 active（BR-13） | 重邀刷新过期时间（幂等） |
 | 邀请过期窗口 | 7 × 24 h | beat 每日 03:30 批量置 `expired`；过期后链接立即不可用（实时判定，不依赖 beat） |
 | 成员列表搜索 | 前缀匹配（display_name / email），≤ 64 字符 | 超长 400 `TOO_LONG`；量级小走 `istartswith`（不启用 trigram） |
@@ -406,7 +419,7 @@ Headless UI `Dialog`，宽 560px。
 | 计数 | 输入区下方 `n / 20`，达到 20 后不再接受新 Tag（输入禁用 + 提示） |
 | 预设角色 | 仅「成员 / 管理员」两项（BR-02）；下拉项附一行能力说明（`aria-describedby`） |
 | 提交中 | 按钮 loading（`loader-2` 旋转 + 「发送中…」），Modal 锁定 |
-| 结果视图 | 三态图标：`check-circle`（added，绿）/ `mail`（invited，蓝）/ `skip-forward`（skipped，灰）/ `x-circle`（failed，红 + message） |
+| 结果视图 | **四态**图标：`check-circle`（added，绿）/ `mail`（invited，蓝）/ `skip-forward`（skipped，灰）/ `x-circle`（failed，红 + message） |
 | SMTP 降级 | invited 条目追加「复制邀请链接」按钮（读 `meta.invite_links[email]`） |
 | 继续邀请 | 清空 Tag 保留角色选择，回到输入态 |
 | 关闭 | ✕ / `Esc` / 遮罩（提交中不可关；表单有内容时二次确认） |
@@ -840,7 +853,7 @@ GET /api/v1/workspaces/rabbitprojects/members/?search=li&role__gte=15&expand=use
 }
 ```
 
-> `joined_at` 为序列化层映射自 `created_at`（当前行的创建时间即「本次加入时间」——重新邀请新建行保证了该语义，§2.3）。`is_owner` 是 `role == 20` 的便捷布尔，供前端免做魔法值比较。
+> `joined_at` 为序列化层映射自 `created_at`（**复活软删行**保留了原始 `created_at` 作为首次加入时间，再次邀请/接受不会改写该字段，从而 `joined_at` 与「成员历史」语义一致，§2.3）。`is_owner` 是 `role == 20` 的便捷布尔，供前端免做魔法值比较。
 
 #### 4.2.3 `POST /api/v1/invitations/{token}/accept/` — 接受邀请
 
@@ -1021,20 +1034,46 @@ X-Request-Id: 01JCTE4M2R8SA5N9P3Q6W7X8Y08
 # apps/api/plane/db/services/workspace_member.py
 import hashlib
 import uuid
+from datetime import timedelta
 
 from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 
 from plane.db.models import (
-    User, WorkspaceMember, WorkspaceMemberInvite, WorkspaceRole,
+    ProjectMember, User, WorkspaceMember, WorkspaceMemberInvite, WorkspaceRole,
 )
 from plane.bgtasks.notifications import send_workspace_notification
+from plane.bgtasks.workspace_invite import send_invite_email
+from plane.app.permissions.rbac import assert_can_manage_member
+from plane.utils.exceptions import (
+    AppValidationError, PermissionDeniedError, ResourceConflictError,
+    ResourceLimitExceededError, ResourceNotFoundError, ResourceStateInvalidError,
+    RoleInsufficientError,
+)
 
 MAX_INVITE_EMAILS = 20
+MAX_WORKSPACE_MEMBERS = 100  # §2.8 P1 标准版软限
 
 
 class MemberService:
     """工作空间成员生命周期服务 —— 邀请 / 接受 / 角色 / 移除 / 转让"""
+
+    # ---------------- 内部 helper ----------------
+
+    @staticmethod
+    def _get_user_id(email: str) -> uuid.UUID:
+        """按归一邮箱取 user.id；调用前已通过 User.objects.filter(email=email).exists() 校验存在。"""
+        return User.objects.get(email=email).id
+
+    @staticmethod
+    def get_membership(user: User, workspace) -> WorkspaceMember | None:
+        """取用户在指定工作空间的 active 成员行；不存在返回 None（被移除 / 未邀请 / 跨空间）。"""
+        return (
+            WorkspaceMember.objects
+            .filter(workspace=workspace, member=user, is_active=True, deleted_at__isnull=True)
+            .first()
+        )
 
     # ---------------- 邀请 ----------------
 
@@ -1044,6 +1083,7 @@ class MemberService:
         """批量邀请：一次取数、内存分拣、逐条独立落库。
 
         返回逐条结果（added / invited / skipped / failed），单条失败不影响他条。
+        整体走 200；结构性错误（emails 缺失 / 超 20 / 角色非法）仍 400 整请求拒绝。
         """
         if role not in (WorkspaceRole.MEMBER, WorkspaceRole.ADMIN):     # BR-02
             raise AppValidationError({"role": [("NOT_A_CHOICE", "邀请角色仅支持成员或管理员")]})
@@ -1074,6 +1114,15 @@ class MemberService:
             if inv.email in seen_in_request
         }
 
+        # 当前 active 成员数 + 本次「将落库」上限预判（§2.8 软限）
+        active_count = WorkspaceMember.objects.filter(
+            workspace=workspace, is_active=True, deleted_at__isnull=True,
+        ).count()
+        # 直加与复活都会立即占一个 active 名额（复活把现有 deleted 行重新置 active，占位与 INSERT 等价）；
+        # invited 接受时再占（避免邀请阶段就耗光配额）—— 由 _do_accept 入口二次校验
+        # （§4.3.2，避免并发接受竞态绕过 §2.8 软限）
+        remaining_seats = MAX_WORKSPACE_MEMBERS - active_count
+
         results: list[dict] = []
         for email in normalized:
             if email in member_emails:
@@ -1082,18 +1131,50 @@ class MemberService:
 
             registered = User.objects.filter(email=email).exists()
             if registered:
-                # 已注册非成员 → 直加（不需要邮件确认：身份已由注册时验证）
+                # 已注册非成员 → 直加或复活软删行（身份已由注册时验证，无需邮件确认）
+                if remaining_seats <= 0:
+                    results.append({"email": email, "status": "failed", "reason": "member_limit",
+                                    "message": f"已达标准版成员上限（{MAX_WORKSPACE_MEMBERS}）"})
+                    continue
+                user_id = self._get_user_id(email)
                 with transaction.atomic():
-                    member = WorkspaceMember.objects.create(
-                        workspace=workspace, member_id=self._get_user_id(email),
-                        role=role, is_active=True, created_by=actor, updated_by=actor,
+                    # 先查软删行：存在则复活（UPDATE），避免裸 unique_together 触发 IntegrityError（§2.3）。
+                    # all_objects 跨 Manager 软删可见集；唯一匹配 = (workspace, member_id) 旧行。
+                    soft_deleted = (
+                        WorkspaceMember.all_objects
+                        .select_for_update()
+                        .filter(
+                            workspace=workspace, member_id=user_id,
+                            deleted_at__isnull=False,
+                        )
+                        .first()
                     )
+                    if soft_deleted is not None:
+                        soft_deleted.deleted_at = None
+                        soft_deleted.is_active = True
+                        soft_deleted.role = role
+                        soft_deleted.updated_at = timezone.now()
+                        soft_deleted.updated_by = actor
+                        soft_deleted.save(update_fields=[
+                            "deleted_at", "is_active", "role",
+                            "updated_at", "updated_by",
+                        ])
+                        member = soft_deleted
+                        revived = True
+                    else:
+                        member = WorkspaceMember.objects.create(
+                            workspace=workspace, member_id=user_id,
+                            role=role, is_active=True, created_by=actor, updated_by=actor,
+                        )
+                        revived = False
                     transaction.on_commit(
                         lambda m=member: send_workspace_notification.delay(
-                            receiver_id=str(m.member_id), kind="workspace.member.added",
-                            context={"workspace_slug": workspace.slug, "actor": actor.display_name},
+                            receiver_id=str(m.member_id), event="workspace.member.added",
+                            context={"workspace_slug": workspace.slug, "actor": actor.display_name,
+                                     "revived": revived},
                         )
                     )
+                remaining_seats -= 1
                 results.append({"email": email, "status": "added", "member_id": str(member.id), "role": role})
             else:
                 # 未注册 → token 邀请（或顺延既有 pending）
@@ -1142,6 +1223,75 @@ class MemberService:
 ```python
     # ---------------- 接受 ----------------
 
+    def _do_accept(self, *, invite: WorkspaceMemberInvite, actor: User) -> tuple[WorkspaceMember, bool]:
+        """接受邀请的原子单元：行已 select_for_update 锁住；返回 (member, created)。
+
+        - created=True：新建 WorkspaceMember 行（接受路径）
+        - created=False：复活既有软删行（注册钩子 / 重复接受时去重，§2.3 复活语义）
+
+        跳过 token 校验（注册钩子路径不需要 token，注册时邮箱已验证）。
+
+        §2.8 软限二次校验：仅对「消耗名额」的路径（复活 + 新建）生效；若
+        `active_count + 1 > MAX_WORKSPACE_MEMBERS(100)` → 直接抛
+        `ResourceLimitExceededError`（409 `RESOURCE_LIMIT_EXCEEDED`）——避免并发
+        接受 + 邀请阶段配额耗尽时复活绕过 §2.8 软限。早期 active 成员兜底分支不消耗名额，跳过校验。
+        """
+        existing = (
+            WorkspaceMember.objects
+            .select_for_update()
+            .filter(workspace=invite.workspace, member=actor)
+            .first()
+        )
+        if existing is not None and existing.deleted_at is None and existing.is_active:
+            # 已是 active 成员（不应发生但兜底）→ 标记邀请为 accepted 后直接返回；
+            # 不消耗名额，跳过 §2.8 软限校验
+            invite.status = WorkspaceMemberInvite.Status.ACCEPTED
+            invite.accepted_at = invite.accepted_at or timezone.now()
+            invite.accepted_by = actor
+            invite.save(update_fields=["status", "accepted_at", "accepted_by", "updated_at"])
+            return existing, False
+
+        # §2.8 软限二次校验（仅对复活 / 新建两条「消耗名额」路径生效）
+        active_count = WorkspaceMember.objects.filter(
+            workspace=invite.workspace, is_active=True, deleted_at__isnull=True,
+        ).count()
+        if active_count + 1 > MAX_WORKSPACE_MEMBERS:
+            raise ResourceLimitExceededError(
+                f"工作空间已达标准版成员上限（{MAX_WORKSPACE_MEMBERS}），无法接受该邀请"
+            )
+
+        if existing is not None and existing.deleted_at is not None:
+            # 复活软删行（裸 unique_together 不允许 INSERT 新行，§2.3）
+            existing.deleted_at = None
+            existing.is_active = True
+            existing.role = invite.role
+            existing.updated_at = timezone.now()
+            existing.updated_by = invite.invited_by or actor
+            existing.save(update_fields=["deleted_at", "is_active", "role",
+                                         "updated_at", "updated_by"])
+            member = existing
+            created = False
+        else:
+            member = WorkspaceMember.objects.create(
+                workspace=invite.workspace, member=actor,
+                role=invite.role, is_active=True,
+                created_by=invite.invited_by or actor, updated_by=invite.invited_by or actor,
+            )
+            created = True
+
+        invite.status = WorkspaceMemberInvite.Status.ACCEPTED
+        invite.accepted_at = timezone.now()
+        invite.accepted_by = actor
+        invite.save(update_fields=["status", "accepted_at", "accepted_by", "updated_at"])
+
+        transaction.on_commit(
+            lambda: send_workspace_notification.delay(
+                receiver_id=str(actor.id), event="workspace.member.added",
+                context={"workspace_slug": invite.workspace.slug, "revived": not created},
+            )
+        )
+        return member, created
+
     @transaction.atomic
     def accept_invite(self, *, token: str, actor: User) -> WorkspaceMember:
         """接受邀请：哈希检索 + 邮箱绑定校验 + 原子状态翻转 + 成员落库（同一事务）"""
@@ -1158,28 +1308,14 @@ class MemberService:
             raise PermissionDeniedError("该邀请面向其他邮箱，请切换账号后重试")
         # 邀请所属空间与目标邮箱接受者的空间上下文一致性由 invite.workspace 保证
 
-        member = WorkspaceMember.objects.create(
-            workspace=invite.workspace, member=actor,
-            role=invite.role, is_active=True,
-            created_by=invite.invited_by, updated_by=invite.invited_by,
-        )
-        invite.status = WorkspaceMemberInvite.Status.ACCEPTED
-        invite.accepted_at = timezone.now()
-        invite.accepted_by = actor
-        invite.save(update_fields=["status", "accepted_at", "accepted_by", "updated_at"])
-
-        transaction.on_commit(
-            lambda: send_workspace_notification.delay(
-                receiver_id=str(actor.id), kind="workspace.member.added",
-                context={"workspace_slug": invite.workspace.slug},
-            )
-        )
+        member, _ = self._do_accept(invite=invite, actor=actor)
         return member
 
 
     def accept_pending_invites(self, user: User) -> list[WorkspaceMember]:
         """注册钩子（AUTH-001 注册事务内调用）：自动接受所有面向该邮箱的 pending 邀请。
 
+        调用顺序硬性约定：必须在 `create_default_workspace(user)` 之后、AUTH-001 注册事务提交前。
         邮箱在注册时已验证（AUTH-001），故跳过 BR-04 的登录邮箱比对
         —— 注册者本人即邮箱所有者。多空间邀请逐一接受。
         """
@@ -1199,30 +1335,42 @@ class MemberService:
 ```python
     # ---------------- 移除 / 退出 ----------------
 
+    def _soft_delete_with_cascade(self, *, workspace, membership: WorkspaceMember, actor) -> None:
+        """软删除成员 + 级联回收 ProjectMember；私有 helper，被 remove/leave 复用"""
+        membership.deleted_at = timezone.now()
+        membership.is_active = False
+        membership.updated_by = actor
+        membership.save(update_fields=["deleted_at", "is_active", "updated_by", "updated_at"])
+        # 级联回收项目资格：ProjectMember.workspace 冗余列使之为单表 UPDATE
+        ProjectMember.objects.filter(
+            workspace=workspace, member=membership.member, deleted_at__isnull=True
+        ).update(deleted_at=timezone.now(), updated_at=timezone.now())
+
     @transaction.atomic
     def remove_member(self, *, workspace, member: WorkspaceMember, actor) -> None:
         if member.role == WorkspaceRole.OWNER:
             raise ResourceStateInvalidError("所有者不可移除，请先转让所有权")
         if member.member_id == actor.id:
             raise AppValidationError({"member_id": [("INVALID", "不能移除自己，请使用退出团队")]})
-        assert_can_manage_member(operator_role=actor.membership(workspace).role,
-                                 target_role=member.role)               # rbac §7.1
+        operator_membership = self.get_membership(actor, workspace)     # rbac §7.1
+        if operator_membership is None:
+            raise PermissionDeniedError("你不是该工作空间成员")
+        assert_can_manage_member(operator_role=operator_membership.role,
+                                 target_role=member.role)
 
-        member.delete()   # BaseModel 软删除（deleted_at 置值）
-        # 级联回收项目资格：ProjectMember.workspace 冗余列使之为单表 UPDATE
-        ProjectMember.objects.filter(
-            workspace=workspace, member=member.member, deleted_at__isnull=True
-        ).delete()
+        self._soft_delete_with_cascade(workspace=workspace, membership=member, actor=actor)
         transaction.on_commit(
             lambda: send_workspace_notification.delay(
-                receiver_id=str(member.member_id), kind="workspace.member.removed",
+                receiver_id=str(member.member_id), event="workspace.member.removed",
                 context={"workspace_slug": workspace.slug, "actor": actor.display_name},
             )
         )
 
     @transaction.atomic
     def leave_workspace(self, *, workspace, actor) -> None:
-        membership = actor.membership(workspace)      # 不存在则上游已 404
+        membership = self.get_membership(actor, workspace)
+        if membership is None:
+            raise ResourceNotFoundError("你不是该工作空间成员")
         if membership.role == WorkspaceRole.OWNER:
             raise ResourceStateInvalidError("所有者不能退出团队，请先转让所有权")
         active_count = WorkspaceMember.objects.filter(
@@ -1230,7 +1378,14 @@ class MemberService:
         ).count()
         if active_count <= 1:
             raise ResourceStateInvalidError("团队仅剩你一名成员，无法退出")
-        self.remove_member_common(workspace=workspace, membership=membership, actor=actor)
+        self._soft_delete_with_cascade(workspace=workspace, membership=membership, actor=actor)
+        transaction.on_commit(
+            lambda: send_workspace_notification.delay(
+                receiver_id=str(actor.id), event="workspace.member.removed",
+                context={"workspace_slug": workspace.slug, "actor": actor.display_name,
+                         "self_initiated": True},
+            )
+        )
 ```
 
 #### 4.3.4 角色调整与转让（层级保护 + 原子互换）
@@ -1246,13 +1401,21 @@ class MemberService:
             raise AppValidationError({"role": [("INVALID", "不能修改自己的角色")]})
         if new_role == WorkspaceRole.OWNER:
             raise AppValidationError({"role": [("NOT_A_CHOICE", "所有者仅能通过转让所有权产生")]})
-        operator_role = actor.membership(workspace).role
-        assert_can_manage_member(operator_role, member.role, new_role)  # §7.1 双向保护
+        operator_membership = self.get_membership(actor, workspace)
+        if operator_membership is None:
+            raise PermissionDeniedError("你不是该工作空间成员")
+        operator_role = operator_membership.role
+        assert_can_manage_member(operator_role, member.role, new_role)  # rbac §7.1 双向保护
 
+        old_role = member.role
         member.role = new_role
         member.updated_by = actor
         member.save(update_fields=["role", "updated_by", "updated_at"])
-        transaction.on_commit(lambda: notify_role_changed.delay(str(member.id), new_role))
+        transaction.on_commit(lambda: send_workspace_notification.delay(
+            receiver_id=str(member.member_id), event="workspace.member.role_changed",
+            context={"workspace_slug": workspace.slug, "actor": actor.display_name,
+                     "old_role": old_role, "new_role": new_role},
+        ))
         return member
 
     @transaction.atomic
@@ -1270,8 +1433,8 @@ class MemberService:
                 {"new_owner_member_id": [("INVALID", "不能转让给自己")]}
             )
 
-        current = actor.membership(workspace)
-        if current.role != WorkspaceRole.OWNER:
+        current = self.get_membership(actor, workspace)
+        if current is None or current.role != WorkspaceRole.OWNER:
             raise RoleInsufficientError("仅所有者可以转让所有权")
 
         # 固定 id 序加锁防死锁；两行同锁保证「恰一 OWNER」不变量无真空窗口
@@ -1285,15 +1448,33 @@ class MemberService:
 
         target.role = WorkspaceRole.OWNER
         current.role = WorkspaceRole.ADMIN               # rbac §7.5：原 OWNER 自动降为 ADMIN
-        WorkspaceMember.objects.bulk_update(rows, ["role", "updated_at"])
+        rows[0].updated_by = actor
+        rows[1].updated_by = actor
+        WorkspaceMember.objects.bulk_update(rows, ["role", "updated_by", "updated_at"])
         workspace.owner = target.member                  # Workspace.owner 同步指向
         workspace.save(update_fields=["owner", "updated_at"])
 
-        transaction.on_commit(lambda: notify_ownership_transferred.delay(
-            str(workspace.id), str(target.member_id), str(actor.id)
+        # 转让 = 双方角色变更；按 BR-11 发两条 role_changed 通知（带 ownership_transferred 标记）
+        transaction.on_commit(lambda: send_workspace_notification.delay(
+            receiver_id=str(target.member_id), event="workspace.member.role_changed",
+            context={"workspace_slug": workspace.slug, "actor": actor.display_name,
+                     "old_role": WorkspaceRole.ADMIN, "new_role": WorkspaceRole.OWNER,
+                     "ownership_transferred": True},
         ))
-        return {"new_owner": {...}, "previous_owner_role": WorkspaceRole.ADMIN}
+        transaction.on_commit(lambda: send_workspace_notification.delay(
+            receiver_id=str(actor.id), event="workspace.member.role_changed",
+            context={"workspace_slug": workspace.slug, "actor": actor.display_name,
+                     "old_role": WorkspaceRole.OWNER, "new_role": WorkspaceRole.ADMIN,
+                     "ownership_transferred": True},
+        ))
+        return {
+            "new_owner": {"member_id": str(target.id), "user_id": str(target.member_id),
+                          "display_name": target.member.display_name},
+            "previous_owner_role": WorkspaceRole.ADMIN,
+        }
 ```
+
+> **通知任务别名说明**：本文档统一通过 `plane.bgtasks.notifications.send_workspace_notification.delay(event=..., context=...)` 投递所有成员变动通知（覆盖 `workspace.member.added` / `workspace.member.removed` / `workspace.member.role_changed` 三类事件）；事件枚举与 `COLLAB-001` §4.1.2 `Notification.event` 字段对齐，`ownership_transferred` 通过 `context.ownership_transferred=true` 标记。**不**单独定义 `notify_role_changed` / `notify_ownership_transferred` 两个 task——它们是 `send_workspace_notification` 在不同 `context` 下的调用，无独立实现。
 
 #### 4.3.5 ViewSet 与权限接线
 
@@ -1408,7 +1589,7 @@ def expire_invites() -> int:
 | --- | --- | --- | --- |
 | `send_invite_email` | `on_commit` | `email` | 重试前检查 `status == pending`；撤销后不再投递 |
 | `expire_invites` | beat 每日 03:30 | `default` | `update` 天然幂等 |
-| `send_workspace_notification` / `notify_role_changed` / `notify_ownership_transferred` | `on_commit` | `default` | 只传 ID，任务内重查（`api-conventions.md` §10.5） |
+| `send_workspace_notification`（含 added / removed / role_changed 三类事件，通过 `event` 与 `context` 区分；`ownership_transferred` 由 `context.ownership_transferred=true` 标记） | `on_commit` | `default` | 只传 ID，任务内重查（`api-conventions.md` §10.5）；与 `COLLAB-001` §4.3 事件消费对齐 |
 
 ### 4.5 端点 × 角色权限矩阵
 
@@ -1580,13 +1761,21 @@ export class WorkspaceMemberStore {
 | BE-24 | 转让原子性 | OWNER + 1 ADMIN | 转让中注入异常 | 两角色均未变化（事务回滚）；无「双 OWNER / 零 OWNER」中间态 |
 | BE-25 | confirm_name 不匹配 | 错误名称 | POST transfer | 400 + `confirm_name/INVALID` |
 | BE-26 | 转让后身份 | 成功转让 | 分别查两人 | 新 OWNER role=20 且 `workspace.owner` 指向其用户；原 OWNER role=15 |
-| BE-27 | 成员上限 | 已 100 成员 | 第 101 个邀请 | 该条 `failed(member_limit)` 或 409 `QUOTA_MEMBER_EXCEEDED` |
+| BE-27 | 成员上限（单条） | 已 100 active 成员 | 第 101 个 `registered` 邮箱邀请 | 该条 `data[].status="failed"`, `reason="member_limit"`，请求整体仍 200，**不**返回 409、**不**使用 `QUOTA_MEMBER_EXCEEDED` |
+| BE-27b | 成员上限（混合请求） | 已 99 active | 邀请 3 个 `registered` 邮箱 | 前 1 条 `added`，后 2 条 `failed(member_limit)`；邀请阶段 `added` 逐条扣减 `remaining_seats`，到 0 后立即转 `failed` |
+| BE-27c | 接受路径成员上限（复活 + 新建覆盖） | 已 100 active；面向新邮箱的 pending 邀请 | 注册该邮箱触发 `accept_pending_invites`（或带 token 直接 accept） | 409 `RESOURCE_LIMIT_EXCEEDED`，message「工作空间已达标准版成员上限（100），无法接受该邀请」；邀请不被消费；DB 无 `WorkspaceMember` 新行；复活路径同等校验 |
 | BE-28 | beat 过期清理 | 构造 2 条过期 pending | 运行 `expire_invites` | 置 expired ×2；行未删除 |
 | BE-29 | 邮件降级 | `SMTP_HOST=""` | 邀请 | 200；日志含链接；`meta.invite_links` 回显 |
 | BE-30 | 邮件重试与撤销竞态 | 撤销发生在重试间隙 | 手动触发任务 | 任务发现 status≠pending 直接返回（不投递） |
 | BE-31 | 成员列表搜索 | 造 `梁工 / liang@ex.com` | `?search=li` | 命中邮箱前缀；`?search=梁` 命中昵称 |
 | BE-32 | GUEST 不可见成员列表 | role=5 | GET members | 403 |
 | BE-33 | 响应契约 | 任意端点 | 抓包 | 成功信封 `{status,data,meta}`；错误含 `request_id`；204 无响应体 |
+| BE-34 | **BR-09** 被移除者 Session 不吊销 | U1 属 WS-A、WS-B 双空间；U1 在 WS-A 被 ADMIN 移除 | U1 用原 Session 访问 WS-A 资源 | 404 `RESOURCE_NOT_FOUND`（数据面隔离）；U1 访问 WS-B 资源 | 200（其他空间合法上下文保留） |
+| BE-35 | **BR-12** 移除限流 | ADMIN 在 1 小时内连续 DELETE 31 次 | 第 31 次 DELETE | 429 `RATE_LIMIT_EXCEEDED`，含 `Retry-After` |
+| BE-36 | **BR-12** 邀请限流 | ADMIN 在 1 分钟内连续 POST invitations 11 次 | 第 11 次 POST | 429 `RATE_LIMIT_EXCEEDED`，含 `Retry-After` |
+| BE-37 | **BR-08** 转让非 ADMIN 目标 | target 是 MEMBER（role=10） | POST transfer | 400 `VALIDATION_ERROR` + `details.field=new_owner_member_id, code=INVALID` |
+| BE-38 | **BR-07** 末位 OWNER 退出 | 仅剩 OWNER 一人 | POST leave | 409 `RESOURCE_STATE_INVALID`，message「所有者不能退出团队，请先转让所有权」（与 BR-07 的 OWNER 禁退语义合一，不另发末位保护） |
+| BE-39 | 重新邀请复活既有行 | 已移除 U1（`deleted_at` 非空） | ADMIN 重新邀请 U1 邮箱 | 邀请成功；接受后 DB **无** 新 `WorkspaceMember` 行，原行 `deleted_at=NULL`、`is_active=True`；`created_at` 保留为首次加入时间，`updated_at` 更新为本次复活时点 |
 
 ### 5.2 前端单元测试（Vitest + Testing Library）
 
@@ -1686,7 +1875,7 @@ export class WorkspaceMemberStore {
 | 后端 | `db/services/workspace_member.py`（分拣 / 接受 / 级联 / 层级保护 / 转让）、`app/views/workspace_member.py` + `invitations.py`（10 端点）、`app/permissions/workspace_member.py`、Serializer 三件套、`AUTH-001` 注册视图挂钩 `accept_pending_invites` |
 | Celery | `send_invite_email`（重试 + 降级）、beat `expire_invites`（每日 03:30） |
 | 前端 | 成员设置页、邀请弹窗（Tag 输入 + 结果视图）、待接受面板、`/invite/$token` 三态接受页、移除 / 转让确认弹窗、`WorkspaceMemberStore` |
-| 通知 | 入队 / 移除 / 角色变更 / 转让 4 类 `Notification`（落库，`COLLAB-001` 消费） |
+| 通知 | 3 类 `Notification`（`workspace.member.added` / `workspace.member.removed` / `workspace.member.role_changed`，其中转让通过两条 `role_changed` + `context.ownership_transferred=true` 表达，落库 `COLLAB-001` 消费） |
 | 测试 | BE-01~33、FE-01~12、E2E-01~06 |
 | 文档 | 本文档；OpenAPI `@extend_schema` 补齐 10 端点 |
 
@@ -1718,5 +1907,5 @@ export class WorkspaceMemberStore {
 - [ ] §7.2 八条功能验收全部通过，并由非开发者走查一遍
 - [ ] §7.3 非功能指标达标；§5.4 覆盖率门禁通过；`ruff` / `mypy` / `oxlint` / `tsc` 零 error
 - [ ] `PROJ-002` 开发者确认：`GET members/?expand=user` 返回结构足以支撑其项目成员候选集，无需追加端点
-- [ ] `COLLAB-001` 开发者确认：4 类 Notification 的 kind 与 context 字段契约冻结
+- [ ] `COLLAB-001` 开发者确认：3 类 Notification 的 `event` 与 `context` 字段契约冻结（含 `ownership_transferred` 标记）
 - [ ] `docker compose up` 环境完整走通「邀请 → 邮件 → 接受 → 指派任务给新成员 → 移除 → 隔离」链路

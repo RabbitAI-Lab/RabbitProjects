@@ -10,8 +10,8 @@
 | 最后更新日期 | 2026-09-01 |
 | 上游依据 | `docs/需求文档.md` §3.3（项目成员添加、移除、项目子角色权限配置；项目全局筛选、搜索、收藏项目）、§8.2 项目管理 P1 列（含「项目状态切换（进行中/归档）」） |
 | 前置依赖 | `PROJ-001`（项目 CRUD / `ProjectMember` 创建者 ADMIN 记录 / `status` 枚举）、`TEAM-001`（Workspace 与空间成员）、`TEAM-002`（空间成员候选集与移除级联）、`AUTH-003`（项目可见性行级规则）、`AUTH-005`（权限矩阵与按钮守护）、`INFRA-004`（错误信封） |
-| 下游消费 | `TASK-002`（指派人选择器消费项目成员）、`COLLAB-001`（通知接收人 = 项目成员；消费本文档 2 类成员变动通知）、`BOARD-002` / `TASK-003`（筛选候选同样取自项目成员）、`RPT-002`（P2 成员任务量统计）、`AUTH-006`（P2 行级隔离深化）、`PROJ-003`（P2 完整生命周期：draft/closed 与动态时间线） |
-| 关联架构文档 | [`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §2.3（PROJ_* 角色）、§7.1（层级保护）、§7.3（GUEST 提升限制）、§7.4（WS_OWNER/ADMIN 隐式 PROJ_ADMIN）、§8.2（项目级权限矩阵）、[`api-conventions.md`](../architecture/api-conventions.md) §2.5（members / favorite / archive 端点契约）、§2.6（动作子资源）、§4（信封）、§8（错误码） |
+| 下游消费 | `TASK-002`（指派人选择器消费项目成员）、`COLLAB-001`（通知接收人 = 项目成员；消费本文档 4 类成员变动通知：加入/移除/角色变更/归档）、`BOARD-002` / `TASK-003`（筛选候选同样取自项目成员）、`RPT-002`（P2 成员任务量统计）、`AUTH-006`（P2 行级隔离深化）、`PROJ-003`（P2 完整生命周期：draft/closed 与动态时间线） |
+| 关联架构文档 | [`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §2.3（PROJ_* 角色）、§5.5（保护规则统一 403 错误码：PERM_ROLE_HIERARCHY / PERM_LAST_OWNER / PERM_GUEST_LIMIT）、§7.1（层级保护）、§7.2（末位 Owner/Admin 保护）、§7.3（GUEST 提升限制）、§7.4（WS_OWNER/ADMIN 隐式 PROJ_ADMIN）、§8.2（项目级权限矩阵：含 `project.favorite` / `project.archive` 权限点）、[`api-conventions.md`](../architecture/api-conventions.md) §2.5（members / favorite / archive 端点契约）、§2.6（动作子资源）、§4（信封 / 游标）、§5.5（`?search=` 全文搜索）、§6.3（meta 必含字段）、§8（错误码） |
 | 对标基线 | Plane `ProjectMember` + `UserProjectFavorite`（favorites 端点 + 项目搜索） · Ones 项目成员按角色模板批量套用 |
 | 工作量估算 | 后端 2 人日 / 前端 2.5 人日 / 联调与测试 1 人日，合计 **5.5 人日** |
 
@@ -80,7 +80,7 @@
 | 移除项目成员（不级联改派任务） | ✅ | — |
 | 项目角色四档调整（含层级保护） | ✅ | — |
 | 末位 `PROJ_ADMIN` 保护（含隐式接管判定） | ✅ | — |
-| 项目列表 `?q=` 搜索 + `?status=` 筛选 | ✅ | — |
+| 项目列表 `?search=` 搜索 + `?status=` 筛选 | ✅ | — |
 | 收藏 / 取消收藏（幂等）+ 置顶段 + Tab | ✅ | — |
 | `active ↔ archived` 切换 | ✅ | — |
 | 空间级邀请（入队前置） | ❌ | `TEAM-002`（同 Sprint） |
@@ -96,7 +96,7 @@
 | `TEAM-001` | `WorkspaceMember`（候选集的来源表） | 候选集无法构造 |
 | `TEAM-002` | 空间成员列表端点（`?expand=user`）；移除空间成员时级联软删 `ProjectMember` | 候选集数据 / 孤儿成员 |
 | `AUTH-003` | 项目可见性三态规则（404 防探测） | 越权可见 |
-| `AUTH-005` | `project.member.manage / project.favorite / project.archive` 权限点与 `<PermissionGate>` | UI 与接口守护 |
+| `AUTH-005` | `project.member.manage` 权限点与 `<PermissionGate>`；`project.favorite` / `project.archive` 已在 `rbac-permission-model.md` §8.2 矩阵登记（`AUTH-005` 仅交付按钮级 Gate，AUTH-005 矩阵扩展在本文档一并冻结——架构文档待回改登记） | UI 与接口守护 |
 
 ### 1.6 竞品参考
 
@@ -158,7 +158,7 @@ sequenceDiagram
         API->>DB: INSERT project_members（workspace 列 = project.workspace_id 自动填充）
     end
     API->>DB: COMMIT
-    API->>CW: on_commit ×N → notify_project_member.delay(kind=added)
+    API->>CW: on_commit ×N → notify_project_member.delay(event="project.member.added")
     API-->>FE: 200 逐条结果
     FE->>FE: 结果 Toast；新行淡入；候选集移除已加者
     Note over CW: 通知落库（COLLAB-001 通知中心消费）
@@ -196,8 +196,8 @@ stateDiagram-v2
 ```mermaid
 flowchart LR
     A["用户在搜索框输入 rbt"] --> B["300ms 防抖"]
-    B --> C["URL 同步 ?q=rbt（可分享 / 刷新还原）"]
-    C --> D["GET …/projects/?q=rbt&favorite_first=true"]
+    B --> C["URL 同步 ?search=rbt（可分享 / 刷新还原）"]
+    C --> D["GET …/projects/?search=rbt&favorite_first=true"]
     D --> E["accessible_by() 过滤（权限最外层）"]
     E --> F{"q 非空?"}
     F -->|是| G["name__istartswith(q) OR identifier__istartswith(q.upper())"]
@@ -240,7 +240,7 @@ flowchart TD
     B --> C["确认弹窗：归档后项目变为只读，默认从列表隐藏"]
     C --> D["POST …/projects/{id}/archive/"]
     D --> E{"权限 project.archive<br/>∧ 项目当前 status=active"}
-    E -->|否| E1["403 / 409 RESOURCE_STATE_INVALID"]
+    E -->|否| E1["403 PERM_ROLE_INSUFFICIENT（无 project.archive）"]
     E -->|是| F["status='archived'（单行 UPDATE）"]
     F --> G["on_commit → 空间动态 + 成员通知（项目已归档）"]
     G --> H["200 {status:'archived'}"]
@@ -264,16 +264,17 @@ flowchart TD
 | BR-02 | 单次添加 1 ~ 20 人；请求内去重 | Serializer | 400 `VALIDATION_ERROR` + `TOO_LONG` |
 | BR-03 | 角色域为 `PROJ_ADMIN(20)/CONTRIBUTOR(15)/COMMENTER(10)/VIEWER(5)` 四值 | Serializer | 400 + `NOT_A_CHOICE` |
 | BR-04 | 仅 `project.member.manage` 持有者（含隐式 `PROJ_ADMIN`）可管理项目成员 | Permission | 403 `PERM_ROLE_INSUFFICIENT` |
-| BR-05 | `WS_GUEST` 只能被授予 `PROJ_COMMENTER` 及以下（rbac §7.3 `ALLOWED_PROJECT_ROLES_FOR_GUEST`）；整请求级前置校验 | Service | 400 + `INVALID` |
-| BR-06 | **末位 ADMIN 保护**：移除 / 降级最后一个 `PROJ_ADMIN` 前，断言「仍存在其他显式 ADMIN **或** 空间存在 `WS_OWNER`/`WS_ADMIN`（隐式接管）」；全部不满足 → 拒绝 | Service（事务） | 409 `RESOURCE_STATE_INVALID` |
+| BR-05 | `WS_GUEST` 只能被授予 `PROJ_COMMENTER` 及以下（rbac §7.3 `ALLOWED_PROJECT_ROLES_FOR_GUEST`）；整请求级前置校验 | Service（`assert_valid_project_role_for_guest`） | 403 `PERM_GUEST_LIMIT`（rbac §5.5/§7.3） |
+| BR-06 | **末位 ADMIN 保护**：移除 / 降级最后一个 `PROJ_ADMIN` 前，断言「仍存在其他显式 ADMIN **或** 空间存在 `WS_OWNER`/`WS_ADMIN`（隐式接管）」；全部不满足 → 拒绝 | Service（事务） | 403 `PERM_LAST_OWNER`（rbac §5.5/§7.2） |
 | BR-07 | 移除项目成员**不触发任务改派**：其名下任务保留指派但该成员已不可见（前端以「已移出成员」灰头像展示）；P2 `TASK-007` 交付转交 | — | — |
 | BR-08 | 收藏幂等：POST = `get_or_create`（重复 200）；DELETE 不存在也 204 | 动作子资源（`api-conventions.md` §2.6） | — |
-| BR-09 | 搜索关键词 1 ~ 64 字符；匹配 `name` 与 `identifier` 前缀（大小写不敏感）；URL `?q=` 同源可分享 | Serializer | 400 + `TOO_LONG` |
+| BR-09 | 搜索关键词 1 ~ 64 字符；匹配 `name` 与 `identifier` 前缀（大小写不敏感）；URL `?search=` 同源可分享（参数命名与 `api-conventions.md` §5.5 一致） | Serializer | 400 `VALIDATION_INVALID_PARAM` + `details.field=search/TOO_LONG` |
 | BR-10 | 列表排序：收藏段（组内按收藏时间倒序）→ 其余（按 `-updated_at`）；两段间有视觉分隔；游标分页尾部追加 `-id` 保稳定 | 前端 + 查询 | — |
 | BR-11 | 归档项目默认不出现在列表（`?status=` 未传时过滤）；收藏的已归档项目在「已收藏」Tab 中以归档徽标展示（不静默消失） | 查询 + 前端 | — |
-| BR-12 | 角色调整层级保护：`PROJ_ADMIN` 之间不可互相降级（rbac §7.1）；不可修改隐式管理员（其无本表行） | Service | 403 `PERM_ROLE_INSUFFICIENT` |
+| BR-12 | 角色调整层级保护：`PROJ_ADMIN` 之间不可互相降级（rbac §7.1）；不可修改隐式管理员（其无本表行） | Service | 403 `PERM_ROLE_HIERARCHY`（rbac §5.5/§7.1） |
 | BR-13 | `ProjectMember.workspace` 冗余列由 `save()` 从 `project.workspace_id` 自动填充，禁止手工赋值（rbac §3.2） | Model | — |
 | BR-14 | 成员变动（被加入 / 被移除 / 角色变更）产生 `Notification` 与项目动态落库（本迭代仅落库，`COLLAB-001` / `PROJ-003` 消费） | `on_commit` | — |
+| BR-15 | 收藏再激活：`ProjectFavorite` 取消时硬删除（`delete()`），不再保留 `deleted_at` 软删痕迹——保证再次收藏走 `get_or_create` 创建新行时无唯一冲突；项目软删期间用户无法访问 favorite 端点（`accessible_by` 过滤），恢复后收藏记录自然可重新生效。 | Model / Service | — |
 
 ### 2.7 异常处理
 
@@ -283,8 +284,8 @@ flowchart TD
 | 添加已是成员 | member ∈ 项目 active 集 | 200 | —（该条 `skipped`） | 结果列表「已在项目中」 | — |
 | 超过 20 人 | 21 个 member_ids | 400 | `VALIDATION_ERROR` + `TOO_LONG` | — | — |
 | 角色非法 | role=99 | 400 | `VALIDATION_ERROR` + `NOT_A_CHOICE` | 角色下拉标红 | — |
-| GUEST 越权角色 | 给 GUEST 授 CONTRIBUTOR+ | 400 | `VALIDATION_ERROR` + `INVALID` | 弹窗提示「访客最高为评论者，如需更高权限请先提升空间角色」 | 整请求前置校验 |
-| 移除 / 降级末位 ADMIN | BR-06 断言失败 | 409 | `RESOURCE_STATE_INVALID` | 弹窗「请先指定新的项目管理员，或由工作空间管理员接管」 | 事务回滚 |
+| GUEST 越权角色 | 给 GUEST 授 CONTRIBUTOR+ | 403 | `PERM_GUEST_LIMIT`（rbac §5.5/§7.3） | 弹窗提示「访客最高为评论者，如需更高权限请先提升空间角色」 | 整请求前置校验 |
+| 移除 / 降级末位 ADMIN | BR-06 断言失败 | 403 | `PERM_LAST_OWNER`（rbac §5.5/§7.2） | 弹窗「请先指定新的项目管理员，或由工作空间管理员接管」 | 事务回滚 |
 | 非管理员管理成员 | CONTRIBUTOR 调用 | 403 | `PERM_ROLE_INSUFFICIENT` | 操作菜单不可见（UI 层）+ 403（API 层） | — |
 | 收藏不可见项目 | 项目不在 `accessible_by()` 集 | 404 | `RESOURCE_NOT_FOUND` | 404 空态 | DB 层过滤（存在性隐藏） |
 | 收藏越限 | 第 51 个 | 409 | `RESOURCE_LIMIT_EXCEEDED` | 「收藏已满（50），请先取消部分收藏」 | Service 前置断言 |
@@ -344,7 +345,7 @@ flowchart TD
 
 | 元素 | 规格 |
 | --- | --- |
-| 搜索框 | 占位「搜索项目名或标识，如 RBT」；300ms 防抖；`q` 同步到 URL（分享 / 刷新还原）；清空按钮 |
+| 搜索框 | 占位「搜索项目名或标识，如 RBT」；300ms 防抖；`search` 同步到 URL（分享 / 刷新还原）；清空按钮 |
 | 状态筛选 | 下拉：进行中（默认）/ 已归档 / 全部；映射 `?status=active|archived|` （未传=默认排除归档） |
 | Tabs | 「全部 (N)」/「★ 已收藏 (M)」；后者 = `?favorite=true`；计数实时 |
 | 卡片星标 | 右上角 24px `star` / `star-filled`；`aria-pressed`；点击即乐观切换（§2.4） |
@@ -566,7 +567,7 @@ erDiagram
 
 | # | 方法 | 路径 | 描述 | 权限 Key | 成功码 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `GET` | `/api/v1/workspaces/{slug}/projects/` | 列表（`?q=&status=&favorite=&favorite_first=&cursor=`） | `project.list` | `200` |
+| 1 | `GET` | `/api/v1/workspaces/{slug}/projects/` | 列表（`?search=&status=&favorite=&favorite_first=&cursor=&per_page=`） | `project.list` | `200` |
 | 2 | `GET` | `…/projects/{project_id}/members/` | 项目成员列表（`?expand=user&search=`） | `project.member.read` | `200` |
 | 3 | `POST` | `…/projects/{project_id}/members/` | 批量添加成员（同角色，≤ 20） | `project.member.manage` | `200` |
 | 4 | `PATCH` | `…/projects/{project_id}/members/{member_id}/` | 调整项目角色 | `project.member.manage` | `200` |
@@ -581,12 +582,12 @@ erDiagram
 **请求**
 
 ```http
-GET /api/v1/workspaces/rabbitprojects/projects/?q=rbt&favorite_first=true&per_page=20 HTTP/1.1
+GET /api/v1/workspaces/rabbitprojects/projects/?search=rbt&favorite_first=true&per_page=20 HTTP/1.1
 ```
 
 | 查询参数 | 支持 | 说明 |
 | --- | --- | --- |
-| `?q=` | ✅ | `name` / `identifier` 前缀匹配（`istartswith`），≤ 64 字符（BR-09） |
+| `?search=` | ✅ | `name` / `identifier` 前缀匹配（`istartswith`），≤ 64 字符（BR-09；参数名与 `api-conventions.md` §5.5 一致） |
 | `?status=` | ✅ | `active` / `archived`；**未传时默认排除 archived**（BR-11）；`all` 显式全量 |
 | `?favorite=true` | ✅ | 仅收藏项（「已收藏」Tab） |
 | `?favorite_first=true` | ✅ | 收藏置顶段排序（BR-10） |
@@ -606,7 +607,7 @@ GET /api/v1/workspaces/rabbitprojects/projects/?q=rbt&favorite_first=true&per_pa
       "description": "核心业务系统",
       "status": "active",
       "is_favorite": true,
-      "member_count": 6,
+      "total_members": 6,
       "total_issues": 34,
       "current_user_role": 20,
       "updated_at": "2026-08-31T10:00:00.000Z"
@@ -618,20 +619,23 @@ GET /api/v1/workspaces/rabbitprojects/projects/?q=rbt&favorite_first=true&per_pa
       "description": "官网 v2",
       "status": "active",
       "is_favorite": false,
-      "member_count": 3,
+      "total_members": 3,
       "total_issues": 12,
       "current_user_role": 15,
       "updated_at": "2026-08-30T09:00:00.000Z"
     }
   ],
   "meta": {
-    "next_cursor": null,
+    "next_cursor": "20:1:0",
     "prev_cursor": "20:0:1",
-    "next_page_results": false,
+    "next_page_results": true,
+    "prev_page_results": false,
     "count": 2,
     "total_count": 12,
-    "favorite_count": 1,
-    "grouped_by": "favorite_first"
+    "total_pages": 1,
+    "page": 1,
+    "per_page": 20,
+    "favorite_count": 1
   }
 }
 ```
@@ -640,7 +644,7 @@ GET /api/v1/workspaces/rabbitprojects/projects/?q=rbt&favorite_first=true&per_pa
 | --- | --- |
 | `is_favorite` | **注水字段**：序列化层用「一次取出的用户收藏集」判定，非逐行子查询（§4.3.1） |
 | `favorite_count` | 可见集中被收藏的数量（「已收藏」Tab 计数） |
-| `member_count` / `total_issues` | annotate 聚合（沿袭 `PROJ-001` 列表页口径，成员计数仅显式 `ProjectMember`，隐式管理员不占位） |
+| `total_members` / `total_issues` | annotate 聚合（沿袭 `PROJ-001` 列表页口径，成员计数仅显式 `ProjectMember`，隐式管理员不占位） |
 | `current_user_role` | 有效项目角色（显式与隐式取大，`PROJ-001` §4.3.3） |
 
 **失败响应 `400`（关键词超长）**
@@ -652,7 +656,7 @@ GET /api/v1/workspaces/rabbitprojects/projects/?q=rbt&favorite_first=true&per_pa
     "code": "VALIDATION_ERROR",
     "message": "请求参数校验失败",
     "details": [
-      { "field": "q", "code": "TOO_LONG", "message": "搜索关键词最多 64 个字符" }
+      { "field": "search", "code": "TOO_LONG", "message": "搜索关键词最多 64 个字符" }
     ],
     "request_id": "01JCTF5N3S9UB6O3R7X8Y9Z1A01"
   }
@@ -753,7 +757,10 @@ GET …/projects/9d8e7f6a-…/members/?expand=user&search=liang HTTP/1.1
     }
   ],
   "meta": {
-    "next_cursor": null, "count": 6, "total_count": 6, "page": 1, "per_page": 20
+    "next_cursor": null, "prev_cursor": null,
+    "next_page_results": false, "prev_page_results": false,
+    "count": 6, "total_count": 6, "total_pages": 1,
+    "page": 1, "per_page": 20
   }
 }
 ```
@@ -774,13 +781,13 @@ GET …/projects/9d8e7f6a-…/members/?expand=user&search=liang HTTP/1.1
 
 **成功响应 `200`**：返回该成员完整对象（`role` 已更新）。
 
-**失败响应 `409`（末位 ADMIN 降级）**
+**失败响应 `403`（末位 ADMIN 降级，`PERM_LAST_OWNER`，rbac §5.5/§7.2）**
 
 ```json
 {
   "status": "error",
   "error": {
-    "code": "RESOURCE_STATE_INVALID",
+    "code": "PERM_LAST_OWNER",
     "message": "项目必须保留至少一名项目管理员：请先指定新管理员，或由工作空间管理员接管",
     "request_id": "01JCTF5N3S9UB6O3R7X8Y9Z1A03"
   }
@@ -796,7 +803,7 @@ HTTP/1.1 204 No Content
 X-Request-Id: 01JCTF5N3S9UB6O3R7X8Y9Z1A04
 ```
 
-响应体为空。**失败响应** `409`（末位 ADMIN）同 §4.2.4；`403`（非管理员操作）为 `PERM_ROLE_INSUFFICIENT`。
+响应体为空。**失败响应** `403`（末位 ADMIN）同 §4.2.4；`403`（非管理员操作）为 `PERM_ROLE_INSUFFICIENT`。
 
 #### 4.2.6 `POST .../favorite/` — 收藏（幂等）
 
@@ -884,9 +891,10 @@ class ProjectQueryService:
         else:
             qs = qs.order_by("-updated_at", "-id")
 
-        # ⑥ 聚合（成员计数只数显式 ProjectMember——隐式管理员不占位，rbac §7.4）
+        # ⑥ 聚合（成员计数只数显式 ProjectMember——隐式管理员不占位，rbac §7.4；
+        #    字段命名沿袭 PROJ-001 §4.3.2/§4.3.5，使用 total_members 而非 member_count）
         qs = qs.annotate(
-            member_count=Count(
+            total_members=Count(
                 "project_projectmember",
                 filter=Q(project_projectmember__is_active=True,
                          project_projectmember__deleted_at__isnull=True),
@@ -985,9 +993,12 @@ class ProjectMemberService:
                 )
                 transaction.on_commit(
                     lambda m_id=mid: notify_project_member.delay(
-                        receiver_id=m_id, kind="project.member.added",
-                        context={"project_id": str(project.id),
-                                 "project_name": project.name, "role": role},
+                        receiver_id=m_id, event="project.member.added",
+                        title=f"你已加入项目「{project.name}」（{ProjectRole(role).label}）",
+                        data={"project_id": str(project.id),
+                              "project_name": project.name,
+                              "workspace_slug": project.workspace.slug,
+                              "role": role, "actor": actor.display_name},
                     )
                 )
                 results.append({"member_id": mid, "status": "added",
@@ -1025,8 +1036,11 @@ class ProjectMemberService:
         self._assert_not_last_admin(project=project, member_being_changed=member)
         member.delete()                                           # 软删；任务指派保留（BR-07）
         transaction.on_commit(lambda: notify_project_member.delay(
-            receiver_id=str(member.member_id), kind="project.member.removed",
-            context={"project_id": str(project.id), "project_name": project.name}))
+            receiver_id=str(member.member_id), event="project.member.removed",
+            title=f"你已被移出项目「{project.name}」",
+            data={"project_id": str(project.id), "project_name": project.name,
+                  "workspace_slug": project.workspace.slug,
+                  "actor": actor.display_name}))
 
     @transaction.atomic
     def change_role(self, *, project, member: ProjectMember, new_role: int, actor) -> ProjectMember:
@@ -1041,8 +1055,12 @@ class ProjectMemberService:
         member.updated_by = actor
         member.save(update_fields=["role", "updated_by", "updated_at"])
         transaction.on_commit(lambda: notify_project_member.delay(
-            receiver_id=str(member.member_id), kind="project.member.role_changed",
-            context={"project_id": str(project.id), "role": new_role}))
+            receiver_id=str(member.member_id), event="project.member.role_changed",
+            title=f"你在项目「{project.name}」的角色已变更为 {ProjectRole(new_role).label}",
+            data={"project_id": str(project.id), "project_name": project.name,
+                  "workspace_slug": project.workspace.slug,
+                  "old_role": member.role, "new_role": new_role,
+                  "actor": actor.display_name}))
         return member
 
     # ---------------- 收藏 / 归档 ----------------
@@ -1092,7 +1110,11 @@ class ProjectMemberViewSet(ProjectScopedAPIView):
             )
             .select_related("member", "workspace")
             .annotate(joined_at=F("created_at"),
-                      workspace_role=F("workspace_member__role"))   # GUEST 预拦数据（§4.2.3）
+                      workspace_role=F("member__workspace_member__role"))   # GUEST 预拦数据（§4.2.3）
+            # 注：workspace_member 是 User 侧的 related_name（WorkspaceMember.member 反向），
+            # 必须经 ProjectMember.member 中转才能 JOIN；直接 workspace_member__role 会因
+            # ProjectMember 无此关系而抛 FieldError。本字段为「该成员的空间角色」聚合读数，
+            # 服务于前端 GUEST 上限预拦（§3.3）与「访客」标记（§3.2）。
             .order_by("-role", "created_at")
         )
 ```
@@ -1108,7 +1130,7 @@ class ProjectMemberPermission(ProjectBasePermission):
     }
 ```
 
-列表端点（`GET projects/`）在 `PROJ-001` 的 `ProjectViewSet.list` 上扩展查询参数解析（`q` / `status` / `favorite` / `favorite_first`），委托 `ProjectQueryService`；favorite / archive 两个动作子资源以 `@action(detail=True, methods=["post", "delete"])` 挂载。
+列表端点（`GET projects/`）在 `PROJ-001` 的 `ProjectViewSet.list` 上扩展查询参数解析（`search` / `status` / `favorite` / `favorite_first`），委托 `ProjectQueryService`；favorite / archive 两个动作子资源以 `@action(detail=True, methods=["post", "delete"])` 挂载。
 
 ### 4.4 通知与 Celery 任务
 
@@ -1117,11 +1139,18 @@ class ProjectMemberPermission(ProjectBasePermission):
 ```python
 # apps/api/plane/bgtasks/project_notifications.py
 @shared_task(bind=True, max_retries=3)
-def notify_project_member(self, receiver_id: str, kind: str, context: dict) -> None:
-    """项目成员变动通知（added / removed / role_changed）——落库，COLLAB-001 通知中心消费。"""
+def notify_project_member(self, receiver_id: str, event: str,
+                          title: str, data: dict) -> None:
+    """项目成员变动通知（added / removed / role_changed）——落库，COLLAB-001 通知中心消费。
+
+    字段命名与 Notification 模型（COLLAB-001 §4.1.2）对齐：event / title / data / read_at。
+    `project.member.*` 这 4 类事件须在 COLLAB-001 §2.3 / §4.1.2 的 Event 枚举中补登——
+    当前 COLLAB-001 仅登记 4 类 issue.* 事件，**架构文档待回改登记**。
+    """
     Notification.objects.create(
-        receiver_id=receiver_id, kind=kind, context=context,
-        is_read=False,
+        receiver_id=receiver_id, event=event, title=title[:200], data=data,
+        # read_at 默认 NULL（未读）；dedup_key 由 worker 内构建：
+        # sha256(event + project_id + actor_id + epoch + receiver_id)
     )
 
 @shared_task(bind=True, max_retries=3)
@@ -1132,7 +1161,7 @@ def notify_project_archived(self, project_id: str, archived: bool) -> None:
 
 | 任务 | 触发 | 队列 | 幂等 |
 | --- | --- | --- | --- |
-| `notify_project_member` | `on_commit` | `default` | 只传 ID；重试由行级 is_read 语义天然幂等 |
+| `notify_project_member` | `on_commit` | `default` | 只传 ID；重试由 `(receiver, dedup_key)` 唯一约束天然幂等（COLLAB-001 §4.1.2） |
 | `notify_project_archived` | `on_commit` | `default` | 同上 |
 
 ### 4.5 端点 × 角色权限矩阵
@@ -1160,8 +1189,8 @@ import type { IProject } from "@rp/types";
 import { ProjectService, ProjectFavoriteService } from "@/services/project.service";
 
 export class ProjectListStore {
-  filters: { q: string; status: "active" | "archived" | "all"; favorite: boolean } = {
-    q: "", status: "active", favorite: false,
+  filters: { search: string; status: "active" | "archived" | "all"; favorite: boolean } = {
+    search: "", status: "active", favorite: false,
   };
   favoriteIds: Set<string> = new Set();
   private projectService = new ProjectService();
@@ -1174,12 +1203,12 @@ export class ProjectListStore {
     });
   }
 
-  /** URL ↔ Store 双向同步：q / status / favorite 均落在 URL（可分享 / 刷新还原，TASK-003 同源策略） */
+  /** URL ↔ Store 双向同步：search / status / favorite 均落在 URL（可分享 / 刷新还原，TASK-003 同源策略） */
   setFilter = (patch: Partial<typeof this.filters>, replaceUrl = true) => {
     this.filters = { ...this.filters, ...patch };
     if (replaceUrl) {
       const params = new URLSearchParams();
-      if (this.filters.q) params.set("q", this.filters.q);
+      if (this.filters.search) params.set("search", this.filters.search);
       if (this.filters.status !== "active") params.set("status", this.filters.status);
       if (this.filters.favorite) params.set("favorite", "true");
       window.history.replaceState(null, "", `?${params.toString()}`);
@@ -1188,7 +1217,7 @@ export class ProjectListStore {
 
   syncFromUrl = (params: URLSearchParams) => {
     this.setFilter({
-      q: params.get("q") ?? "",
+      search: params.get("search") ?? "",
       status: (params.get("status") as typeof this.filters.status) ?? "active",
       favorite: params.get("favorite") === "true",
     }, false);
@@ -1196,9 +1225,9 @@ export class ProjectListStore {
 
   /** SWR key 派生：filters 变化 → key 变化 → 自动重新请求 */
   get listKey(): string {
-    const { q, status, favorite } = this.filters;
+    const { search, status, favorite } = this.filters;
     return `/api/v1/workspaces/${this.rootStore.workspace.currentWorkspaceSlug}/projects/`
-         + `?q=${q}&status=${status}&favorite=${favorite}&favorite_first=true`;
+         + `?search=${encodeURIComponent(search)}&status=${status}&favorite=${favorite}&favorite_first=true`;
   }
 
   toggleFavorite = async (projectId: string) => {
@@ -1246,7 +1275,7 @@ export class ProjectMemberStore {
       const updated = await this.service.changeRole(projectId, memberId, { role });
       runInAction(() => { this.memberMap[memberId] = updated; });
     } catch (e) {
-      runInAction(() => { this.memberMap[memberId] = snapshot; });              // 回滚（含 403/409）
+      runInAction(() => { this.memberMap[memberId] = snapshot; });              // 回滚（403 层级 / 末位保护）
       throw e;
     }
   };
@@ -1286,20 +1315,20 @@ export class ProjectMemberStore {
 | BE-02 | 添加空间外成员 | member_ids 含空间外 UUID | POST | 该条 `failed/not_workspace_member`；他条不受影响 |
 | BE-03 | 超过 20 人 | 21 个 | POST | 400 + `member_ids/TOO_LONG` |
 | BE-04 | 角色非法 | role=99 | POST | 400 + `role/NOT_A_CHOICE` |
-| BE-05 | GUEST 上限 | GUEST + role=15 | POST | 400 + `member_ids/INVALID`（整请求级拒绝） |
+| BE-05 | GUEST 上限 | GUEST + role=15 | POST | 403 `PERM_GUEST_LIMIT`（rbac §5.5/§7.3，整请求级拒绝） |
 | BE-06 | GUEST 合法档位 | GUEST + role=10（评论者） | POST | `added` |
 | BE-07 | CONTRIBUTOR 管理 | role=15 调用 POST | — | 403 `PERM_ROLE_INSUFFICIENT` |
-| BE-08 | 末位 ADMIN 保护（显式） | 唯一 PROJ_ADMIN，空间无 WS_ADMIN+ | DELETE 该成员 | 409 `RESOURCE_STATE_INVALID` |
+| BE-08 | 末位 ADMIN 保护（显式） | 唯一 PROJ_ADMIN，空间无 WS_ADMIN+ | DELETE 该成员 | 403 `PERM_LAST_OWNER`（rbac §5.5/§7.2） |
 | BE-09 | 隐式接管放行 | 空间存在 WS_ADMIN | DELETE 唯一 PROJ_ADMIN | 204（隐式接管，动态留痕） |
-| BE-10 | 末位 ADMIN 降级 | 同 BE-08 前置 | PATCH role=15 | 409 |
-| BE-11 | 层级保护 | PROJ_ADMIN 改另一 PROJ_ADMIN | PATCH | 403 `PERM_ROLE_INSUFFICIENT`（rbac §7.1） |
+| BE-10 | 末位 ADMIN 降级 | 同 BE-08 前置 | PATCH role=15 | 403 `PERM_LAST_OWNER` |
+| BE-11 | 层级保护 | PROJ_ADMIN 改另一 PROJ_ADMIN | PATCH | 403 `PERM_ROLE_HIERARCHY`（rbac §5.5/§7.1） |
 | BE-12 | 移除后隔离 | 移除成员 | 该成员 GET 项目 / 任务 | 404（`accessible_by`） |
 | BE-13 | 任务指派保留 | 被移除者名下 5 个任务 | 移除后查 | `IssueAssignee` 行完整（BR-07） |
 | BE-14 | 空间移除级联 | `TEAM-002` 移除空间成员 | 查其 ProjectMember | 行软删 |
 | BE-15 | 重新添加新建行 | 移除后再次添加 | 查行数与 created_at | 新行；旧行保持软删 |
-| BE-16 | 搜索前缀命中 | 造 `兔子核心系统 RBT` / `营销页改版 MKP` | `?q=rbt` | 仅命中 RBT（大小写不敏感） |
-| BE-17 | 搜索 identifier 前缀 | `?q=mk` | — | 命中 MKP |
-| BE-18 | 搜索空串 | `?q=` | — | 等价未传（全量） |
+| BE-16 | 搜索前缀命中 | 造 `兔子核心系统 RBT` / `营销页改版 MKP` | `?search=rbt` | 仅命中 RBT（大小写不敏感） |
+| BE-17 | 搜索 identifier 前缀 | `?search=mk` | — | 命中 MKP |
+| BE-18 | 搜索空串 | `?search=` | — | 等价未传（全量） |
 | BE-19 | 归档默认排除 | 1 active + 1 archived | GET 列表（无 status） | 仅 active |
 | BE-20 | 归档筛选 | `?status=archived` | — | 仅 archived |
 | BE-21 | 收藏幂等 | 同项目两次 POST favorite | — | 均 200；库中一行（`created` 第二次为 false） |
@@ -1312,16 +1341,18 @@ export class ProjectMemberStore {
 | BE-28 | 归档幂等 | 已 archived 再 POST archive | — | 200 `{status:"archived"}` |
 | BE-29 | 归档后只读 | 归档项目内建任务 | POST issues | 403 `PERM_PROJECT_ARCHIVED` |
 | BE-30 | 恢复归档 | DELETE archive | — | 200 `{status:"active"}`；列表重新出现 |
-| BE-31 | 隐式管理员不计数 | WS_ADMIN 无成员行 | 列表 `member_count` | 仅显式成员数 |
+| BE-31 | 隐式管理员不计数 | WS_ADMIN 无成员行 | 列表 `total_members` | 仅显式成员数 |
 | BE-32 | GUEST 列表过滤 | GUEST 已加入 1 / 空间共 5 项目 | GET 列表 | 仅 1 个 |
 | BE-33 | 响应契约 | 任意端点 | 抓包 | 信封 / `request_id` / 204 空体全部合规 |
+| BE-34 | workspace 冗余列自动填充（BR-13） | 故意构造 `ProjectMember` 直接 `create(project=p, member=u, role=…)` 不传 workspace | 查行 | `workspace_id == p.workspace_id`（Model `save()` 自动填，BE-01 仅观察已含此行为，本用例专项守护） |
+| BE-35 | 收藏已归档项目在「已收藏」Tab 中显示（BR-11） | 收藏 1 个已归档项目 + 默认 `?status=` | GET `?favorite=true` | 命中该归档项目；响应带 `status:"archived"`；前端展示归档徽标（FE-13 配套守护） |
 
 ### 5.2 前端单元测试（Vitest + Testing Library）
 
 | # | 用例 | 预期 |
 | --- | --- | --- |
 | FE-01 | 搜索防抖 300ms | 两次快速输入仅发一次请求 |
-| FE-02 | URL 同步 | 输入后 `?q=rbt` 出现；带参刷新还原筛选 |
+| FE-02 | URL 同步 | 输入后 `?search=rbt` 出现；带参刷新还原筛选 |
 | FE-03 | `keepPreviousData` | key 变化时旧列表保持渲染（无闪白） |
 | FE-04 | 收藏乐观切换 + 回滚 | mock 500 后星标恢复；409 时 Toast 显示上限文案 |
 | FE-05 | FLIP 动画触发 | 收藏后卡片进入收藏段（位置动画帧存在） |
@@ -1332,6 +1363,7 @@ export class ProjectMemberStore {
 | FE-10 | 角色回滚 | PATCH 403 后徽章恢复 |
 | FE-11 | 移除确认文案 | 显示其名下任务数（「指派将保留」） |
 | FE-12 | 星标 aria | `aria-pressed` 随状态切换；`aria-label` 含项目名 |
+| FE-13 | 收藏 Tab 归档徽标 | 「已收藏」Tab 含归档项目 | 卡片显示「⊘ 已归档」灰徽标 + `opacity-75`（配套 BE-35） |
 
 ### 5.3 E2E 测试（Playwright）
 
@@ -1342,7 +1374,7 @@ export class ProjectMemberStore {
 | E2E-03 | 找项目 | 20 项目中搜「rbt」 | 1 结果 < 1s；清空恢复全量；URL 分享打开结果一致 |
 | E2E-04 | 高频项目直达 | 收藏 2 项目后刷新浏览器 | 收藏段稳定置顶；「已收藏」Tab 计数 2；取消后回到常规排序 |
 | E2E-05 | 归档旅程 | 归档项目 → 列表消失 → 「已归档」筛出 → 进入见只读横幅 → 恢复 | 每步状态正确；归档项目内建任务被拦截 |
-| E2E-06 | 末位保护 | 移除唯一 ADMIN（空间无 WS_ADMIN+） | 409 弹窗提示指定新管理员 |
+| E2E-06 | 末位保护 | 移除唯一 ADMIN（空间无 WS_ADMIN+） | 403 `PERM_LAST_OWNER` 弹窗提示指定新管理员 |
 
 ### 5.4 覆盖率门禁
 
@@ -1409,12 +1441,12 @@ export class ProjectMemberStore {
 | 类型 | 交付物 |
 | --- | --- |
 | Model / Migration | `ProjectFavorite` 新表（`uniq_user_project_favorite` + `idx_pf_user_time`） |
-| API 端点 | §4.2 全部 9 个（列表端点扩展 `q/status/favorite/favorite_first` 参数） |
+| API 端点 | §4.2 全部 9 个（列表端点扩展 `search/status/favorite/favorite_first` 参数） |
 | 后端 | `ProjectQueryService`（搜索 + 收藏置顶 + 注水）、`ProjectMemberService`（批量 / 三条保护规则 / 收藏 / 归档）、`ProjectMemberViewSet` + favorite/archive 动作子资源、`ProjectMemberPermission` |
 | Celery | `notify_project_member` / `notify_project_archived`（复用 COLLAB-001 管道，无新 beat） |
 | 前端 | 项目列表页升级（搜索行 / Tabs / 收藏段 / 星标 / 归档徽标）、项目设置成员 Tab、添加成员弹窗（候选差集）、归档确认弹窗、`ProjectListStore` / `ProjectMemberStore` |
 | 通知 | 被加入 / 被移出 / 角色变更 / 归档 4 类 `Notification`（落库） |
-| 测试 | BE-01~33、FE-01~12、E2E-01~06 |
+| 测试 | BE-01~35、FE-01~13、E2E-01~06 |
 | 文档 | 本文档；OpenAPI `@extend_schema` 补齐 9 端点与查询参数 |
 
 ### 7.2 功能验收（可操作演示）
@@ -1423,7 +1455,7 @@ export class ProjectMemberStore {
 | --- | --- | --- |
 | AC-01 | 批量添加逐条反馈 | 项目管理员一次添加 3 名成员：2 成功 1 skipped（已在项目）；成功者立即获得对应权限并收到通知，且出现在 `TASK-002` 指派人选择器中 |
 | AC-02 | 移除即隔离、数据不丢 | 被移除成员刷新后项目 404；其名下任务对他人仍可见（灰头像，指派保留） |
-| AC-03 | 保护规则 | 移除 / 降级唯一 ADMIN（空间无 WS_OWNER/ADMIN）被 409 拦截并提示指定新管理员；空间存在 WS_ADMIN 时放行（隐式接管） |
+| AC-03 | 保护规则 | 移除 / 降级唯一 ADMIN（空间无 WS_OWNER/ADMIN）被 403 `PERM_LAST_OWNER` 拦截并提示指定新管理员；空间存在 WS_ADMIN 时放行（隐式接管） |
 | AC-04 | 搜索可分享 | 搜索「rbt」大小写任意命中 RBT 项目；URL 参数在另一浏览器打开结果一致；清空恢复全量 |
 | AC-05 | 收藏直达 | 收藏项目后刷新浏览器，收藏段稳定置顶且组内按收藏时间倒序；「已收藏」Tab 计数正确；取消后回到常规排序；第 51 个收藏被 409 引导 |
 | AC-06 | 归档旅程 | 归档后项目默认从列表消失、「已归档」筛选可见、进入后全局只读（建任务 403）、取消归档完全恢复 |
@@ -1445,5 +1477,5 @@ export class ProjectMemberStore {
 - [ ] §7.2 八条功能验收全部通过，并由非开发者走查一遍
 - [ ] §7.3 非功能指标达标；§5.4 覆盖率门禁通过；`ruff` / `mypy` / `oxlint` / `tsc` 零 error
 - [ ] `TASK-002` 开发者确认：`GET members/?expand=user`（含 `workspace_role`）足以支撑指派人选择器与 GUEST 预拦
-- [ ] `COLLAB-001` 开发者确认：4 类 Notification 的 kind 与 context 契约冻结
+- [ ] `COLLAB-001` 开发者确认：4 类项目成员 Notification 的 `event` / `title` / `data` 契约冻结（`project.member.added` / `removed` / `role_changed` / `project.archived` 4 个 event 在 COLLAB-001 §2.3 / §4.1.2 Event 枚举补登——架构文档待回改登记）
 - [ ] `docker compose up` 环境完整走通「邀请入空间 → 加入项目 → 建任务指派 → 搜索 / 收藏项目 → 移除 → 隔离 → 归档 / 恢复」链路

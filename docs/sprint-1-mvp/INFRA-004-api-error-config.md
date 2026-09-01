@@ -40,7 +40,7 @@ INFRA-004 把这四件事一次收口为**框架级默认行为**：
 | 错误码注册表 | `ErrorCodes` 注册表与架构文档 §8 全表**一一对应**；业务代码只能抛 `AppException(code=...)`，未注册码在测试期即 `KeyError` 暴露 |
 | 六件套中间件 | `RequestIDMiddleware → StructuredLoggingMiddleware → RateLimitHeaderMiddleware → AuditContextMiddleware → ResponseEnvelopeMiddleware → MaintenanceModeMiddleware`，顺序与职责对齐 §10.4 配套中间件表 |
 | 结构化运行日志 | structlog JSON 行格式 + ULID 请求追踪 ID + 按模块分 channel + 慢请求 / 查询数 / 脱敏三条可观测规则（§13.5） |
-| 环境配置体系 | `settings/{__init__,base,dev,prod}.py` 四文件分层 + `.env.example` 单一事实来源 + prod 6 项必填项启动即校验（快速失败） |
+| 环境配置体系 | `settings/{__init__,base,dev,prod}.py` 四文件分层 + `.env.example` 单一事实来源 + prod 9 项必填项启动即校验（快速失败） |
 | 前端消费闭环 | axios 错误拦截器按 `error.code` 分派（§8.9 范围的 P1 子集）、`ErrorToast`、`useApiFieldErrors`、404/403/500 空态页 |
 
 ### 1.2 三大关键约定（本文档最重要的技术决策）
@@ -50,7 +50,7 @@ INFRA-004 把这四件事一次收口为**框架级默认行为**：
 | # | 约定 | 含义 | 守护机制 |
 | --- | --- | --- | --- |
 | **C1** | **信封两种结构，无例外** | 所有 `2xx`（除 `204` 空体）为 `{status:"success", data, meta}`；所有 `4xx/5xx` 为 `{status:"error", error:{code, message, details?, request_id, doc_url?}}`。**不存在任何第三种结构**，包括 Nginx 网关层产生的 413/502/503/504 | IT-01 全路由快照测试逐路由断言；`ResponseEnvelopeMiddleware` 兜底（开发态直接抛错，见 §4.6） |
-| **C2** | **错误码双源一致** | 错误码唯一事实来源是 [`api-conventions.md`](../architecture/api-conventions.md) §8；后端 `ErrorCodes` 注册表、前端 `ErrorCode` 常量、OpenAPI `ErrorEnvelope` 组件三者由脚本校验与文档集合一致 | UT-01 解析 Markdown 错误码表 vs 注册表集合断言相等；`scripts/check-error-codes.mjs` 在 CI 对前后端双向校验（§4.11） |
+| **C2** | **错误码双源一致** | 错误码唯一事实来源是 [`api-conventions.md`](../architecture/api-conventions.md) §8；后端 `ErrorCodes` 注册表、前端手写 `ErrorCode` 常量、OpenAPI `ErrorEnvelope` 影子枚举由脚本校验与文档四方集合一致（详见 §4.11.1 / §4.11.3） | UT-01 解析 Markdown 错误码表 vs 注册表集合断言相等；`scripts/check-error-codes.mjs` 在 CI 对四组集合两两 diff（§4.11.3） |
 | **C3** | **`request_id` 全链路贯穿** | ULID 生成于最外层中间件，同时出现在：响应头 `X-Request-Id`、错误体 `error.request_id`、access 日志、error 日志（含堆栈）。用户报障提供此 ID 即可检索到该请求的全部日志 | UT-05 单元断言 + IT-03 检索演练 |
 
 **与 `204` 的关系澄清**（对齐 §4.3 状态码表）：`204 No Content` 的响应体**必须为空**，不包装 `{status:"success"}`——这是 C1 的显式例外而非漏洞。`ResponseEnvelopeMiddleware` 对 204 放行不包装。
@@ -61,7 +61,7 @@ INFRA-004 把这四件事一次收口为**框架级默认行为**：
 apps/api/plane/
 ├── base/                          # ★ 本文档新增的框架层
 │   ├── __init__.py
-│   ├── error_codes.py             # 错误码注册表（§8 全表 69 码）
+│   ├── error_codes.py             # 错误码注册表（§8 全表 75 码）
 │   ├── exception.py               # AppException 基类 + 默认文案
 │   ├── handlers.py                # envelope_exception_handler（十步收敛）
 │   ├── response.py                # success_response / 分页 meta 装配
@@ -70,7 +70,7 @@ apps/api/plane/
 │   ├── __init__.py                # 按 DJANGO_SETTINGS_MODULE 分发
 │   ├── base.py                    # 公共配置（全量）
 │   ├── dev.py                     # DEBUG=True + 本地容器默认值 + CORS 宽松
-│   └── prod.py                    # DEBUG=False + 安全头 + 6 项必填启动校验
+│   └── prod.py                    # DEBUG=False + 安全头 + 9 项必填启动校验
 └── logging.py                     # structlog 配置（进程入口调用）
 
 apps/proxy/conf.d/api.conf         # 413/502/503/504 网关层统一 JSON
@@ -80,7 +80,10 @@ packages/form/src/hooks/use-api-field-errors.ts   # details[] → 表单字段�
 scripts/check-error-codes.mjs      # 前后端错误码一致性校验（CI）
 ```
 
-> **落位说明**：[`api-conventions.md`](../architecture/api-conventions.md) §10.4 以 `plane/utils/exception_handler.py` 指称该组件；实际落位为 `plane/base/handlers.py`（与既有 `plane/app/` / `plane/api/` / `plane/space/` 三包平行的框架层）。二者是同一组件的规范名与落位名，本文档以下统一使用 `plane/base/`。
+> **落位说明（与 INFRA-003 / monorepo-structure.md 的命名差异）**：
+> 1. **框架层包名**：[`api-conventions.md`](../architecture/api-conventions.md) §10.4 以 `plane/utils/` / `plane/middleware/` 指称相关组件；[`monorepo-structure.md`](../architecture/monorepo-structure.md) §2 已将 `utils/` 与 `middleware/` 用于「分页器、字段选择 mixin」与「请求 ID、审计上下文」等独立模块；`INFRA-003` 已交付 `plane/settings/{common,local,production,test}.py`。**为避免与既有 `plane/utils/` / `plane/middleware/` 目录命名冲突**，本文档新增的「异常处理 / 错误码注册表 / 信封装配 / 六件套中间件 / contextvar」统一落位到 `plane/base/`，与既有 `plane/app/` / `plane/api/` / `plane/space/` / `plane/utils/` / `plane/middleware/` 五包平行的**第六个框架层**。`plane/middleware/` 保留 `monorepo-structure` §2 约定的「请求 ID、审计上下文」等内容（与 `plane/base/middleware.py` 的六件套是子集关系，本文档的六件套作为 `MIDDLEWARE` 列表的入口）。
+> 2. **settings 文件名**：[`INFRA-003`](./INFRA-003-django-models-init.md) §2.2 已交付 `plane/settings/{common,local,production,test}.py`；本文 §4.8 引用的 `plane/settings/{__init__,base,dev,prod}.py` 为**正式命名收口**——`common` → `base`、`local` → `dev`、`production` → `prod`、`test.py` 不在 P1 范围（测试态通过 `DJANGO_SETTINGS_MODULE` 切到 `base` + 环境变量覆盖实现）。**该命名收口在 INFRA-003 验收通过后由本文档统一发起 ADR，不在 INFRA-003 PR 中回改**，以避免 PR 范围污染。
+> 3. **架构文档待回改**：`api-conventions.md` §10.4 的 `plane/utils/exception_handler.py` 与 `monorepo-structure.md` §2 的 `utils/` / `middleware/` 命名待回改为 `plane/base/`，本文与 INFRA-003 实现为准。
 
 ### 1.4 范围边界
 
@@ -104,7 +107,7 @@ scripts/check-error-codes.mjs      # 前后端错误码一致性校验（CI）
 | 依赖文档 | 消费的具体决策 | 缺失后果 |
 | --- | --- | --- |
 | `INFRA-003` | Django App 划分、settings 骨架、`BaseModel` | 异常处理器与中间件无处挂载 |
-| `INFRA-002` | `apps/proxy`（Nginx）与全部服务容器；`docker-compose.prod.yml` 的 `${VAR:?}` 强制变量清单（§2.5） | 网关层 413/502/503/504 统一 JSON 无法落地；6 项必填校验清单无依据 |
+| `INFRA-002` | `apps/proxy`（Nginx）与全部服务容器；`docker-compose.prod.yml` 的 `${VAR:?}` 强制变量清单（§2.5） | 网关层 413/502/503/504 统一 JSON 无法落地；9 项必填校验清单无依据 |
 | `INFRA-001` | `scripts/gen-api-types.mjs` 生成链路、`packages/types` 位置 | 前端 `ErrorCode` 无法同源生成 |
 | [`api-conventions.md`](../architecture/api-conventions.md) | §4 响应格式、§8 错误码总表、§10.4 处理顺序与中间件、§13.4 CORS、§13.5 日志——本文档是其**代码实现**，不新增任何规范 | — |
 
@@ -230,9 +233,9 @@ sequenceDiagram
 | BR-08 | 500 响应体永不包含堆栈 / SQL / 路径 / 内部主机名；`message` 固定通用文案 | handlers.py 第 10 步 | UT-04 |
 | BR-09 | 校验错误必须逐字段给出 `details[]`，字段级子码遵循 §8.8（`REQUIRED` / `INVALID` / `UNIQUE` / `DOES_NOT_EXIST`…） | handlers.py 第 2 步 | 评审拒绝 |
 | BR-10 | 日志单条 ≤ 8 KB：超长字段（请求体摘要等）截断为前 512 字符 + `…` | structlog processor | UT-08 |
-| BR-11 | 日志中的 `password` / `token` / `secret` / `X-API-Key` 一律脱敏为 `***` | structlog processor | UT-12 |
+| BR-11 | 日志中的 `password` / `token` / `secret` / `X-API-Key` 一律脱敏为 `***` | structlog processor | UT-11 |
 | BR-12 | 单请求 DB 查询 > 30 记 WARN；请求耗时 > 1000ms 记 WARN、> 3000ms 记 ERROR | LoggingMiddleware 出站 | — |
-| BR-13 | prod 环境 6 项必填变量（§4.8）缺失时 `ImproperlyConfigured` 快速失败，**禁止带缺省启动** | prod.py 模块级校验 | 进程退出 |
+| BR-13 | prod 环境 9 项必填变量（§4.8）缺失时 `ImproperlyConfigured` 快速失败，**禁止带缺省启动** | prod.py 模块级校验 | 进程退出 |
 | BR-14 | `SMTP_HOST` 为空 = 邮件功能**降级**为日志投递，主流程不报错（P1 无邮件依赖方，`AUTH-004` 忘记密码依赖此契约） | `plane/app/mail.py` | IT-05 |
 | BR-15 | `.env.example` 是唯一环境变量模板；代码读取的变量集合 ⊆ 模板键集合 | UT-09 扫描 `os.environ.get` | CI 失败 |
 | BR-16 | 新增错误码的完整链路（文档 §8 → 后端注册表 → 前端常量 → OpenAPI 组件）必须在**同一 PR** 完成 | PR 模板检查项 | 评审拒绝 |
@@ -266,7 +269,7 @@ sequenceDiagram
 | 请求体大小 | 2 MB（api 层；附件直传走 MinIO 预签名不经 api） | Nginx `client_max_body_size` 拦截 → 413 统一 JSON |
 | `request_id` 透传 | 仅接受合法 ULID 格式的外部 `X-Request-Id` | 非法则重新生成（防日志注入） |
 | ULID 长度 | 26 字符 | — |
-| 环境变量缺失（6 项必填） | — | 启动即 `ImproperlyConfigured`，退出码非 0 |
+| 环境变量缺失（9 项必填） | — | 启动即 `ImproperlyConfigured`，退出码非 0 |
 | 维护模式白名单 | `/api/v1/health/` 一条 | 白名单外全部 503 |
 
 ---
@@ -416,7 +419,7 @@ export function useApiFieldErrors(form: UseFormReturn) {
 ```mermaid
 flowchart LR
     subgraph Framework["plane/base/（本文档新增）"]
-        EC["error_codes.py<br/>注册表 69 码"]
+        EC["error_codes.py<br/>注册表 75 码"]
         EX["exception.py<br/>AppException"]
         HD["handlers.py<br/>十步收敛"]
         RS["response.py<br/>success_response"]
@@ -489,9 +492,13 @@ class ErrorCodes:
     # ── §8.3 权限错误 PERM_* ──────────────────────────────
     PERM_DENIED                = ("PERM_DENIED", status.HTTP_403_FORBIDDEN)
     PERM_ROLE_INSUFFICIENT     = ("PERM_ROLE_INSUFFICIENT", status.HTTP_403_FORBIDDEN)
+    PERM_PROJECT_ADMIN_REQUIRED = ("PERM_PROJECT_ADMIN_REQUIRED", status.HTTP_403_FORBIDDEN)    # Sprint 5 注册
+    PERM_WORKSPACE_ADMIN_REQUIRED = ("PERM_WORKSPACE_ADMIN_REQUIRED", status.HTTP_403_FORBIDDEN) # Sprint 5 注册
+    PERM_WORKSPACE_OWNER_REQUIRED = ("PERM_WORKSPACE_OWNER_REQUIRED", status.HTTP_403_FORBIDDEN) # Sprint 5 注册
     PERM_NOT_WORKSPACE_MEMBER  = ("PERM_NOT_WORKSPACE_MEMBER", status.HTTP_403_FORBIDDEN)
     PERM_NOT_PROJECT_MEMBER    = ("PERM_NOT_PROJECT_MEMBER", status.HTTP_403_FORBIDDEN)
     PERM_PROJECT_ARCHIVED      = ("PERM_PROJECT_ARCHIVED", status.HTTP_403_FORBIDDEN)
+    PERM_PROJECT_CLOSED        = ("PERM_PROJECT_CLOSED", status.HTTP_403_FORBIDDEN)             # Sprint 5 PROJ-003 注册
     PERM_WORKSPACE_ARCHIVED    = ("PERM_WORKSPACE_ARCHIVED", status.HTTP_403_FORBIDDEN)
     PERM_FIELD_READ_ONLY       = ("PERM_FIELD_READ_ONLY", status.HTTP_403_FORBIDDEN)          # P3
     PERM_FIELD_HIDDEN          = ("PERM_FIELD_HIDDEN", status.HTTP_403_FORBIDDEN)             # P3
@@ -512,6 +519,7 @@ class ErrorCodes:
     VALIDATION_BULK_LIMIT_EXCEEDED = ("VALIDATION_BULK_LIMIT_EXCEEDED", status.HTTP_400_BAD_REQUEST)
     VALIDATION_FILE_TYPE_NOT_ALLOWED = ("VALIDATION_FILE_TYPE_NOT_ALLOWED", status.HTTP_400_BAD_REQUEST)
     VALIDATION_FILE_SIZE_EXCEEDED  = ("VALIDATION_FILE_SIZE_EXCEEDED", status.HTTP_400_BAD_REQUEST)
+    VALIDATION_FILE_UPLOAD_MISMATCH = ("VALIDATION_FILE_UPLOAD_MISMATCH", status.HTTP_400_BAD_REQUEST)  # FILE-001 注册
     VALIDATION_INVALID_DATE_RANGE  = ("VALIDATION_INVALID_DATE_RANGE", status.HTTP_400_BAD_REQUEST)
     VALIDATION_CUSTOM_FIELD_INVALID = ("VALIDATION_CUSTOM_FIELD_INVALID", status.HTTP_400_BAD_REQUEST)  # P2
     VALIDATION_REQUIRED_FIELD_MISSING = ("VALIDATION_REQUIRED_FIELD_MISSING", status.HTTP_400_BAD_REQUEST)  # P3
@@ -547,6 +555,7 @@ class ErrorCodes:
     QUOTA_STORAGE_EXCEEDED = ("QUOTA_STORAGE_EXCEEDED", status.HTTP_409_CONFLICT)          # P2
     QUOTA_MEMBER_EXCEEDED  = ("QUOTA_MEMBER_EXCEEDED", status.HTTP_409_CONFLICT)           # P3
     QUOTA_PROJECT_EXCEEDED = ("QUOTA_PROJECT_EXCEEDED", status.HTTP_409_CONFLICT)          # P3
+    QUOTA_AI_EXCEEDED      = ("QUOTA_AI_EXCEEDED", status.HTTP_409_CONFLICT)               # P4 AI-001 注册
 
     @classmethod
     def all(cls) -> dict[str, int]:
@@ -583,7 +592,7 @@ DEFAULT_MESSAGES: dict[str, str] = {
 }
 ```
 
-**注册表规模核对**：AUTH 17 + PERM 14 + VALIDATION 13 + RESOURCE 11 + SERVER 10 + RATE/QUOTA 4 = **69 码**，与 [`api-conventions.md`](../architecture/api-conventions.md) §8 各分表行数合计一致（UT-01 逐码断言，多一个少一个都失败）。
+**注册表规模核对**：AUTH 17 + PERM 18 + VALIDATION 14 + RESOURCE 11 + SERVER 10 + RATE/QUOTA 5 = **75 码**，与 [`api-conventions.md`](../architecture/api-conventions.md) §8 各分表行数合计一致（UT-01 逐码断言，多一个少一个都失败）。
 
 ### 4.3 业务异常基类（`exception.py`）
 
@@ -653,8 +662,8 @@ class BusinessError(AppException):
 """全局异常处理器 —— 一切异常收敛为 §4.2 错误信封，无例外。"""
 import logging
 
-from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
-from django.db import IntegrityError, OperationalError
+from django.core.exceptions import ObjectDoesNotExist, PermissionDenied as DjangoPermissionDenied
+from django.db import DatabaseError, IntegrityError, OperationalError
 from django.http import Http404
 from rest_framework import status
 from rest_framework.response import Response
@@ -733,7 +742,7 @@ def envelope_exception_handler(exc: Exception, context: dict) -> Response:
         response.data = _error_body("AUTH_CSRF_FAILED", request_id)
 
     # ── 第 6 步：404（资源不存在 / 权限不可见，二者同构）──
-    elif isinstance(exc, Http404):
+    elif isinstance(exc, Http404) or isinstance(exc, ObjectDoesNotExist):
         response = Response(status=status.HTTP_404_NOT_FOUND)
         response.data = _error_body("RESOURCE_NOT_FOUND", request_id)
 
@@ -768,7 +777,8 @@ def envelope_exception_handler(exc: Exception, context: dict) -> Response:
                                     details=[{"field": field, "code": "UNIQUE" if http == 409 else "INVALID",
                                               "message": DEFAULT_MESSAGES.get(code, "数据约束冲突")}])
         logger.warning("integrity_error request_id=%s constraint=%s", request_id, _constraint_name(str(exc)))
-    elif isinstance(exc, OperationalError):
+    elif isinstance(exc, (OperationalError, DatabaseError)):
+        # OperationalError 是连接级（连接池耗尽、服务不可达），DatabaseError 是其父类（含编程错误）
         logger.exception("database_error request_id=%s", request_id)
         response = Response(status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         response.data = _error_body("SERVER_DATABASE_ERROR", request_id)
@@ -868,7 +878,7 @@ def created_response(data, *, location: str, meta: dict | None = None) -> Respon
 
 
 def paginated_response(results: list, *, paginator, request) -> Response:
-    """游标分页 meta 装配 —— 八个必填字段一次到位（§6.3 表）。
+    """游标分页 meta 装配 —— 九个必填字段一次到位（§6.3 表）。
 
     paginator 为 plane/base/paginator.py 的 CursorPagination 实例
     （INFRA-003 交付，格式 "{value}:{offset}:{is_prev}" Base64）。
@@ -898,12 +908,15 @@ def paginated_response(results: list, *, paginator, request) -> Response:
 # apps/api/plane/base/middleware.py
 """六件套中间件 —— 顺序敏感，见 api-conventions.md §10.4。"""
 import contextvars
+import logging
 import re
 import time
 
 import structlog
+from django.conf import settings as dj_settings
 from django.http import HttpResponse, JsonResponse
 from rest_framework.status import HTTP_503_SERVICE_UNAVAILABLE
+from ulid import ULID
 
 from plane.base.error_codes import DEFAULT_MESSAGES
 
@@ -921,6 +934,26 @@ def current_actor() -> dict:
     return _actor_var.get()
 
 
+def ulid_new() -> str:
+    """生成 26 位 Crockford Base32 ULID —— RequestIDMiddleware 与 §2.6 边界表共用。"""
+    return str(ULID())
+
+
+def settings_debug() -> bool:
+    """dev/prod 一行判断；ResponseEnvelopeMiddleware 据此切换严格模式（开发态裸 2xx 抛错）。"""
+    return bool(getattr(dj_settings, "DEBUG", False))
+
+
+def _error_code_of(response) -> str | None:
+    """从 DRF Response.data 中提取 envelope 的 error.code（access 日志维度，§13.5）。"""
+    data = getattr(response, "data", None)
+    if isinstance(data, dict):
+        err = data.get("error")
+        if isinstance(err, dict):
+            return err.get("code")
+    return None
+
+
 ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")   # Crockford Base32，排除 I/L/O/U
 
 
@@ -933,7 +966,7 @@ class RequestIDMiddleware:
 
     def __call__(self, request):
         incoming = request.headers.get("X-Request-Id", "")
-        request.request_id = incoming if ULID_RE.fullmatch(incoming) else str(ulid_new())
+        request.request_id = incoming if ULID_RE.fullmatch(incoming) else ulid_new()
         token = _request_id_var.set(request.request_id)
         try:
             response = self.get_response(request)
@@ -967,14 +1000,23 @@ class StructuredLoggingMiddleware:
                 "warning" if duration_ms > self.SLOW_REQUEST_WARN_MS else "info"
         # path 用路由模板而非实际 URL（避免 ID 爆炸日志基数，§13.5）
         route_template = getattr(request.resolver_match, "route", request.path)
+        # workspace_id 取自 URL 路径参数（slash 前缀的 URL 解析）；命中后写入日志维度
+        workspace_id = None
+        if request.resolver_match is not None:
+            workspace_id = request.resolver_match.kwargs.get("slug")
+        # 查询数预警：DEBUG 开启连接追踪时记录实际值，超阈值则字段额外标记 WARN
+        query_count = len(connection.queries) if settings_debug() else None
+        if query_count is not None and query_count > self.QUERY_COUNT_WARN:
+            log = log.bind(query_count_warn=True)
         log.log(getattr(logging, level.upper()), "http_request",
                 method=request.method,
                 path="/" + route_template,
-                status_code=response.status_code,
+                status=response.status_code,
                 error_code=_error_code_of(response),
                 duration_ms=duration_ms,
-                db_query_count=len(connection.queries) if settings_debug() else None,
-                user_id=_actor_var.get().get("user_id"))
+                db_query_count=query_count,
+                user_id=_actor_var.get().get("user_id"),
+                workspace_id=workspace_id)
         return response
 
 
@@ -1139,8 +1181,9 @@ def configure_logging(debug: bool = False) -> None:
 {"event": "http_request", "request_id": "01JBX3K9Q7ZR4M8N2P5V6W7X8Y",
  "level": "info", "logger": "plane.api.access",
  "user_id": "6c7d1a2b-3e4f-4a5b-9c8d-7e6f5a4b3c2d",
+ "workspace_id": "9d4a7c8b-1e2f-4a3b-8c5d-6f7e8a9b0c1d",
  "method": "PATCH", "path": "/api/v1/workspaces/{slug}/projects/{project_id}/issues/{issue_id}/",
- "status_code": 200, "error_code": null, "duration_ms": 34.2, "db_query_count": null,
+ "status": 200, "error_code": null, "duration_ms": 34.2, "db_query_count": null,
  "timestamp": "2026-09-01T07:12:45.120Z"}
 ```
 
@@ -1168,7 +1211,7 @@ def configure_logging(debug: bool = False) -> None:
 | --- | --- | --- |
 | 慢请求 | > 1000ms | WARN + 附查询摘要；> 3000ms 升 ERROR |
 | 查询数预警 | 单请求 > 30 条 | WARN（`db_query_count` 字段，仅 DEBUG 连接追踪开启时输出） |
-| 敏感脱敏 | `password` / `token` / `secret` / `X-API-Key` / `authorization` | 值替换 `***`（UT-12） |
+| 敏感脱敏 | `password` / `token` / `secret` / `X-API-Key` / `authorization` | 值替换 `***`（UT-11） |
 
 ### 4.8 环境配置体系（settings 四文件）
 
@@ -1268,7 +1311,7 @@ ENVELOPE_STRICT = True
 ```
 
 ```python
-# apps/api/plane/settings/prod.py —— 安全收紧 + 6 项必填启动校验
+# apps/api/plane/settings/prod.py —— 安全收紧 + 9 项必填启动校验
 import os
 from django.core.exceptions import ImproperlyConfigured
 
@@ -1276,12 +1319,19 @@ from .base import *          # noqa: F401,F403
 
 DEBUG = False
 
-# ── 6 项必填：import 即校验（manage.py 任何命令快速失败，BR-13）──
+# ── 9 项必填：import 即校验（manage.py 任何命令快速失败，BR-13）──
+# 注意：DATABASE_URL / CELERY_BROKER_URL / AWS_SECRET_ACCESS_KEY 在 base.py 设有默认值，
+# 仅靠 POSTGRES_PASSWORD / RABBITMQ_DEFAULT_PASS / MINIO_ROOT_PASSWORD 校验会让
+# 用户覆盖连接串时绕过 BR-13（base.py 默认值会静默接管，落到本地 sqlite / 内存 broker），
+# 因此三者必须同时列入 REQUIRED_ENV。
 REQUIRED_ENV = [
     "SECRET_KEY",             # 会话签名
-    "POSTGRES_PASSWORD",      # 数据库（compose 同名变量，§2.5 of INFRA-002）
-    "RABBITMQ_DEFAULT_PASS",  # 消息队列
-    "MINIO_ROOT_PASSWORD",    # 对象存储
+    "POSTGRES_PASSWORD",      # 数据库密码（compose 同名变量，§2.5 of INFRA-002）
+    "DATABASE_URL",           # 数据库连接串（必须显式给出，禁止默认 sqlite 回退）
+    "RABBITMQ_DEFAULT_PASS",  # 消息队列密码
+    "CELERY_BROKER_URL",      # Celery broker 连接串（必须显式给出，禁止默认 localhost 回退）
+    "MINIO_ROOT_PASSWORD",    # 对象存储密码
+    "AWS_SECRET_ACCESS_KEY",  # S3 签名密钥（必须显式给出，禁止空串回退导致上传 403）
     "CORS_ALLOWED_ORIGINS",   # 精确白名单（禁止回退 * ）
     "APP_BASE_URL",           # Cookie Domain / 绝对链接推导
 ]
@@ -1309,7 +1359,7 @@ X_FRAME_OPTIONS = "DENY"
 | `__init__.py` | 分发 + 防呆（非法模块名断言） | 不放任何配置 |
 | `base.py` | 全部公共配置 + 六件套中间件 + DRF 挂载 | 不做环境判断（`if DEBUG` 只出现在 dev/prod） |
 | `dev.py` | DEBUG=True、CORS 放宽、Envelope 严格模式 | 不覆盖数据库指向 |
-| `prod.py` | 6 项必填校验 + 安全头 + Cookie 加固 | 不给任何必填项写默认值（写了等于绕过 BR-13） |
+| `prod.py` | 9 项必填校验 + 安全头 + Cookie 加固 | 不给任何必填项写默认值（写了等于绕过 BR-13） |
 
 ### 4.9 `.env.example`（唯一模板，全量注释版）
 
@@ -1318,7 +1368,7 @@ X_FRAME_OPTIONS = "DENY"
 # RabbitProjects 环境变量模板 —— 唯一事实来源（BR-15）
 # 约定：代码读取的变量集合 ⊆ 本文件键集合（UT-09 扫描断言）；
 #      变量名与 deploy/compose/docker-compose.yml 插值一一对应（INFRA-002 §2.5）。
-# 标注 [prod 必填] 的 6 项缺失时 prod 拒绝启动（BR-13）。
+# 标注 [prod 必填] 的 9 项缺失时 prod 拒绝启动（BR-13）。
 # =====================================================================
 
 # ── Django 核心 ──────────────────────────────────────────────────
@@ -1452,7 +1502,7 @@ export type ApiError = { status: "error"; error: ApiErrorBody };
 export type ApiResponse<T> = ApiSuccess<T> | ApiError;
 ```
 
-`ErrorCode` 常量由 `pnpm gen:api-types` 从 OpenAPI `ErrorEnvelope` 组件的枚举生成（§4.12），**禁止手写**——手写副本会漂移，这正是 Plane 的教训（§6.1）。
+`ErrorCode` 常量由前端**手工维护**于 `packages/types/src/api/error-codes.ts`（与 [`api-conventions.md`](../architecture/api-conventions.md) §8.9 的手写示例一致）；同时 `pnpm gen:api-types` 从 OpenAPI `ErrorEnvelope` 组件的 enum 派生一个**机器可读的影子枚举** `packages/types/src/generated/error-codes.ts`（§4.12），由 `scripts/check-error-codes.mjs`（§4.11.3）三方 diff 保证「架构文档 §8 / 后端注册表 / 前端手写常量 / 影子枚举」四者集合一致——手写版本作为唯一可读的对外契约，影子枚举仅做 CI 校验用途。这是 Plane 漂移教训与 §8.1「脚本校验一致性」的折中：手写便于 IDE 跳转与代码评审，影子枚举 + 三方 diff 防止漂移（§6.1）。
 
 #### 4.11.2 axios 响应拦截器（错误分派 + 成功解包）
 
@@ -1532,24 +1582,27 @@ const retryAfterSeconds = (err: AxiosError) =>
 #### 4.11.3 前后端错误码一致性校验（CI）
 
 ```javascript
-// scripts/check-error-codes.mjs —— 三方集合 diff，任一差异退出码 1
+// scripts/check-error-codes.mjs —— 四方集合 diff，任一差异退出码 1
 //   A. docs/architecture/api-conventions.md §8 表格解析出的码集合（唯一事实来源）
 //   B. apps/api/plane/base/error_codes.py 的 ErrorCodes 注册表（AST 解析）
-//   C. packages/types/src/generated/error-codes.ts 的 ErrorCode 常量（gen:api-types 产物）
+//   C. packages/types/src/api/error-codes.ts 的 ErrorCode 常量（前端手写，对外契约）
+//   D. packages/types/src/generated/error-codes.ts 的 ErrorCode 常量（gen:api-types 产物，影子枚举）
 import { readFileSync } from "node:fs";
 import { parse as parsePy } from "python-ast-parser";       // 示意：任一 AST 解析方案
 
-const docCodes = parseConventionsTable("docs/architecture/api-conventions.md");
-const pyCodes  = parseRegistry("apps/api/plane/base/error_codes.py");
-const tsCodes  = parseConstEnum("packages/types/src/generated/error-codes.ts");
+const docCodes   = parseConventionsTable("docs/architecture/api-conventions.md");
+const pyCodes    = parseRegistry("apps/api/plane/base/error_codes.py");
+const tsCodes    = parseConstEnum("packages/types/src/api/error-codes.ts");
+const tsGenCodes = parseConstEnum("packages/types/src/generated/error-codes.ts");
 
 const diff = (label, a, b) => {
   const only = [...a].filter((x) => !b.has(x));
   if (only.length) { console.error(`✗ 仅存在于 ${label}：${only.join(", ")}`); process.exitCode = 1; }
 };
-diff("架构文档", docCodes, pyCodes);  diff("后端注册表", pyCodes, docCodes);
-diff("后端注册表", pyCodes, tsCodes); diff("前端常量", tsCodes, pyCodes);
-if (!process.exitCode) console.log(`✓ 三方错误码一致（${docCodes.size} 码）`);
+diff("架构文档",  docCodes,   pyCodes);    diff("后端注册表", pyCodes,   docCodes);
+diff("后端注册表", pyCodes,   tsCodes);    diff("前端常量",   tsCodes,   pyCodes);
+diff("后端注册表", pyCodes,   tsGenCodes); diff("影子枚举",   tsGenCodes, pyCodes);
+if (!process.exitCode) console.log(`✓ 四方错误码一致（${docCodes.size} 码）`);
 ```
 
 接入方式：`package.json` 的 `scripts.verify` 链（`pnpm verify` = oxlint + typecheck + test + `check-error-codes`），Husky pre-push 与 CI 均执行（BR-05 / C2 的机器守护）。
@@ -1582,7 +1635,7 @@ ERROR_ENVELOPE_COMPONENT = {
 ```
 
 - 全部端点的 `@extend_schema(responses={...: ErrorEnvelope})` 引用同一组件——OpenAPI 文档中错误结构**只有一个定义点**（对齐 §10.6「补齐 responses 含错误响应示例」的检查项）。
-- `pnpm gen:api-types` 从 `/api/v1/schema/` 生成前端类型，`ErrorCode` 枚举即由该组件的 `enum` 派生——形成「后端注册表 → OpenAPI → 前端类型」的单向生成链，`check-error-codes.mjs` 校验链条两端与文档三方一致。
+- `pnpm gen:api-types` 从 `/api/v1/schema/` 生成前端类型，影子枚举 `packages/types/src/generated/error-codes.ts` 即由 `ErrorEnvelope` 组件的 `enum` 派生——形成「后端注册表 → OpenAPI → 影子枚举」单向生成链；前端手写常量 `packages/types/src/api/error-codes.ts` 作为对外契约的可读副本，由 `check-error-codes.mjs` 三方 diff 保证「架构文档 §8 / 后端注册表 / 前端手写常量 / 影子枚举」四者集合一致（与 §4.11.1 对齐）。
 
 ### 4.13 响应信封全示例（七类形态）
 
@@ -1592,9 +1645,10 @@ ERROR_ENVELOPE_COMPONENT = {
 
 ```json
 { "status": "success",
-  "data": { "id": "8a1f9c2e-6b3d-4a7e-9f11-2c4d5e6f7a8b", "name": "支持看板卡片批量拖拽" },
-  "meta": null }
+  "data": { "id": "8a1f9c2e-6b3d-4a7e-9f11-2c4d5e6f7a8b", "name": "支持看板卡片批量拖拽" } }
 ```
+
+> 详情端点按 §4.1 表 `meta` 为「⭕」可省略；`success_response(..., meta=None)` 不输出 `meta` 键（与 `meta=null` 不同——后者是显式空值）。`ApiSuccess<T>` 类型上 `meta?: Record<string, unknown>` 也对应「键可缺失」语义。
 
 **② 成功信封（列表，meta 必填）**
 
@@ -1686,12 +1740,12 @@ X-Request-Id: 01JBX3K9Q7ZR4M8N2P5V6W7X9E
 
 | 用例 ID | 测试目标 | 输入 | 预期输出 | 覆盖类型 |
 | --- | --- | --- | --- | --- |
-| UT-01 | 注册表与架构文档 §8 集合一致 | 解析 `api-conventions.md` §8 全表 vs `ErrorCodes.all()` | 集合完全相等（69 码，多一少一均失败） | 一致性（C2） |
+| UT-01 | 注册表与架构文档 §8 集合一致 | 解析 `api-conventions.md` §8 全表 vs `ErrorCodes.all()` | 集合完全相等（75 码，多一少一均失败） | 一致性（C2） |
 | UT-02 | 未注册码抛异常 | `AppException("NOT_EXIST")` | `KeyError` 且提示登记流程 | 防御 |
 | UT-03 | ValidationError 嵌套平铺 | `ValidationError({"a": {"0": [{"b": [ErrorDetail(…)]}]}})` | `details=[{field:"a.0.b",…}]` | 正常 |
 | UT-04 | 500 脱敏 | 视图抛 `RuntimeError("db password is xxx")` | 响应体无该字符串；error 日志含堆栈 | 安全（BR-08） |
 | UT-05 | request_id 生成与三处一致 | 不带头的请求 | `X-Request-Id` 头 = `error.request_id`（错误时）= access 日志值，且为合法 26 位 ULID | 正常（C3） |
-| UT-06 | prod 缺 6 项必填拒绝启动 | `DJANGO_SETTINGS_MODULE=plane.settings.prod` + 空变量 | `ImproperlyConfigured` 列出全部缺失项 | 边界（BR-13） |
+| UT-06 | prod 缺 9 项必填拒绝启动 | `DJANGO_SETTINGS_MODULE=plane.settings.prod` + 空变量 | `ImproperlyConfigured` 列出全部缺失项 | 边界（BR-13） |
 | UT-07 | 信封兜底与 204 例外 | 视图返回裸 dict；另一视图返回 204 | dev 态裸 dict 抛 `RuntimeError`；204 体为空不被包装 | 正常（C1/BR-02） |
 | UT-08 | 日志超长截断 | 记录 8KB+ body 字段 | 单条序列化后 ≤ 8KB，body 截为 512 字符 + `…` | 边界（BR-10） |
 | UT-09 | `.env.example` 与代码读取集合一致 | AST 扫描全部 `os.environ.get` 调用 | 读取集合 ⊆ 模板键集合 | 一致性（BR-15） |
@@ -1708,7 +1762,7 @@ X-Request-Id: 01JBX3K9Q7ZR4M8N2P5V6W7X9E
 | IT-03 | 500 时 request_id 可检索 | 人为注入抛 `RuntimeError` 的调试路由 | 触发后用返回的 request_id 检索 `docker compose logs api` | 恰好命中 1 条 access + 1 条 error（含堆栈）日志 |
 | IT-04 | Nginx 413 统一 JSON | 3MB 请求体直发 proxy | POST `/api/v1/…` | 413 + `VALIDATION_PAYLOAD_TOO_LARGE` 信封 |
 | IT-05 | SMTP 未配置降级 | `SMTP_HOST` 为空 | 触发忘记密码（`AUTH-004`） | 接口 202 正常；`plane.app.mail` channel 留降级日志；重置链接可从日志取回（开发态） |
-| IT-06 | 幂等键重放 | 同 `Idempotency-Key` 二次 POST 创建 | 断言两次响应 | 响应体一致 + `Idempotency-Replayed: true`（`TASK-001` 已启用的端点） |
+| IT-06 | 幂等键重放 | 同 `Idempotency-Key` 二次 POST 创建 | 断言两次响应 | 响应体一致 + `Idempotency-Replayed: true`（P2 起在 Open API 创建端点强制；P1 在任意一个创建端点手工挂中间件做端到端验证即可，`TASK-001` 暂未启用此能力） |
 | IT-07 | 维护模式 | `MAINTENANCE_MODE=true` 重启 | 访问任意业务端点 / `/api/v1/health/` | 前者 503 `SERVER_MAINTENANCE` + `Retry-After: 300`；后者 200 放行 |
 | IT-08 | CORS 白名单 | Origin 为白名单内 / 白名单外 | 预检 OPTIONS | 前者放行且 `Access-Control-Allow-Credentials: true`；后者无 CORS 头（非 `*` 回退） |
 
@@ -1745,7 +1799,7 @@ Ones 作为商业闭源产品，其公开材料与企业版能力清单显示的
 
 | 能力 | Ones 企业版 | 本系统 P1 对应 |
 | --- | --- | --- |
-| 配置中心 | 租户级配置下发、灰度开关、变更审批 | `.env` + settings 四文件 + 6 项启动校验（**结果体验对齐：配置可审计**；多租户下发留 P4） |
+| 配置中心 | 租户级配置下发、灰度开关、变更审批 | `.env` + settings 四文件 + 9 项启动校验（**结果体验对齐：配置可审计**；多租户下发留 P4） |
 | 日志采集 | 分级采集、按租户隔离、可对接企业 SIEM | structlog JSON 行 + request_id 贯穿（**结果体验对齐：故障可定位**；SIEM 对接留 P3 `AUTH-010`） |
 | 故障定位 | 工单系统与日志链路打通 | §3.6 报障路径：用户凭追踪号 → 日志检索（最小可行版） |
 | 合规 | 审计级留痕、留存周期策略 | `AuditContextMiddleware` 预埋 contextvar，P3 落独立审计表 |
@@ -1755,7 +1809,7 @@ Ones 的这些能力依赖多租户与合规体系（P3/P4 前置），2 人团�
 ### 6.3 本系统设计决策
 
 1. **契约先行、代码收口**：[`api-conventions.md`](../architecture/api-conventions.md) §8 是错误码唯一事实来源，后端注册表、前端常量、OpenAPI 组件三方由 `check-error-codes.mjs` + UT-01 双重校验一致——比 Plane 多出完整的防漂移机制，错误码漂移从「线上事故」降级为「CI 失败」。
-2. **快速失败**：prod 6 项必填环境变量在 `import plane.settings.prod` 时即校验（`manage.py` 任何命令快速失败），杜绝「带病启动」——直接吸取 Plane `common.py` 无校验的教训。
+2. **快速失败**：prod 9 项必填环境变量在 `import plane.settings.prod` 时即校验（`manage.py` 任何命令快速失败），杜绝「带病启动」——直接吸取 Plane `common.py` 无校验的教训。
 3. **request_id 全链路贯穿**（C3）：ULID 生成于最外层中间件，同时出现在响应头、错误体、access/error 两类日志；P1 不引入 Sentry 即可完成端到端故障定位（IT-03 演练），并为 P2 Sentry 接入预留 `error_code` 维度与 `request_id` 锚点。
 4. **网关与应用同构**：Nginx 层 413/502/503/504 复制同一信封与注册表错误码——「不存在绕过信封的端点」在网关侧同样成立，这是对 Plane（网关错误为默认 HTML 页）的显式改进。
 5. **差异化价值**：以 2 人团队的投入逼近 Ones 的「配置可审计、故障可定位」体验——JSON 结构化日志、环境变量单一模板、启动校验、三方码表校验，全部是标准版即内置、不额外收费的工程底座；这些能力在竞品中要么缺失（Plane），要么锁定在企业版（Ones）。
@@ -1769,8 +1823,8 @@ Ones 的这些能力依赖多租户与合规体系（P3/P4 前置），2 人团�
 | 类型 | 交付物 |
 | --- | --- |
 | Model / Migration | 无新增表 |
-| 后端 | `plane/base/`：`error_codes.py`（69 码注册表 + 默认文案）、`exception.py`（`AppException`）、`handlers.py`（十步收敛 + `CONSTRAINT_MAP`）、`response.py`（信封装配）、`middleware.py`（六件套）、`request_context.py`（contextvar）；`plane/logging.py`（structlog 配置） |
-| settings | `{__init__,base,dev,prod}.py` 四文件（六件套中间件顺序挂载、REST_FRAMEWORK、CORS、6 项必填校验、安全头） |
+| 后端 | `plane/base/`：`error_codes.py`（75 码注册表 + 默认文案）、`exception.py`（`AppException`）、`handlers.py`（十步收敛 + `CONSTRAINT_MAP`）、`response.py`（信封装配）、`middleware.py`（六件套）、`request_context.py`（contextvar）；`plane/logging.py`（structlog 配置） |
+| settings | `{__init__,base,dev,prod}.py` 四文件（六件套中间件顺序挂载、REST_FRAMEWORK、CORS、9 项必填校验、安全头） |
 | 网关 | `apps/proxy/conf.d/api.conf`：413 / 502 / 503 / 504 统一 JSON + `X-Request-Id` 透传 |
 | 前端 | axios 成功解包 + 错误分派拦截器、`ErrorToast`（含追踪号复制）、`useApiFieldErrors`、404/403/500 空态页、429 退避 |
 | 契约 | drf-spectacular `ErrorEnvelope` 组件、`pnpm gen:api-types` 生成 `ErrorCode`、`scripts/check-error-codes.mjs` 三方校验 |
@@ -1779,7 +1833,7 @@ Ones 的这些能力依赖多租户与合规体系（P3/P4 前置），2 人团�
 
 ### 7.2 可操作演示的验收标准
 
-1. **信封无例外**：对系统任意端点制造 404 / 403 / 400 / 409 / 429 / 500，curl 响应体均为统一信封，`error.code` 在注册表 69 码之内；`IT-01` 全路由快照在 CI 全绿（C1）。
+1. **信封无例外**：对系统任意端点制造 404 / 403 / 400 / 409 / 429 / 500，curl 响应体均为统一信封，`error.code` 在注册表 75 码之内；`IT-01` 全路由快照在 CI 全绿（C1）。
 2. **一次报障一次定位**：用 500 响应中的 `X-Request-Id` 在 `docker compose logs api` 检索，同时命中 access 与 error（含堆栈）两条日志，`request_id` 三处同值（C3 / IT-03）。
 3. **快速失败**：删除 `.env` 中 `SECRET_KEY` 后以 prod 配置启动，进程立即报 `ImproperlyConfigured` 并列出全部缺失项；补齐后正常启动（BR-13 / UT-06）。
 4. **邮件降级不阻塞**：`SMTP_HOST` 为空时忘记密码流程接口 202 正常、邮件动作降级为 `plane.app.mail` 日志（BR-14 / IT-05）。

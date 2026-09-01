@@ -9,9 +9,9 @@
 | 文档状态 | 待评审（Draft） |
 | 最后更新日期 | 2026-09-01 |
 | 上游依据 | `docs/需求文档.md` §8.2 数据报表 P1 列（个人待办 / 已完成任务统计）、§3.8（实时消息推送中「任务变更」的未读数联动） |
-| 前置依赖 | `TASK-001/002/003`（Issue 属性 / 列表筛选语义 / 跨项目聚合端点）、`COLLAB-001`（通知未读数，工作台摘要卡消费）、`INFRA-004`（错误信封 / `Cache-Control` 头规范） |
+| 前置依赖 | `AUTH-003`（`accessible_by()` 行级过滤 Manager——统计与列表共用基座的权限根源）、`TASK-001/002/003`（Issue 属性 / 列表筛选语义 / 跨项目聚合端点）、`COLLAB-001`（通知未读数，工作台摘要卡消费）、`INFRA-004`（错误信封 / `Cache-Control` 头规范） |
 | 下游消费 | `RPT-002`（P2 项目进度 / 成员任务量统计**复用本迭代交付的聚合查询范式**）、`RPT-003/004`（P3 敏捷报表注入同一 Service 框架）、需求池视图（P2 消费 `state_group` 参数）、`TASK-013`（P3 工时台账，扩展 `WorkLog` 维度） |
-| 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.8（`completed_at` 口径 / `idx_assignee_issue` 索引 / `State.group` 语义组）、§4.3（`completed_at` 派生规则）；[`api-conventions.md`](../architecture/api-conventions.md) §4（信封）、§5.3（筛选语义）、§7.2（报表聚合端点限流 10 req/min）；[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §3（`accessible_by` 行级过滤） |
+| 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.6（`State.group` 语义组）、§2.8（`completed_at` 口径与派生规则）、§2.9（`idx_assignee_issue` 索引）；[`api-conventions.md`](../architecture/api-conventions.md) §4（信封）、§5.3（筛选语义）、§7.2（报表聚合端点限流 10 req/min）；[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §3（`accessible_by` 行级过滤） |
 | 对标基线 | Plane `/users/me/issues/`（跨 workspace 我的工作项端点） · Ones 个人工时台账与绩效视图（Business+） |
 | 工作量估算 | 后端 1.5 人日 / 前端 2.5 人日 / 联调与测试 1 人日，合计 **5 人日** |
 
@@ -70,6 +70,7 @@ P1 的成员被派了一堆任务，但系统没有一处「以我为中心」�
 
 | 依赖 | 内容 | 阻塞原因 |
 | --- | --- | --- |
+| `AUTH-003` | `Issue.objects.accessible_by(user)` 行级过滤 Manager（统计与列表共用基座的权限根源，§4.3.1） | 被移出项目的旧指派需自然消失（BR-08） |
 | `TASK-001/002` | Issue 完整字段（`target_date` / `completed_at` / `state` 关联 / `IssueAssignee` M2M） | 聚合的列基础 |
 | `TASK-003` | `IssueFilterSet`（`assignee_id=me` 语义 / `me` 展开 / 稳定次序）；列表游标分页 | 列表 Tab 的查询语义与分页 |
 | `INFRA-003` | 索引 `idx_assignee_issue`（我的待办核心反查）、`idx_issue_active_by_project`、`target_date` 单列索引 | 性能门禁（BR-06） |
@@ -91,13 +92,13 @@ P1 的成员被派了一堆任务，但系统没有一处「以我为中心」�
 
 | 指标 | 口径（SQL 语义） |
 | --- | --- |
-| 我的待办 `todo_count` | `assignee = me ∧ state.group ∈ {unstarted, started} ∧ 未删未归档` |
+| 我的待办 `todo_count` | `assignee = me ∧ state.group ∈ {unstarted, started} ∧ 未删未归档 ∧ project.status='active'` |
 | 今日到期 `due_today_count` | 待办 ∧ `target_date = today`（`today` 按用户时区折算，BR-04） |
 | 已逾期 `overdue_count` | 待办 ∧ `target_date < today` |
-| 本周完成 `completed_this_week_count` | `assignee = me ∧ completed_at ∈ [本周一 00:00（用户本地）, now]`（周一起始；服务端 UTC 折算区间） |
-| 7 日趋势 `trend` | 近 7 天（含今日）每日 `completed_at` 落当日数；无值日补 0；`cancelled` 态不计入 |
+| 本周完成 `completed_this_week_count` | `assignee = me ∧ completed_at ∈ [本地本周一 00:00 → UTC 等价瞬时, UTC now]`（周一起始；服务端 UTC 瞬时比较，与 TruncDate 同语义，BR-04） |
+| 7 日趋势 `trend` | 近 7 天（含今日）每日 `completed_at` 落当日数；`TruncDate(completed_at, tzinfo=tz)` 按用户本地日历切日；窗口起点 `completed_at >= now-7d UTC`；无值日补 0；`cancelled` 态不计入 |
 
-> 全部计数均在 `Issue.objects.accessible_by(user)` 之上聚合——「我的待办」天然只含**我仍有权访问的项目**的任务：被移出项目的历史指派不计数（与列表可见性一致，UT-04 守护）。
+> 全部计数均在 `Issue.objects.accessible_by(user)` 之上聚合——「我的待办」天然只含**我仍有权访问的项目**的任务：被移出项目的历史指派不计数（与列表可见性一致，UT-04 守护）。项目状态过滤用 `Project.status='active'`（[unified-issue-model.md] §2.4 枚举：active/draft/archived/closed），P1 唯一启用值为 active；其余值由 PROJ-002/003 启用后加入显式集合。
 
 ### 2.2 工作台页加载流（并行时序）
 
@@ -133,12 +134,12 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     A["stats 请求到达"] --> B["解析 workspace（slug）<br/>非成员 → 404（存在性隐藏）"]
-    B --> C["解析 tz 参数<br/>缺省取 profile.timezone（默认 Asia/Shanghai）"]
-    C --> D["today = 用户本地今日 → 折算为 UTC 日期区间<br/>monday = 本地本周一 00:00 → UTC"]
-    D --> E["base = accessible_by(me)<br/>.filter(issue_assignees__assignee=me<br/>, archived_at IS NULL, project.workspace=ws)"]
-    E --> F["open_states = State.group ∈ {unstarted, started} 的 id 集"]
+    B --> C["解析 tz 参数<br/>优先级：query ?tz= > X-Client-TZ 头 > 默认 Asia/Shanghai"]
+    C --> D["today = 用户本地今日 → 折算为 UTC 等价瞬时<br/>monday = 本地本周一 00:00 → UTC（BR-04）"]
+    D --> E["base = accessible_by(me)<br/>.filter(issue_assignees__assignee=me<br/>, archived_at IS NULL, project.workspace=ws<br/>, project.status='active')"]
+    E --> F["state_group_pairs = State.group ∈ {unstarted, started, completed} 的 (group, id) 对（单条 SQL 同源覆盖 open + completed）"]
     F --> G["单条 aggregate：<br/>todo / due_today / overdue / week_done<br/>（Count + filter=Q 组合）"]
-    G --> H["趋势：completed_at ≥ today-6 的 TruncDate 分组计数"]
+    G --> H["趋势：completed_at ≥ today-7d UTC 的 TruncDate 分组计数<br/>（按用户本地日历切日）"]
     H --> I["补零：无完成日填 {date, count:0}，恒 7 点"]
     I --> J["200 信封 + generated_at + no-store"]
 ```
@@ -150,9 +151,9 @@ flowchart TD
 | BR-01 | 「我的待办」列表与统计共用同一 QuerySet 构造器（同一 `PersonalStatsService`），禁止两处手写口径 | Service 层 | 评审拒绝；CI 静态检查 |
 | BR-02 | 已完成 Tab 仅显示 `completed_at` 本周内任务；`cancelled` 态不计入完成与趋势（取消污染防护） | Service | — |
 | BR-03 | 多指派任务（P1 单人，P2 多人）对「我」的计数：`IssueAssignee` 存在即计 1（按人视角天然正确，不去重不拆分） | ORM | — |
-| BR-04 | 时区：`today` / `monday` 以用户 profile 时区（默认 `Asia/Shanghai` UTC+8）折算为 UTC 区间比较；跨日界任务归属正确 | Service | — |
+| BR-04 | 时区：`today` / `monday` 以请求时区（query `tz` > `X-Client-TZ` 头 > 默认 `Asia/Shanghai`）折算为 UTC 等价瞬时比较；跨日界任务归属正确（与 TruncDate 同语义；AUTH-004 Profile 无 timezone 字段，时区由前端持、后端折算） | Service | — |
 | BR-05 | stats 端点响应 `Cache-Control: no-store`（实时性优先，禁中间缓存）；列表复用游标分页 | ViewSet | — |
-| BR-06 | 统计接口 SQL ≤ 5 条（权限 + open_states + 单条 aggregate + 趋势 + 可选 total），P95 < 100ms @ 10 万任务 | ORM | 性能门禁（IT-06） |
+| BR-06 | 统计接口 SQL ≤ 5 条（workspace 查 + 成员判定 + state_group_pairs（open + completed 同源）+ 单条 aggregate + 趋势），P95 < 100ms @ 10 万任务 | ORM | 性能门禁（IT-06） |
 | BR-07 | stats 限流 10 请求/分钟（报表聚合端点配额，[`api-conventions.md`](../architecture/api-conventions.md) §7.2）；超限 `429 RATE_LIMIT_EXCEEDED` + `Retry-After` | Throttle | 429 |
 | BR-08 | 被移出项目的历史指派不计数、不出现在列表（`accessible_by` 先于一切业务过滤） | Service | — |
 | BR-09 | `state_group` 参数值域 `{backlog, unstarted, started, completed, cancelled}` 逗号分隔 OR；非法值 400 `INVALID`；未知参数忽略 | FilterSet | 400 |
@@ -187,16 +188,16 @@ flowchart TD
 ```mermaid
 flowchart LR
     subgraph User["用户本地（UTC-5，tz=America/New_York）"]
-        L1["本地周日 8-31 23:30<br/>完成任务 X"]
-        L2["本地周一 9-01 00:30<br/>完成任务 Y"]
+        L1["本地周日 8-30 23:30<br/>完成任务 X"]
+        L2["本地周一 8-31 00:30<br/>完成任务 Y"]
     end
     subgraph Server["服务端（UTC 存储）"]
-        S1["completed_at = 2026-09-01T04:30Z"]
-        S2["completed_at = 2026-09-01T05:30Z"]
+        S1["completed_at = 2026-08-31T04:30Z"]
+        S2["completed_at = 2026-08-31T05:30Z"]
     end
     subgraph Judge["折算判定（TruncDate tzinfo=tz）"]
-        J1["X → 本地 8-31<br/>上周 → 不入本周完成<br/>趋势落 8-31 柱"]
-        J2["Y → 本地 9-01<br/>本周（本地周一 00:00 起）<br/>趋势落今日柱"]
+        J1["X → 本地 8-30<br/>上周 → 不入本周完成<br/>趋势落 8-30 柱"]
+        J2["Y → 本地 8-31<br/>本周（本地周一 00:00 起）<br/>趋势落 8-31 柱"]
     end
     L1 --> S1 --> J1
     L2 --> S2 --> J2
@@ -204,12 +205,12 @@ flowchart LR
 
 | 场景 | 服务器 UTC 视角（错误做法） | 用户本地视角（本系统口径） |
 | --- | --- | --- |
-| X 的归属 | 9-01 完成 → 误入「本周」 | **8-31（上周）**：不计入本周完成（BE-7） |
-| Y 的归属 | 9-01 | 9-01（本地周一）：计入本周 |
+| X 的归属 | 8-31 UTC 完成 → 误入「本周」 | **8-30（上周日）**：不计入本周完成（BE-7） |
+| Y 的归属 | 8-31 UTC | 8-31（本地周一）：计入本周（BE-7a） |
 | `today` 的「今日到期」 | UTC 日期（UTC-5 用户深夜错位一天） | 本地日历日（BE-6） |
 | 趋势 7 点的日期标签 | UTC 日期 | 本地日期（与卡片 / Tabs 的字面日期一致） |
 
-> 该图即 BE-6 / BE-7 两条用例的判定依据；「双路同源」（§4.4.2：stats 后端折算 + 列表前端注入字面日期）保证两条路径在用户本地日历上重合。
+> 该图即 BE-6 / BE-7 / BE-7a 三条用例的判定依据；「双路同源」（§4.4.2：stats 后端折算 + 列表前端注入字面日期）保证两条路径在用户本地日历上重合。注：日历锚点 2026-09-01 为周二、08-31 为周一、08-30 为周日——所有日期标注与真实日历一致。
 
 ---
 
@@ -423,14 +424,14 @@ Cookie: sessionid=…
 ```python
 # apps/api/plane/analytics/services/personal.py
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from django.db.models import Count, Q, QuerySet
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 
-from plane.db.models import Issue, State
+from plane.db.models import Issue, Project, State
 
 
 class PersonalStatsService:
@@ -451,8 +452,10 @@ class PersonalStatsService:
                 issue_assignees__assignee=user,                     # idx_assignee_issue 反查
                 project__workspace_id=workspace_id,
                 archived_at__isnull=True,
-                # 归档项目任务不入待办（P1 防御式：列已由 INFRA-003 预留）
-                project__archived_at__isnull=True,
+                # 归档项目任务不入待办：Project 以 status 枚举记录归档态（[unified-issue-model.md] §2.4），
+                # 不存在 archived_at 列；只保留 status="active" 的项目（其余 draft/archived/closed 由
+                # PROJ-002/003 启用后扩展为显式集合）
+                project__status=Project.Status.ACTIVE,
             )
             .distinct()                                             # M2M join 去重
         )
@@ -461,12 +464,19 @@ class PersonalStatsService:
     def stats(self, user, *, workspace_id: uuid.UUID, tz_name: str) -> dict:
         tz = ZoneInfo(tz_name)
         base = self.my_issues_queryset(user, workspace_id=workspace_id)
-        today = timezone.localdate(zone=tz)                          # 用户本地今日（BR-04）
-        monday = today - timedelta(days=today.weekday())             # 本地本周一
+        now_local = datetime.now(tz)                                # 用户本地当前时刻
+        today = now_local.date()                                    # 用户本地今日（BR-04）
+        monday_local = datetime.combine(today - timedelta(days=today.weekday()), datetime.min.time(), tzinfo=tz)
+        monday_utc = monday_local.astimezone(ZoneInfo("UTC"))        # 本地周一 → UTC 等价瞬时
 
-        open_state_ids = list(
-            State.objects.filter(group__in=self.OPEN_GROUPS).values_list("id", flat=True)
-        )                                                           # 第 1 条：语义组 id 集
+        # 单条 SQL 取 open + completed 两组 id（BR-06 ≤5 SQL 预算不变，§4.3.3「open_state_ids」注口径扩展为「state_ids」）
+        state_group_pairs = list(
+            State.objects
+            .filter(group__in=("unstarted", "started", "completed"))
+            .values_list("group", "id")
+        )
+        open_state_ids = [sid for g, sid in state_group_pairs if g in self.OPEN_GROUPS]
+        completed_state_ids = [sid for g, sid in state_group_pairs if g == "completed"]
 
         counts = base.aggregate(                                    # 第 2 条：单条聚合四计数
             todo_count=Count("id", filter=Q(state_id__in=open_state_ids)),
@@ -474,12 +484,13 @@ class PersonalStatsService:
             overdue_count=Count("id", filter=Q(state_id__in=open_state_ids, target_date__lt=today)),
             completed_this_week_count=Count(
                 "id",
-                filter=Q(state__group="completed",
-                         completed_at__date__gte=monday)),           # completed_at 落本周（UTC date 比较）
+                filter=Q(state_id__in=completed_state_ids,
+                         completed_at__gte=monday_utc)),             # 本地周一 00:00 → UTC 等价瞬时（BR-04）
         )
 
         trend_rows = (                                              # 第 3 条：趋势分组
-            base.filter(completed_at__date__gte=today - timedelta(days=6))
+            base.filter(completed_at__gte=now_local.astimezone(ZoneInfo("UTC")) - timedelta(days=7),
+                        state__group="completed")                    # 防御过滤：trend 仅含 completed（不染 cancelled，BE-3）
             .annotate(day=TruncDate("completed_at", tzinfo=tz))
             .values("day").annotate(count=Count("id")).order_by("day")
         )
@@ -498,7 +509,7 @@ class PersonalStatsService:
         ]
 ```
 
-> **两处实现细节**：① `TruncDate(..., tzinfo=tz)` 让「完成落哪一天」按**用户本地日历**切分（UTC-5 用户深夜完成的任务落在他的「今天」，BR-04）；② `completed_at__date__gte=monday` 与 TruncDate 的时区口径一致，均以用户本地周一为界。
+> **三处实现细节**：① `TruncDate(..., tzinfo=tz)` 让「完成落哪一天」按**用户本地日历**切分（UTC-5 用户深夜完成的任务落在他的「今天」，BR-04）；② `completed_at__gte=monday_utc` 把本地周一 00:00 显式换算为 UTC 瞬时比较，与 TruncDate 时区口径一致（之前的 `__date__gte=monday` 是按 UTC 日期切，会让 UTC+8 用户「本地周一凌晨完成」算到「UTC 周日」漂出本周——BE-7 守护）；③ 趋势 7 日窗同样改 `completed_at__gte = now-7d`（UTC）以与 TruncDate 切日同语义，规避「6 天 23 小时」漂移导致的昨日漏算。
 
 #### 4.3.2 ViewSet
 
@@ -514,7 +525,14 @@ class MyIssuesStatsAPIView(BaseAPIView):
         workspace = Workspace.objects.filter(slug=slug).first()
         if workspace is None or not workspace.members.filter(id=request.user.id).exists():
             raise NotFound()                                 # 404 存在性隐藏
-        tz_name = request.query_params.get("tz") or request.user.profile.timezone or "Asia/Shanghai"
+        # 时区优先级：query 显式 tz > 浏览器时区（前端注入 X-Client-TZ）> 系统默认（BR-04 兜底）
+        # 注：AUTH-004 Profile 模型未提供 timezone 字段，时区由前端持、后端折算（§4.4.2「双路同源」）；
+        # 本迭代不扩展 Profile，避免与 AUTH-004 §1.3「字段阶段矩阵」漂移
+        tz_name = (
+            request.query_params.get("tz")
+            or request.headers.get("X-Client-TZ")
+            or "Asia/Shanghai"
+        )
         try:
             ZoneInfo(tz_name)
         except Exception:
@@ -528,11 +546,11 @@ class MyIssuesStatsAPIView(BaseAPIView):
 
 | SQL | # | 路径 | 预期（10 万任务 / 单 workspace） |
 | --- | --- | --- | --- |
-| 权限（accessible_by 可见项目集） | 1 | `ProjectMember` 唯一索引（含 Redis 缓存位） | < 1ms |
-| open_state_ids | 1 | `State.group` 低基数小表 | < 1ms |
-| 四计数单条 aggregate | 1 | `idx_assignee_issue` 反查 + filter 组合 | < 25ms |
-| 趋势 TruncDate 分组 | 1 | 同上（时间窗收窄到 7 日） | < 20ms |
-| **合计** | **≤ 5** | — | **P95 < 100ms（BR-06 门禁，IT-06）** |
+| workspace 查 + 成员判定（ViewSet） | 2 | `Workspace.slug` 唯一 + `ProjectMember` 索引（`idx_project_member_user`） | < 1ms |
+| state_group_pairs（open + completed 同源） | 1 | `State.group` 低基数小表（`group__in={unstarted,started,completed}`） | < 1ms |
+| 四计数单条 aggregate | 1 | `idx_assignee_issue` 反查 + filter 组合（含基座 `project__status="active"`） | < 25ms |
+| 趋势 TruncDate 分组 | 1 | 同上（时间窗收窄到 7 日，按用户本地切日） | < 20ms |
+| **合计** | **5** | 与 BR-06 / BE-11 口径一致 | **P95 < 100ms（BR-06 门禁，IT-06）** |
 
 ### 4.4 前端实现
 
@@ -660,15 +678,16 @@ export const TrendCard = ({ trend }: { trend: TrendPoint[] }) => {
 | --- | --- | --- | --- |
 | BE-1 | 逾期口径 | 昨天截止未完成 1 条 | `overdue_count=1` |
 | BE-2 | 今日到期口径 | 今天截止未完成 | `due_today_count` 计入、`overdue` 不计 |
-| BE-3 | 取消不污染完成 | 拖入 `cancelled` 的本周任务 | `completed_this_week_count` 与趋势均不计（BR-02） |
+| BE-3 | 取消不污染完成 | 拖入 `cancelled` 的本周任务 | `completed_this_week_count` 与趋势（7 日柱）均不含 cancelled（BR-02；trend SQL 含 `state__group="completed"` 防御过滤） |
 | BE-4 | 已完成不再计待办 | `completed` 态任务 | 不入 `todo_count` |
 | BE-5 | backlog 不计待办 | `backlog` 态任务 | 不入 `todo_count`（open 仅两语义组） |
 | BE-6 | 时区折算（UTC-5） | 用户本地 8-31 深夜完成（UTC 9-01 凌晨） | 趋势落该用户本地 8-31（BR-04） |
 | BE-7 | 周界折算 | 本地周日 23:59（UTC+8）完成 | 不入「本周」（周一 00:00 起） |
+| BE-7a | 本地周一边界（**新增，§2.7 守护**） | 本地周一 00:00（UTC-5）本地完成（即 UTC 05:00） | 入「本周」完成计数，趋势落本地周一柱 |
 | BE-8 | 权限内聚合 | 被移出项目的旧指派 | 不计数不出列表（BR-08） |
 | BE-9 | 多指派计数（前瞻） | 一任务挂两人 | 每人视角各计 1（BR-03） |
 | BE-10 | 趋势补零 | 中间 4 日无完成 | 恰 7 点含 0（BR-10） |
-| BE-11 | SQL 条数 | 任一 stats 请求 | `assertNumQueries` ≤ 5（BR-06） |
+| BE-11 | SQL 条数 | 任一 stats 请求（workspace 存在 + 成员判定 + Service） | `assertNumQueries` ≤ 5（BR-06；§4.3.3 拆解：workspace 1 + 成员 1 + state_group_pairs 1 + aggregate 1 + 趋势 1 = 5） |
 | BE-12 | `no-store` 头 | 响应头检查 | `Cache-Control: no-store`（BR-05） |
 | BE-13 | `tz` 非法 | `tz=ABC` | 400 `VALIDATION_ERROR` / `INVALID` |
 | BE-14 | `state_group` 非法 | `state_group=doing` | 400 `INVALID`；合法五组逗号 OR 正常（BR-09） |

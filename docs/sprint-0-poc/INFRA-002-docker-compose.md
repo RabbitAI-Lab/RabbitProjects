@@ -41,7 +41,7 @@
 | 前端（3） | `web`、`admin`、`space` |
 | 入口（1） | `proxy`（Nginx 反向代理） |
 
-> **服务计数口径说明**：[`tech-stack.md`](../architecture/tech-stack.md) §11 的表述为「编排 web/admin/space/api/worker/beat/live/db/redis/mq/minio/proxy 共 11 个服务」，其枚举的服务名实为 **12 个**（文字计数为笔误，枚举清单才是权威）。本文档以 **12 个常驻服务**为准，并额外引入 2 个一次性初始化服务（`migrator` / `createbuckets`）以满足"无需手动初始化"要求——这 2 个服务是本系统相对 Plane 的改进项，见 §6.3。
+> **服务计数口径说明**：[`tech-stack.md`](../architecture/tech-stack.md) §5（工程工具链）的 Compose 行表述为「编排 web/admin/space/api/worker/beat/live/db/redis/mq/minio/proxy 共 11 个服务」，其枚举的服务名实为 **12 个**（文字计数少 1，枚举清单才是权威）；[`monorepo-structure.md`](../architecture/monorepo-structure.md) §1.1 目标 1「起全套 11 个服务」与 §2 目录树注释「本地开发全套编排（11 服务）」两处计数同样少 1。上述三处均以本文的 **12 个常驻服务编排为准**（架构文档待回改：回改时同步把计数修正为 12）。本文档额外引入 2 个一次性初始化服务（`migrator` / `createbuckets`）以满足"无需手动初始化"要求——这 2 个服务是本系统相对 Plane 的改进项，见 §6.3。
 
 ### 1.2 目标用户
 
@@ -58,7 +58,7 @@
 | 依赖 | 消费的具体决策 |
 | --- | --- |
 | [`INFRA-001`](./INFRA-001-monorepo-scaffold.md) | `apps/*` 目录布局（Dockerfile 的 build context）；`deploy/compose/` 位置；`pnpm-workspace.yaml` 结构（前端镜像需 `pnpm deploy --filter`）；`.env.example` 变量清单；`apps/api/bin/docker-entrypoint-*.sh` 与 `apps/proxy/nginx.conf.template` 的文件位置 |
-| [`architecture/tech-stack.md`](../architecture/tech-stack.md) | §8 生产镜像矩阵（`postgres:15.7-alpine` / `valkey/valkey:7.2-alpine` / `rabbitmq:3.13-management-alpine` / `nginx:1.27-alpine` / `node:22-alpine` / `python:3.12-slim`）；§11 `profiles` + `healthcheck` + `depends_on: condition` 编排要求；§6.2 差异 1（Nginx 替代 Caddy 及其代价）；§6.2 差异 3（RabbitMQ 为唯一 Celery broker，Redis 仅作 result backend） |
+| [`architecture/tech-stack.md`](../architecture/tech-stack.md) | §8 生产镜像矩阵（`postgres:15.7-alpine` / `valkey/valkey:7.2-alpine` / `rabbitmq:3.13-management-alpine` / `nginx:1.27-alpine` / `node:22-alpine` / `python:3.12-slim`）；§5 `profiles` + `healthcheck` + `depends_on: condition` 编排要求；§6.2 差异 1（Nginx 替代 Caddy 及其代价）；§6.2 差异 3（RabbitMQ 为唯一 Celery broker，Redis 仅作 result backend） |
 | [`architecture/monorepo-structure.md`](../architecture/monorepo-structure.md) | §9 环境变量层级与命名前缀；§10.3 本地全栈启动路径；根 `package.json` 的 `compose:*` 脚本 |
 | [`architecture/dependency-graph.md`](../architecture/dependency-graph.md) | §6 全局技术决策：`INFRA-002` 须在 Sprint 0 就把 worker / beat 编排就位（即使 P0 无异步任务） |
 
@@ -205,7 +205,7 @@ flowchart TD
 | `redis` | `valkey-cli ping` | 5s | 3s | 10 | 5s | 期望输出 `PONG` |
 | `mq` | `rabbitmq-diagnostics -q ping` | 10s | 10s | 10 | **40s** | RabbitMQ 启动慢（Erlang VM + 磁盘节点恢复），`start_period` 必须给足，否则会在启动期被误判为 unhealthy 并重启，陷入循环 |
 | `minio` | `curl -f http://localhost:9000/minio/health/live` | 10s | 5s | 5 | 10s | 官方 liveness 端点 |
-| `api` | `curl -f http://localhost:8000/api/v1/health/` | 10s | 5s | 10 | 20s | **必须是真实端点**，其内部检查 DB 连接与 Redis 连接（见 §4.8） |
+| `api` | `curl -f http://localhost:8000/api/v1/health/` | 10s | 5s | 10 | 20s | **必须是真实端点**，其内部检查 DB 连接与 Redis 连接（端点设计见 §4.10） |
 | `worker` | `celery -A plane inspect ping -d celery@$HOSTNAME` | 30s | 10s | 5 | 30s | 探测 worker 是否真正注册到 broker，而非仅进程存活 |
 | `beat` | 无 healthcheck | — | — | — | — | Beat 无对外端口与查询接口；用 `restart: unless-stopped` 兜底。P2 可改为检查 pid 文件时间戳 |
 | `live` | `curl -f http://localhost:3000/health` | 10s | 5s | 5 | 10s | 端点内检查到 api 的内部连通性 |
@@ -282,22 +282,30 @@ flowchart LR
 仓库根 `package.json` 提供快捷脚本（`INFRA-001` §4.5）：
 
 ```bash
-pnpm compose:up      # docker compose -f deploy/compose/docker-compose.yml up -d
+pnpm compose:up      # docker compose --env-file .env -f deploy/compose/docker-compose.yml up -d
+pnpm compose:dev     # docker compose --env-file .env -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.override.yml up
 pnpm compose:down    # ... down
 pnpm compose:logs    # ... logs -f
 ```
+
+> **为什么 `-f` 形式必须显式带 `--env-file .env`**：Compose v2 从**首个 `-f` 文件所在目录**（即 `deploy/compose/`）查找 `.env` 做变量插值，而非当前工作目录——不带 `--env-file` 时仓库根的 `.env` 不生效，`${POSTGRES_USER:?}` 等必填变量会在启动时直接报错。`monorepo-structure.md` §2 给出的替代方案是在仓库根放置指向 `deploy/compose/docker-compose.yml` 的软链 `docker-compose.yml`，从根目录直接 `docker compose up`；本文的命令与脚本统一采用显式 `--env-file .env`（等价达成同一效果，且不改变 compose 文件内 `../..` 相对路径以 `deploy/compose/` 为锚的解析——注意 `--project-directory .` 会把该锚点移到仓库根，导致 `context: ../..` 指到仓库之外，故**不可用**）。`INFRA-001` §4.5 与 `monorepo-structure.md` §6.2 的脚本定义需同步补上该参数（待回改）。
+>
+> **为什么开发覆盖必须追加第二个 `-f`**：Compose v2 显式传 `-f` 时**跳过默认文件查找**，`docker-compose.override.yml` 的默认自动合并随之失效——上述基线命令（单 `-f`）永远不会加载 override。因此开发姿势统一经 `compose:dev` 显式追加第二个 `-f`（加载效果与用法见 §4.7）；该新增脚本同样需在 `INFRA-001` §4.5 与 `monorepo-structure.md` §6.2 回改登记（待回改）。
 
 ### 3.2 两种典型开发姿势
 
 | 姿势 | 命令 | 适用场景 |
 | --- | --- | --- |
 | **全容器**（演示 / 验收 / 新成员上手） | `docker compose up` → 浏览器访问 `http://localhost` | 验证"一键启动"；前端改动需重建镜像，不适合日常开发 |
-| **混合模式**（日常开发，推荐） | `pnpm compose:up` 起后端全套 → `pnpm dev` 本地起前端 | 前端享受 Vite HMR（< 300ms），后端在容器内。前端通过 Vite proxy 把 `/api` 转发到 `http://localhost:8000` |
+| **混合模式**（日常开发，推荐） | `pnpm compose:dev` 起后端全套（加载 override：api 换 `runserver` 热重载、worker 换 `watchfiles`，前端与 proxy 不启动）→ `pnpm dev` 本地起前端 | 前端享受 Vite HMR（< 300ms），后端在容器内且改 Python 代码即热重载。前端通过 Vite proxy 把 `/api` 转发到 `http://localhost:8000` |
 
 混合模式下前端只需起必要的后端服务：
 
 ```bash
-docker compose up -d db redis mq minio api          # Compose 自动带上 migrator/createbuckets
+# Compose 只自动启动「所列服务依赖链」上的服务：
+#   api depends_on migrator → migrator（及其依赖 db）自动带上；
+#   createbuckets 无任何服务 depends_on 它、不在依赖链上 → 必须显式列出，否则 bucket 不会被创建
+docker compose up -d db redis mq minio api createbuckets
 pnpm dev
 ```
 
@@ -328,12 +336,12 @@ docker compose up               # 等价全新环境重来
 
 | 服务名 | 镜像 / 构建 | 对外端口 | 内部端口 | 依赖 | 重启策略 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `db` | `postgres:15.7-alpine` | 5432 | 5432 | — | unless-stopped | PostgreSQL 主库；`pgdata` 卷；开机执行 `init-extensions.sql` 建 `pg_trgm` 扩展 |
+| `db` | `postgres:15.7-alpine` | 5432 | 5432 | — | unless-stopped | PostgreSQL 主库；`pgdata` 卷；开机执行 `init-extensions.sql` 建 `pg_trgm` + `btree_gin` 扩展 |
 | `redis` | `valkey/valkey:7.2-alpine` | 6379 | 6379 | — | unless-stopped | 缓存 / Session / 限流计数 / Celery **result backend**（**非 broker**） |
 | `mq` | `rabbitmq:3.13-management-alpine` | 5672 / 15672 | 5672 / 15672 | — | unless-stopped | Celery **唯一 broker**；15672 为管理界面（生产仅内网） |
-| `minio` | `minio/minio:RELEASE.2024-11-07T00-52-20Z` | 9000 / 9001 | 9000 / 9001 | — | unless-stopped | S3 兼容对象存储；9000 API / 9001 控制台 |
+| `minio` | `minio/minio:RELEASE.2025-xx-xx` | 9000 / 9001 | 9000 / 9001 | — | unless-stopped | S3 兼容对象存储；9000 API / 9001 控制台；RELEASE tag 以 `tech-stack.md` §3 登记为准，生产按 digest 锁定 |
 | `migrator` | 构建 `apps/api`（同 api 镜像） | — | — | `db`(healthy) | **no** | 一次性：`migrate --noinput` + 种子数据；退出码 0 即成功 |
-| `createbuckets` | `minio/mc:latest` | — | — | `minio`(healthy) | **no** | 一次性：创建 `rp-uploads` bucket 并设访问策略 |
+| `createbuckets` | `minio/mc:RELEASE.2025-xx-xx` | — | — | `minio`(healthy) | **no** | 一次性：创建 `rp-uploads` bucket 并设访问策略；mc 与 MinIO 服务端同期锁定 RELEASE tag（见下方版本对齐说明） |
 | `api` | 构建 `apps/api` | 8000 | 8000 | `db` `redis` `mq`(healthy)、`migrator`(completed) | unless-stopped | Django + DRF，gunicorn 23 + gthread |
 | `worker` | 构建 `apps/api`（同镜像，换 command） | — | — | 同 `api` | unless-stopped | Celery Worker；队列 `notifications,webhooks,reports,imports` |
 | `beat` | 构建 `apps/api`（同镜像，换 command） | — | — | 同 `api` | unless-stopped | Celery Beat 定时调度；DatabaseScheduler |
@@ -343,7 +351,7 @@ docker compose up               # 等价全新环境重来
 | `space` | 构建 `apps/space` | 3003 | 3003 | `api`(healthy) | unless-stopped | 对外公开空间 |
 | `proxy` | 构建 `apps/proxy`（基于 `nginx:1.27-alpine`） | **80 / 443** | 80 / 443 | `web` `admin` `space` `api` `live` 全部 healthy | unless-stopped | 唯一对外入口；五路由分发 |
 
-> **与任务给定服务表的版本对齐说明**：任务描述中给出的镜像为 `postgres:15.7` / `valkey:7` / `rabbitmq:3-management` / `minio/minio`（大版本粒度）。本文档按 [`tech-stack.md`](../architecture/tech-stack.md) §8「生产镜像」行**收紧为精确的 patch 级 tag**（`postgres:15.7-alpine` / `valkey/valkey:7.2-alpine` / `rabbitmq:3.13-management-alpine`），MinIO 亦锁定到具体 RELEASE tag。理由：浮动 tag 会导致"同一份 compose 在不同时间拉到不同版本"，直接破坏可复现性与气隙部署的镜像清单确定性。这是收紧而非偏离，两者语义兼容。
+> **与任务给定服务表的版本对齐说明**：任务描述中给出的镜像为 `postgres:15.7` / `valkey:7` / `rabbitmq:3-management` / `minio/minio`（大版本粒度）。本文档按 [`tech-stack.md`](../architecture/tech-stack.md) §8「生产镜像」行**收紧为精确的 patch 级 tag**（`postgres:15.7-alpine` / `valkey/valkey:7.2-alpine` / `rabbitmq:3.13-management-alpine`）；MinIO 的 RELEASE tag 以 [`tech-stack.md`](../architecture/tech-stack.md) §3 版本表登记为**唯一口径**（`RELEASE.2025-xx-xx`），本文与其保持同一 tag、不另行指定版本，生产再按 digest 锁定（`tech-stack.md` §1.1 / §9.3），具体 RELEASE 日期由 `tech-stack.md` §3 登记后在两处同步替换。理由：浮动 tag 会导致"同一份 compose 在不同时间拉到不同版本"，直接破坏可复现性与气隙部署的镜像清单确定性。这是收紧而非偏离，两者语义兼容。一次性工具容器 `minio/mc` 同样按此口径锁定为 `RELEASE.2025-xx-xx`——**不再使用 `latest`**（浮动 tag 同样会破坏气隙镜像清单确定性，见 §6.4），具体 RELEASE 日期与 `minio/minio` 服务端同期配套（选取依据：`mc` 为 MinIO 官方客户端，按官方同期发布线选取以保证与服务端兼容），同样以 [`tech-stack.md`](../architecture/tech-stack.md) §3 登记为唯一口径。架构文档待回改：`tech-stack.md` §3 需补登记 `minio/mc` 的 RELEASE tag 行（与 MinIO 行同期），登记后在本文 §4.1 / §4.2 同步替换。
 
 ### 4.2 docker-compose.yml（完整设计）
 
@@ -439,7 +447,7 @@ services:
     <<: *default-logging
 
   minio:
-    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    image: minio/minio:RELEASE.2025-xx-xx   # tag 以 tech-stack.md §3 登记为准；生产按 digest 锁定（见 §4.1 版本对齐说明）
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -469,7 +477,7 @@ services:
     <<: *default-logging
 
   createbuckets:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2025-xx-xx   # 与 minio/minio 同期 RELEASE；tag 以 tech-stack.md §3 登记为准，生产按 digest 锁定（见 §4.1 版本对齐说明）
     restart: "no"
     depends_on:
       minio: { condition: service_healthy }
@@ -686,7 +694,8 @@ FROM python:3.12-slim AS builder
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_COMPILE_BYTECODE=1
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential libpq-dev \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# 构建工具镜像同样精确锁定，禁止 latest（与 §4.9 镜像基线一致；升级走 tech-stack.md §9.2 流程）
+COPY --from=ghcr.io/astral-sh/uv:0.12.8 /uv /usr/local/bin/uv
 WORKDIR /app
 # 仅拷 lock 文件 → 依赖层可缓存
 COPY apps/api/pyproject.toml apps/api/uv.lock apps/api/.python-version ./
@@ -772,7 +781,7 @@ exec celery -A plane beat \
   --pidfile=/tmp/celerybeat.pid
 ```
 
-> **`api` entrypoint 中刻意不含 `migrate`**：见 §2.2 的独立 `migrator` 设计决策。
+> **`api` entrypoint 中刻意不含 `migrate`**：见 §2.2 的独立 `migrator` 设计决策；`collectstatic` 同样由 `migrator` 执行（见上方脚本），`api` entrypoint 只负责启动 gunicorn。**口径冲突说明**：`monorepo-structure.md` §2 目录树将 `docker-entrypoint-api.sh` 注释为「migrate + collectstatic + gunicorn」，与本文 §2.2 / §4.3 / §7.4 的决策冲突——以本文为准（架构文档待回改）：monorepo-structure §2 该注释待回改为「collectstatic + gunicorn（migrate 由 migrator 执行）」；按本文最终脚本划分，`collectstatic` 实际亦由 migrator 执行，回改为「gunicorn（migrate / collectstatic 由 migrator 执行）」更为准确。
 > **队列按业务拆分**（`notifications` / `webhooks` / `reports` / `imports`）与每队列配 DLX，是 `tech-stack.md` §6.2 差异 3 的落地要求；P0 阶段队列为空但必须编排就位。
 
 #### apps/web|admin|space/Dockerfile（前端，多阶段）
@@ -855,14 +864,37 @@ CMD ["node", "dist/index.js"]
 ```dockerfile
 FROM nginx:1.27-alpine
 RUN apk add --no-cache curl gettext        # gettext 提供 envsubst
-COPY apps/proxy/nginx.conf.template /etc/nginx/templates/nginx.conf.template
-COPY apps/proxy/conf.d/ /etc/nginx/snippets/
-COPY apps/proxy/docker-entrypoint.sh /docker-entrypoint.d/40-render-config.sh
-RUN chmod +x /docker-entrypoint.d/40-render-config.sh
+# 模板放自管目录 /etc/nginx/template/，严禁放进官方 /etc/nginx/templates/：
+# 官方 20-envsubst 机制只把 *.template 渲染进 conf.d（http 片段挂载点），
+# 完整主配置（worker_processes/events/http 顶层结构）会被误当片段 include，nginx -t 直接失败
+COPY apps/proxy/nginx.conf.template /etc/nginx/template/nginx.conf.template
+COPY apps/proxy/conf.d/ /etc/nginx/template/conf.d/
+COPY apps/proxy/docker-entrypoint.sh /usr/local/bin/proxy-entrypoint.sh
+RUN chmod +x /usr/local/bin/proxy-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/proxy-entrypoint.sh"]
 EXPOSE 80 443
 ```
 
-`nginx:1.27-alpine` 官方镜像自带 `/docker-entrypoint.d/` 机制与 `20-envsubst-on-templates.sh`，会自动把 `/etc/nginx/templates/*.template` 经 `envsubst` 渲染到 `/etc/nginx/conf.d/`。本项目额外加一个 `40-render-config.sh` 处理条件性配置（如是否启用 TLS server 段），这正是 `tech-stack.md` §6.2 差异 1 中「由 `apps/proxy` 内的模板 + entrypoint 变量替换解决」的具体落地。
+```sh
+#!/bin/sh
+# apps/proxy/docker-entrypoint.sh —— 自定义 entrypoint：渲染主配置与片段，校验后启动 nginx
+set -e
+# 只替换环境中已定义的大写占位符（与官方 20-envsubst 脚本同策略），
+# 避免误吞 nginx 自身运行时变量（$host、$remote_addr、$http_upgrade 等小写变量）
+SUBST="$(printf '${%s} ' $(env | cut -d= -f1 | grep -E '^[A-Z_][A-Z0-9_]*$'))"
+# ① 主配置：完整模板渲染到 /etc/nginx/nginx.conf（而非 conf.d）
+envsubst "$SUBST" < /etc/nginx/template/nginx.conf.template > /etc/nginx/nginx.conf
+# ② 片段：upstreams.conf 中的 ${WEB_UPSTREAM} 等占位符纳入同一渲染范围，输出到 snippets/
+mkdir -p /etc/nginx/snippets
+for t in /etc/nginx/template/conf.d/*.conf; do
+  envsubst "$SUBST" < "$t" > "/etc/nginx/snippets/$(basename "$t")"
+done
+# ③ 渲染产物先过语法校验，失败即拒绝启动（残缺配置不进运行态）
+nginx -t
+exec "$@"        # 透传 CMD：nginx -g 'daemon off;'
+```
+
+**为什么不用官方 `20-envsubst-on-templates.sh` 机制**：该机制只适用于 **http 片段**——它把 `/etc/nginx/templates/*.template` 渲染到 `/etc/nginx/conf.d/`（由主配置 `include /etc/nginx/conf.d/*.conf` 加载），而本项目的主配置是含 `worker_processes` / `events` / `http` 顶层结构的**完整配置**，放进该机制会残留嵌套的 `http { }` 结构导致 `nginx -t` 失败；同时 `upstreams.conf` 若只 `COPY` 不渲染，其中的 `${WEB_UPSTREAM}` 等占位符会以字面量残留，Nginx 解析 `server ${WEB_UPSTREAM}` 时同样启动失败。因此改由自定义 entrypoint 将主模板渲染至 `/etc/nginx/nginx.conf`、把 upstreams 片段纳入同一渲染范围输出到 `/etc/nginx/snippets/`，并在启动前 `nginx -t` 兜底（条件性配置如是否启用 TLS server 段也在此 entrypoint 中处理）。这正是 `tech-stack.md` §6.2 差异 1 中「由 `apps/proxy` 内的模板 + entrypoint 变量替换解决」的具体落地。
 
 ### 4.4 Nginx 反向代理路由配置
 
@@ -877,7 +909,7 @@ EXPOSE 80 443
 | `/live` | `live:3000` | 实时协作 WebSocket（需 upgrade 处理） |
 
 ```nginx
-# apps/proxy/nginx.conf.template（经 envsubst 渲染）
+# apps/proxy/nginx.conf.template（由 docker-entrypoint.sh 渲染到 /etc/nginx/nginx.conf）
 worker_processes auto;
 events { worker_connections 4096; }
 
@@ -980,7 +1012,8 @@ http {
 ```
 
 ```nginx
-# apps/proxy/conf.d/upstreams.conf
+# apps/proxy/conf.d/upstreams.conf（由 docker-entrypoint.sh 渲染到 /etc/nginx/snippets/upstreams.conf，
+# ${*_UPSTREAM} 占位符在该阶段替换——直接 COPY 不渲染会残留字面量导致启动失败，见 §4.3）
 upstream web_upstream   { server ${WEB_UPSTREAM}   max_fails=3 fail_timeout=15s; keepalive 32; }
 upstream admin_upstream { server ${ADMIN_UPSTREAM} max_fails=3 fail_timeout=15s; keepalive 16; }
 upstream space_upstream { server ${SPACE_UPSTREAM} max_fails=3 fail_timeout=15s; keepalive 16; }
@@ -991,6 +1024,10 @@ upstream live_upstream  { server ${LIVE_UPSTREAM}  max_fails=3 fail_timeout=15s;
 ```nginx
 # apps/proxy/conf.d/proxy-common.conf
 proxy_http_version 1.1;
+# upstream keepalive 双必要条件之二：清空逐请求 Connection 头（另一条件为上面的 HTTP/1.1）。
+# 缺失时 Nginx 默认向上游发送 "Connection: close"，upstreams.conf 中声明的 keepalive 池无法复用长连接；
+# /live/ WebSocket 段不 include 本文件，其 Connection 仍为 $connection_upgrade，升级不受影响
+proxy_set_header Connection "";
 proxy_set_header Host              $host;
 proxy_set_header X-Real-IP         $remote_addr;
 proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
@@ -1048,7 +1085,7 @@ networks:
 | --- | --- |
 | 单一自定义 bridge 网络 | 不用 default 网络。自定义网络提供**内置 DNS**：容器可用服务名互访（`db`、`redis`、`api`），无需 `links` 或 IP |
 | 服务间通信用服务名 | `DATABASE_URL=postgresql://rp:rp@db:5432/...`；`API_INTERNAL_URL=http://api:8000` |
-| 端口暴露原则 | **开发**：全部服务暴露端口到宿主机，便于用 psql / redis-cli / 浏览器直连调试。**生产**：仅 `proxy` 暴露 80/443，其余全部移除 `ports`（见 §4.9） |
+| 端口暴露原则 | **开发**：全部服务暴露端口到宿主机，便于用 psql / redis-cli / 浏览器直连调试。**生产**：仅 `proxy` 的 80/443 对外发布，其余全部移除 `ports`；例外：`mq` 15672 管理界面**按需发布且由外层防火墙限制**（见 §4.7 / §4.9） |
 | P2 网络分段 | 可拆为 `rp-edge`（proxy + 前端）与 `rp-internal`（db/redis/mq/minio + 后端），使基础设施不可从边缘网络直达。P0 单网络够用，不提前复杂化 |
 
 ### 4.7 生产 vs 开发配置差异
@@ -1057,21 +1094,23 @@ networks:
 
 | 文件 | 用途 | 加载方式 |
 | --- | --- | --- |
-| `deploy/compose/docker-compose.yml` | **基线**（可独立运行的本地开发配置） | `docker compose up` |
-| `docker-compose.override.yml` | **本地开发自动覆盖**（Compose 默认自动加载，不入库或入库为 `.example`） | 自动 |
-| `deploy/compose/docker-compose.prod.yml` | **生产覆盖** | `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d` |
-| `deploy/compose/docker-compose.ci.yml` | **CI 覆盖** | 同上模式 |
+| `deploy/compose/docker-compose.yml` | **基线**（可独立运行的本地开发配置） | §3.1 基线命令（单 `-f`）：`docker compose --env-file .env -f deploy/compose/docker-compose.yml up`；或仓库根软链就位后裸 `docker compose up`（见 §7.1 第 17 项） |
+| `deploy/compose/docker-compose.override.yml` | **本地开发覆盖**（模板以 `.example` 入库，使用时复制为同名文件，复制件不入库） | **不自动加载**——Compose v2 显式传 `-f` 时跳过默认文件查找，须显式追加第二个 `-f`：`docker compose --env-file .env -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.override.yml up`（快捷脚本 `pnpm compose:dev`，见 §3.1） |
+| `deploy/compose/docker-compose.prod.yml` | **生产覆盖** | 在 `deploy/compose/` 内执行 `docker compose --env-file ../../.env -f docker-compose.yml -f docker-compose.prod.yml up -d`（`--env-file` 的理由见 §3.1） |
+| `deploy/compose/docker-compose.ci.yml` | **CI 覆盖**（最小依赖集，定义见下） | `docker compose --env-file ../../.env -f docker-compose.yml -f docker-compose.ci.yml up -d db redis mq minio` |
 
 #### docker-compose.override.yml（开发覆盖）
 
 ```yaml
 # deploy/compose/docker-compose.override.yml
-# Compose 自动加载，无需 -f 指定。用于本地开发的便利性调整。
+# 不会被自动加载：基线命令显式传 -f 时，Compose v2 跳过默认文件查找（含 override 的默认自动合并），
+# 须作为第二个 -f 显式追加——开发姿势统一走 pnpm compose:dev（见 §3.1 / §4.7 表格）。
 services:
   api:
     # 源码挂载 + runserver 热重载，改 Python 代码无需重建镜像
     volumes:
       - ../../apps/api:/app
+      - /app/.venv          # 匿名卷：防止源码挂载遮蔽镜像内依赖（理由见下方说明）
     command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
     environment:
       DJANGO_SETTINGS_MODULE: plane.settings.local
@@ -1080,6 +1119,7 @@ services:
   worker:
     volumes:
       - ../../apps/api:/app
+      - /app/.venv          # 同上
     command: ["watchfiles", "--filter", "python",
               "celery -A plane worker --loglevel=DEBUG --concurrency=2 -Q notifications,webhooks,reports,imports"]
 
@@ -1090,9 +1130,11 @@ services:
   proxy: { profiles: ["full"] }
 ```
 
-> `profiles: ["full"]` 使这四个服务在默认 `docker compose up` 时**不启动**，仅在 `docker compose --profile full up` 时启动。这契合 §3.2 的混合开发模式，也是 `tech-stack.md` §11 中「`profiles` 区分本地/生产」的落地。
+> `profiles: ["full"]` 使这四个服务在 override 生效的开发姿势（`pnpm compose:dev`）下默认**不启动**，仅在 `compose:dev` 命令追加 `--profile full` 时启动。这契合 §3.2 的混合开发模式，也是 `tech-stack.md` §5 中「`profiles` 区分本地/生产」的落地。
 >
-> **重要**：`INFRA-002` 的验收（"一键启动全部服务"）必须用 `docker compose --profile full up` 或在无 override 的环境下执行，以确保 12 个服务全起。CI 与验收环境中不放置 `override.yml`。
+> **`/app/.venv` 匿名卷的理由（防源码挂载遮蔽镜像依赖）**：`api` / `worker` 镜像的依赖装在镜像内 `/app/.venv`（§4.3 Dockerfile 中 `uv sync --frozen` 的产物，镜像 `PATH` 亦指向 `/app/.venv/bin`）。源码 bind mount `../../apps/api:/app` 会**整体遮蔽**容器内的 `/app`——若不加处理，`/app/.venv` 处只剩宿主机目录内容，镜像依赖不可见，`runserver` / `celery` 启动即 `ImportError`。两种解法中选定**匿名卷**（`- /app/.venv`：内层挂载优先于外层 bind mount，首次创建时从镜像内容初始化，从而保留镜像内依赖）：① 容器自包含，宿主机无需安装 uv / Python 3.12，也无需先在宿主 `uv sync` 生成 venv 的前置步骤；② 「宿主 venv」方案不可行——宿主 venv 中的 psycopg 等二进制包按宿主平台（如 macOS arm64）编译，挂入 Linux 容器即不可用。注意：镜像重建后若依赖变更，匿名卷仍持有旧依赖，需 `docker compose down -v`（该命令会一并删除匿名卷）后重起以重建。
+>
+> **重要**：override 仅在显式追加第二个 `-f`（`pnpm compose:dev`）时生效——§3.1 的基线命令（单 `-f`）与仓库根软链后的裸 `docker compose up` 均**不会**加载它（override 收敛于 `deploy/compose/` 且以 `.example` 入库，仓库根无同名文件）。因此 `INFRA-002` 的验收（"一键启动全部服务"）按 §7.2 用基线命令执行即可，天然不受 override 影响，无需依赖"环境未放置 override"；若要在开发覆盖姿势下验证 12 个服务全起，须在 `compose:dev` 命令上追加 `--profile full`。CI 与验收环境中不放置 `override.yml`。
 
 #### docker-compose.prod.yml（生产覆盖）
 
@@ -1106,7 +1148,7 @@ services:
     deploy: { resources: { limits: { cpus: "2", memory: 4G } } }
 
   redis: { ports: [], restart: always }
-  mq:    { ports: ["15672:15672"], restart: always }   # 仅管理界面，且应由外层防火墙限制
+  mq:    { ports: ["15672:15672"], restart: always }   # 管理界面按需发布（无需外部访问时注释掉本 ports），且由外层防火墙限制
   minio: { ports: [], restart: always }
 
   api:
@@ -1144,14 +1186,31 @@ services:
       SERVER_NAME: ${SERVER_NAME:?required}
 ```
 
+#### docker-compose.ci.yml（CI 覆盖：最小依赖集）
+
+与 `monorepo-structure.md` §2 对 `docker-compose.ci.yml` 的定位（「CI 用最小依赖（db/redis/mq/minio）」）分工对齐：本文件只为**后端 CI**（`api-ci.yml` 的 ruff / mypy / pytest）提供四件套依赖，被测对象（pytest）跑在 Job 进程内、经端口映射连接，因此**不起** `api` / `worker` / `beat` / `live` / 前端 / `proxy`；**E2E（`e2e.yml`）不使用本文件**——§5.1 / §5.2 的被测对象是全栈编排本身，直接用基线 compose 加 `--profile full` 起全套。
+
+```yaml
+# deploy/compose/docker-compose.ci.yml
+services:
+  db:
+    ports: ["5432"]                      # 仅声明容器端口 → 宿主机随机分配端口，并行 Job 互不冲突
+    tmpfs: [/var/lib/postgresql/data]    # 内存盘：更快且用后即弃，无需清理数据卷
+  redis: { ports: ["6379"] }
+  mq:    { ports: ["5672"] }
+  minio: { ports: ["9000"] }
+  # 不挂载源码、不构建应用镜像；CI 通过 docker compose port <svc> <port> 读取随机端口并注入
+  # pytest 的连接环境变量（DATABASE_URL / REDIS_URL / CELERY_BROKER_URL / AWS_S3_ENDPOINT_URL）
+```
+
 #### 差异总表
 
 | 维度 | 开发 | 生产 |
 | --- | --- | --- |
 | Django settings | `plane.settings.local`，`DEBUG=1` | `plane.settings.production`，`DEBUG=0` |
 | api 运行方式 | `manage.py runserver`（自动重载） | `gunicorn`（3-5 worker × 4 thread） |
-| 源码挂载 | ✅ bind mount，改码即生效 | ❌ 全部打进镜像，不可变 |
-| 端口暴露 | 全部服务暴露，便于调试 | **仅 proxy 的 80/443** |
+| 源码挂载 | ✅ bind mount，改码即生效（`/app/.venv` 用匿名卷保留镜像内依赖，见 §4.7 override 说明） | ❌ 全部打进镜像，不可变 |
+| 端口暴露 | 全部服务暴露，便于调试 | **仅 proxy 的 80/443 对外发布**；例外：`mq` 15672 管理界面按需发布且由外层防火墙限制（§4.9） |
 | 副本数 | 各 1 | api ×2、worker ×2、**beat 恰好 ×1** |
 | TLS | 无（http://localhost） | Nginx 443 + 证书卷挂载 |
 | 重启策略 | `unless-stopped` | `always` |
@@ -1178,7 +1237,7 @@ sequenceDiagram
 
     U->>C: docker compose up
     C->>DB: 启动容器
-    DB->>DB: initdb + 执行 init-extensions.sql (pg_trgm)
+    DB->>DB: initdb + 执行 init-extensions.sql (pg_trgm + btree_gin)
     loop 每 5s，最多 10 次
         C->>DB: healthcheck: pg_isready -U rp -d rabbit_projects
     end
@@ -1244,12 +1303,30 @@ class Command(BaseCommand):
 | --- | --- | --- |
 | 容器用户 | api / live 以非 root（uid 10001）运行 | P2 全服务只读根文件系统 |
 | 密钥 | 全部 `${VAR}` 注入，compose 中零硬编码；生产必填变量用 `${VAR:?}` | P3 接入密钥管理服务 |
-| 端口 | 生产仅暴露 proxy 80/443 | P2 网络分段（`rp-edge` / `rp-internal`） |
+| 端口 | 生产仅 proxy 的 80/443 对外发布；`mq` 15672 管理界面按需发布且由外层防火墙限制 | P2 网络分段（`rp-edge` / `rp-internal`） |
 | 限流 | Nginx `limit_req_zone`（api 30r/s、auth 5r/s） | P2 `INFRA-005` DRF 应用层限流 |
 | 上传体积 | `client_max_body_size 100M`，与 MinIO 直传上限对齐 | P2 分片续传（`FILE-003`） |
 | 响应头 | `security.conf`：nosniff / SAMEORIGIN / Referrer-Policy；`server_tokens off` | P2 CSP |
-| 镜像 | 全部精确 tag，无 `latest`（例外：`minio/mc` 仅用于一次性建桶） | P2 Trivy 扫描门禁（`tech-stack.md` §9） |
-| RabbitMQ 管理界面 | 开发暴露 15672；生产由防火墙限制 | P2 移除或加认证代理 |
+| 镜像 | 全部精确 tag，无 `latest`——覆盖 compose 的 `image:` **与 Dockerfile 的 `COPY --from`**，一次性工具容器 `minio/mc` 亦锁定 RELEASE tag（§4.1 版本对齐说明），**无任何例外** | P2 Trivy 扫描门禁（`tech-stack.md` §9） |
+| RabbitMQ 管理界面 | 开发暴露 15672；生产按需发布且由外层防火墙限制 | P2 移除或加认证代理 |
+
+### 4.10 `GET /api/v1/health/` 健康检查端点
+
+`api` 的 healthcheck（§2.3）、`live` / `web` 的启动条件（§2.2 层 ④）、路由测试 RT-05 与验收标准 3-④ 均依赖该端点。它不是业务功能，无对应功能文档，**随本文交付**，归属 `apps/api`。实现要点：
+
+| 要点 | 设计 |
+| --- | --- |
+| 路由与视图 | `GET /api/v1/health/`（全局端点，不进 `/api/v1/workspaces/{slug}/` 层级）。DRF `APIView` 简单视图，无 Serializer、无 ORM 查询；实现位于 `apps/api/plane/app/views/health.py`，在 `plane/urls.py` 根路由的 `/api/v1/` 前缀下挂载 |
+| 访问控制 | 免认证 + `permission_classes = [AllowAny]` + 不限流（健康探测不得被 `auth_zone` 限流误杀，也不得消耗会话）；生产亦开放——它只回显依赖连通性，不泄露配置 |
+| DB 连通检查 | `connections["default"].cursor()` 执行 `SELECT 1`，捕获异常记为 `checks.database = "error"`，超时 2s |
+| Redis 连通检查 | 经 django-redis 原生客户端 `cache.set("health:ping", ts, timeout=1)` 后读回；超时 2s。两项检查**互不短路**，单点失败仍返回完整 checks，便于定位是哪个依赖挂了 |
+| 返回结构（成功） | `200`，统一信封（`api-conventions.md` §4.1）：`{"status":"success","data":{"status":"ok","checks":{"database":"ok","redis":"ok"}}}` |
+| 返回结构（失败） | 任一检查失败：`503`，`{"status":"error","error":{"code":"SERVER_DATABASE_ERROR"|"SERVER_ERROR","message":"服务依赖不可用","request_id":"…"}}`——错误码**复用** `api-conventions.md` §8.6 已注册项（DB 失败用 `SERVER_DATABASE_ERROR`，其余用兜底 `SERVER_ERROR`），不新增注册码；`request_id` 由请求中间件注入。探测方（healthcheck / proxy）只按 HTTP 200/503 分支；**503 系健康端点例外映射**（偏离登记见下方注） |
+| 开销约束 | 纯只读探测，不写业务表；P95 < 50ms（§5.5 性能基线） |
+
+> **健康端点 503 例外（已登记偏离）**：`api-conventions.md` §8.6 将 `SERVER_DATABASE_ERROR` 与 `SERVER_ERROR` 均注册为 **500**，本端点在依赖不可用时将二者映射为 **503**（Service Unavailable）。理由：① 健康探测语义要求以 503 表达「依赖未就绪、稍后重试」，与 500 的「代码缺陷」区分——既避免健康探测流量污染 5xx 告警，也为 K8s / 负载均衡等外部探测方提供正确的重试信号；② §8.6 已有的 503 码（`SERVER_LIVE_SERVICE_UNAVAILABLE` 为 live 协作专用、`SERVER_MAINTENANCE` 为维护模式）语义均不匹配「依赖不可用」，故不改用、也不新增注册码。该例外**仅限本端点**（错误码沿用 §8.6 注册项，仅状态码例外），业务端点仍严格按 §8.6 的 500 映射。架构文档待回改：`api-conventions.md` §8.6 需在 `SERVER_DATABASE_ERROR` / `SERVER_ERROR` 两行补注「健康探测端点 `GET /api/v1/health/`（`INFRA-002` §4.10）例外映射为 503」，登记此健康探测专用的 503 映射例外。
+
+> 该端点是 compose 启动链路的组成部分：`api` 容器 healthcheck 命中它 → `service_healthy` → `live` / `web` / `admin` / `space` 才启动 → `proxy` 最终就绪。**若该端点缺失，§2.2 的依赖链条全部悬空**，故列入 §7.1 交付物第 16 项。
 
 ---
 
@@ -1279,7 +1356,7 @@ class Command(BaseCommand):
 | ID | 用例 | 命令 | 预期结果 |
 | --- | --- | --- | --- |
 | RT-01 | 代理自身健康 | `curl -i http://localhost/healthz` | 200，body `ok` |
-| RT-02 | `/` → web | `curl -sI http://localhost/` | 200，`Content-Type: text/html`，body 含 web 的 root div |
+| RT-02 | `/` → web | `curl -si http://localhost/` | 200，`Content-Type: text/html`，body 含 web 的 root div（`-sI` 为 HEAD 请求、响应无 body，无法断言 body；`-si` 为 GET 并连同状态行 / 响应头输出，三项断言均可验） |
 | RT-03 | `/god-mode` → admin | `curl -sI http://localhost/god-mode` | 200，HTML |
 | RT-04 | `/spaces` → space | `curl -sI http://localhost/spaces` | 200，HTML |
 | RT-05 | `/api` → api | `curl -s http://localhost/api/v1/health/` | 200，JSON，且符合统一信封 `{"status":"success","data":{...}}`（`api-conventions.md` §4.1） |
@@ -1324,7 +1401,7 @@ class Command(BaseCommand):
 | BT-10 | Redis 数据持久化 | ① 登录取得 Session；② `restart redis`；③ 刷新页面 | 仍处登录态（`--appendonly yes` 生效） |
 | BT-11 | RabbitMQ 启动慢不被误杀 | 观察 `mq` 前 40s 的健康状态 | `start_period: 40s` 内的失败不计入 retries，`mq` 不被反复重启 |
 | BT-12 | `beat` 单副本约束 | 生产配置下检查 `beat` 副本数 | 恰好 1；若配置为 >1，CI 校验脚本报错 |
-| BT-13 | 镜像 tag 无 `latest` | 扫描 compose 中的 `image:` 字段 | 除 `minio/mc`（一次性工具容器）外无 `latest` tag |
+| BT-13 | 镜像 tag 无 `latest` | 扫描 compose 中的 `image:` 字段（含一次性工具容器 `minio/mc`） | 无任何 `latest` tag，全部为精确 RELEASE / patch tag |
 
 ### 5.5 性能与资源基线（观测项，非门禁）
 
@@ -1436,20 +1513,22 @@ class Command(BaseCommand):
 | # | 交付物 | 路径 | 完成判定 |
 | --- | --- | --- | --- |
 | 1 | 主编排文件 | `deploy/compose/docker-compose.yml` | 与 §4.2 一致；12 常驻 + 2 一次性服务；全部 healthcheck 与 `depends_on: condition` 就位 |
-| 2 | 开发覆盖 | `deploy/compose/docker-compose.override.yml`（`.example` 入库） | 源码挂载 + `runserver`；前端与 proxy 置于 `full` profile |
+| 2 | 开发覆盖 | `deploy/compose/docker-compose.override.yml`（`.example` 入库） | 源码挂载 + `runserver`，`/app/.venv` 以匿名卷保留镜像内依赖；前端与 proxy 置于 `full` profile；经第二个 `-f` 显式加载（`pnpm compose:dev`，§3.1 / §4.7） |
 | 3 | 生产覆盖 | `deploy/compose/docker-compose.prod.yml` | 与 §4.7 一致；仅 proxy 暴露端口；`beat` 单副本；必填变量 `${VAR:?}` |
-| 4 | CI 覆盖 | `deploy/compose/docker-compose.ci.yml` | 无端口冲突（随机端口）、无源码挂载、镜像预构建 |
+| 4 | CI 覆盖 | `deploy/compose/docker-compose.ci.yml` | 与 §4.7 一致：仅 `db`/`redis`/`mq`/`minio` 最小依赖集（对齐 `monorepo-structure.md` §2「CI 用最小依赖」）；端口随机分配无冲突；无源码挂载；E2E 不用本文件（直接用基线 compose `--profile full`） |
 | 5 | PostgreSQL 初始化脚本 | `deploy/compose/init/init-extensions.sql` | `pg_trgm` + `btree_gin` |
 | 6 | Django Dockerfile | `apps/api/Dockerfile` | 多阶段；非 root（uid 10001）；含 `curl`；`uv sync --frozen` |
 | 7 | 四个 entrypoint 脚本 | `apps/api/bin/docker-entrypoint-{api,worker,beat,migrator}.sh` | 可执行位已设；`api` 脚本中**不含 migrate**；`beat` 脚本清理残留 pid |
 | 8 | `wait_for_db` 命令 | `apps/api/plane/db/management/commands/wait_for_db.py` | 支持 `--timeout`，超时以非零码退出 |
 | 9 | 前端三 Dockerfile + SPA 配置 | `apps/{web,admin,space}/Dockerfile` + `docker/nginx-spa.conf` | `VITE_*` 经 `build.args`；`try_files ... /index.html` fallback；静态资源缓存头 |
 | 10 | live Dockerfile | `apps/live/Dockerfile` | `pnpm deploy --prod` 实体化依赖；非 root |
-| 11 | proxy 镜像与配置 | `apps/proxy/Dockerfile`、`nginx.conf.template`、`conf.d/{upstreams,proxy-common,security,ratelimit,websocket}.conf`、`docker-entrypoint.sh` | 五路由；WebSocket upgrade；`client_max_body_size 100M`；`limit_req_zone`；`/healthz` |
+| 11 | proxy 镜像与配置 | `apps/proxy/Dockerfile`、`nginx.conf.template`、`conf.d/{upstreams,proxy-common,security}.conf`、`docker-entrypoint.sh` | 五路由；WebSocket upgrade；`client_max_body_size 100M`；`limit_req_zone`；`/healthz`；entrypoint 将主配置渲染至 `/etc/nginx/nginx.conf`、upstreams 片段渲染至 `snippets/`（§4.3），渲染后 `nginx -t` 通过 |
 | 12 | 环境变量模板 | 根 `.env.example` | 覆盖全部服务变量；含注释与示例值；`VITE_*` 无密钥 |
 | 13 | 备份脚本 | `deploy/scripts/{backup-db.sh,restore-db.sh}` | `pg_dump -Fc` / `pg_restore` 可执行（定时化由 `INFRA-005` 接管） |
 | 14 | E2E 工作流 | `.github/workflows/e2e.yml` | 在 CI 中执行 §5.1 与 §5.2 全部用例 |
 | 15 | 运维文档 | 仓库根 `README.md` 的 Deployment 段 | 一键启动、混合开发、清理、常见故障排查表 |
+| 16 | `/api/v1/health/` 端点 | `apps/api/plane/app/views/health.py` + `plane/urls.py` 挂载 | 与 §4.10 一致：免认证、不限流；DB `SELECT 1` + Redis 读写探测，两项互不短路；成功 `200` success 信封 / 失败 `503` error 信封（复用已注册错误码；503 为健康端点例外映射，§4.10 已登记偏离、`api-conventions.md` §8.6 待回改） |
+| 17 | 仓库根 compose 软链 | `./docker-compose.yml` → `deploy/compose/docker-compose.yml`（方案出处 `monorepo-structure.md` §2，随 `INFRA-001` 脚手架创建） | 软链入 git，`git clone` 后从仓库根裸 `docker compose up` 可直接执行——§3.2 / §3.3 / §5.1 / §5.4 中的裸命令形式（IT-01 / BT-01 / BT-02 等）均以此为前置；与显式 `-f` 形式的等价性说明见 §3.1，且该形式同样不会自动加载 override |
 
 ### 7.2 验收标准
 
@@ -1457,9 +1536,11 @@ class Command(BaseCommand):
 
 | # | 验收标准 | 执行 | 通过判定 |
 | --- | --- | --- | --- |
-| **1** | **全新环境 `docker compose up` 一键启动成功，无需手动初始化** | ```git clone <repo> && cd RabbitProjects && cp .env.example .env && docker compose -f deploy/compose/docker-compose.yml up -d --build``` | ① 命令退出码 0；② 10 分钟内 12 个常驻服务全部 healthy（`beat` 为 running）、`migrator` 与 `createbuckets` 为 `exited (0)`；③ **全程零人工干预**——除 `cp .env.example .env` 外无任何手工命令；④ 特别地，**未执行过任何 `manage.py migrate`、`createsuperuser`、MinIO 建桶操作**，而表结构、种子数据、bucket 全部就绪（IT-04 / IT-06 / IT-08） |
+| **1** | **全新环境 `docker compose up` 一键启动成功，无需手动初始化** | ```git clone <repo> && cd RabbitProjects && cp .env.example .env && docker compose --env-file .env -f deploy/compose/docker-compose.yml up -d --build``` | ① 命令退出码 0；② 10 分钟内 12 个常驻服务全部 healthy（`beat` 为 running）、`migrator` 与 `createbuckets` 为 `exited (0)`；③ **全程零人工干预**——除 `cp .env.example .env` 外无任何手工命令；④ 特别地，**未执行过任何 `manage.py migrate`、`createsuperuser`、MinIO 建桶操作**，而表结构、种子数据、bucket 全部就绪（IT-04 / IT-06 / IT-08） |
 | **2** | **所有服务健康运行** | `docker compose ps` + §5.3 全部连通性用例 | ① `ps` 输出符合 IT-02；② 日志无 `Traceback` / `FATAL` / `emerg`；③ api→db / api→redis / worker→**mq** / api→minio / live→api 连通性全部通过；④ `celery inspect conf` 确认 broker 为 `amqp://...@mq:5672//`、result backend 为 `redis://redis:6379/1`（验证"RabbitMQ 唯一 broker"决策真实落地）；⑤ 四个业务队列已声明 |
 | **3** | **前端三应用可访问** | 浏览器依次打开 | ① `http://localhost/` → web 主工作台正常渲染；② `http://localhost/god-mode` → admin 正常渲染；③ `http://localhost/spaces` → space 正常渲染；④ `http://localhost/api/v1/health/` 返回符合统一信封的 JSON；⑤ **深链接刷新不 404**（RT-07）；⑥ WebSocket upgrade 返回 101（RT-06） |
+
+> **验收命令的 `.env` 生效说明**：Compose v2 从首个 `-f` 文件所在目录（`deploy/compose/`）查找 `.env` 做插值，因此 `-f` 形式必须显式 `--env-file .env` 才能读到仓库根的 `.env`（理由详见 §3.1 的说明）；等价替代是 `monorepo-structure.md` §2 的根软链方案——从仓库根直接 `docker compose up -d --build`。两种形式任选其一验收，均视为满足「一键启动」。
 
 #### 附加质量门槛（同为验收前置）
 
@@ -1489,7 +1570,7 @@ class Command(BaseCommand):
 
 ### 7.4 变更控制
 
-本编排在 Sprint 0 定型后进入冻结（`dependency-graph.md` §5：M0-INFRA 变更成本"最高"）。
+本编排在 Sprint 0 定型后进入冻结（`dependency-graph.md` §3.2：M0-INFRA 变更成本"最高"）。
 
 | 变更类型 | 流程 |
 | --- | --- |
@@ -1507,6 +1588,6 @@ class Command(BaseCommand):
 - 迭代概览：[`sprint-overview.md`](./sprint-overview.md)
 - 上游：[`INFRA-001-monorepo-scaffold.md`](./INFRA-001-monorepo-scaffold.md)、[`architecture/tech-stack.md`](../architecture/tech-stack.md)、[`architecture/monorepo-structure.md`](../architecture/monorepo-structure.md)
 - 下游：[`INFRA-003-django-models-init.md`](./INFRA-003-django-models-init.md)
-- P2 延续：`sprint-6-stabilize/INFRA-005-rate-limit-backup-deploy.md`（限流 / 备份 / 生产部署）
-- P4 延续：`sprint-future-p4/INFRA-006-ha-private-deploy.md`（高可用集群 / 气隙部署）
+- P2 延续：`sprint-6-stabilize/INFRA-005-rate-limit-backup.md`（限流 / 备份 / 生产部署）
+- P4 延续：`sprint-future-p4/INFRA-006-ha-deploy.md`（高可用集群 / 气隙部署）
 - 原始需求：[`docs/需求文档.md`](../需求文档.md) §8.3 第 1 条、§8.4 第 6 条

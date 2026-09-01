@@ -60,6 +60,8 @@ P0 交付：在项目内完成任务的**创建、查询、编辑、删除**，�
 | `custom_fields` | ✅ | ✅ GIN | ❌ | ❌ | P2 |
 | `archived_at` | ✅ | ✅ 偏索引 | ❌ | ❌ | P2 |
 
+> **`cycle_id` / `module_id` 预留列口径**：[`unified-issue-model.md`](../architecture/unified-issue-model.md) §9 落地清单写有「含 `cycle_id` / `module_id`（可空）」，但该两列是指向**尚不存在表**（`Cycle` / `Module`，P2+）的外键，unified-issue-model §9 的该项按 `INFRA-003` §7.3 现行裁定 **P0 不建**（架构文档待回改）。因此本节清单与 §4.1、AC-14 均不列该两列；P2 建表时以可空外键 `AddField` 平滑补齐（`INFRA-003` §2.4 规则 1 的边界界定）。
+
 **为什么必须一次建齐**（[`unified-issue-model.md`](../architecture/unified-issue-model.md) §6 的核心结论）：
 
 1. **零 DDL 升级**。`issues` 表是全库增长最快的核心表。在数据量达到百万级后执行 `ALTER TABLE ADD COLUMN` + `CREATE INDEX`，即便 PostgreSQL 支持 `CREATE INDEX CONCURRENTLY`，仍需数小时且伴随复制延迟风险。P0 阶段表为空，此时建齐成本为零。
@@ -194,7 +196,7 @@ flowchart LR
     C -->|是| D["DELETE .../issues/{id}/"]
     D --> E{"权限: PROJ_ADMIN 或 创建者本人"}
     E -->|否| E1["403 PERM_DENIED"]
-    E -->|是| F["issue.deleted_at = now()<br/>级联软删 IssueAssignee / IssueLabel"]
+    E -->|是| F["issue.deleted_at = now()<br/>物理删除 IssueAssignee / IssueLabel<br/>（不留软删痕迹，避免污染 M2M，详见 §4.1.2）"]
     F --> G["on_commit → issue_activity.delay(verb=deleted)"]
     G --> H["204 No Content（空体）"]
     H --> I["前端从 IssueStore 移除 + Drawer 关闭"]
@@ -217,11 +219,11 @@ flowchart LR
 | BR-2 | `description` 全空时 `description_html` 为 `"<p></p>"`，`description_stripped` 为 `NULL`（`Issue.save()` 自动处理） |
 | BR-3 | `state_id` 未指定时落入项目 `is_default=True` 的状态（「待办」） |
 | BR-4 | `state_id` 必须属于当前项目，否则 `400 VALIDATION_ERROR` + `code=DOES_NOT_EXIST` |
-| BR-5 | `assignee_ids` P0 **最多 1 个元素**；元素必须是当前项目的 active `ProjectMember` |
+| BR-5 | `assignee_ids` P0 **最多 1 个元素**；元素必须是当前项目的 active `ProjectMember`；`sync_assignees`（§4.1.2）在创建 / 更新同一事务内校验成员资格，**任一元素非成员则整事务回滚并返回 `400 VALIDATION_ERROR` + `code=DOES_NOT_EXIST`**。**注意与 §4.2.5 的边界**：若上一次负责人已被 `ProjectMember` 移除，PATCH 仅传其他字段（未传 `assignee_ids`）不会触发校验；但传 `assignee_ids: [旧负责人]` 等于重新指向非成员，将落入失败路径 —— 此时前端必须显式传 `assignee_ids: []` 清空才能继续编辑其他字段 |
 | BR-6 | `target_date` 格式 `YYYY-MM-DD`。**允许过去日期**（补录历史任务是合法场景），不校验 |
 | BR-7 | `start_date` P0 不暴露，恒为 `NULL`。DB 约束 `chk_issue_start_before_target` 因此永不触发 |
 | BR-8 | `sequence_id` 由服务端生成，**Workspace 内不唯一、项目内唯一**（约束 `uniq_issue_sequence_per_project`） |
-| BR-9 | 展示编号 = `{project.identifier}-{sequence_id}`，如 `TZXM-1`。该拼接在**展示层**完成，DB 不冗余存储 |
+| BR-9 | 展示编号 = `{project.identifier}-{sequence_id}`，如 `TZXM-1`。由**服务端**拼好为 `issue_key` 下发、前端直用（§4.2.1），DB 不冗余存储 |
 | BR-10 | `sort_order` 新建时 = 目标状态列当前最大值 + 65535.0 |
 | BR-11 | `state.group` 首次进入 `completed` 时写 `completed_at`；退回非 completed 状态时 `completed_at` **保留不清空**（首次完成时间语义） |
 | BR-12 | `project` 由 URL 推导，不接受请求体传入 |
@@ -244,7 +246,7 @@ flowchart LR
 | `PROJ_VIEWER` 创建任务 | 403 | `PERM_ROLE_INSUFFICIENT` | 「你没有创建任务的权限」 |
 | `PROJ_CONTRIBUTOR` 删他人任务 | 403 | `PERM_DENIED` | 「只能删除自己创建的任务」 |
 | 序列号唯一约束冲突（理论不应发生） | 409 | `RESOURCE_CONFLICT` | 「任务编号冲突，请重试」 |
-| PUT 请求 | 405 | `METHOD_NOT_ALLOWED` | — |
+| PUT 请求 | 405 | 无专用注册码：由全局异常处理器按 [`api-conventions.md`](../architecture/api-conventions.md) §10.4 第 6 条映射为 `VALIDATION_*`（§8 未注册 `METHOD_NOT_ALLOWED`） | — |
 | ETag 冲突（并发编辑） | 409 | `RESOURCE_CONFLICT` | 「该任务已被他人修改，请刷新后重试」 |
 
 ---
@@ -274,7 +276,7 @@ flowchart LR
 
 | 列 | 宽度 | 渲染 |
 | --- | --- | --- |
-| 编号 | 96px | `{identifier}-{sequence_id}`，`font-mono text-xs text-neutral-500`。点击复制到剪贴板并 toast |
+| 编号 | 96px | 直接使用服务端下发的 `issue_key`（如 `TZXM-1`，见 §4.2.1），**前端不拼接**。`font-mono text-xs text-neutral-500`。点击复制到剪贴板并 toast |
 | 标题 | flex-1，min 240px | `text-sm truncate`，hover 下划线。整行可点击打开 Drawer |
 | 状态 | 120px | `StateBadge`（`PROJ-001` §4.4.4 提供）：圆点用 `state.color` + 状态名 |
 | 负责人 | 100px | 24px 圆形头像 + 名称（`truncate`）；无则 `—` |
@@ -470,7 +472,7 @@ export const BASIC_EXTENSIONS = [
 
 ### 4.1 数据模型
 
-完整定义见 [`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.8。本节**完整引用**，因为 P0 必须一次建齐（§1.3）。
+完整定义见 [`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.8（落地实现见 `INFRA-003` §4.7）。本节**完整引用**，因为 P0 必须一次建齐（§1.3）。两处口径按 `INFRA-003` 现行裁定对齐：`Issue` **不重声明** `created_by`（由 `BaseModel` 提供，重声明触发 `FieldError`，见其 §4.7 说明块）；`cycle` / `module` 仅以注释预留、P0 不建列（§1.3 注）。
 
 ```python
 # apps/api/plane/db/models/issue.py
@@ -515,8 +517,9 @@ class Issue(BaseModel):
                                 default=Priority.NONE, db_index=True, verbose_name="优先级")
 
     # ---------------- 人员 ----------------
-    created_by = models.ForeignKey("db.User", on_delete=models.SET_NULL, null=True,
-                                   related_name="created_issues", verbose_name="创建人")
+    # created_by / updated_by 由 BaseModel 提供（related_name="issue_created_by"），
+    # 不在 Issue 上重复声明——Django 不允许子类重定义抽象基类的具体字段，
+    # 直接照抄会抛 FieldError（INFRA-003 §4.7 裁定）。
     assignees = models.ManyToManyField("db.User", through="IssueAssignee",
                                        through_fields=("issue", "assignee"),
                                        related_name="assigned_issues", blank=True,
@@ -548,6 +551,10 @@ class Issue(BaseModel):
     # ---------------- 预留扩展 ----------------
     custom_fields = models.JSONField(default=dict, blank=True, verbose_name="自定义字段值",
                                      help_text="动态字段值集合，GIN 索引，详见 dynamic-fields-design.md")
+
+    # ---- 预留关联（Plane Cycle / Module 对标，P2 之后启用；指向尚不存在的表，P0 不建列）----
+    # cycle = models.ForeignKey("db.Cycle", on_delete=models.SET_NULL, null=True, blank=True, related_name="issues")
+    # module = models.ForeignKey("db.Module", on_delete=models.SET_NULL, null=True, blank=True, related_name="issues")
 
     # ---------------- 归档 ----------------
     archived_at = models.DateTimeField(null=True, blank=True, verbose_name="归档时间")
@@ -613,23 +620,27 @@ class Issue(BaseModel):
 class IssueAssignee(BaseModel):
     """负责人显式中间表 —— 相比 Plane 额外记录 assigned_by（谁指派的）"""
 
-    issue = models.ForeignKey(Issue, on_delete=models.CASCADE, related_name="issue_assignee")
+    issue = models.ForeignKey(Issue, on_delete=models.CASCADE, related_name="issue_assignees")
     assignee = models.ForeignKey("db.User", on_delete=models.CASCADE,
-                                 related_name="issue_assignee")
+                                 related_name="issue_assignees")
     assigned_by = models.ForeignKey("db.User", on_delete=models.SET_NULL, null=True,
-                                    related_name="assigned_issue_assignee")
+                                    related_name="assigned_issue_records")
 
     class Meta(BaseModel.Meta):
         db_table = "issue_assignees"
         constraints = [
             models.UniqueConstraint(fields=["issue", "assignee"],
-                                    condition=models.Q(deleted_at__isnull=True),
                                     name="uniq_issue_assignee"),
         ]
-        indexes = [models.Index(fields=["issue"], name="idx_assignee_issue")]
+        indexes = [models.Index(fields=["assignee", "issue"], name="idx_assignee_issue")]
 ```
 
-`IssueLabel` 结构同理（`issue` + `label`），P0 建表不使用。
+> 与 [`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.9 逐字对齐的两点：① 唯一约束 `uniq_issue_assignee` **不带** `deleted_at IS NULL` 偏条件——中间表**全程采用物理删除语义**，任何路径都不写 `deleted_at`。两条入口路径如下：
+>
+> - **`sync_assignees(issue, assignee_ids, actor_id)`**（POST / PATCH 主路径）：把传入的 `assignee_ids` 集合视为权威，先 `IssueAssignee.objects.filter(issue=issue).delete()` 整体清掉本任务已有中间表行，再 `bulk_create` 新的行（含 `assigned_by = actor_id`）。**必须置于 `transaction.atomic()` 内**，且需在创建咨询锁的同一事务中落库，保证序列号 / `Issue` 主表 / 中间表三者同生同灭。校验失败（任一 user_id 不属于本项目 active `ProjectMember`，或 P0 模式下超过 1 人）→ **整事务回滚**并返回 `400 VALIDATION_ERROR` + `code=DOES_NOT_EXIST`（BR-5）。
+> - **Issue 软删级联**（DELETE 主路径）：`Issue.deleted_at = now()` 后，View 层在同一事务内显式 `IssueAssignee.objects.filter(issue=issue).delete()` + `IssueLabel.objects.filter(issue=issue).delete()`（**不写任何行的 `deleted_at`**，与主表软删保持口径不同）。`all_objects` 仍可查到 `Issue` 软删记录，但中间表行已物理消失。
+>
+> 不留软删痕迹的原因：若中间表保留 `(issue, assignee, deleted_at IS NOT NULL)` 行，未来任何「复活任务」/「按人重建 M2M」的运维动作都会撞上「同一 (issue, assignee) 存在活跃+软删两行」的历史脏数据，破坏 M2M 唯一性约束与查询语义。这是 `INFRA-003` §2.4 规则 2.4 的例外（详见其 §4.8 说明）；② 索引列序为 `["assignee", "issue"]`，服务「我的待办」按人取数的核心查询。`IssueLabel` 结构同理（`issue` + `label`），P0 建表不使用，软删级联走相同物理删除语义。
 
 #### 4.1.3 IssueActivity
 
@@ -833,11 +844,11 @@ GET /api/v1/workspaces/rabbitprojects/projects/7b3e9c1a-.../issues/?group_by=sta
 | `?ordering=` | ✅ | 白名单 `sort_order` / `created_at` / `updated_at` / `target_date` / `sequence_id`；服务端追加 `-created_at,-id` 保证游标稳定 |
 | `?fields=` | ✅ | 字段裁剪。列表视图用 `?fields=id,issue_key,name,state_id,assignee_ids,target_date,sort_order` 显著减小载荷 |
 | `?expand=` | ✅ | 深度 1 层，≤5 个。支持 `state` / `assignees` / `created_by` |
-| `?state=` | ✅ | 逗号分隔多值为 OR |
+| `?state_id=` | ✅ | 逗号分隔多值为 OR（参数名与 [`api-conventions.md`](../architecture/api-conventions.md) §5.3 及 `TASK-003` 一致） |
 | `?assignee=me` | ✅ | 语法糖，等价于当前用户 ID |
 | `?target_date=` | ✅ | 支持 `;before` / `;after` / `;between` 修饰符 |
 | `?search=` | ⚠️ | P0 仅按 `name` 模糊（`description_stripped` 的 trgm 搜索 P1 开放） |
-| `?cursor=` / `?per_page=` | ✅ | 游标分页，`per_page` 默认 100，上限 250 |
+| `?cursor=` / `?per_page=` | ✅ | 游标分页，`per_page` 默认 100，**上限 100**（超过静默截断为 100 并在 `meta.degraded` 告知，[`api-conventions.md`](../architecture/api-conventions.md) §6.3） |
 | `?priority=` / `?labels=` / `?issue_type=` | ❌ | P1 |
 
 **成功响应 `200`（普通列表）**
@@ -934,6 +945,10 @@ GET /api/v1/workspaces/rabbitprojects/projects/7b3e9c1a-.../issues/?group_by=sta
     "e3f4a5b6-7c8d-4e9f-8a1b-2c3d4e5f6a7b": {
       "results": [],
       "total_results": 0
+    },
+    "f4a5b6c7-8d9e-4f0a-9b2c-3d4e5f6a7b8c": {
+      "results": [],
+      "total_results": 0
     }
   },
   "meta": {
@@ -946,7 +961,7 @@ GET /api/v1/workspaces/rabbitprojects/projects/7b3e9c1a-.../issues/?group_by=sta
 
 **契约保证**（`BOARD-001` 依赖）：
 
-1. **每个 State 都有键**，即使 `results` 为空数组、`total_results` 为 0。前端无需为空列做兜底判断；
+1. **每个 State 都有键**，即使 `results` 为空数组、`total_results` 为 0——上例 4 键即 `PROJ-001` 种子的**四态**（待办 / 进行中 / 已完成 / **已取消**，已取消 P0 不渲染为看板列但同样有键）。前端无需为空列做兜底判断；
 2. 每组内按 `sort_order` 升序；
 3. 每组默认返回前 **25** 条 + `total_results`（避免看板首屏拉全量）。单列「加载更多」用 `?group_id={state_id}&cursor=…`；
 4. 只返回 `state_id` 属于该项目的分组，不含其他项目的状态。
@@ -1116,7 +1131,7 @@ X-Request-Id: 01JBX5N3S9TB6P0Q4R7X8Y9Z0G
 | Redis `INCR` | 有（Redis 与 PG 不同事务） | Redis key | 需 TTL/续期 | 无 | ❌ |
 | **`pg_advisory_xact_lock`** | **无** | **无** | **无**（事务结束自动释放） | **仅串行化「创建」** | ✅ |
 
-**完整实现**（与架构文档 §3.3 完全一致）：
+**完整实现**（基于架构文档 §3.3；`sort_order` 取值按 BR-10 修正为「先取目标状态列 `MAX(sort_order)` 作为 `prev_order` 再调用」，对齐 SORT-05 / AC-18）：
 
 ```python
 # apps/api/plane/db/services/issue_sequence.py
@@ -1169,12 +1184,22 @@ def create_issue(*, project_id: uuid.UUID, actor_id: uuid.UUID, payload: dict) -
     """
     acquire_project_lock(project_id)
 
+    # BR-3：未指定 state 时落项目默认状态
+    payload["state_id"] = payload.get("state_id") or default_state_id(project_id)
+
+    # BR-10：新建固定追加到目标状态列尾——先取该列当前 MAX(sort_order) 作为 prev_order。
+    # 已持有项目锁，此处读取无并发写入；空列时 prev 为 None，calculate_sort_order
+    # 返回 65535.0（首条），其后依次 131070.0 / 196605.0（SORT-05 / AC-18）。
+    prev_order = (
+        Issue.objects.filter(project_id=project_id, state_id=payload["state_id"])
+        .aggregate(max_order=Max("sort_order"))["max_order"]
+    )
+
     issue = Issue.objects.create(
         project_id=project_id,
         created_by_id=actor_id,
         sequence_id=next_sequence_id(project_id),
-        sort_order=calculate_sort_order(prev_order=None,
-                                        next_order=payload.pop("next_sort_order", None)),
+        sort_order=calculate_sort_order(prev_order=prev_order, next_order=None),
         **payload,
     )
 
@@ -1856,6 +1881,7 @@ export const useIssues = (workspaceSlug?: string, projectId?: string) => {
 | BE-12 | `state_id` 显式指定生效 | 传「进行中」 | `201`；`state_id` 为进行中 |
 | BE-13 | `assignee_ids` 2 人被拒 | `[U1, U2]` | `400`；`code="INVALID"`，message 含「仅支持单个负责人」 |
 | BE-14 | 负责人非项目成员 | 传 Workspace 内非项目成员 | `400`；`code="DOES_NOT_EXIST"` |
+| BE-14a | 已指派的负责人被移出项目后再 PATCH 触发 | U1 原为项目成员并被指派为该任务负责人，后被从 `ProjectMember` 移除；PATCH 该任务同时传 `assignee_ids: [U1]` | `400 VALIDATION_ERROR`；`details[0].field="assignee_ids"`, `code="DOES_NOT_EXIST"`，message 含「所选负责人不是项目成员」；`sync_assignees` 与所在事务整体回滚，DB 中该任务的 `assignee_ids` 与请求体中其他字段（如 `name` / `state_id`）均维持原状（BR-5） |
 | BE-15 | `IssueAssignee` 记录正确 | 创建带负责人 | DB 存在 1 条 `IssueAssignee`，`assigned_by` 为创建者 |
 | BE-16 | `target_date` 格式非法 | `"2026/09/08"` | `400`；`code="INVALID"` |
 | BE-17 | `target_date` 允许过去 | `"2020-01-01"` | `201`（BR-6） |
@@ -1882,7 +1908,7 @@ export const useIssues = (workspaceSlug?: string, projectId?: string) => {
 | BE-38 | `?expand=assignees` | — | 含 `assignees` 数组（`display_name`/`avatar_url`） |
 | BE-39 | `?expand=` 超 5 个 | 6 个字段 | `400` |
 | BE-40 | `?expand=` 深度 2 层被拒 | `?expand=state.project` | `400` |
-| BE-41 | `?state=` 多值 OR | `?state={A},{B}` | 返回状态为 A 或 B 的任务 |
+| BE-41 | `?state_id=` 多值 OR | `?state_id={A},{B}` | 返回状态为 A 或 B 的任务 |
 | BE-42 | `?assignee=me` 语法糖 | — | 仅返回指派给当前用户的 |
 | BE-43 | `?target_date=;before` | `?target_date=2026-09-10;before` | 仅返回早于该日期的 |
 | BE-44 | `?search=` 按标题 | `?search=Docker` | 命中标题含 Docker 的 |
@@ -1901,7 +1927,7 @@ export const useIssues = (workspaceSlug?: string, projectId?: string) => {
 | BE-57 | PATCH 改标题 | — | `200`；`name` 已改；`updated_at` 刷新 |
 | BE-58 | PATCH 改状态 | — | `200` |
 | BE-59 | PATCH 改 `sort_order` | `{"sort_order": 98302.5}` | `200`（`BOARD-001` 依赖） |
-| BE-60 | PATCH 清空负责人 | `{"assignee_ids": []}` | `200`；`assignee_ids == []`；`IssueAssignee` 记录软删 |
+| BE-60 | PATCH 清空负责人（物理删除中间表行） | `{"assignee_ids": []}` | `200`；`assignee_ids == []`；`sync_assignees` 对该任务原有中间表行执行物理删除，`issue_assignees` 表中 `(issue, assignee)` 行不复存在（§4.1.2） |
 | BE-61 | PATCH 清空截止时间 | `{"target_date": null}` | `200`；`target_date == null` |
 | BE-62 | PATCH 不传字段则不改 | `{"name":"新"}` | `state_id` / `assignee_ids` / `target_date` 均未变 |
 | BE-63 | PATCH `sequence_id` 被忽略 | — | `sequence_id` 不变 |
@@ -1912,7 +1938,7 @@ export const useIssues = (workspaceSlug?: string, projectId?: string) => {
 | BE-68 | 不带 If-Match 则不校验 | — | `200`（后写胜出） |
 | BE-69 | DELETE 返回 204 空体 | — | `204`；`content == b""` |
 | BE-70 | **软删除后列表不显示** | 删除后 `GET` 列表 | 不含该任务；`all_objects` 仍可查到，`deleted_at` 非空 |
-| BE-71 | 删除级联软删 M2M | 有负责人的任务被删 | `IssueAssignee.deleted_at` 非空 |
+| BE-71 | 删除级联清理 M2M（物理删除） | 有负责人的任务被删 | 该 `(issue, assignee)` 行在 `issue_assignees` 表中**不复存在**（`SELECT COUNT(*) FROM issue_assignees WHERE issue_id = ...` = 0）；`Issue.deleted_at` 仍非空，`all_objects` 可查到软删记录；中间表不留任何软删痕迹（§4.1.2 物理删除语义） |
 | BE-72 | 重复 DELETE 404 | — | `404` |
 | BE-73 | `PROJ_ADMIN` 可删他人任务 | — | `204` |
 | BE-74 | `PROJ_CONTRIBUTOR` 可删自己的 | `created_by == self` | `204` |
@@ -2000,6 +2026,7 @@ export const useIssues = (workspaceSlug?: string, projectId?: string) => {
 | `plane/db/services/issue_sequence.py` | 行覆盖 **100%**（序列号是核心风险区，零容忍） |
 | `plane/db/services/issue_sort.py` | 行覆盖 **100%**（含 5 个分支与重排阈值） |
 | `plane/db/services/issue_activity.py` | 行覆盖 **100%**（标量 / FK / M2M 三类分支全覆盖） |
+| `plane/db/services/issue_assignee_sync.py`（即 `sync_assignees`） | 行覆盖 **100%**（BR-5 成员资格校验 + 物理删除 + `bulk_create` 全部路径，是 P0 唯一会接触中间表的写操作） |
 | `plane/db/models/issue.py`（`save()`） | 行覆盖 **100%**（stripped 派生 + completed_at 两分支） |
 | `plane/app/views/issue.py` | ≥ 90% |
 | `plane/app/permissions/issue.py` | **100%** |

@@ -12,6 +12,7 @@
 | 最后更新日期 | 2026-09-01 |
 | 前置依赖 | [`architecture/unified-issue-model.md`](../architecture/unified-issue-model.md)、[`architecture/dynamic-fields-design.md`](../architecture/dynamic-fields-design.md)、[`architecture/rbac-permission-model.md`](../architecture/rbac-permission-model.md)、[`INFRA-001`](./INFRA-001-monorepo-scaffold.md)（`apps/api` 目录骨架）、[`INFRA-002`](./INFRA-002-docker-compose.md)（PostgreSQL 容器 + `migrator` 服务） |
 | 阻塞下游 | `AUTH-001` `AUTH-002` `AUTH-003` `TEAM-001` `PROJ-001` `TASK-001` `BOARD-001`（Sprint 0 全部业务文档）→ 进而阻塞 Sprint 1-9 |
+| 工作量估算 | 后端 3 人日（模型 + migration + 种子 + advisory lock 服务）/ 联调与测试（含 BT-01 并发压测与 Django Admin 验证）1.5 人日，合计 **4.5 人日**（数据层文档，无前端界面工作量） |
 
 ---
 
@@ -128,6 +129,7 @@ apps/api/plane/
 │   ├── models/
 │   │   ├── __init__.py          # 汇总导出，供 `from plane.db.models import X` 使用
 │   │   ├── base.py              # BaseModel / SoftDeleteManager / SoftDeleteQuerySet
+│   │   ├── roles.py             # WorkspaceRole / ProjectRole（整数角色枚举）
 │   │   ├── user.py              # User / UserManager
 │   │   ├── workspace.py         # Workspace / WorkspaceMember
 │   │   ├── project.py           # Project / ProjectMember
@@ -192,7 +194,7 @@ flowchart LR
 | 顺序约束 | 原因 |
 | --- | --- |
 | **① `TrigramExtension` 必须在全部 `AddIndex` 之前** | `idx_issue_desc_trgm` 使用 `gin_trgm_ops` opclass。扩展未安装时 `CREATE INDEX` 直接报 `operator class "gin_trgm_ops" does not exist`。Django 的 `makemigrations` **不会自动插入扩展操作**，必须手工把 `TrigramExtension()` 放到 `operations` 列表首位。 |
-| **① 与 `init-extensions.sql` 构成双保险** | [`INFRA-002`](./INFRA-002-docker-compose.md) §4.4 的 `deploy/compose/init/init-extensions.sql` 只在 PostgreSQL **数据目录为空**时执行。已有 `pgdata` 卷的环境（如从旧版本升级）不会跑该脚本，此时只有 migration 内的 `TrigramExtension` 能保证扩展存在。**两条路径都必须保留。** |
+| **① 与 `init-extensions.sql` 构成双保险** | [`INFRA-002`](./INFRA-002-docker-compose.md) §4.2 的 `deploy/compose/init/init-extensions.sql` 只在 PostgreSQL **数据目录为空**时执行。已有 `pgdata` 卷的环境（如从旧版本升级）不会跑该脚本，此时只有 migration 内的 `TrigramExtension` 能保证扩展存在。**两条路径都必须保留。** |
 | **② `User` 必须最先** | 几乎所有表的 `created_by` / `updated_by` 都指向 `db.User`。Django 会自动排序，但显式确认这一点可避免因手工编辑 migration 导致的循环依赖。 |
 | **⑦⑧ 索引与约束在建表之后** | Django 默认行为。P0 空表下顺序无性能影响；生产环境的后续 migration 见 §4.17 的 `AddIndexConcurrently` 规范。 |
 
@@ -224,9 +226,11 @@ flowchart LR
 | `workspace_members.department_id` / `custom_role_id` | ❌ **不建** | ❌ | P3 | 见下方说明 |
 | `issues.cycle_id` / `module_id` | ❌ **不建** | ❌ | P2+ | 见下方说明 |
 
+> **启用阶段分歧登记（架构文档待回改）**：`description_binary` 的启用阶段，[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.8 字段表与 §6 迭代分层标为 **P2**，本文标为 **P3**（协同编辑）。**P3 为正确口径**：该列由 `apps/live` 的 Hocuspocus/Yjs 协同编辑服务写入（见 §6.3），而协同编辑按 [`sprint-overview.md`](./sprint-overview.md) §2 与 §9 风险 6 的规划落在 P3。**架构文档待回改**（§2.8 字段表与 §6 分层表改 P2 → P3），本文按 P3 口径执行。
+
 **为什么 `department` / `custom_role` / `cycle` / `module` 例外，不在 P0 建列？**
 
-这四个字段是**指向尚不存在的表的外键**（`Department` / `CustomRole` / `Cycle` / `Module` 均为 P2/P3 表）。外键无法在被引用表缺失时创建，因此它们必然是 P2/P3 的 `AddField` 操作。[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.8 与 [`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §3.2 也正是以**注释形式**预留，而非真实字段。
+这四个字段是**指向尚不存在的表的外键**（`Department` / `CustomRole` / `Cycle` / `Module` 均为 P2/P3 表）。外键无法在被引用表缺失时创建，因此它们必然是 P2/P3 的 `AddField` 操作。[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.8 与 [`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §3.2 也正是以**注释形式**预留，而非真实字段。（**架构文档落地清单待回改**：`unified-issue-model.md` §7.4 与 §9 检查清单条目 2 却要求 `cycle_id` / `module_id`「P0 建表时即创建列」，与其 §2.8 的注释预留自相矛盾，且外键指向尚不存在的表在物理上无法创建。该清单需按本文口径回改，登记见 §7.3 条目 2。）
 
 「一次性建齐」原则的**准确边界**是：**不依赖未来新表的列，P0 全部建齐**。加一个可空外键列本身是 PostgreSQL 的 `ALTER TABLE ADD COLUMN ... NULL`，在 PG 11+ 是常数时间操作（不重写表），真正昂贵的是 `NOT NULL DEFAULT <非常量>` 与 `CREATE INDEX`。这两类昂贵操作在 P0 已全部完成（`custom_fields` 的 `NOT NULL DEFAULT '{}'` 与全部 GIN 索引）。
 
@@ -427,14 +431,11 @@ admin.site.index_title = "全部数据模型"
 
 ### 4.2 `BaseModel` — 全站抽象基类
 
-> **口径合并说明（重要）**
+> **口径合并说明（已对齐）**
 >
-> 两份架构文档各自给出了一版 `BaseModel`，二者是**正交的互补关系**而非冲突：
+> 历史上两份架构文档各自给出了一版 `BaseModel`：[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.2 版本贡献**软删除语义的实现载体**（`SoftDeleteManager` / `all_objects`），[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §3.1 版本贡献**权限追溯所需的审计字段**（`created_by` / `updated_by`、`ordering`）。二者正交互补，本文档据此采用**并集版本**——审计字段是权限判定与操作溯源的必要条件（`rbac` §5 的「谁改了什么」需要 `updated_by`），软删除 Manager 是软删除语义的唯一实现路径，二者作用域不重叠，可无损合并。
 >
-> - [`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.2 版本：`id` / `created_at`(db_index) / `updated_at` / `deleted_at` + `SoftDeleteManager` + `all_objects`，`Meta` 仅 `abstract = True`。它的贡献是**软删除语义的实现载体**。
-> - [`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §3.1 版本：额外含 `created_by` / `updated_by`（`related_name="%(class)s_created_by"`），`id` 与 `deleted_at` 带 `db_index=True`，`Meta` 含 `ordering = ("-created_at",)`。它的贡献是**权限追溯所需的审计字段**。
->
-> 本文档采用**并集版本**：审计外键（rbac 侧）+ 软删除 Manager 与 `all_objects`（unified 侧）+ 两侧全部索引 + `ordering`。合并依据：审计字段是权限判定与操作溯源的必要条件（`rbac` §5 的「谁改了什么」需要 `updated_by`），软删除 Manager 是软删除语义的唯一实现路径，二者作用域不重叠，可无损合并。`unified-issue-model.md` §2.8 的 `class Meta(BaseModel.Meta)` 写法本身也暗示 `BaseModel.Meta` 携带 `ordering`，与 rbac 版本一致。
+> **现行架构文档已按该并集口径回改合并**：`unified-issue-model.md` §2.2 的 `BaseModel` 现与下方代码**逐字段一致**（含审计外键、`SoftDeleteManager`、`all_objects` 与 `ordering`，并注明子模型不得重复声明 `created_by` / `updated_by`）；`rbac-permission-model.md` §3.1 的版本为其子集（不含软删除 Manager）。三方（两份架构文档 + 本文档）**已对齐**，本项无待回改事项。
 
 ```python
 # apps/api/plane/db/models/base.py
@@ -463,8 +464,8 @@ class SoftDeleteManager(models.Manager):
 class BaseModel(models.Model):
     """全站模型基类：UUID 主键 + 审计字段 + 软删除位。
 
-    合并 unified-issue-model.md §2.2（软删除 Manager）
-    与 rbac-permission-model.md §3.1（created_by / updated_by 审计外键）两版定义。
+    字段口径与 unified-issue-model.md §2.2 逐字段一致（该文档已合并
+    rbac-permission-model.md §3.1 的审计外键定义）。
     """
 
     id = models.UUIDField(
@@ -609,6 +610,7 @@ PASSWORD_HASHERS = [
 from django.db import models
 
 from plane.db.models.base import BaseModel
+from plane.db.models.roles import WorkspaceRole
 
 
 class Workspace(BaseModel):
@@ -617,7 +619,7 @@ class Workspace(BaseModel):
     name = models.CharField(max_length=255, verbose_name="名称")
     slug = models.SlugField(max_length=48, db_index=True, verbose_name="URL 标识")
     description = models.TextField(blank=True, verbose_name="描述")
-    logo = models.URLField(max_length=800, blank=True, verbose_name="Logo 地址")
+    logo = models.URLField(max_length=800, blank=True, null=True, verbose_name="Logo 地址")
     owner = models.ForeignKey(
         "db.User", on_delete=models.CASCADE, related_name="owner_workspaces", verbose_name="所有者"
     )
@@ -948,7 +950,7 @@ class Label(BaseModel):
 | `IssueType` 在 Workspace 级而非 Project 级 | 跨项目报表（「本季度全组织缺陷密度」）需要类型语义在组织内可比。若类型是项目级，A 项目的「缺陷」与 B 项目的「缺陷」是两条不同记录，跨项目聚合只能按 name 字符串匹配，脆弱且低效。项目级灵活性由 P2 的 `ProjectIssueType(project, issue_type, is_enabled, sort_order)` 关联表满足 |
 | `uniq_default_issue_type_per_workspace` 只按 `workspace` 建唯一 + `is_default=True` 偏条件 | PostgreSQL 的部分唯一索引实现「每个 Workspace 至多一个默认类型」，无需应用层校验 |
 | `State.group` 是报表与看板的**唯一**判定依据 | 改状态名不破坏任何下游逻辑。`group` 到各视图的映射：`backlog` 折叠 / `unstarted` 待办列 / `started` 进行中列 / `completed` 已完成列 / `cancelled` 折叠且移出 Sprint 范围 |
-| `State.issue_type` 为 `NULL` 表示项目通用状态 | P0-P2 恒为 `NULL`；`uniq_state_name_per_project_type` 中 `issue_type` 参与唯一键，PostgreSQL 中 `NULL` 不等于 `NULL`，因此**多条 `issue_type IS NULL` 的同名状态不会被该约束拦截**。P0 靠 `seed_project_states` 的 `get_or_create` 保证幂等；`BOARD-004` 开放自定义状态时须在应用层补校验（`PROJ-001` 已记录此项） |
+| `State.issue_type` 为 `NULL` 表示项目通用状态 | P0-P2 恒为 `NULL`；`uniq_state_name_per_project_type` 中 `issue_type` 参与唯一键，PostgreSQL 中 `NULL` 不等于 `NULL`，因此**多条 `issue_type IS NULL` 的同名状态不会被该约束拦截**。P0 靠 `seed_project_states` 的 `get_or_create` 保证幂等；`BOARD-003` 开放自定义状态时须在应用层补校验（**已对齐**：`PROJ-001` §2.3.2 的约束表该行已按本文口径回改为「P0 `issue_type=NULL` 时偏索引不拦截同项目同名状态，唯一性由 `seed_project_states` 的 `get_or_create` 幂等 + 应用层校验保证；`BOARD-003` 开放写时须补 serializer / 服务层校验」，与本文一致，本项销项） |
 | `Label` 保持项目级 | 与 Plane 一致。Workspace 级全局标签在 P3 通过 `Label.workspace` 可空外键 + `project` 可空实现 |
 | P0 `Label` 全表为空 | 建表但无任何写入入口（规则 1） |
 
@@ -1133,7 +1135,7 @@ class Issue(BaseModel):
 | 基础 | `name` | `varchar(512)` | NOT NULL | — | P0 |
 | 描述 | `description_json` | `jsonb` | NOT NULL, default `{}` | — | P0（编辑器原生格式） |
 | 描述 | `description_html` | `text` | NOT NULL, default `<p></p>` | — | P0（API 返回） |
-| 描述 | `description_binary` | `bytea` | NULL | — | **P3**（Yjs 协同） |
+| 描述 | `description_binary` | `bytea` | NULL | — | **P3**（Yjs 协同；架构文档标 P2，待回改——见 §2.4 规则 1 分歧登记） |
 | 描述 | `description_stripped` | `text` | NULL, `save()` 派生 | GIN trgm | P0 建列 / P1 搜索 |
 | 分类 | `issue_type_id` | `uuid` FK | NULL, SET_NULL | `idx_issue_proj_type` | **P1** |
 | 分类 | `state_id` | `uuid` FK | NULL, SET_NULL | `idx_issue_proj_state_sort` | P0 |
@@ -1153,15 +1155,13 @@ class Issue(BaseModel):
 | 基类 | `created_by_id` | `uuid` FK | NULL, SET_NULL | FK 索引 | P0（反向名 `issue_created_by`，见下方说明） |
 | 基类 | `updated_by_id` | `uuid` FK | NULL, SET_NULL | FK 索引 | P0 |
 
-> **`created_by` 重复声明的冲突处置（架构文档待回改项）**
+> **`created_by` 声明口径（已与架构文档对齐）**
 >
-> [`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.8 在 `Issue` 上显式声明了 `created_by`（`related_name="created_issues"`），而 §4.2 合并后的 `BaseModel` 已提供同名字段（`related_name="%(class)s_created_by"`）。**Django 不允许子类重定义抽象基类的具体字段**，直接照抄两侧会在启动时抛 `FieldError: Local field 'created_by' in class 'Issue' clashes with field of the same name from base class 'BaseModel'`。
+> `created_by` / `updated_by` 统一由 `BaseModel` 提供（`related_name="%(class)s_created_by"`，见 §4.2）。**Django 不允许子类重定义抽象基类的具体字段**——任何在 `Issue` 上重复声明 `created_by` 的写法都会在启动时抛 `FieldError: Local field 'created_by' in class 'Issue' clashes with field of the same name from base class 'BaseModel'`。
 >
-> 这不是本文档制造的矛盾，而是两份架构文档各自独立演进留下的**真实冲突**（`unified-issue-model.md` 的 `BaseModel` 版本没有审计外键，故其 `Issue` 需自行声明；合并 rbac 版本后该声明变为冗余）。
+> **处置（本文档采纳）**：`Issue` **不声明** `created_by`，直接继承 `BaseModel` 的定义，反向查询名为 `issue_created_by`（`user.issue_created_by.all()`，而非 `user.created_issues.all()`）。[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.2 已注明「子模型不得重复声明同名字段」，其 §2.8 的 `Issue` 已删除重复声明并标注反向查询名——**本文档与架构文档已对齐**，此前登记的「回改 §2.8」待办已完成，此处销项。
 >
-> **处置（本文档采纳）**：`Issue` **不声明** `created_by`，直接继承 `BaseModel` 的定义。影响面仅一处——反向查询名由 `created_issues` 变为 `issue_created_by`，`user.issue_created_by.all()` 取代 `user.created_issues.all()`。`AUTH-001` / `TASK-001` 中涉及此反向查询的代码统一使用 `issue_created_by`。
->
-> **待办**：Day 2 实现落地后，需回改 `unified-issue-model.md` §2.8 删除 `Issue.created_by` 的重复声明并注明其由 `BaseModel` 提供。此项已登记，不得以「文档已定稿」为由跳过——留着它会让下一个照抄架构文档的人踩同一个坑。
+> **已对齐**：`TASK-001` §4.1 的 `Issue` 代码已按本文口径删除旧 `created_by` 重复声明，改为继承 `BaseModel` 定义并显式注释「`created_by` / `updated_by` 由 `BaseModel` 提供，重声明触发 `FieldError`，见 `INFRA-003` §4.7 裁定」。**本项销项**——`AUTH-001` / `TASK-001` 中涉及此字段的模型代码与反向查询统一按本文口径执行（继承 `BaseModel` 定义、使用 `issue_created_by`）。
 
 ### 4.8 `IssueAssignee` / `IssueLabel` — 显式中间表
 
@@ -1393,6 +1393,7 @@ from django.db import connection, transaction
 from django.db.models import Max
 
 from plane.db.models import Issue
+from plane.db.services.sort_order import calculate_sort_order    # §4.12 定义，浮点插值生成 sort_order
 
 
 def project_lock_key(project_id: uuid.UUID) -> int:
@@ -1458,6 +1459,8 @@ def bulk_create_issues(*, project_id: uuid.UUID, rows: list[dict]) -> list[Issue
     ]
     return Issue.objects.bulk_create(issues, batch_size=500)
 ```
+
+> **helper 归属说明**：`create_issue` 内调用的 `sync_assignees` / `sync_labels` / `dispatch_issue_created_events` 三个服务函数**不在本文档交付**，其定义与实现归 [`TASK-001`](./TASK-001-task-crud.md)（M2M 中间表同步与创建事件分发，其 §2.1 / §4.3 消费）。本文档只交付 `project_lock_key` / `acquire_project_lock` / `next_sequence_id` / `create_issue` / `bulk_create_issues`（本节）与 `calculate_sort_order`（§4.12）。实现者按本文落地时不得因这三个 helper 未定义而落空或自行另写一套，应等待 / 复用 `TASK-001` 的交付。
 
 并发时序（两个并发请求）：
 
@@ -1802,7 +1805,7 @@ class Command(BaseCommand):
 | 禁止 | Django 自动生成的 `0002_auto_20260901_1203.py` 一律重命名 | 时间戳名无法表达意图，Code Review 无从判断影响面 |
 | 数据迁移 | 必须与结构迁移**分文件**，文件名以 `backfill_` 或 `seed_` 开头 | 结构 `0009_add_issue_external_id.py` + 数据 `0010_backfill_issue_external_id.py` |
 | 可逆性 | 结构迁移必须提供 `reverse`；数据迁移可用 `migrations.RunPython.noop` 作为 reverse 并在 docstring 说明不可逆原因 | — |
-| 破坏性迁移 | 删列 / 改类型 / 加 `NOT NULL` 必须在 PR 打 `db-breaking` 标签，并在描述中给出回滚方案 | [`INFRA-002`](./INFRA-002-docker-compose.md) §4.10 生产约束 |
+| 破坏性迁移 | 删列 / 改类型 / 加 `NOT NULL` 必须在 PR 打 `db-breaking` 标签，并在描述中给出回滚方案 | [`INFRA-002`](./INFRA-002-docker-compose.md) §4.8 生产约束 |
 | 大表加索引 | 使用 `AddIndexConcurrently` + `atomic = False` | 见下方代码 |
 | 一个 PR 一个 migration | 同一 PR 内多次 `makemigrations` 产生的碎片必须 `squashmigrations` 合并 | 避免 `0011` / `0012` / `0013` 三个文件做同一件事 |
 
@@ -1936,7 +1939,7 @@ class Migration(migrations.Migration):
 | BT-10 | `sort_order` 极端插值不崩溃 | 连续 60 次在同一间隙插入 | 无异常；第 50 次左右 `needs_rebalance` 转 `True`；重排后所有值间隔恢复 `DEFAULT_GAP` |
 | BT-11 | 超长标题边界 | 512 字符与 513 字符 | 512 成功；513 在 `full_clean()` 抛 `ValidationError`，绕过校验直接入库则抛 `DataError` |
 | BT-12 | `custom_fields` 深层嵌套与大体积 | 写入含 100 个键、嵌套 5 层、总计 200KB 的 JSONB | 写入成功；`?` 与 `@>` 查询仍命中 GIN（jsonb 单值上限 255MB，200KB 远未触及 TOAST 压缩问题） |
-| BT-13 | `parent` 自引用不成环（P1 前置） | 手工构造 A→B→A 的 `parent` 链 | 数据库层**不拦截**（无检查约束）；记录该风险，`TASK-003` 须在应用层校验。P0 无 `parent` 写入路径故不构成缺陷 |
+| BT-13 | `parent` 自引用不成环（P1 前置） | 手工构造 A→B→A 的 `parent` 链 | 数据库层**不拦截**（无检查约束）；记录该风险，`TASK-004`（多层级子任务与进度联动）须在应用层校验。P0 无 `parent` 写入路径故不构成缺陷 |
 | BT-14 | `IssueActivity` 大批量写入 | 一次更新触发 6 个字段变更 | 6 条 `IssueActivity`，`epoch` 完全相同（可按 epoch 聚合展示） |
 | BT-15 | 时区一致性 | 在 `TZ=Asia/Shanghai` 环境创建 Issue | `created_at` 以 UTC 存储；`target_date`（`DateField`）不因时区偏移改变日期 |
 
@@ -2100,7 +2103,7 @@ Plane 用四列冗余存储同一份描述，我们完整参考：
 | # | 检查条目 | 验证证据 |
 | --- | --- | --- |
 | 1 | `BaseModel` 提供 UUID 主键、`created_at` / `updated_at` / `deleted_at` 与软删除 Manager | §4.2 代码 + UT-01 ~ UT-04 |
-| 2 | `issues` 表建齐全部列：含 `issue_type_id`（可空）、`custom_fields`（jsonb default `{}`）、四格式描述列、`sequence_id`、`sort_order`、`archived_at`、`completed_at` | `\d+ issues` 快照逐列核对 §4.7 字段清单。**例外说明**：`cycle_id` / `module_id` 因指向尚不存在的表而不在 P0 建列，见 §2.4 规则 1 的边界界定 |
+| 2 | `issues` 表建齐全部列：含 `issue_type_id`（可空）、`custom_fields`（jsonb default `{}`）、四格式描述列、`sequence_id`、`sort_order`、`archived_at`、`completed_at` | `\d+ issues` 快照逐列核对 §4.7 字段清单。**例外说明**：`cycle_id` / `module_id` 因指向尚不存在的表（`Cycle` / `Module` 为 P2+ 表）而不在 P0 建列，见 §2.4 规则 1 的边界界定。**架构文档落地清单待回改**：`unified-issue-model.md` §9 本条目与 §7.4 要求 `cycle_id` / `module_id`「P0 建表时即创建列」，与其 §2.8 的注释预留自相矛盾且物理上不可实现（外键在被引用表缺失时无法创建），需按本文口径回改为「P2 建 `Cycle` / `Module` 表时以 `AddField` 一并创建，P0 不建」 |
 | 3 | 唯一约束 `uniq_issue_sequence_per_project`（带 `deleted_at IS NULL` 偏条件） | IT-10 / IT-11 |
 | 4 | 检查约束 `chk_issue_start_before_target`、`chk_issue_link_no_self` | IT-10、UT-26 ~ UT-28 |
 | 5 | 索引：`idx_issue_proj_state_sort`、`idx_issue_proj_type`、`idx_issue_parent`、`idx_issue_active_by_project`（偏索引） | IT-07 / IT-09 |
@@ -2157,6 +2160,6 @@ Plane 用四列冗余存储同一份描述，我们完整参考：
 - 直接上游：[`INFRA-001-monorepo-scaffold.md`](./INFRA-001-monorepo-scaffold.md)（`apps/api` 目录骨架）、[`INFRA-002-docker-compose.md`](./INFRA-002-docker-compose.md)（`db` 容器、`migrator` 服务、`init-extensions.sql`）
 - 直接下游：[`AUTH-001-registration-login.md`](./AUTH-001-registration-login.md)（`User` 消费方）、[`AUTH-003-basic-isolation.md`](./AUTH-003-basic-isolation.md)（`WorkspaceMember` / `ProjectMember` 行级过滤）、[`TEAM-001-team-crud.md`](./TEAM-001-team-crud.md)（`Workspace` + `seed_workspace_issue_types`）、[`PROJ-001-project-crud.md`](./PROJ-001-project-crud.md)（`Project` / `State` + `seed_project_states`）、`TASK-001-task-crud.md`（`Issue` + `create_issue`）、`BOARD-001-fixed-kanban.md`（`State.group` + `sort_order`）
 - 架构依据：[`architecture/unified-issue-model.md`](../architecture/unified-issue-model.md)（§2 全部模型、§3 advisory lock、§4 四格式描述、§5 种子数据、§6 能力分层、§7 Plane 对标、§9 落地检查清单）、[`architecture/dynamic-fields-design.md`](../architecture/dynamic-fields-design.md)（`custom_fields` + GIN opclass 选型 + `cf_` 命名）、[`architecture/rbac-permission-model.md`](../architecture/rbac-permission-model.md)（§2.2/§2.3 角色枚举、§3.1 `BaseModel` 审计字段、§3.2 成员与系统管理员模型）、[`architecture/tech-stack.md`](../architecture/tech-stack.md)（§5 测试栈、§8 PostgreSQL 15.7 / psycopg 3.2 版本锁定）
-- P1 延续：`sprint-1-mvp/TASK-002`（`priority` / `start_date` / `labels` / `parent` 开放）、`sprint-1-mvp/TASK-003`（类型切换与回填）
-- P2 延续：`TASK-008`（`custom_fields` 启用 + `CustomFieldDefinition` 建表）、`TASK-010`（`archived_at` 归档 + `IssueActivity` 展示）
+- P1 延续：`sprint-1-mvp/TASK-002`（`priority` / `start_date` / `labels` / `parent` 开放、`issue_type` 类型切换与存量回填）
+- P2 延续：`TASK-008`（`custom_fields` 启用 + `CustomFieldDefinition` 建表）、`TASK-009`（`archived_at` 归档 / 恢复）、`TASK-010`（`IssueActivity` 全量审计日志展示）
 - 全局索引：[`docs/README.md`](../README.md) §4.2（Sprint 0 十份文档清单）、§7.3 第 1 条（INFRA-003 是全系统总闸）

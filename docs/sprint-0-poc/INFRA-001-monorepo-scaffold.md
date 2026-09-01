@@ -27,7 +27,7 @@
 | --- | --- |
 | 目录结构 | `apps/{web,admin,space,api,live,proxy}` + `packages/{ui,editor,types,shared-state,tailwind-config}` + `deploy/` + `scripts/` + `.github/` |
 | 包管理配置 | `pnpm-workspace.yaml`、`.npmrc`、`.nvmrc`、根 `package.json`、各包 `package.json` |
-| 构建编排配置 | `turbo.json`（build / dev / lint / typecheck / test / storybook / clean + `//#api:*` 根任务） |
+| 构建编排配置 | `turbo.json`（build / dev / lint / format:check / typecheck / test / storybook / clean + `//#api:*` 根任务） |
 | 质量与规范配置 | `tsconfig.base.json` 及各包 `extends`、`.oxlintrc.json`、`commitlint.config.js`、`.husky/{pre-commit,commit-msg,pre-push}`、`.env.example` |
 
 **它是全系统的第一块砖**：`INFRA-003` 的 Django 模型代码必须落在 `apps/api/plane/db/models/` 内，`INFRA-002` 的 Dockerfile 必须依赖本文档确立的 workspace 布局才能正确 `pnpm deploy --filter`。因此本文档是 Sprint 0 的第 1 篇，Day 1 完成。
@@ -48,7 +48,7 @@
 | 依赖文档 | 本文档消费的具体决策 |
 | --- | --- |
 | [`architecture/tech-stack.md`](../architecture/tech-stack.md) | §8 运行时环境矩阵（Node 22.14.x / pnpm 11.x / Python 3.12.x 的精确锁定）；`engines` + `engine-strict` + `.nvmrc` + `packageManager` 四重约束；§4.1 Yjs 跨包同版本红线；§9 依赖治理（许可证白名单、`pnpm audit`） |
-| [`architecture/monorepo-structure.md`](../architecture/monorepo-structure.md) | §2 完整目录树；§3 命名规范（`@rp/<name>` scope、kebab-case 目录、`workspace:*` 引用）；§5 `pnpm-workspace.yaml` 全文与 Python/Nginx 排除理由；§5.3 `.npmrc`；§6 `turbo.json` 全文与依赖拓扑；§6.2 根 `package.json` 脚本；§7.1 依赖方向 6 条硬规则；§9 环境变量层级 |
+| [`architecture/monorepo-structure.md`](../architecture/monorepo-structure.md) | §2 完整目录树；§1.2 命名约定（`@rp/<name>` scope、kebab-case 目录、`workspace:*` 引用）；§5 `pnpm-workspace.yaml` 全文与 Python/Nginx 排除理由；§5.3 `.npmrc`；§6 `turbo.json` 全文与依赖拓扑；§6.2 根 `package.json` 脚本；§7.1 依赖方向 6 条硬规则；§9 环境变量层级 |
 
 **依赖强度**：两份文档均为**强依赖**。任何与之不一致的配置写法都视为缺陷；若实施中发现架构文档有误，走 ADR 流程回改架构文档，不在本文档中私自偏离。
 
@@ -87,7 +87,7 @@ flowchart TD
     STEP2 --> STEP3["③ 创建 apps<br/>web / admin / space（Vite + RR7）<br/>live（Node + tsup）<br/>api（Django，非 workspace）<br/>proxy（Nginx，非 workspace）"]
     STEP3 --> STEP4["④ 创建 packages<br/>tailwind-config → types<br/>→ ui / editor / shared-state<br/>（按依赖自底向上创建）"]
     STEP4 --> STEP5["⑤ 配置 Turborepo<br/>turbo.json 管道<br/>build/dev/lint/typecheck/test<br/>+ //#api:* 根任务"]
-    STEP5 --> STEP6["⑥ 配置 TypeScript<br/>根 tsconfig.base.json（strict）<br/>各包 extends + composite"]
+    STEP5 --> STEP6["⑥ 配置 TypeScript<br/>根 tsconfig.base.json（strict）<br/>各包 extends"]
     STEP6 --> STEP7["⑦ 配置 ESLint/OxLint<br/>.oxlintrc.json + oxfmt<br/>依赖方向白名单规则"]
     STEP7 --> STEP8["⑧ 配置 Husky<br/>pre-commit: lint-staged<br/>commit-msg: commitlint<br/>pre-push: typecheck + check:yjs"]
     STEP8 --> VERIFY{"验收三连<br/>pnpm install<br/>pnpm build<br/>pnpm dev"}
@@ -110,7 +110,7 @@ flowchart TD
 | --- | --- | --- | --- |
 | 1.1 内部包版本统一 | 全部 `packages/*` 与 `apps/*` 的 `version` 固定为 `0.1.0`，且 `private: true` | 内部包被误发布到公共 registry | CI 校验所有 workspace 包 `private === true` |
 | 1.2 跨包同一依赖同一版本 | React、React Router、TypeScript、Tailwind 等在所有包中必须完全同版本 | 打包出双份 React → Hooks 报 "Invalid hook call" | `pnpm dedupe --check` 在 CI 中执行 |
-| 1.3 **Yjs 家族严格同版本（红线）** | `yjs` / `y-prosemirror` / `y-protocols` 在 `apps/web`、`packages/editor`、`apps/live` 三处必须完全一致 | 协同编辑静默数据错乱，P3 阶段才暴露，排查成本极高 | 根 `pnpm.overrides` 锁定 + `scripts/check-yjs-version.mjs` 在 `pre-push` 与 CI 中双重守卫 |
+| 1.3 **Yjs 家族严格同版本（红线）** | `yjs` / `y-prosemirror` / `y-protocols` 在 `apps/web`、`packages/editor`、`apps/live` 三处必须完全一致 | 协同编辑静默数据错乱，P3 阶段才暴露，排查成本极高 | pnpm-workspace.yaml 的 `overrides`（pnpm≥10 支持）锁定 + `scripts/check-yjs-version.mjs` 在 `pre-push` 与 CI 中双重守卫 |
 | 1.4 包管理器版本锁定 | 根 `packageManager: "pnpm@11.0.0"` 精确版本（非 `^`），配合 Corepack | 不同成员用不同 pnpm 版本，产出不同 lockfile 结构导致冲突 | `packageManager` 字段 + `engine-strict=true` |
 | 1.5 许可证白名单 | 仅允许 MIT / Apache-2.0 / BSD / ISC；禁止 GPL / AGPL / RSAL / SSPL | 商业化合规风险 | CI 许可证扫描（`tech-stack.md` §9） |
 
@@ -125,7 +125,7 @@ flowchart TD
 | 2.5 `@rp/ui` **禁止**依赖 `@rp/shared-state` | 组件库必须与状态方案解耦，只接受 props |
 | 2.6 `@rp/types` **零运行时依赖** | `dependencies` 必须为空，只输出 `.d.ts` |
 
-上述 2.2 ~ 2.6 即 `monorepo-structure.md` §7.1 的六条硬规则，由 CI 脚本扫描各 `package.json` 的依赖名实现自动化拦截，不依赖人工 Code Review。
+上述 2.2 ~ 2.6 **五条**对应 `monorepo-structure.md` §7.1 的**前五条**硬规则，由 CI 脚本扫描各 `package.json` 的依赖名实现自动化拦截，不依赖人工 Code Review。§7.1 第 6 条「业务组件不得直连 axios，网络请求统一在 app 的 `services/` 层」不体现在依赖图上，由 oxlint 的 `no-restricted-imports` 规则承接（见 §4.11）。
 
 #### 规则 3：Python 项目排除规则
 
@@ -176,7 +176,7 @@ Turbo 通过根任务 `//#api:lint` / `//#api:typecheck` / `//#api:test` / `//#a
 
 | 条件 | 处理方式 |
 | --- | --- |
-| 无网络环境首次安装 | 不支持。`pnpm install` 需访问 registry；离线场景需预置 pnpm store（P2 气隙部署议题，见 `INFRA-002` §6） |
+| 无网络环境首次安装 | 不支持。`pnpm install` 需访问 registry；离线场景需预置 pnpm store（气隙部署为 P3/P4 议题，见 `INFRA-002` §6.4，由 `INFRA-006` 承接） |
 | Windows 开发机 | 不作为一等公民支持。`.husky` 钩子与 `bin/*.sh` 依赖 POSIX shell；Windows 用户走 WSL2 |
 | 大小写不敏感文件系统（macOS 默认） | 目录名统一 kebab-case 全小写，规避 `Ui` / `ui` 在 Linux CI 上解析失败 |
 | `node_modules` 幽灵依赖 | `shamefully-hoist=false` 严格布局；任何未在自身 `package.json` 声明的 import 在构建期即失败 |
@@ -229,9 +229,11 @@ pnpm dev        # = turbo run dev --filter=@rp/web... --filter=@rp/live...
 | 阶段 | Turbo 行为 | 开发者感知 |
 | --- | --- | --- |
 | 1 | 解析 `--filter=@rp/web...`（`...` 后缀 = 该包及其全部依赖） | — |
-| 2 | 因 `dev` 任务 `dependsOn: ["^build"]`，先按拓扑构建 `tailwind-config` → `types` → `ui` / `editor` / `shared-state`，产出 `.d.ts` | 首次约 20-40s，二次因缓存命中 < 2s |
-| 3 | 并行启动 persistent 任务：`web` 的 Vite dev server、`live` 的 tsup watch | TUI 分栏显示各服务日志 |
-| 4 | 各 package 以 `dev:watch` 增量重建，下游 Vite 自动 HMR | 改 `@rp/ui` 组件，浏览器即时刷新 |
+| 2 | 因 `dev` 任务 `dependsOn: ["^build", "^dev:watch"]`，先按拓扑构建 `tailwind-config` → `types` → `ui` / `editor` / `shared-state` 产出 `.d.ts`，再并行触发各 package 的 `dev:watch` | 首次约 20-40s，二次因缓存命中 < 2s |
+| 3 | 在同一 `dev` 任务下并行启动全部 persistent 进程：`web` 的 Vite dev server、`live` 的 `tsup --watch --onSuccess`、各 package 的 `dev:watch`（`tsup --watch --dts`） | TUI 分栏显示各服务日志 |
+| 4 | 各 package 的 `dev:watch`（`tsup --watch --dts`）增量重建，下游 Vite 经 `exports` 读到新产物后自动 HMR | 改 `@rp/ui` 组件，浏览器即时刷新 |
+
+> **触发链路说明（packages 侧的 `dev:watch` 入口）**：根 `dev` 脚本执行 `turbo run dev`，turbo.json 中 `dev` 任务以 `dependsOn: ["^build", "^dev:watch"]`（见 §4.4）显式触发上游 packages 的 `dev:watch` 任务——packages 内的 watch 构建脚本命名为 `dev:watch`（`tsup --watch --dts`，见 §4.7），与 turbo.json 中独立定义的 `dev:watch` 任务（`cache: false`、`persistent: true`，见 §4.4）一一对应。完整链路：① 首次启动按拓扑构建上游 `tailwind-config` → `types` → `ui` / `editor` / `shared-state` 产出 `.d.ts`；② 随后并行启动 apps 的 `dev`（web = Vite、live = `tsup --watch --onSuccess`）与各 package 的 `dev:watch`（`tsup --watch --dts` 增量重建）；③ 下游 Vite 经 `exports` 读到新产物后自动 HMR——改 `@rp/ui` 组件浏览器即时刷新，无需重启 app 进程。
 
 服务与端口（与 `INFRA-002` §4 的容器端口保持一致，避免本地与容器两套心智模型）：
 
@@ -260,7 +262,7 @@ pnpm build      # = turbo run build
 CI 中使用增量命令，仅校验受本次改动影响的包：
 
 ```bash
-pnpm ci:affected   # = turbo run lint typecheck test build --filter=...[origin/main]
+pnpm ci:affected   # = turbo run lint format:check typecheck test build --filter=...[origin/main]
 ```
 
 ### 3.5 命令行输出规范
@@ -354,6 +356,7 @@ packages:
 # ── 强制统一版本：Yjs 家族跨包同版本红线（tech-stack.md §4.1）──
 overrides:
   yjs: "13.6.x"
+  y-prosemirror: "1.3.x"
   y-protocols: "1.0.x"
 
 # ── 允许执行构建脚本的包白名单（pnpm 10+ 默认阻止 postinstall）──
@@ -364,6 +367,8 @@ onlyBuiltDependencies:
 ```
 
 `onlyBuiltDependencies` 说明：pnpm 10 起默认阻止依赖的 `postinstall` 脚本执行（供应链安全默认值）。`esbuild`（Vite 依赖）、`@tailwindcss/oxide`（Tailwind v4 的 Rust 引擎）、`sharp`（图像处理）需下载平台原生二进制，必须显式放行。新增需放行的包必须在 PR 中说明理由。
+
+> **勘误（`overrides` 的声明位置）**：Yjs 家族的版本锁定统一声明在 **pnpm-workspace.yaml 的 `overrides`**（pnpm≥10 支持，本骨架锁定 pnpm 11.x）。`tech-stack.md` §4.1 将实现手段写作「在根 `package.json` 中声明 `pnpm.overrides`」，与本节及 `monorepo-structure.md` §5 的实际工程口径（`overrides` 落在 `pnpm-workspace.yaml`）不一致，登记为**架构文档待回改项**，回改前以本节配置为准（§2.2 规则 1.3 / §4.6 / §6.5 中的表述均按此口径）。
 
 ### 4.3 .npmrc
 
@@ -398,7 +403,7 @@ auto-install-peers=true
     ".oxlintrc.json"
   ],
   "globalEnv": ["NODE_ENV", "CI"],
-  // 仅参与哈希、不注入进程（避免密钥进缓存 key 之外的泄露路径）
+  // 注入任务进程、不参与缓存哈希（与 globalEnv 相反；VITE_* 的缓存哈希由 build 任务 env 承担）
   "globalPassThroughEnv": ["VITE_API_BASE_URL", "VITE_LIVE_BASE_URL"],
 
   "tasks": {
@@ -435,7 +440,7 @@ auto-install-peers=true
 
     // ── 开发：长驻任务，不缓存、不持久化输出 ─────────────
     "dev": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "^dev:watch"],
       "cache": false,
       "persistent": true
     },
@@ -465,6 +470,8 @@ auto-install-peers=true
 }
 ```
 
+> **勘误（Turbo 字段语义）**：`globalPassThroughEnv` 的实际语义是「**注入任务进程、不参与缓存哈希**」——任务执行时可读取这些变量，但其取值变化不会令缓存失效；`VITE_*` 变量的缓存哈希由 `build` 任务的 `env: ["VITE_*"]` 承担（见 IT-07）。`monorepo-structure.md` §6 中同款注释将该语义写反（写作「仅参与哈希、不注入进程」），登记为**架构文档待回改项**，回改前以本条说明为准。
+
 #### 4.4.1 dependsOn 拓扑说明
 
 `^` 前缀表示「**依赖包**（upstream dependencies）的同名任务」，无前缀表示「**本包**的其他任务」。
@@ -475,7 +482,7 @@ auto-install-peers=true
 | `typecheck` | `^build` → self | 类型检查需上游已产出 `.d.ts`；**刻意不依赖上游 `typecheck`**——上游类型错误会在其自身 `typecheck` 任务中暴露，无需串行等待，可提升并行度 |
 | `lint` | 无依赖，全并行 | OxLint 基于源码而非产物，全仓库通常 < 2s |
 | `test` | `^build` → self | 单元测试 import 上游包的编译产物 |
-| `dev` | `^build` → self（persistent） | 首次启动先把 packages 构建一遍产出 `.d.ts` 供 IDE 与 Vite 解析；之后各包以 `dev:watch` 增量重建 |
+| `dev` | `^build` → `^dev:watch` → self（persistent） | 首次启动先把 packages 构建一遍产出 `.d.ts` 供 IDE 与 Vite 解析；随后通过 `^dev:watch` 并行触发上游 packages 的 `dev:watch`（`tsup --watch --dts`），改 packages 后下游 Vite 经 `exports` 读到新产物自动 HMR |
 | `//#api:*` | 根任务，与 JS 任务无依赖关系 | 通过 `//#` 前缀定义在根包上，实现「Python 任务纳入统一编排入口，但不进入 JS 依赖图」 |
 
 构建拓扑可视化：
@@ -494,10 +501,17 @@ graph LR
     TWCFG --> WEB
     UI --> ADMIN["@rp/admin"]
     STATE --> ADMIN
+    TYPES --> ADMIN
+    TWCFG --> ADMIN
     UI --> SPACE["@rp/space"]
     EDITOR --> SPACE
+    TYPES --> SPACE
+    TWCFG --> SPACE
     TYPES --> LIVE["@rp/live"]
+    EDITOR --> LIVE
 ```
+
+> 边方向与 `monorepo-structure.md` §7 的包间依赖关系图一一对应（该图为「消费方 → 依赖」，本图按构建拓扑反写为「上游 → 下游」，如 `TYPES --> ADMIN` = §7 的 `ADMIN --> TYPES`）：`admin` 依赖 `ui`/`shared-state`/`types`/`tailwind-config`（不含 `editor`），`space` 依赖 `ui`/`editor`/`types`/`tailwind-config`（不含 `shared-state`），`live` 依赖 `editor`/`types`（复用 ProseMirror schema 与 Yjs 链路三件套，对应 §4.6 apps/live 的依赖列表），与 §4.6 各 app 依赖表一致。
 
 ### 4.5 根 package.json
 
@@ -516,6 +530,7 @@ graph LR
     "build":          "turbo run build",
     "lint":           "turbo run lint",
     "format":         "oxfmt .",
+    "format:check":   "oxfmt --check .",
     "typecheck":      "turbo run typecheck",
     "test":           "turbo run test",
     "test:e2e":       "playwright test",
@@ -533,9 +548,11 @@ graph LR
     "gen:api-types":  "node scripts/gen-api-types.mjs",
     "check:yjs":      "node scripts/check-yjs-version.mjs",
 
-    "compose:up":     "docker compose -f deploy/compose/docker-compose.yml up -d",
-    "compose:down":   "docker compose -f deploy/compose/docker-compose.yml down",
-    "compose:logs":   "docker compose -f deploy/compose/docker-compose.yml logs -f",
+    // --env-file 必须显式携带：-f 形式下 Compose 从首个 -f 所在目录（deploy/compose/）查找 .env，
+    // 仓库根 .env 不生效、必填变量直接报错（INFRA-002 §3.1，此处与其验收命令同款）
+    "compose:up":     "docker compose --env-file .env -f deploy/compose/docker-compose.yml up -d",
+    "compose:down":   "docker compose --env-file .env -f deploy/compose/docker-compose.yml down",
+    "compose:logs":   "docker compose --env-file .env -f deploy/compose/docker-compose.yml logs -f",
 
     "prepare":        "husky"
   },
@@ -543,12 +560,12 @@ graph LR
     "turbo": "2.5.x",
     "typescript": "5.8.x",
     "oxlint": "1.x",
-    "oxfmt": "latest",
+    "oxfmt": "0.x",
     "husky": "9.1.x",
     "lint-staged": "15.x",
     "@commitlint/cli": "19.x",
     "@commitlint/config-conventional": "19.x",
-    "@playwright/test": "1.5x",
+    "@playwright/test": "1.5.x",
     "vitest": "3.x"
   }
 }
@@ -589,7 +606,12 @@ graph LR
     "swr": "2.3.x",
     "axios": "1.8.x",
     "@atlaskit/pragmatic-drag-and-drop": "1.7.x",
-    "lucide-react": "latest",
+    "lucide-react": "0.5xx.x",
+    // Yjs 家族三件套：与 packages/editor、apps/live 三处严格同版本（tech-stack.md §2 / §4.1 红线，
+    // 由 pnpm-workspace.yaml 的 overrides（pnpm≥10 支持）+ scripts/check-yjs-version.mjs 守卫）
+    "yjs": "13.6.x",
+    "y-prosemirror": "1.3.x",
+    "y-protocols": "1.0.x",
     "zod": "3.25.x"
   },
   "devDependencies": {
@@ -640,14 +662,15 @@ graph LR
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "dev":       "tsup --watch --onSuccess \"node dist/index.js\"",
-    "build":     "tsup",
+    "dev":       "tsup --watch --dts --onSuccess \"node dist/index.js\"",
+    "build":     "tsup --dts",
     "lint":      "oxlint src",
     "typecheck": "tsc --noEmit",
     "test":      "vitest run"
   },
   "dependencies": {
     "@rp/types": "workspace:*",
+    "@rp/editor": "workspace:*",
     "@hocuspocus/server": "2.15.x",
     "express": "4.21.x",
     "yjs": "13.6.x",
@@ -662,7 +685,8 @@ graph LR
 关键点：
 
 - 端口 `3000`；环境变量以 zod 做 **fail-fast** 校验（缺失即启动失败，不静默取默认值）。
-- Yjs 家族三个包的版本必须与 `apps/web`、`packages/editor` 完全一致，由 `pnpm.overrides` + `scripts/check-yjs-version.mjs` 守卫。
+- Yjs 家族三个包的版本必须与 `apps/web`、`packages/editor` 完全一致，由 pnpm-workspace.yaml 的 `overrides`（pnpm≥10 支持）+ `scripts/check-yjs-version.mjs` 守卫。
+- **依赖 `@rp/editor: workspace:*`**：复用其 ProseMirror schema 做服务端安全校验（防恶意客户端注入非法节点，对应 unified-issue-model.md §4.4 的惰性迁移）；`@rp/editor` 与 `apps/live` 共享同一份 schema，schema 演进时不会出现「迁移用旧、编辑器用新」的错配。
 - **P0 阶段仅要求容器可启动、健康检查可通过、Nginx WebSocket upgrade 路由可达**，不承载业务功能（协同编辑在 P3）。
 
 #### apps/api（Django）与 apps/proxy（Nginx）
@@ -689,8 +713,8 @@ graph LR
   },
   "files": ["dist"],
   "scripts": {
-    "build":     "tsup",
-    "dev:watch": "tsup --watch",
+    "build":     "tsup --dts",
+    "dev:watch": "tsup --watch --dts",
     "lint":      "oxlint src",
     "typecheck": "tsc --noEmit",
     "clean":     "rm -rf dist .turbo *.tsbuildinfo"
@@ -704,9 +728,9 @@ graph LR
 | --- | --- | --- | --- | --- |
 | `@rp/tailwind-config` | 无 | `tailwindcss: 4.1.x` | 无 `build`（纯 CSS 产物，`exports` 直接指向 `./theme.css` / `./preset.css` / `./dark.css`） | Tailwind v4 CSS-first，**不导出 JS config** |
 | `@rp/types` | **必须为空** | 无 | 无 | 只输出 `.d.ts`；含 `src/generated/`（由 `gen:api-types` 写入，`.gitignore` 之外——需入库以便离线构建） |
-| `@rp/ui` | `@rp/tailwind-config: workspace:*`、`@headlessui/react` 2.2.x、`lucide-react`、`clsx`、`tailwind-merge` | `react` 19.1.x、`react-dom` 19.1.x | `storybook`、`build-storybook` | **禁止**依赖 `@rp/types`（业务实体类型）与 `@rp/shared-state`；**禁止**发起网络请求；新组件无 story 不予合并 |
-| `@rp/editor` | `@rp/ui`、`@rp/types`、`@rp/tailwind-config`（均 `workspace:*`）、`@tiptap/*` 2.14.x、`yjs` 13.6.x、`y-prosemirror` 1.3.x | `react`、`react-dom` | 无 | ProseMirror schema 必须全仓库唯一（`apps/live` 复用其 schema 做服务端安全校验） |
-| `@rp/shared-state` | `@rp/types: workspace:*`、`mobx` 6.13.x、`swr` 2.3.x、`axios` 1.8.x | `react`、`mobx-react-lite` | 无 | **禁止**依赖 `@rp/ui`（状态层不知晓 UI）；业务组件不得直连 axios，统一经本包的 service 层 |
+| `@rp/ui` | `@rp/tailwind-config: workspace:*`、`@headlessui/react` 2.2.x、`lucide-react` 0.5xx.x、`clsx` 2.1.x、`tailwind-merge` 3.x | `react` 19.1.x、`react-dom` 19.1.x | `storybook`、`build-storybook` | **禁止**依赖 `@rp/types`（业务实体类型）与 `@rp/shared-state`；**禁止**发起网络请求；新组件无 story 不予合并 |
+| `@rp/editor` | `@rp/ui`、`@rp/types`、`@rp/tailwind-config`（均 `workspace:*`）、`@tiptap/*` 2.14.x、`yjs` 13.6.x、`y-prosemirror` 1.3.x、`y-protocols` 1.0.x | `react`、`react-dom` | 无 | ProseMirror schema 必须全仓库唯一（`apps/live` 通过 `workspace:*` 依赖复用其 schema 做服务端安全校验，依赖配置见 §4.6 live 部分） |
+| `@rp/shared-state` | `@rp/types: workspace:*`、`mobx` 6.13.x | `react`、`mobx-react-lite` | 无 | **禁止**依赖 `@rp/ui`（状态层不知晓 UI）；**不发起 HTTP 请求**——axios 请求层归属各 app 的 `services/`，本包仅接受 app 层注入的数据获取函数（`monorepo-structure.md` §4）；业务组件不得直连 axios，统一经各 app 的 `services/` 层（由 oxlint `no-restricted-imports` 拦截，见 §4.11） |
 
 **`peerDependencies` 而非 `dependencies` 放置 React 的原因**：避免 pnpm 严格布局下每个包各自装一份 React，导致运行时出现多份 React 实例、Hooks 抛 "Invalid hook call"。React 由 app 层唯一提供。
 
@@ -792,6 +816,7 @@ tsconfig.base.json                 ← 唯一编译行为基线（strict 全开�
 | `tsconfig.base.json` 列入 `turbo.json` 的 `globalDependencies` | 改动编译基线必须令全仓库缓存失效，否则会用旧编译行为的缓存产物 |
 | `strict` 相关选项**逐项显式列出** | `strict: true` 的隐含集合随 TS 版本变化，显式列出可在升级 TS 时明确感知行为变更 |
 | `skipLibCheck: true` | 第三方 `.d.ts` 的类型错误不应阻塞本项目构建 |
+| 不启用 `composite` / `references` | 构建由 tsup + Turbo 拓扑（`dependsOn: ["^build"]`）承担，包间类型消费经 `exports` 读上游 `dist/*.d.ts`；TS 项目引用的增量编译产物与 tsup 产物重叠，引入只会增加约束而无收益（§2.1 步骤⑥与此口径一致，仅 extends） |
 | 包间类型跳转指向源码 | 各包 `exports.types` 指向 `dist/*.d.ts`（有 `declarationMap`），IDE 可经 sourcemap 跳回 `src` |
 | 禁止使用 `paths` 做包间别名 | 一律走 `workspace:*` + `exports`，与运行时解析行为一致，避免"IDE 能跳但构建报错" |
 
@@ -830,15 +855,19 @@ packages/tailwind-config/
   --color-brand-500: #3f76ff;
   --color-brand-600: #2f5fe0;
 
-  /* 工作项状态色（与 unified-issue-model.md §5 的种子状态色一致）*/
+  /* 工作项状态色（与 unified-issue-model.md §5.2 的 5 个状态组种子色一致，unstarted 为 P0 三列看板第一列）*/
   --color-state-backlog:   #9ca3af;
+  --color-state-unstarted: #9ca3af;
   --color-state-started:   #3b82f6;
   --color-state-completed: #10b981;
   --color-state-cancelled: #6b7280;
 
-  /* 优先级色 */
+  /* 优先级色（与 unified-issue-model.md §2.8 的 Priority 枚举 none/low/medium/high/urgent 一一对应） */
+  --color-priority-none:   #6b7280;
+  --color-priority-low:    #94a3b8;
+  --color-priority-medium: #f59e0b;
+  --color-priority-high:   #fb923c;
   --color-priority-urgent: #ef4444;
-  --color-priority-high:   #f59e0b;
 
   --radius-card: 0.5rem;
   --duration-fast: 120ms;
@@ -855,38 +884,51 @@ packages/tailwind-config/
 ```
 
 ```ts
-// apps/web/vite.config.ts
+// apps/web/vite.config.ts（admin / space 同款，端口分别为 3002 / 3003）
 import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [tailwindcss(), reactRouter()],
-  server: { port: 3001 },
+  // envDir 指向仓库根：三个 app 统一从仓库根加载 .env*（见 §4.10 文件层级）
+  envDir: "../..",
+  server: {
+    port: 3001,
+    // 端口被占用时直接报错退出，而非 Vite 默认的自动递增端口（E2E-06 的可诊断性要求）
+    strictPort: true,
+  },
 });
 ```
 
-**硬性约束**：新增颜色 / 字号必须改 `@rp/tailwind-config`，禁止在业务代码中写任意值。`bg-[#3f76ff]` 形式在 CI lint 中告警（`monorepo-structure.md` §4 packages/tailwind-config 条目）。这保证设计 token 全局唯一来源。
+**硬性约束**：新增颜色 / 字号必须改 `@rp/tailwind-config`，禁止在业务代码中写任意值。`bg-[#3f76ff]` 形式在 CI lint 中告警（`monorepo-structure.md` §4 packages/tailwind-config 条目；规则定义见 §4.11 的 `no-restricted-syntax`）。这保证设计 token 全局唯一来源。
 
 ### 4.10 环境变量 .env 层级设计
 
 #### 文件层级
 
+三个 Vite app 的 `envDir` 统一指向**仓库根**（见下方加载优先级），因此 **Vite 只加载仓库根目录下的 `.env*` 文件**；`apps/<app>/` 目录下的任何 `.env*` 文件对 Vite 一律不生效。
+
 | 文件 | 是否入库 | 作用 |
 | --- | --- | --- |
 | `/.env.example` | ✅ 入库 | **唯一模板**，含全部变量的键、示例值与注释。新增变量必须同步此文件 |
-| `/.env` | ❌ gitignore | 本地实际值。`docker compose` 自动读取，`Vite` 经 `envDir` 读取 |
-| `/apps/<app>/.env.example` | ✅ 入库 | 仅当该 app 有独占变量时存在（P0 阶段仅 `apps/live` 需要） |
-| `/apps/<app>/.env.local` | ❌ gitignore | 单 app 覆盖，优先级最高 |
+| `/.env` | ❌ gitignore | 本地实际值。`docker compose` 经 `compose:*` 脚本中的 `--env-file .env` 显式读取（`-f` 形式下不会自动读取仓库根 `.env`，见 §4.5 与 `INFRA-002` §3.1）；Vite 亦读取（Vite 各层中优先级最低的一层） |
+| `/.env.local`、`/.env.<mode>`、`/.env.<mode>.local` | 带 `.local` 后缀 ❌ gitignore | 仓库根下的 Vite 逐层覆盖文件（覆盖顺序见下表）。`docker compose` **仅读取 `/.env`**，不读取这三个文件 |
+| `/apps/<app>/.env.example` | ✅ 入库 | 仅当该 app 有独占变量时存在（P0 阶段仅 `apps/live` 需要），作为该 app 变量的文档模板，Vite 不加载 |
+| `/apps/<app>/.env.local` | ❌ gitignore | 预留给**非 Vite** 消费方，或未来将某 app 的 `envDir` 改回其自身目录（Vite 默认值）时的单 app 覆盖。本骨架默认配置下 **Vite 不读取此文件**，对 Vite 不存在任何优先级 |
+
+> **相对 `monorepo-structure.md` §9.1 的 P0 裁剪说明**：§9.1 的完整形态为各 app（`web` / `admin` / `space` / `live` / `api`）均配 `.env.example`；本骨架 P0 **显式裁剪**为仅交付 `apps/live/.env.example`——web / admin / space 的变量全部是根 `.env` 已覆盖的 `VITE_*`，无独占变量，单独模板只会多一份需同步的清单；`apps/api` 的变量文档由根 `.env.example` 的服务分区承担。此为登记在案的裁剪而非偏离，后续某 app 出现独占变量时再按 §9.1 补齐该文件（§7.1 #11 交付物同此口径）。
 
 #### 加载优先级（四套独立机制）
 
 | 消费方 | 加载机制 | 优先级 |
 | --- | --- | --- |
-| Vite（web/admin/space） | `envDir` 指向仓库根，只暴露 `VITE_` 前缀变量到浏览器 | `.env.local` > `.env.<mode>` > `.env` |
+| Vite（web/admin/space） | `envDir` 指向仓库根：只加载仓库根下的 `.env*` 文件（不加载 `apps/<app>/` 下的 `.env*`），只暴露 `VITE_` 前缀变量到浏览器 | 已注入的进程环境变量 > `.env.<mode>.local` > `.env.<mode>` > `.env.local` > `.env`（均位于仓库根） |
 | Django（api） | `django-environ` 读取 `os.environ`；容器内由 compose 注入 | 进程环境变量 > `.env` 文件 |
 | live（Node） | 启动时 zod schema **fail-fast** 校验，缺失即退出 | 进程环境变量 |
-| Docker Compose | 根 `.env` 做 `${VAR}` 插值 + `environment:` 显式注入 | shell 环境 > `.env` |
+| Docker Compose | 根 `.env` 做 `${VAR}` 插值 + `environment:` 显式注入；`compose:*` 脚本为 `-f deploy/compose/...` 形式，Compose v2 从首个 `-f` 所在目录查找 `.env`，仓库根 `.env` 须靠脚本中的 `--env-file .env` 显式加载（见 §4.5、`INFRA-002` §3.1） | shell 环境 > `.env` |
+
+> **勘误（Vite env 加载优先级）**：Vite（含本骨架锁定的 6.3.x）按 `.env` → `.env.local` → `.env.<mode>` → `.env.<mode>.local` 的顺序加载，后加载者覆盖前者，已存在的进程环境变量优先于全部文件——即 `.env.<mode>` 的优先级**高于** `.env.local`，与 dotenv / Next.js 系约定相反；开发模式下（`mode=development`）`.env.development` 会覆盖 `.env.local`，本地覆盖请使用 `.env.development.local`。`monorepo-structure.md` §9.1 将加载链写作 `.env` → `.env.[mode]` → `.env.local` → `.env.[mode].local`（中间两级顺序与 Vite 实际行为不符），且其目录树中 `apps/web/.env.local` 标注「Vite 优先级最高」（仅在 `envDir` 指向 app 目录的 Vite 默认配置下成立）。两处一并登记为**架构文档待回改项**，回改前以本节说明为准。
 
 #### 变量分类与命名前缀
 
@@ -956,7 +998,16 @@ NGINX_PORT=80
     "no-console": "error",              // 生产代码禁止 console，日志走统一封装
     "typescript/no-explicit-any": "error",
     "import/no-cycle": "error",         // 循环依赖直接失败
-    "react/jsx-key": "error"
+    "react/jsx-key": "error",
+    // monorepo-structure.md §7.1 第 6 条：业务组件不得直连 axios，网络请求统一在各 app 的 services/ 层
+    "no-restricted-imports": ["error", {
+      "paths": [{ "name": "axios", "message": "业务组件不得直连 axios，请使用本 app services/ 层封装的请求函数" }]
+    }],
+    // 任意色值检查：禁止 className 中 bg-[#3f76ff] 等任意值写法（设计 token 单一来源，见 §4.9 / IT-11）
+    "no-restricted-syntax": ["warn", {
+      "selector": "Literal[value=/\\[#[0-9a-fA-F]{3,8}\\]/]",
+      "message": "禁止在业务代码中写任意色值工具类（如 bg-[#3f76ff]），请改用 @rp/tailwind-config 的语义 token"
+    }]
   },
   "ignorePatterns": ["dist", "build", "storybook-static", "**/generated/**"]
 }
@@ -978,7 +1029,7 @@ pnpm commitlint --edit "$1"
 
 ```bash
 # .husky/pre-push
-pnpm typecheck && pnpm check:yjs
+turbo run typecheck --filter=...[origin/main] && pnpm check:yjs
 ```
 
 ```jsonc
@@ -1006,7 +1057,7 @@ export default {
 };
 ```
 
-**钩子职责划分原则**：`pre-commit` 只做**快**的事（lint + format，秒级）；`pre-push` 才做**慢**的事（typecheck + Yjs 版本校验，十秒级）。把 typecheck 放进 `pre-commit` 会让每次提交等待过久，开发者会开始滥用 `--no-verify`，反而使钩子形同虚设。
+**钩子职责划分原则**：`pre-commit` 只做**快**的事（lint + format，秒级）；`pre-push` 才做**慢**的事（**受影响包**的 typecheck + Yjs 版本校验，十秒级，与 `tech-stack.md` §5「受影响包类型检查」及 `monorepo-structure.md` §2 的 `turbo run typecheck --filter=...[origin/main]` 一致）。把 typecheck 放进 `pre-commit` 会让每次提交等待过久，开发者会开始滥用 `--no-verify`，反而使钩子形同虚设。
 
 #### scripts/check-yjs-version.mjs（职责说明）
 
@@ -1070,7 +1121,7 @@ export default {
 | BT-02 | pnpm 版本过低（10.x） | 同上（`engines.pnpm` + Corepack 校验） |
 | BT-03 | `apps/api` 被误纳入 workspace | 若有人把 `pnpm-workspace.yaml` 改回 `apps/*`，黑名单 `!apps/api` 仍生效；CI 中额外断言 `pnpm ls -r --depth=-1` 输出不含 `api` / `proxy` |
 | BT-04 | 内部包引用写成固定版本号 | `pnpm install` 尝试从 registry 拉取 `@rp/ui@0.1.0` 并失败（404）；CI 断言所有 `@rp/*` 依赖值以 `workspace:` 开头 |
-| BT-05 | `.env` 缺失 | Vite 使用 `.env.example` 中的默认值仍可启动前端；`apps/live` 因 zod fail-fast **拒绝启动**并打印缺失的变量名（这是预期行为，不是缺陷） |
+| BT-05 | `.env` 缺失 | 前端三应用仍可启动：`Vite` **不读取** `.env.example`，`VITE_*` 变量未注入时以**代码内默认值**兜底——判定：`pnpm dev` 启动成功且页面可打开，`import.meta.env.VITE_API_BASE_URL === "/api/v1"`（默认相对路径；同 `VITE_LIVE_BASE_URL === "/live"`）；`apps/live` 因 zod fail-fast **拒绝启动**并打印缺失的变量名（这是预期行为，不是缺陷） |
 | BT-06 | 磁盘空间不足 | `pnpm install` 报 ENOSPC；README 中标注 ≥ 5 GB 要求 |
 | BT-07 | 循环依赖被引入 | 有人让 `@rp/types` 依赖 `@rp/ui` → Turbo 构建报 cyclic dependency；`import/no-cycle` 报 error |
 
@@ -1083,7 +1134,7 @@ export default {
 | 维度 | Plane | 说明 |
 | --- | --- | --- |
 | 应用数 | **6 个 app** | `web`、`admin`、`space`、`api`（Python）、`live`（Node）、`proxy`（反向代理） |
-| 共享包数 | **6 个 package** | `ui`、`editor`、`types`、`shared-state`、`tailwind-config`、`eslint-config` / `typescript-config`（编译与 lint 预设） |
+| 共享包数 | **7 个 package** | `ui`、`editor`、`types`、`shared-state`、`tailwind-config`、`eslint-config`、`typescript-config`（后两个为编译与 lint 预设） |
 | 包管理器 | pnpm **11.3** 级别 | 内部包一律 `workspace:*` |
 | 构建编排 | Turborepo | `build` 任务 `dependsOn: ["^build"]` |
 | Node 版本 | **≥ 22.22** | `engines` 约束 |
@@ -1137,11 +1188,11 @@ Plane 的 `apps/api` 是 Django 项目，**不含 `package.json`**，不被 `pnp
 | 3 | **类型自动生成** | 类型主要手写维护 | `scripts/gen-api-types.mjs` 从 drf-spectacular 的 OpenAPI schema 生成 `@rp/types/src/generated` | 消除手写类型与后端契约的漂移 |
 | 4 | **Tailwind v4 CSS-first** | JS preset（v3 时代） | `@rp/tailwind-config` 导出 CSS token（`@theme`） | 设计 token 单一来源，Storybook 与三端零配置对齐 |
 | 5 | **共享编译配置成包** | 各包自带 tsconfig，存在行为漂移 | P0 单一根 `tsconfig.base.json`（列入 `globalDependencies`），P1 抽 `@rp/config` | 消除包间编译行为差异 |
-| 6 | **Yjs 版本守卫** | 依靠人工注意 | `pnpm.overrides` 锁定 + `check-yjs-version.mjs` 在 `pre-push` 与 CI 双重执行 | 阻断"P3 才暴露、排查成本极高"的静默数据错乱风险 |
+| 6 | **Yjs 版本守卫** | 依靠人工注意 | pnpm-workspace.yaml 的 `overrides`（pnpm≥10 支持）锁定 + `check-yjs-version.mjs` 在 `pre-push` 与 CI 双重执行 | 阻断"P3 才暴露、排查成本极高"的静默数据错乱风险 |
 | 7 | **`//#api:*` 根任务** | 无统一入口，Python 命令需手工 cd | 统一入口 `pnpm api:*` | 单一命令入口，且不污染 JS 依赖图 |
 | 8 | **Storybook 作为强制交付物** | 有但覆盖有限 | `@rp/ui` 新组件无 story 不予合并 | 组件库可评审、可视觉回归 |
 | 9 | **lint 工具替换** | ESLint | OxLint + oxfmt（Rust） | 全仓库 lint 从数十秒降至 2s 内，使其可进 `pre-commit` |
-| 10 | **依赖方向 CI 强校验** | 依赖 Code Review | 脚本扫描 `package.json` 依赖名，违规即失败 | 六条依赖硬规则自动化拦截，不靠人工 |
+| 10 | **依赖方向 CI 强校验** | 依赖 Code Review | 脚本扫描 `package.json` 依赖名，违规即失败 | 五条依赖硬规则（`monorepo-structure.md` §7.1 前五条）自动化拦截；第 6 条（业务组件不直连 axios）由 oxlint `no-restricted-imports` 承接，均不靠人工 |
 
 ### 6.6 Ones 对标结论
 
@@ -1172,7 +1223,7 @@ Ones 为闭源商业产品，**无 Monorepo 结构的公开信息**。可获取�
 | 5 | Django 项目骨架 | `apps/api/`（`pyproject.toml`、`uv.lock`、`.python-version`、`manage.py`、`plane/` 目录树、`bin/*.sh`） | `pnpm api:lint` 通过；目录结构与 §4.1 一致（具体 Model 代码由 `INFRA-003` 交付） |
 | 6 | Nginx 配置骨架 | `apps/proxy/`（`nginx.conf.template`、`conf.d/*.conf`、`docker-entrypoint.sh`） | 文件就位（路由内容由 `INFRA-002` 交付） |
 | 7 | 五个共享包 | `packages/{ui,editor,types,shared-state,tailwind-config}/` | 各含 `package.json`（`private: true`、`version: 0.1.0`、`exports`）；依赖方向符合 §2.2 规则 2 |
-| 8 | TypeScript 配置层级 | `tsconfig.base.json` + 9 处 `extends` | strict 全开；`turbo run typecheck` 通过 |
+| 8 | TypeScript 配置层级 | `tsconfig.base.json` + 8 处 `extends`（packages 4 处 + apps 4 处；`tailwind-config` 无 tsconfig） | strict 全开；`turbo run typecheck` 通过 |
 | 9 | Tailwind 共享配置 | `packages/tailwind-config/{theme,preset,dark}.css` | 三个 app + Storybook 均 `@import`；无重复 token 定义 |
 | 10 | 代码质量工具链 | `.oxlintrc.json`、`commitlint.config.js`、`.husky/{pre-commit,commit-msg,pre-push}`、`lint-staged` 配置 | 钩子实际生效（IT-10） |
 | 11 | 环境变量模板 | `.env.example`（根）+ `apps/live/.env.example` | 覆盖 §4.10 全部变量；`VITE_` 无密钥（UT-09） |
@@ -1195,7 +1246,7 @@ Ones 为闭源商业产品，**无 Monorepo 结构的公开信息**。可获取�
 
 | # | 门槛 | 判定 |
 | --- | --- | --- |
-| 4 | 依赖方向硬规则 | UT-05 六条规则全部通过 |
+| 4 | 依赖方向硬规则 | UT-05 全部规则通过 |
 | 5 | Yjs 版本一致性 | `pnpm check:yjs` 退出码 0 |
 | 6 | 版本门禁生效 | Node 20 下 `pnpm install` 失败（BT-01） |
 | 7 | 密钥泄露扫描 | UT-09 通过 |
@@ -1215,7 +1266,7 @@ Ones 为闭源商业产品，**无 Monorepo 结构的公开信息**。可获取�
 
 ### 7.4 变更控制
 
-本骨架在 Sprint 0 定型后进入**冻结状态**（`dependency-graph.md` §5：M0-INFRA 变更成本"最高"）。后续变更规则：
+本骨架在 Sprint 0 定型后进入**冻结状态**（`dependency-graph.md` §3.2：M0-INFRA 变更成本"最高"）。后续变更规则：
 
 | 变更类型 | 流程 |
 | --- | --- |

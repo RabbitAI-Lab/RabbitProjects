@@ -81,6 +81,8 @@ RabbitProjects 是一套复刻 [Ones](https://ones.cn/) 与 [Plane](https://gith
 
 目标：跑通「登录 → 建团队 → 建项目 → 建任务 → 拖拽看板」最小闭环，清零全栈技术风险。
 
+迭代概览：[sprint-0-poc/sprint-overview.md](sprint-0-poc/sprint-overview.md)
+
 | # | 文档 | 标题 | 所属迭代 | 优先级 | 模块 |
 |---|---|---|---|---|---|
 | 8 | [sprint-0-poc/INFRA-001-monorepo-scaffold.md](sprint-0-poc/INFRA-001-monorepo-scaffold.md) | Monorepo 工程骨架搭建 | Sprint 0 | P0 | INFRA |
@@ -97,6 +99,8 @@ RabbitProjects 是一套复刻 [Ones](https://ones.cn/) 与 [Plane](https://gith
 ### 4.3 Sprint 1 — MVP 能力补齐（11 份 · P1 · 第 3 周）
 
 目标：补齐 10 人以内小团队日常真实协作必备能力。
+
+迭代概览：[sprint-1-mvp/sprint-overview.md](sprint-1-mvp/sprint-overview.md)
 
 | # | 文档 | 标题 | 所属迭代 | 优先级 | 模块 |
 |---|---|---|---|---|---|
@@ -116,19 +120,23 @@ RabbitProjects 是一套复刻 [Ones](https://ones.cn/) 与 [Plane](https://gith
 
 目标：补齐标准版完整任务核心能力，含动态自定义字段与全字段筛选器。
 
+迭代概览：[sprint-2-task-full/sprint-overview.md](sprint-2-task-full/sprint-overview.md)
+
 | # | 文档 | 标题 | 所属迭代 | 优先级 | 模块 |
 |---|---|---|---|---|---|
-| 29 | [sprint-2-task-full/TASK-004-multilevel-subtask.md](sprint-2-task-full/TASK-004-multilevel-subtask.md) | 多层级子任务与进度联动 | Sprint 2 | P2 | TASK |
+| 29 | [sprint-2-task-full/TASK-004-subtask-hierarchy.md](sprint-2-task-full/TASK-004-subtask-hierarchy.md) | 多层级子任务与进度联动 | Sprint 2 | P2 | TASK |
 | 30 | [sprint-2-task-full/TASK-005-task-dependency.md](sprint-2-task-full/TASK-005-task-dependency.md) | 任务前置 / 后置依赖关系 | Sprint 2 | P2 | TASK |
-| 31 | [sprint-2-task-full/TASK-006-worklog-estimate.md](sprint-2-task-full/TASK-006-worklog-estimate.md) | 工时估算与工时填报 | Sprint 2 | P2 | TASK |
+| 31 | [sprint-2-task-full/TASK-006-worklog.md](sprint-2-task-full/TASK-006-worklog.md) | 工时估算与工时填报 | Sprint 2 | P2 | TASK |
 | 32 | [sprint-2-task-full/TASK-007-multi-assignee.md](sprint-2-task-full/TASK-007-multi-assignee.md) | 多执行人 / 任务转交 / 认领 | Sprint 2 | P2 | TASK |
-| 33 | [sprint-2-task-full/TASK-008-custom-fields.md](sprint-2-task-full/TASK-008-custom-fields.md) | 基础自定义字段动态增删 | Sprint 2 | P2 | TASK |
-| 34 | [sprint-2-task-full/TASK-009-advanced-filter-view.md](sprint-2-task-full/TASK-009-advanced-filter-view.md) | 全字段组合筛选器与视图保存 | Sprint 2 | P2 | TASK |
-| 35 | [sprint-2-task-full/TASK-010-copy-archive-log.md](sprint-2-task-full/TASK-010-copy-archive-log.md) | 任务复制 / 归档 / 全量操作日志 | Sprint 2 | P2 | TASK |
+| 33 | [sprint-2-task-full/TASK-008-custom-fields-basic.md](sprint-2-task-full/TASK-008-custom-fields-basic.md) | 基础自定义字段动态增删 | Sprint 2 | P2 | TASK |
+| 34 | [sprint-2-task-full/TASK-009-task-copy-archive.md](sprint-2-task-full/TASK-009-task-copy-archive.md) | 任务复制 / 归档 / 恢复 | Sprint 2 | P2 | TASK |
+| 35 | [sprint-2-task-full/TASK-010-full-audit-log.md](sprint-2-task-full/TASK-010-full-audit-log.md) | 全操作留痕审计日志 | Sprint 2 | P2 | TASK |
 
 ### 4.5 Sprint 3 — 高级视图 + 实时协作（6 份 · P2 · 第 5 周）
 
 目标：补齐看板高级能力、评论协作与 WebSocket 多人实时同步。
+
+迭代概览：[sprint-3-views-collab/sprint-overview.md](sprint-3-views-collab/sprint-overview.md)
 
 | # | 文档 | 标题 | 所属迭代 | 优先级 | 模块 |
 |---|---|---|---|---|---|
@@ -143,91 +151,105 @@ RabbitProjects 是一套复刻 [Ones](https://ones.cn/) 与 [Plane](https://gith
 
 目标：补齐进度可视化与项目级文件资源能力。
 
+迭代概览：[sprint-4-gantt-file/sprint-overview.md](sprint-4-gantt-file/sprint-overview.md)
+
 | # | 文档 | 标题 | 所属迭代 | 优先级 | 模块 |
 |---|---|---|---|---|---|
-| 42 | [sprint-4-gantt-file/GANTT-001-gantt-base.md](sprint-4-gantt-file/GANTT-001-gantt-base.md) | 甘特图渲染与日 / 周 / 月粒度 | Sprint 4 | P2 | GANTT |
-| 43 | [sprint-4-gantt-file/GANTT-002-gantt-drag-dependency.md](sprint-4-gantt-file/GANTT-002-gantt-drag-dependency.md) | 任务条拖拽 / 依赖连线 / 导出 | Sprint 4 | P2 | GANTT |
-| 44 | [sprint-4-gantt-file/FILE-002-project-file-library.md](sprint-4-gantt-file/FILE-002-project-file-library.md) | 项目文件库与多层级目录 | Sprint 4 | P2 | FILE |
-| 45 | [sprint-4-gantt-file/FILE-003-chunk-upload-preview.md](sprint-4-gantt-file/FILE-003-chunk-upload-preview.md) | 大文件分片续传与在线预览 | Sprint 4 | P2 | FILE |
-| 46 | [sprint-4-gantt-file/FILE-004-version-share-permission.md](sprint-4-gantt-file/FILE-004-version-share-permission.md) | 文件多版本 / 分享链接 / 权限 | Sprint 4 | P2 | FILE |
+| 42 | [sprint-4-gantt-file/GANTT-001-gantt-core.md](sprint-4-gantt-file/GANTT-001-gantt-core.md) | 甘特图核心渲染与粒度切换 | Sprint 4 | P2 | GANTT |
+| 43 | [sprint-4-gantt-file/GANTT-002-delay-export.md](sprint-4-gantt-file/GANTT-002-delay-export.md) | 甘特拖拽改期 / 延期高亮 / 导出 | Sprint 4 | P2 | GANTT |
+| 44 | [sprint-4-gantt-file/FILE-002-project-filelib.md](sprint-4-gantt-file/FILE-002-project-filelib.md) | 项目文件库与多层级目录 | Sprint 4 | P2 | FILE |
+| 45 | [sprint-4-gantt-file/FILE-003-preview-version.md](sprint-4-gantt-file/FILE-003-preview-version.md) | 大文件分片续传 / 在线预览 / 多版本 | Sprint 4 | P2 | FILE |
+| 46 | [sprint-4-gantt-file/FILE-004-share-permission.md](sprint-4-gantt-file/FILE-004-share-permission.md) | 文件分享链接与权限管控 | Sprint 4 | P2 | FILE |
 
 ### 4.7 Sprint 5 — 集成 + 标准版收尾（6 份 · P2 · 第 7 周）
 
 目标：补齐 GitHub 集成、基础统计与生产配置，标准版功能全量冻结。
 
+迭代概览：[sprint-5-integration-standard/sprint-overview.md](sprint-5-integration-standard/sprint-overview.md)
+
 | # | 文档 | 标题 | 所属迭代 | 优先级 | 模块 |
 |---|---|---|---|---|---|
-| 47 | [sprint-5-integration-standard/INTG-001-github-integration.md](sprint-5-integration-standard/INTG-001-github-integration.md) | GitHub 基础集成 | Sprint 5 | P2 | INTG |
+| 47 | [sprint-5-integration-standard/INTG-001-github-basic.md](sprint-5-integration-standard/INTG-001-github-basic.md) | GitHub 基础集成 | Sprint 5 | P2 | INTG |
 | 48 | [sprint-5-integration-standard/INTG-002-webhook-basic.md](sprint-5-integration-standard/INTG-002-webhook-basic.md) | 基础 Webhook 出站通知 | Sprint 5 | P2 | INTG |
-| 49 | [sprint-5-integration-standard/RPT-002-project-progress-stats.md](sprint-5-integration-standard/RPT-002-project-progress-stats.md) | 项目进度与成员任务量统计 | Sprint 5 | P2 | RPT |
-| 50 | [sprint-5-integration-standard/PROJ-003-lifecycle-timeline.md](sprint-5-integration-standard/PROJ-003-lifecycle-timeline.md) | 项目生命周期与动态时间线 | Sprint 5 | P2 | PROJ |
-| 51 | [sprint-5-integration-standard/AUTH-006-row-level-isolation.md](sprint-5-integration-standard/AUTH-006-row-level-isolation.md) | 数据库行级隔离与成员权限分配 | Sprint 5 | P2 | AUTH |
+| 49 | [sprint-5-integration-standard/RPT-002-project-stats.md](sprint-5-integration-standard/RPT-002-project-stats.md) | 项目进度与成员任务量统计 | Sprint 5 | P2 | RPT |
+| 50 | [sprint-5-integration-standard/PROJ-003-project-lifecycle.md](sprint-5-integration-standard/PROJ-003-project-lifecycle.md) | 项目生命周期与动态时间线 | Sprint 5 | P2 | PROJ |
+| 51 | [sprint-5-integration-standard/AUTH-006-row-level-security.md](sprint-5-integration-standard/AUTH-006-row-level-security.md) | 数据库行级隔离与成员权限分配 | Sprint 5 | P2 | AUTH |
 | 52 | [sprint-5-integration-standard/TEAM-003-team-archive-config.md](sprint-5-integration-standard/TEAM-003-team-archive-config.md) | 团队归档与全局模板配置 | Sprint 5 | P2 | TEAM |
 
 ### 4.8 Sprint 6 — 稳定性缓冲（2 份 · 第 8 周）
 
 目标：无新增功能，标准版 V1.0 正式发布。
 
+迭代概览：[sprint-6-stabilize/sprint-overview.md](sprint-6-stabilize/sprint-overview.md)
+
 | # | 文档 | 标题 | 所属迭代 | 优先级 | 模块 |
 |---|---|---|---|---|---|
-| 53 | [sprint-6-stabilize/INFRA-005-rate-limit-backup-deploy.md](sprint-6-stabilize/INFRA-005-rate-limit-backup-deploy.md) | 接口限流 / 数据备份 / 生产部署 | Sprint 6 | P2 | INFRA |
-| 54 | [sprint-6-stabilize/QA-001-stabilize-hardening.md](sprint-6-stabilize/QA-001-stabilize-hardening.md) | 缺陷修复 / 性能优化 / 权限加固 | Sprint 6 | — | QA |
+| 53 | [sprint-6-stabilize/INFRA-005-rate-limit-backup.md](sprint-6-stabilize/INFRA-005-rate-limit-backup.md) | 接口限流 / 数据备份 / 生产部署配置 | Sprint 6 | P2 | INFRA |
+| 54 | [sprint-6-stabilize/QA-001-standard-release.md](sprint-6-stabilize/QA-001-standard-release.md) | 标准版 V1.0 缺陷修复 / 性能加固 / 发布验收 | Sprint 6 | — | QA |
 
 ### 4.9 Sprint 7 — 企业工作流核心（8 份 · P3 · 第 9-10 周）
 
 目标：交付企业版最核心的自定义工作流与审批能力（企业版最大技术难点）。
 
+迭代概览：[sprint-7-enterprise-workflow/sprint-overview.md](sprint-7-enterprise-workflow/sprint-overview.md)
+
 | # | 文档 | 标题 | 所属迭代 | 优先级 | 模块 |
 |---|---|---|---|---|---|
-| 55 | [sprint-7-enterprise-workflow/WF-001-workflow-engine-model.md](sprint-7-enterprise-workflow/WF-001-workflow-engine-model.md) | 工作流引擎数据模型与状态机 | Sprint 7 | P3 | WF |
-| 56 | [sprint-7-enterprise-workflow/WF-002-workflow-canvas.md](sprint-7-enterprise-workflow/WF-002-workflow-canvas.md) | 可视化工作流画布编辑器 | Sprint 7 | P3 | WF |
-| 57 | [sprint-7-enterprise-workflow/WF-003-transition-rules.md](sprint-7-enterprise-workflow/WF-003-transition-rules.md) | 流转条件校验与字段锁定 | Sprint 7 | P3 | WF |
-| 58 | [sprint-7-enterprise-workflow/WF-004-approval-flow.md](sprint-7-enterprise-workflow/WF-004-approval-flow.md) | 审批流（会签 / 或签 / 逐级 / 驳回） | Sprint 7 | P3 | WF |
-| 59 | [sprint-7-enterprise-workflow/WF-005-automation-rules.md](sprint-7-enterprise-workflow/WF-005-automation-rules.md) | 自动化规则引擎 | Sprint 7 | P3 | WF |
-| 60 | [sprint-7-enterprise-workflow/WF-006-workflow-template-library.md](sprint-7-enterprise-workflow/WF-006-workflow-template-library.md) | 工作流模板库与全局下发 | Sprint 7 | P3 | WF |
-| 61 | [sprint-7-enterprise-workflow/TASK-012-advanced-custom-fields.md](sprint-7-enterprise-workflow/TASK-012-advanced-custom-fields.md) | 高级自定义字段与字段权限 | Sprint 7 | P3 | TASK |
-| 62 | [sprint-7-enterprise-workflow/TASK-013-worklog-team-stats.md](sprint-7-enterprise-workflow/TASK-013-worklog-team-stats.md) | 团队工时统计与工时管控 | Sprint 7 | P3 | TASK |
+| 55 | [sprint-7-enterprise-workflow/WF-001-workflow-canvas.md](sprint-7-enterprise-workflow/WF-001-workflow-canvas.md) | 可视化工作流画布与引擎数据模型 | Sprint 7 | P3 | WF |
+| 56 | [sprint-7-enterprise-workflow/WF-002-approval-flow.md](sprint-7-enterprise-workflow/WF-002-approval-flow.md) | 审批流（会签 / 或签 / 逐级 / 驳回 / 撤回） | Sprint 7 | P3 | WF |
+| 57 | [sprint-7-enterprise-workflow/WF-003-automation-rules.md](sprint-7-enterprise-workflow/WF-003-automation-rules.md) | 自动化规则引擎 | Sprint 7 | P3 | WF |
+| 58 | [sprint-7-enterprise-workflow/WF-004-transition-guard.md](sprint-7-enterprise-workflow/WF-004-transition-guard.md) | 流转守卫与字段锁定 | Sprint 7 | P3 | WF |
+| 59 | [sprint-7-enterprise-workflow/WF-005-workflow-templates.md](sprint-7-enterprise-workflow/WF-005-workflow-templates.md) | 工作流模板库与全局下发 | Sprint 7 | P3 | WF |
+| 60 | [sprint-7-enterprise-workflow/WF-006-approval-audit.md](sprint-7-enterprise-workflow/WF-006-approval-audit.md) | 审批留痕与合规溯源 | Sprint 7 | P3 | WF |
+| 61 | [sprint-7-enterprise-workflow/TASK-012-advanced-fields.md](sprint-7-enterprise-workflow/TASK-012-advanced-fields.md) | 高级自定义字段与字段级权限 | Sprint 7 | P3 | TASK |
+| 62 | [sprint-7-enterprise-workflow/TASK-013-team-worklog.md](sprint-7-enterprise-workflow/TASK-013-team-worklog.md) | 团队工时统计与工时管控 | Sprint 7 | P3 | TASK |
 
 ### 4.10 Sprint 8 — 企业组织权限（5 份 · P3 · 第 11 周）
 
 目标：企业级组织架构、高级权限与安全审计。
 
+迭代概览：[sprint-8-enterprise-org/sprint-overview.md](sprint-8-enterprise-org/sprint-overview.md)
+
 | # | 文档 | 标题 | 所属迭代 | 优先级 | 模块 |
 |---|---|---|---|---|---|
-| 63 | [sprint-8-enterprise-org/AUTH-007-org-department.md](sprint-8-enterprise-org/AUTH-007-org-department.md) | 部门层级组织架构 | Sprint 8 | P3 | AUTH |
-| 64 | [sprint-8-enterprise-org/AUTH-008-custom-role-group.md](sprint-8-enterprise-org/AUTH-008-custom-role-group.md) | 自定义角色组与细粒度资源权限 | Sprint 8 | P3 | AUTH |
-| 65 | [sprint-8-enterprise-org/AUTH-009-audit-log.md](sprint-8-enterprise-org/AUTH-009-audit-log.md) | 全量操作审计日志 | Sprint 8 | P3 | AUTH |
-| 66 | [sprint-8-enterprise-org/AUTH-010-sso.md](sprint-8-enterprise-org/AUTH-010-sso.md) | SSO 单点登录 | Sprint 8 | P3 | AUTH |
-| 67 | [sprint-8-enterprise-org/BOARD-005-view-share-lock.md](sprint-8-enterprise-org/BOARD-005-view-share-lock.md) | 视图共享 / 锁定 / 多维度分组 | Sprint 8 | P3 | BOARD |
+| 63 | [sprint-8-enterprise-org/AUTH-007-org-structure.md](sprint-8-enterprise-org/AUTH-007-org-structure.md) | 部门层级组织架构 | Sprint 8 | P3 | AUTH |
+| 64 | [sprint-8-enterprise-org/AUTH-008-custom-roles.md](sprint-8-enterprise-org/AUTH-008-custom-roles.md) | 自定义角色组与细粒度资源权限 | Sprint 8 | P3 | AUTH |
+| 65 | [sprint-8-enterprise-org/AUTH-009-sso.md](sprint-8-enterprise-org/AUTH-009-sso.md) | SSO 单点登录（SAML 2.0 / OIDC） | Sprint 8 | P3 | AUTH |
+| 66 | [sprint-8-enterprise-org/AUTH-010-audit-log-full.md](sprint-8-enterprise-org/AUTH-010-audit-log-full.md) | 全站操作审计日志 | Sprint 8 | P3 | AUTH |
+| 67 | [sprint-8-enterprise-org/BOARD-005-shared-views.md](sprint-8-enterprise-org/BOARD-005-shared-views.md) | 视图团队共享 / 管理员锁定 / 多维分组 | Sprint 8 | P3 | BOARD |
 
 ### 4.11 Sprint 9 — 企业项目 / 报表 / Wiki（5 份 · P3 · 第 12 周）
 
 目标：项目集管理、敏捷报表与团队知识库，企业版 V1.0 正式交付。
 
+迭代概览：[sprint-9-enterprise-portfolio/sprint-overview.md](sprint-9-enterprise-portfolio/sprint-overview.md)
+
 | # | 文档 | 标题 | 所属迭代 | 优先级 | 模块 |
 |---|---|---|---|---|---|
 | 68 | [sprint-9-enterprise-portfolio/PROJ-004-portfolio.md](sprint-9-enterprise-portfolio/PROJ-004-portfolio.md) | 项目集 / 项目组合与跨项目依赖 | Sprint 9 | P3 | PROJ |
-| 69 | [sprint-9-enterprise-portfolio/RPT-003-agile-charts.md](sprint-9-enterprise-portfolio/RPT-003-agile-charts.md) | 燃尽图 / 迭代速率 / 累积流图 | Sprint 9 | P3 | RPT |
-| 70 | [sprint-9-enterprise-portfolio/RPT-004-team-load-health.md](sprint-9-enterprise-portfolio/RPT-004-team-load-health.md) | 团队负载 / 项目健康度 / 报表导出 | Sprint 9 | P3 | RPT |
-| 71 | [sprint-9-enterprise-portfolio/FILE-005-wiki-knowledge-base.md](sprint-9-enterprise-portfolio/FILE-005-wiki-knowledge-base.md) | 项目 Wiki 与全局知识检索 | Sprint 9 | P3 | FILE |
+| 69 | [sprint-9-enterprise-portfolio/RPT-003-agile-reports.md](sprint-9-enterprise-portfolio/RPT-003-agile-reports.md) | 燃尽图 / 迭代速率 / 累积流图 | Sprint 9 | P3 | RPT |
+| 70 | [sprint-9-enterprise-portfolio/RPT-004-project-health.md](sprint-9-enterprise-portfolio/RPT-004-project-health.md) | 项目健康度 / 团队负载 / 报表导出 | Sprint 9 | P3 | RPT |
+| 71 | [sprint-9-enterprise-portfolio/FILE-005-wiki.md](sprint-9-enterprise-portfolio/FILE-005-wiki.md) | 项目 Wiki 与全局知识检索 | Sprint 9 | P3 | FILE |
 | 72 | [sprint-9-enterprise-portfolio/GANTT-003-critical-path.md](sprint-9-enterprise-portfolio/GANTT-003-critical-path.md) | 关键路径计算与延期预警 | Sprint 9 | P3 | GANTT |
 
 ### 4.12 P4 远期增强（10 份 · P4 · 第 13 周起）
 
 目标：按商业化节奏排期，标准版 V1.0 正式发布前一律不占用排期。
 
+迭代概览：[sprint-future-p4/sprint-overview.md](sprint-future-p4/sprint-overview.md)
+
 | # | 文档 | 标题 | 所属迭代 | 优先级 | 模块 |
 |---|---|---|---|---|---|
 | 73 | [sprint-future-p4/AUTH-011-ldap-scim.md](sprint-future-p4/AUTH-011-ldap-scim.md) | LDAP / SCIM 账号同步 | 远期 | P4 | AUTH |
-| 74 | [sprint-future-p4/AUTH-012-multi-tenant-risk.md](sprint-future-p4/AUTH-012-multi-tenant-risk.md) | 多租户隔离与风控告警溯源 | 远期 | P4 | AUTH |
-| 75 | [sprint-future-p4/TASK-014-formula-cascade-fields.md](sprint-future-p4/TASK-014-formula-cascade-fields.md) | 公式 / 级联 / 跨项目关联字段 | 远期 | P4 | TASK |
-| 76 | [sprint-future-p4/TASK-015-baseline-version.md](sprint-future-p4/TASK-015-baseline-version.md) | 任务基线与版本对比 | 远期 | P4 | TASK |
-| 77 | [sprint-future-p4/INTG-003-open-api-platform.md](sprint-future-p4/INTG-003-open-api-platform.md) | 完整 OpenAPI 与应用接入市场 | 远期 | P4 | INTG |
-| 78 | [sprint-future-p4/INTG-004-slack-zoom.md](sprint-future-p4/INTG-004-slack-zoom.md) | Slack / Zoom 全量集成 | 远期 | P4 | INTG |
-| 79 | [sprint-future-p4/FILE-006-file-compliance.md](sprint-future-p4/FILE-006-file-compliance.md) | 文件水印 / 脱敏 / 合规留存 | 远期 | P4 | FILE |
-| 80 | [sprint-future-p4/AI-001-ai-assistant.md](sprint-future-p4/AI-001-ai-assistant.md) | AI 辅助能力（摘要 / 预警 / 生成） | 远期 | P4 | AI |
-| 81 | [sprint-future-p4/RPT-005-dashboard-custom-report.md](sprint-future-p4/RPT-005-dashboard-custom-report.md) | 企业数据大屏与自定义报表 | 远期 | P4 | RPT |
-| 82 | [sprint-future-p4/INFRA-006-ha-private-deploy.md](sprint-future-p4/INFRA-006-ha-private-deploy.md) | 高可用集群与私有化部署 | 远期 | P4 | INFRA |
+| 74 | [sprint-future-p4/AUTH-012-multi-tenant.md](sprint-future-p4/AUTH-012-multi-tenant.md) | 多租户隔离与风控告警溯源 | 远期 | P4 | AUTH |
+| 75 | [sprint-future-p4/TASK-014-formula-fields.md](sprint-future-p4/TASK-014-formula-fields.md) | 公式 / 级联 / 跨项目关联字段 | 远期 | P4 | TASK |
+| 76 | [sprint-future-p4/TASK-015-baseline.md](sprint-future-p4/TASK-015-baseline.md) | 任务基线与版本对比 | 远期 | P4 | TASK |
+| 77 | [sprint-future-p4/INTG-003-slack-zoom.md](sprint-future-p4/INTG-003-slack-zoom.md) | Slack / Zoom 全量集成 | 远期 | P4 | INTG |
+| 78 | [sprint-future-p4/INTG-004-open-api.md](sprint-future-p4/INTG-004-open-api.md) | 完整 Open API 与应用接入 | 远期 | P4 | INTG |
+| 79 | [sprint-future-p4/FILE-006-compliance.md](sprint-future-p4/FILE-006-compliance.md) | 文件水印 / 脱敏 / 合规留存 | 远期 | P4 | FILE |
+| 80 | [sprint-future-p4/AI-001-ai-features.md](sprint-future-p4/AI-001-ai-features.md) | AI 辅助能力（摘要 / 预警 / 生成） | 远期 | P4 | AI |
+| 81 | [sprint-future-p4/RPT-005-dashboard.md](sprint-future-p4/RPT-005-dashboard.md) | 企业数据大屏与自定义报表 | 远期 | P4 | RPT |
+| 82 | [sprint-future-p4/INFRA-006-ha-deploy.md](sprint-future-p4/INFRA-006-ha-deploy.md) | 高可用集群与私有化部署 | 远期 | P4 | INFRA |
 
 ---
 
@@ -257,7 +279,7 @@ RabbitProjects 是一套复刻 [Ones](https://ones.cn/) 与 [Plane](https://gith
 格式：`{模块缩写}-{三位序号}-{英文短标识}.md`
 
 ```
-TASK-008-custom-fields.md
+TASK-008-custom-fields-basic.md
  │     │        └── 英文短标识：全小写，kebab-case，2-4 个单词概括功能
  │     └── 三位序号：模块内全局递增，跨 Sprint 连续，一经分配永不复用
  └── 模块缩写：大写字母，见 5.3 映射表

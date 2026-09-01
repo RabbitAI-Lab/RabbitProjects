@@ -9,7 +9,7 @@
 | 文档状态 | 已确认（Approved） |
 | 最后更新日期 | 2026-09-01 |
 | 上游依赖 | `TASK-001`（Issue + `sort_order` + PATCH 接口 + 分组列表 + 详情 Drawer）、`PROJ-001`（`State` 三态 + `GET .../states/`） |
-| 下游消费 | `BOARD-002`（同列拖拽排序与顺序持久化，**同属 Sprint 0**）、`BOARD-003`（看板基础筛选 + 卡片悬浮预览）、`BOARD-004`（看板列自定义）、`BOARD-006`（多人实时拖拽同步） |
+| 下游消费 | `BOARD-002`（看板筛选与卡片悬浮预览，Sprint 1）、`BOARD-003`（多看板与列自定义，Sprint 3）、`BOARD-004`（任务批量操作，Sprint 3）、`COLLAB-004`（WebSocket 实时同步，Sprint 3） |
 | 上游依据 | `docs/需求文档.md` §3.5 看板视图、§8.3 POC 范围界定、§8.4 POC 验收标准第 4 条 |
 | 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.6 §2.8（`sort_order` 插值）、[`api-conventions.md`](../architecture/api-conventions.md) §4.1（分组列表响应）§2.6（动作子资源）、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §4.4（`PermissionGate`）、[`tech-stack.md`](../architecture/tech-stack.md) §2 |
 | 对标基线 | Plane 看板（`@atlaskit/pragmatic-drag-and-drop`） · Ones 看板 |
@@ -32,7 +32,7 @@
 5. **全量持久化**：刷新后状态与顺序完全保持；
 6. **卡片点击打开详情**：复用 `TASK-001` 的 `IssuePeekDrawer`。
 
-> **与 `BOARD-002` 的关系**：[`dependency-graph.md`](../architecture/dependency-graph.md) §3 将「同列拖拽排序与顺序持久化」单列为 `BOARD-002`，且与本文档**同属 Sprint 0（P0）**。由于跨列与同列拖拽共用同一套 `sort_order` 算法（§4.3）、同一个 `PATCH` 接口（§4.4.1）与同一条落库链路（§4.2.3 的 `monitorForElements`），把两者的设计拆到两份文档只会产生大量重复描述。因此**本文档一并给出同列排序的完整设计**，`BOARD-002` 作为其落地与压测（并发拖拽顺序一致性、精度耗尽重排）的实施文档，不重复设计。需求文档 §8.4 的验收标准「**状态和顺序**保持一致」由 `BOARD-001` + `BOARD-002` 这一对 Sprint 0 文档共同满足。
+> **同列拖拽排序的归属**：跨列与同列拖拽共用同一套 `sort_order` 算法（§4.3）、同一个 `PATCH` 接口（§4.4.1）与同一条落库链路（§4.2.3 的 `monitorForElements`），因此「同列拖拽排序与顺序持久化」（含并发拖拽顺序一致性、精度耗尽重排的压测）**作为本文档（`BOARD-001`）自身的 P0 交付**，由 §2.3 / §4.3 给出完整设计并用 §5 用例验收，不单拆为独立文档。需求文档 §8.4 的验收标准「**状态和顺序**保持一致」由本文档独立满足。
 
 ### 1.2 P0 的三列
 
@@ -74,13 +74,14 @@ export const P0_BOARD_GROUPS = ["unstarted", "started", "completed"] as const;
 | 列内「加载更多」 | ✅（每列首屏 25 条） | — |
 | 跨列拖拽自动滚动 | ✅ | — |
 | 空列放置提示 | ✅ | — |
-| 看板筛选（负责人 / 优先级 / 标签 / 时间） | ❌ | `BOARD-003` |
-| 卡片悬浮预览 / 弹窗编辑 | ❌ | `BOARD-003` |
-| 列自定义（增删改排序） | ❌ | `BOARD-004` |
-| 多看板 / 视图保存 / 批量操作 | ❌ | `BOARD-005` |
-| 多人实时拖拽同步（WebSocket） | ❌ | `BOARD-006`（依赖 `COLLAB-004`） |
+| 看板筛选（负责人 / 优先级 / 标签 / 时间） | ❌ | `BOARD-002`（Sprint 1） |
+| 卡片悬浮预览 / 弹窗编辑 | ❌ | `BOARD-002`（Sprint 1） |
+| 列自定义（增删改排序） | ❌ | `BOARD-003`（Sprint 3） |
+| 多看板 / 视图保存 | ❌ | `BOARD-003`（Sprint 3） |
+| 任务批量操作 | ❌ | `BOARD-004`（Sprint 3） |
+| 多人实时拖拽同步（WebSocket） | ❌ | `COLLAB-004`（Sprint 3） |
 | 虚拟滚动 | ❌（P0 任务量少，不必要） | P1 视需要 |
-| 分组维度切换（按负责人 / 优先级分组） | ❌ | `BOARD-007`（多维度分组看板） |
+| 分组维度切换（按负责人 / 优先级分组） | ❌ | `BOARD-005`（多维度分组看板，Sprint 8） |
 | WIP 限制（列内任务数上限） | ❌ | 未列入路线图（见 §6.2） |
 | 列表视图的筛选 / 排序 / 分组 | ❌ | `TASK-011` |
 | 日历 / 表格多视图 | ❌ | 未列入路线图（甘特图由 `GANTT-001` 独立模块承载） |
@@ -92,7 +93,9 @@ export const P0_BOARD_GROUPS = ["unstarted", "started", "completed"] as const;
 | `PROJ-001` | `GET .../states/` 返回按 `sort_order` 升序、含 `group` / `color` / `name` 的状态集 | 列定义的唯一来源 |
 | `TASK-001` | ① `GET .../issues/?group_by=state_id` 分组列表（每 State 都有键，含空列）；② `PATCH .../issues/{id}/` 支持同时更新 `state_id` + `sort_order`；③ `calculate_sort_order` 服务端实现；④ `IssuePeekDrawer` 组件；⑤ `IssueStore.updateIssue` 乐观更新 | 卡片数据、拖拽落库、详情面板全部依赖 |
 | `INFRA-003` | 索引 `idx_issue_proj_state_sort`（`project, state, sort_order`） | 每列取数查询的性能保障 |
-| `AUTH-003` | `ProjectEntityPermission`（L3） | 拖拽权限判定 |
+| `AUTH-003` | **仅提供 `Issue.objects.accessible_by()` 行级过滤**（`BaseAPIView` 强制注入，越权表现为 `404`） | 看板取数与拖拽落库的行级隔离（404 层）；L1~L3 权限类**不在其交付边界内**，见下注 |
+
+> ⚠️ **拖拽 403 拦截的 P0 供给（不依赖 `AUTH-005`）**：`AUTH-003` §1.4 交付边界明确——P0 只交付第三层行级过滤（`accessible_by()`），`WorkspaceBasePermission`（L1）/ `ProjectBasePermission`（L2）/ `ProjectEntityPermission`（L3）权限类属 P1 `AUTH-005`。因此 P0 的拖拽 403 拦截（BE-13 / BE-14 / AC-31 / E2E-14）由本文与 `TASK-001` **自建最小判定**：复用 `TASK-001` 交付物 `app/permissions/issue.py` 的简化版——基于 `ProjectMember.role` 的角色等级判定（写操作要求 ≥ `PROJ_CONTRIBUTOR`(15)，不足返回 `403 PERM_ROLE_INSUFFICIENT`），本文 `bulk-sort/` 端点（§4.4.2）挂接同一判定；P1 `AUTH-005` 交付正式 `ProjectEntityPermission`（L3）后原位替换，接口行为不变。
 
 ### 1.5 竞品参考
 
@@ -160,7 +163,7 @@ flowchart TD
 | 拖拽即状态变更 | 目标列的 `state.id` 直接写入 `issue.state_id`，不需要额外的「确认状态变更」步骤 |
 | 状态与顺序**一次 PATCH** | `{state_id, sort_order}` 合并为单个请求，避免两次往返导致中间态 |
 | `completed_at` 由服务端派生 | 拖到「已完成」列时服务端 `Issue.save()` 写入 `completed_at`（`TASK-001` §4.3.5）。前端**不自行设置**，用响应值覆盖 |
-| P0 无流转限制 | 任意列可拖到任意列，包括「已完成」直接拖回「待办」。工作流校验（前置任务未完成禁止流转）由 `WF-003` 交付 |
+| P0 无流转限制 | 任意列可拖到任意列，包括「已完成」直接拖回「待办」。工作流校验（前置任务未完成禁止流转）由 `WF-004`（流转守卫 `blocker_completed`）交付 |
 | 权限 | 无 `PROJ_CONTRIBUTOR`(15)+ 权限时卡片 `isDragDisabled`（[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §4.5 明确列出此场景）；后端 PATCH 同时校验 |
 
 ### 2.3 同列拖拽排序（改顺序）
@@ -696,7 +699,7 @@ export const resolveDropPosition = (
 };
 ```
 
-> **同列向下移动的索引修正**是这段逻辑最容易出错的地方。例如列中有 `[A, B, C]`，把 A（index 0）拖到 C 下方（`drop.index=2, edge=bottom` → `index=3`）。若不修正，插入位置 3 越界；修正后为 2，得到 `[B, C, A]`，正确。此处必须有专项单元测试（§5.1 DROP-05 ~ DROP-08）。
+> **同列向下移动的索引修正**是这段逻辑最容易出错的地方。例如列中有 `[A, B, C]`，把 A（index 0）拖到 C 下方（`drop.index=2, edge=bottom` → `index=3`）。若不修正，插入位置 3 越界；修正后为 2，得到 `[B, C, A]`，正确。此处必须有专项单元测试（§5.1 DROP-06 ~ DROP-09）。
 
 ### 4.3 sort_order 算法（前端）
 
@@ -832,6 +835,8 @@ X-CSRFToken: ...
 
 不含 `state_id` —— PATCH 的部分更新语义下「不传即不改」（`TASK-001` BR/§4.2.5）。
 
+> **并发语义与架构文档待回改登记（[`api-conventions.md`](../architecture/api-conventions.md) §10.5「看板拖拽」行）**：本文拖拽落库采用**客户端计算 `sort_order` + 不带 `If-Match` 的后写胜出**语义——并发 PATCH 均 `200`（BE-17），等值由三级排序键与异步重排消解（BE-18 / BR-10）。这与 §10.5 现行的「`select_for_update()` 锁定相邻记录、服务端重算 `sort_order`、冲突重试 3 次后返回 `409 RESOURCE_CONFLICT`」相悖，**在此登记为架构文档待回改**：§10.5 看板拖拽行待回改为「客户端计算 + 版本号（`If-Match` 可选）」语义。理由：① 拖拽是高频连续交互，409 触发的回滚与重试会打断乐观更新体验；`TASK-001` §4.3.6 的 P0 策略已明确「`sort_order` 不发送 `If-Match`、后写胜出可接受、`BOARD-001` 的快速连续拖拽不应被 409 打断」，本文与其保持两文一致；② `sort_order` 是离散排序值，单条插值算法天然容忍并发（不同区间互不冲突），等值场景由 `(sort_order, created_at, id)` 三级键 + `needsRebalance` 异步重排闭环，无完整性风险。
+
 #### 4.4.2 新增端点：批量重排
 
 按 [`api-conventions.md`](../architecture/api-conventions.md) §2.6「动作子资源」模式建模。
@@ -844,7 +849,7 @@ X-CSRFToken: ...
 
 | 端点 | 语义 | 请求体 | 幂等 | 同步性 |
 | --- | --- | --- | --- | --- |
-| `PATCH .../issues/bulk/` | **客户端指定**每条记录的新值，批量更新（`TASK-009` 交付） | `{issues: [{id, state_id, sort_order}, ...]}` | 否 | 同步 `200` |
+| `PATCH .../issues/bulk/` | **客户端指定**目标记录与更新值，批量更新（Sprint 3 `BOARD-004` 交付） | `{issue_ids, patch, comment?}` | 否 | 同步 `200` |
 | `POST .../issues/bulk-sort/` | **服务端计算**整列 `sort_order` 的均匀重排，客户端不指定具体值 | `{state_id}` | **是**（重复调用结果相同） | 异步 `202` |
 
 二者语义正交，不重叠：前者是「批量写入客户端已知的值」，后者是「请服务端重新规整一列的排序值」。刻意分为两个端点而不是复用 `bulk/`，理由是幂等性与同步性不同——`bulk-sort` 是幂等的异步动作，适合 `202` 模式（[`api-conventions.md`](../architecture/api-conventions.md) §13.1）。
@@ -869,10 +874,13 @@ Idempotency-Key: 01JBX6P4T0UC7Q1R5S8Y9Z0A1B
   "status": "success",
   "data": {
     "task_id": "8f7e6d5c-4b3a-4291-8072-1a2b3c4d5e6f",
-    "status_url": "/api/v1/workspaces/rabbitprojects/tasks/8f7e6d5c-4b3a-4291-8072-1a2b3c4d5e6f/"
+    "state": "queued",
+    "status_url": "/api/v1/tasks/8f7e6d5c-4b3a-4291-8072-1a2b3c4d5e6f/"
   }
 }
 ```
+
+> `state` 与 `status_url` 遵循 [`api-conventions.md`](../architecture/api-conventions.md) §13.1 的 202 模式：`state` 枚举为 `queued` / `processing` / `succeeded` / `failed` / `cancelled`；任务状态查询端点为**全局统一**的 `GET /api/v1/tasks/{task_id}/`（不带工作空间前缀），前端轮询该端点获取重排进度。
 
 **失败响应 `400`（`state_id` 不属于本项目）**
 
@@ -897,21 +905,28 @@ Idempotency-Key: 01JBX6P4T0UC7Q1R5S8Y9Z0A1B
 class IssueBulkSortAPIView(ProjectScopedAPIView):
     """POST .../issues/bulk-sort/ —— 重排某状态列的 sort_order（幂等 · 异步）"""
 
-    permission_classes = [IsAuthenticatedAndActive, IssueEntityPermission]
+    # P0 鉴权（§1.4 注）：L3 ProjectEntityPermission 属 P1 AUTH-005，AUTH-003 仅交付
+    # accessible_by() 行级过滤（404 层）。此处挂接 TASK-001 app/permissions/issue.py
+    # 的最小判定简化版（ProjectMember.role >= PROJ_CONTRIBUTOR(15)，不足 → 403），
+    # AUTH-005 落地后原位替换为正式 ProjectEntityPermission（L3），接口行为不变。
+    permission_classes = [IsAuthenticatedAndActive, IssueWritePermission]
 
     def post(self, request, slug, project_id):
         state_id = request.data.get("state_id")
         if not State.objects.filter(id=state_id, project_id=project_id).exists():
-            raise ValidationError(details=[
+            # DRF 签名为 ValidationError(detail=...)（参数名是 detail，不是 details）
+            raise ValidationError(detail=[
                 {"field": "state_id", "code": "DOES_NOT_EXIST", "message": "所选状态无效"}
             ])
         task = rebalance_state_column.delay(str(project_id), str(state_id))
         return accepted_response(task_id=task.id)      # 202 + task_id + status_url
 ```
 
+> **`{field, code, message}` 明细到 `error.details` 的映射**：上述自定义字典列表作为 `detail` 传入 `ValidationError`；全局异常处理器（[`api-conventions.md`](../architecture/api-conventions.md) §10.4 `custom_exception_handler`）捕获后将其平铺为 `error.details` 数组（`400 VALIDATION_ERROR` + `details[]`），即为本节「失败响应 `400`」示例中的响应形态，视图内无需手工组装错误体。
+
 Celery 任务 `rebalance_state_column` 的实现见 `TASK-001` §4.3.2（同一份代码，本端点只是其同步触发入口）。
 
-**限流**：该端点计入 L2 写操作配额；额外设置专项限流 **每项目每分钟 6 次**（重排是低频兜底操作，高频调用必是异常）。超限返回 `429` + `RATE_LIMIT_EXCEEDED` + `Retry-After`。
+**限流**：该端点适用 [`api-conventions.md`](../architecture/api-conventions.md) §7.2 L2 配额表中「已认证用户（内部 API）60 请求/分钟」的应用限流（该表并无「L2 写操作配额」类目）；在此之上按 §7.1 L3 端点限流模式（ViewSet 级 `throttle_classes`）设置本文自定义的专项限流 **每项目每分钟 6 次**（重排是低频兜底操作，高频调用必是异常）。超限返回 `429` + `RATE_LIMIT_EXCEEDED` + `Retry-After`。
 
 ### 4.5 BoardStore
 
@@ -1054,6 +1069,8 @@ export class BoardStore {
 }
 ```
 
+> **组级 `next_cursor` 的来源与构造（上游待回改项）**：`TASK-001` §4.2.3 的分组响应每组现仅含 `results` 与 `total_results`，未定义组级游标。本文档约定：分组响应（含带 `group_id` + `cursor` 的「加载更多」响应）**每组补充 `next_cursor` 字段**——取该组 `results` 末条的组内游标（`value:offset:is_prev` 格式，同 [`api-conventions.md`](../architecture/api-conventions.md) §6.2），组内已无更多时为 `null`；`fetchBoard` / `loadMore` 中的 `group.next_cursor` 读取即以此为来源，`hasMore` 与「加载更多」起始游标均由它驱动。该字段需 `TASK-001` §4.2.3 契约③ 回改补充，**在此登记为上游待回改项**；回改落地前，`hasMore` 可临时以 `total_results > 该组已加载数` 推算兜底。
+
 ### 4.6 SWR 缓存与 MobX 同步策略
 
 严格遵循 [`tech-stack.md`](../architecture/tech-stack.md) §2.1 的职责边界：
@@ -1119,8 +1136,8 @@ export const useIssuePermission = (projectId: string) => {
 | 层 | 位置 | 表现 |
 | --- | --- | --- |
 | UI 层 | `draggable({ canDrag })` + 列底「＋ 添加任务」由 `<PermissionGate>` 包裹 | 卡片无 `cursor-grab`，按下无响应；无创建按钮 |
-| API 层 | `IssueEntityPermission`（L3） | 绕过 UI 直接调 PATCH → `403 PERM_ROLE_INSUFFICIENT` |
-| DB 层 | `Issue.objects.accessible_by(user)` | 非项目成员的任务 ID → `404` |
+| API 层 | P0：`TASK-001` `app/permissions/issue.py` 最小判定简化版（`ProjectMember.role ≥ PROJ_CONTRIBUTOR`(15)，§1.4 注，403 拦截自建、不依赖 P1 `AUTH-005`）；P1 起由 `AUTH-005` 的 `ProjectEntityPermission`（L3）原位替换 | 绕过 UI 直接调 PATCH → `403 PERM_ROLE_INSUFFICIENT` |
+| DB 层 | `Issue.objects.accessible_by(user)`（`AUTH-003` 交付的行级过滤） | 非项目成员的任务 ID → `404` |
 
 ### 4.8 组件清单
 
@@ -1174,11 +1191,11 @@ export const useIssuePermission = (projectId: string) => {
 | SORT-4 | 中间插入 | `(65535, 131070)` | `98302.5` |
 | SORT-5 | 相邻两次列首插入 | `(null, 32767.5)` | `16383.75` |
 | SORT-6 | `needsRebalance` 正常间隔 | `(65535, 131070)` | `false` |
-| SORT-7 | `needsRebalance` 间隔恰为阈值 | `(1, 1 + 1e-6)` | `false`（严格小于才触发） |
+| SORT-7 | `needsRebalance` 间隔大于阈值（false 侧） | `(1, 1 + 2e-6)` | `false`（实际间隔 ≈ 2×10⁻⁶ > 1e-6，严格小于才触发。不使用 `(1, 1 + 1e-6)`：IEEE754 表示误差使 `Math.abs((1 + 1e-6) - 1) ≈ 9.999999999177e-7 < 1e-6`，按原文输入会实际返回 `true` 而非 `false`） |
 | SORT-8 | `needsRebalance` 间隔小于阈值 | `(1, 1 + 1e-7)` | `true` |
 | SORT-9 | `needsRebalance` 边界为 `null` | `(null, 65535)` | `false`（列首/列尾永不耗尽） |
 | SORT-10 | **与服务端逐分支一致性** | 同一组 `(prev,next)` 五分支输入 | 前端 `calculateSortOrder` 与后端 `calculate_sort_order` 输出**逐位相等**（该用例同时存在于 Vitest 与 pytest，用同一份 JSON fixture 驱动） |
-| SORT-11 | 连续 60 次对半插入 | 循环 `(0, gap)` | 第 ~50 次后 `needsRebalance` 转 `true`，且 `calculateSortOrder` 始终返回有限数（不返回 `NaN`/`Infinity`） |
+| SORT-11 | 连续 60 次对半插入 | 循环 `(0, gap)` | 第 ~36 次起 `needsRebalance` 转 `true`（1e-6 阈值点：`65535/2³⁶ ≈ 9.5×10⁻⁷ < 1e-6`；「~50 次」是双精度 52 位尾数的精度耗尽点，晚于且不同于阈值触发点，两者不可混用），且 `calculateSortOrder` 始终返回有限数（不返回 `NaN`/`Infinity`） |
 
 > SORT-10 是**跨端一致性契约测试**：`packages/utils/src/__fixtures__/sort-order-cases.json` 为唯一数据源，前端 Vitest 与后端 pytest 各自读取并断言。任何一端改算法而未同步，CI 立即红。
 
@@ -1189,7 +1206,7 @@ export const useIssuePermission = (projectId: string) => {
 | BE-1 | 跨列 PATCH `{state_id, sort_order}` | `200`；DB 中 `state_id` 与 `sort_order` 均已更新 |
 | BE-2 | 同列 PATCH `{sort_order}` | `200`；`state_id` 不变 |
 | BE-3 | 拖到 `group=completed` 的状态 | 响应含 `completed_at` 非空；DB 同步写入（`Issue.save()` 派生） |
-| BE-4 | 从 `completed` 拖回 `started` | `completed_at` 被清空为 `null`（[`unified-issue-model.md`](../architecture/unified-issue-model.md) §4.3） |
+| BE-4 | 从 `completed` 拖回 `started` | `completed_at` **保留不清空**（首次完成时间语义，`TASK-001` §2.4 BR-11；[`unified-issue-model.md`](../architecture/unified-issue-model.md) §4.3 的 `save()` 仅在为 `None` 时写入、从不清空） |
 | BE-5 | 已在 `completed` 内同列排序 | `completed_at` **不被刷新**（保持首次完成时间） |
 | BE-6 | `state_id` 属于其他项目 | `400 VALIDATION_ERROR`，`details[0].field="state_id"` |
 | BE-7 | `state_id` 为不存在的 UUID | `400 VALIDATION_ERROR` |
@@ -1198,13 +1215,13 @@ export const useIssuePermission = (projectId: string) => {
 | BE-10 | `sort_order` 传 `NaN` / `Infinity` | `400 VALIDATION_ERROR`（Serializer 显式拒绝非有限浮点） |
 | BE-11 | 跨列 PATCH 触发 IssueActivity | 异步产出 `field="state"` 一条记录，`old_value`/`new_value` 为状态名（`TASK-001` §4.3.3） |
 | BE-12 | 同列 PATCH（仅 `sort_order`） | **不产出** IssueActivity（`sort_order` 不在 `TRACKED_SCALAR_FIELDS` 中，避免噪声） |
-| BE-13 | `PROJ_COMMENTER`(10) 发起 PATCH | `403 PERM_DENIED`（BR-13 的服务端兜底） |
-| BE-14 | `PROJ_VIEWER`(5) 发起 PATCH | `403 PERM_DENIED` |
+| BE-13 | `PROJ_COMMENTER`(10) 发起 PATCH | `403 PERM_ROLE_INSUFFICIENT`（角色等级不足，[`api-conventions.md`](../architecture/api-conventions.md) §8.3；由 §1.4 注登记的 P0 自建最小判定拦截——`TASK-001` `app/permissions/issue.py` 简化版，**不依赖 P1 `AUTH-005`**，Sprint 0 可落地；BR-13 的服务端兜底） |
+| BE-14 | `PROJ_VIEWER`(5) 发起 PATCH | `403 PERM_ROLE_INSUFFICIENT`（同 BE-13，P0 自建最小判定拦截） |
 | BE-15 | 非项目成员发起 PATCH | `404 RESOURCE_NOT_FOUND`（防 ID 枚举） |
 | BE-16 | 目标任务已软删除 | `404 RESOURCE_NOT_FOUND` |
-| BE-17 | 并发两请求 PATCH 同一 Issue 的 `sort_order` | 均 `200`，最后写入者生效；无死锁、无 500 |
+| BE-17 | 并发两请求 PATCH 同一 Issue 的 `sort_order` | 均 `200`，最后写入者生效；无死锁、无 500（并发语义依 §4.4.1 登记的架构文档待回改项：客户端计算 + 后写胜出，与 `TASK-001` §4.3.6 一致，不走 §10.5 的锁重算 + 409 路径） |
 | BE-18 | 并发 PATCH 两个不同 Issue 到同一列同一位置 | 均 `200`；二者 `sort_order` 可能相等，列表按 `(sort_order, created_at, id)` 三级排序仍**稳定确定**（无抖动） |
-| BE-19 | 带 `If-Match` 的过期 ETag | `409 CONFLICT`（[`api-conventions.md`](../architecture/api-conventions.md) §6）；看板 P0 不发 `If-Match`，本用例验证接口能力不被破坏 |
+| BE-19 | 带 `If-Match` 的过期 ETag | `409 CONFLICT`（[`api-conventions.md`](../architecture/api-conventions.md) §3.3 乐观并发控制、§8.5 `RESOURCE_CONFLICT`）；看板 P0 拖拽不发 `If-Match`（`TASK-001` §4.3.6：仅标题与描述发送），本用例验证接口能力不被破坏 |
 
 ### 5.4 后端 — 分组取数（看板首屏）
 
@@ -1212,7 +1229,7 @@ export const useIssuePermission = (projectId: string) => {
 | --- | --- | --- |
 | BE-20 | `GET ?group_by=state_id` | `data` 的键覆盖项目**全部** `State`（含 0 条任务的空列，BR-4 契约①） |
 | BE-21 | 组内排序 | 每组 `results` 按 `sort_order` 升序（契约②） |
-| BE-22 | 组内分页 | 某列 30 条任务 → `results` 长度 25，`total_results=30`，`next_cursor` 非空（契约③） |
+| BE-22 | 组内分页 | 某列 30 条任务 → `results` 长度 25，`total_results=30`，组级 `next_cursor` 非空（契约③ + §4.5 组级游标约定；该字段为登记的 `TASK-001` 上游待回改项） |
 | BE-23 | 隔离性 | 响应不含其他项目的 `State` 键，也不含其他项目的 Issue（契约④） |
 | BE-24 | `meta.grouped_by` | 等于 `"state_id"` |
 | BE-25 | 软删除任务 | 不出现在任何分组（BR-15） |
@@ -1225,15 +1242,15 @@ export const useIssuePermission = (projectId: string) => {
 
 | 编号 | 场景 | 期望 |
 | --- | --- | --- |
-| BE-30 | 正常请求 | `202 Accepted`，响应含 `task_id` 与 `status_url` |
+| BE-30 | 正常请求 | `202 Accepted`，响应含 `task_id`、`state="queued"` 与 `status_url`（`/api/v1/tasks/{task_id}/`） |
 | BE-31 | 重排执行结果 | 该列任务 `sort_order` 重新赋值为 `65535 × 1..N`；**相对顺序与重排前完全一致** |
 | BE-32 | 排序键确定性 | 存在两条 `sort_order` 相等的记录时，按 `(sort_order, created_at, id)` 三级键排序，重复执行结果稳定 |
 | BE-33 | 幂等性 | 对已重排完毕的列再次触发，结果不变（数值已是 `65535×N`） |
 | BE-34 | 只影响目标列 | 其他列的 `sort_order` 一位不变 |
 | BE-35 | 不产出 IssueActivity | 系统性重排不是用户行为，不写活动记录 |
 | BE-36 | `state_id` 不属于本项目 | `400 VALIDATION_ERROR` |
-| BE-37 | 权限 | `PROJ_COMMENTER` 请求 → `403 PERM_DENIED` |
-| BE-38 | 限流 | 同一项目 1 分钟内第 7 次请求 → `429 RATE_LIMITED`，含 `Retry-After` 头 |
+| BE-37 | 权限 | `PROJ_COMMENTER` 请求 → `403 PERM_ROLE_INSUFFICIENT`（同 BE-13 的 P0 自建最小判定，§4.4.2 挂接） |
+| BE-38 | 限流 | 同一项目 1 分钟内第 7 次请求 → `429 RATE_LIMIT_EXCEEDED`，含 `Retry-After` 头 |
 | BE-39 | 重排期间有新任务创建 | 新任务 `sort_order = max + 65535`，落在列尾；重排任务用 `select_for_update` 或整列 `bulk_update`，不产生丢失更新 |
 | BE-40 | Celery 任务失败 | 自动重试 3 次；最终失败不影响业务数据（`sort_order` 仍为可用状态） |
 | BE-41 | 与 `PATCH .../issues/bulk/` 语义区分 | `bulk/` 接受客户端指定值、同步 `200`、非幂等；`bulk-sort/` 服务端计算、异步 `202`、幂等（§4.4.2） |
@@ -1291,11 +1308,11 @@ export const useIssuePermission = (projectId: string) => {
 | E2E-10 | 断网回滚 | `context.setOffline(true)` → 拖拽 → 回滚 + toast |
 | E2E-11 | 卡片点击打开详情 | 点击卡片 → Drawer 滑出，URL 含 `?peekIssue=` |
 | E2E-12 | Drawer 内改状态同步看板 | 在 Drawer 中把状态改为「已完成」→ 关闭 Drawer → 卡片已移动到「已完成」列 |
-| E2E-13 | 列内快速创建 | 在「进行中」列顶部创建任务 → 新卡片出现在该列，编号递增；刷新保持 |
+| E2E-13 | 列内快速创建 | 点击「进行中」列底「＋ 添加任务」展开输入框，输入标题回车 → 新卡片出现在该列列尾，编号递增；刷新保持 |
 | E2E-14 | 权限：`PROJ_COMMENTER` | 以该角色登录 → 卡片不可拖动（拖拽后位置不变）、可点击打开详情 |
 | E2E-15 | 「已取消」不成列 | 项目有 4 个 State → 页面只有 3 个列头 |
 | E2E-16 | 窄屏横向滚动 | 视口 `375×667` → 三列横向可滚动且带 `scroll-snap`；卡片可正常打开详情 |
-| E2E-17 | 精度耗尽后自动重排 | 通过 API 预置 30 次对半插入使间隔 < `1e-6` → 触发一次拖拽 → 等待 `bulk-sort` 完成 → 刷新后顺序与拖拽结束时**完全一致**，且各卡片 `sort_order` 已恢复为 `65535` 的整数倍 |
+| E2E-17 | 精度耗尽后自动重排 | 通过 API 预置 36 次对半插入使间隔 < `1e-6`（`65535/2³⁶ ≈ 9.5×10⁻⁷ < 1e-6`；30 次仅达 `65535/2³⁰ ≈ 6.1×10⁻⁵`，不足以越过阈值）→ 触发一次拖拽 → 等待 `bulk-sort` 完成 → 刷新后顺序与拖拽结束时**完全一致**，且各卡片 `sort_order` 已恢复为 `65535` 的整数倍 |
 | E2E-18 | 完整闭环（验收脚本） | 登录 → 进入项目 Board → 创建 3 个任务 → 拖拽分布到三列 → 刷新 → 状态与顺序全部保持 |
 
 ### 5.8 覆盖率门禁
@@ -1342,10 +1359,10 @@ Plane 的 Kanban（`web/core/components/issues/issue-layouts/kanban/`）是本�
 | 默认间隔 | `65535` | **一致** |
 | 插入算法 | `(prev + next) / 2` | **一致**（五分支见 §4.3） |
 | 单条更新 | 只 UPDATE 被拖拽的一条 | **一致**（避免整列 O(n) 写） |
-| 精度耗尽处置 | Plane 未内置显式重排机制（依赖数值范围足够大） | **本系统补强**：`needsRebalance` + `bulk-sort/` 异步全列重排 |
-| 排序稳定性 | `order_by("sort_order")` | **本系统补强**：三级键 `(sort_order, created_at, id)`，消除等值抖动 |
+| 精度耗尽处置 | 阈值检测（相邻间隔 < `1e-6`）+ Celery 异步重排该列（按 65535 步长） | **与 Plane 对齐**（[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.8 明载「Plane 同样采用该策略」）；P0 即同步落地 `needsRebalance` 检测 + `bulk-sort/` 端点 + `rebalance_state_column` 服务函数 |
+| 排序稳定性 | 未核实（架构文档未记载 Plane 的等值破除策略） | 三级键 `(sort_order, created_at, id)`，消除等值抖动（本系统设计，BE-18 / BE-32 验收） |
 
-> 这是本文档相对 Plane 的**两处主动改进**。Plane 在极端连续插入场景下存在 `prev === next` 导致卡片顺序不确定的风险；本系统通过阈值检测 + 异步重排 + 三级排序键彻底闭环（对应 BE-31 ~ BE-34、SORT-11、E2E-17）。
+> 外部事实以架构文档为唯一来源：[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.8 明确「Plane 同样采用该策略」——检测到相邻间隔小于 `REBALANCE_THRESHOLD` 时投递 Celery 任务将该状态列的 `sort_order` 按 65535 步长重排。本系统与其**对齐**，并在 P0 同步落地插值与重算的服务函数与端点（§4.3 `needsRebalance`、§4.4.2 `bulk-sort/` 与 `rebalance_state_column`，对应 BE-31 ~ BE-34、SORT-11、E2E-17）。三级排序键 `(sort_order, created_at, id)` 是本系统自身的确定性兜底设计；Plane 侧的等值破除策略架构文档未记载，此处不作「领先 / 补强」对比定性。
 
 #### 6.1.3 多视图与虚拟滚动
 
@@ -1357,8 +1374,8 @@ Plane 的 Kanban（`web/core/components/issues/issue-layouts/kanban/`）是本�
 | Spreadsheet 视图 | ✅ | ❌ | 未列入路线图（`@tanstack/react-table` 已锁版本，可随 `TASK-011` 增量实现） |
 | Gantt 视图 | ✅ | ❌ | `GANTT-001`（独立模块） |
 | 虚拟滚动 | `@tanstack/react-virtual` | ❌ **P0 不启用** | P1 单列 > 200 条时启用 |
-| 分组维度 | state / priority / assignee / label / created_by / cycle / module | **仅 `state`** | P3 `BOARD-007` 多维度分组看板 |
-| 子分组（二维看板） | ✅ | ❌ | P3 `BOARD-007` |
+| 分组维度 | state / priority / assignee / label / created_by / cycle / module | **仅 `state`** | P3 `BOARD-005` 多维度分组看板（Sprint 8） |
+| 子分组（二维看板） | ✅ | ❌ | P3 `BOARD-005` |
 
 **P0 不做虚拟滚动的理由**：每列服务端分页 25 条（BR-4），DOM 节点上限约 75 张卡片，远低于触发性能问题的阈值。而虚拟滚动与 pdnd 的自动滚动 + `attachClosestEdge` 组合需要额外处理「滚动过程中 DOM 复用导致 dropTarget 失效」，是明确的复杂度来源。依赖已在 `tech-stack.md` 中锁定版本，P1 启用时零选型成本。
 
@@ -1366,12 +1383,12 @@ Plane 的 Kanban（`web/core/components/issues/issue-layouts/kanban/`）是本�
 
 | 细节 | Plane | 本系统 P0 |
 | --- | --- | --- |
-| 列头折叠 | ✅ 支持列折叠为竖条 | ❌ `BOARD-004` |
+| 列头折叠 | ✅ 支持列折叠为竖条 | ❌ `BOARD-003` |
 | 空列显示 | 可配置「隐藏空组」 | 空列**始终显示**（P0 固定三列，隐藏会破坏「三列」心智） |
 | `backlog` 组处置 | 默认折叠展示 | P0 无 `backlog` 组状态（§1.2 口径校正） |
 | 卡片字段可配 | ✅ Display Properties 面板 | ❌ 固定 5 项（§3.2） |
 | WIP 限制 | ❌ | ❌（P2，见 §6.2） |
-| 快速创建 | 列底部「+ New Issue」 | 列**顶部**输入框（与 `TASK-001` §3.2.1 一致，focus 保持连续创建） |
+| 快速创建 | 列底部「+ New Issue」 | 列底「＋ 添加任务」展开内联输入框（§3.1 布局图 / §3.4 / §4.8 `ColumnFooter`，与 UI 稿一致；focus 保持连续创建的行为与 `TASK-001` §3.2.1 一致） |
 | 卡片点击 | Peek Overview（模态/侧滑可切换） | 侧滑 Drawer（`IssuePeekDrawer`，复用 `TASK-001` §3.3） |
 | URL 状态 | `?peekIssue={id}` | **一致** |
 
@@ -1380,10 +1397,10 @@ Plane 的 Kanban（`web/core/components/issues/issue-layouts/kanban/`）是本�
 | 能力 | Ones | 本系统 P0 | 处置 |
 | --- | --- | --- | --- |
 | 看板列 = 工作流状态 | ✅ | ✅ | 一致 |
-| **WIP 限制**（列内任务数上限，超限告警） | ✅ | ❌ | 未列入现有路线图。该能力需先有工作流引擎（`WF-001`）承载「限制」语义，否则仅是前端软提示；建议作为 `BOARD-004` 列自定义的增量项 |
-| 列自定义（增删列、列映射多状态） | ✅ | ❌ | P1 `BOARD-004`（本系统的列 = `State`，一列一状态；Ones 支持一列聚合多状态） |
-| 多看板（同项目多套看板配置） | ✅ | ❌ | P2 `BOARD-005` |
-| 泳道（按负责人/优先级横向分组） | ✅ | ❌ | P3 `BOARD-007` 多维度分组看板 |
+| **WIP 限制**（列内任务数上限，超限告警） | ✅ | ❌ | 未列入现有路线图。该能力需先有工作流引擎（`WF-001`）承载「限制」语义，否则仅是前端软提示；建议作为 `BOARD-003` 列自定义的增量项 |
+| 列自定义（增删列、列映射多状态） | ✅ | ❌ | P2 `BOARD-003`（本系统的列 = `State`，一列一状态；Ones 支持一列聚合多状态） |
+| 多看板（同项目多套看板配置） | ✅ | ❌ | P2 `BOARD-003` |
+| 泳道（按负责人/优先级横向分组） | ✅ | ❌ | P3 `BOARD-005` 多维度分组看板（Sprint 8） |
 | 视图切换（列表/看板/甘特/日历） | ✅ | ❌ 仅看板 | 同 §6.1.3 |
 | 拖拽跨项目 | ✅（部分场景） | ❌ | 不在路线图（跨项目移动需重算 `sequence_id`，代价高、收益低） |
 | 卡片自定义字段展示 | ✅ | ❌ | P2（依赖 `TASK-008` 自定义字段） |
@@ -1399,42 +1416,41 @@ Plane 的 Kanban（`web/core/components/issues/issue-layouts/kanban/`）是本�
 | 乐观更新 + 失败回滚 | ✅ | ✅ | ✅ | — |
 | 拖拽库为 pdnd | ✅ | 自研 | ✅ | — |
 | `sort_order` 浮点插值 | ✅ | 未公开 | ✅ | — |
-| 精度耗尽自动重排 | ❌ | 未公开 | ✅ **领先** | — |
-| 排序三级确定性键 | ❌ | 未公开 | ✅ **领先** | — |
+| 精度耗尽自动重排 | ✅（Celery 异步重排，unified-issue-model §2.8） | 未公开 | ✅（与 Plane 对齐，P0 同步落地） | — |
+| 排序三级确定性键 | 未核实（架构文档未记载） | 未公开 | ✅ | — |
 | 列内服务端分组分页 | ✅ | ✅ | ✅ | — |
 | 空列始终渲染 | 可配置 | ✅ | ✅ | — |
 | 虚拟滚动 | ✅ | ✅ | ❌ | P1 |
-| 列自定义 | ✅ | ✅ | ❌ | P1 `BOARD-004` |
-| 多分组维度 | ✅ | ✅ | ❌ | P3 `BOARD-007` |
+| 列自定义 | ✅ | ✅ | ❌ | P2 `BOARD-003` |
+| 多分组维度 | ✅ | ✅ | ❌ | P3 `BOARD-005` |
 | 键盘可访问拖拽 | 部分 | ❌ | ❌（提供 Drawer 状态下拉替代路径） | P2 |
 | WIP 限制 | ❌ | ✅ | ❌ | 未列入路线图 |
-| 多看板 / 泳道 | 子分组 | ✅ | ❌ | P2 `BOARD-005` / P3 `BOARD-007` |
-| 实时协同（他人拖拽即时可见） | ✅（`live` 服务） | ✅ | ❌（依赖 SWR 聚焦重验证） | P2 `BOARD-006`（依赖 `COLLAB-004`） |
+| 多看板 / 泳道 | 子分组 | ✅ | ❌ | P2 `BOARD-003` / P3 `BOARD-005` |
+| 实时协同（他人拖拽即时可见） | ✅（`live` 服务） | ✅ | ❌（依赖 SWR 聚焦重验证） | P2 `COLLAB-004` |
 
 ### 6.4 演进路线
 
-编号与 [`dependency-graph.md`](../architecture/dependency-graph.md) §3 的 BOARD 模块文档清单严格一致：
+编号与迭代归属以 [`docs/README.md`](../README.md) §4 索引为准（BOARD 模块共 5 份文档，`BOARD-001` ~ `BOARD-005`；看板实时同步由 `COLLAB-004` 承载）：
 
 ```
 Sprint 0 / P0
-  BOARD-001  固定三列看板 + 卡片核心信息 + 跨列拖拽自动改状态   ← 本文档
-  BOARD-002  同列拖拽排序与顺序持久化（sort_order 并发一致性、精度重排）
+  BOARD-001  固定三列看板 + 卡片核心信息 + 跨列拖拽自动改状态
+             （含同列拖拽排序与顺序持久化、精度耗尽重排）   ← 本文档
    ↓
 Sprint 1 / P1
-  BOARD-003  看板基础筛选（负责人 / 优先级 / 标签 / 时间）+ 卡片悬浮预览 + 弹窗详情编辑
-  BOARD-004  看板列自定义（新增 / 删除 / 改名 / 排序）+ 列头折叠
+  BOARD-002  看板基础筛选（负责人 / 优先级 / 标签 / 时间）+ 卡片悬浮预览
   （同期：单列 > 200 条时启用 @tanstack/react-virtual 虚拟滚动）
    ↓
 Sprint 3 / P2
-  BOARD-005  多个独立看板、视图配置保存、卡片完整信息展示、任务批量操作
-  BOARD-006  多人实时拖拽同步与全局视图实时刷新（依赖 COLLAB-004）
+  BOARD-003  多个独立看板、视图配置保存、看板列自定义（新增 / 删除 / 改名 / 排序）+ 列头折叠
+  BOARD-004  任务批量操作
+  COLLAB-004 WebSocket 实时推送 / 多人数据同步（看板多人实时拖拽同步随其交付）
    ↓
-Sprint 9 / P3·P4
-  BOARD-007  视图团队共享、管理员视图锁定、多维度分组看板（泳道）、
-             批量操作权限管控、跨项目全局看板
+Sprint 8 / P3
+  BOARD-005  视图团队共享、管理员视图锁定、多维度分组看板（泳道）
 ```
 
-> 本文档不引入 `dependency-graph.md` 之外的新文档编号。本章提到的 Calendar 视图、WIP 限制、键盘可访问拖拽三项均**未列入现有路线图**，仅作为竞品差异记录；如后续确需，应作为对应文档的增量需求提出，而不是新开编号。
+> 本文档不引入 [`docs/README.md`](../README.md) §4 索引之外的新文档编号。本章提到的 Calendar 视图、WIP 限制、键盘可访问拖拽三项均**未列入现有路线图**，仅作为竞品差异记录；如后续确需，应作为对应文档的增量需求提出，而不是新开编号。
 
 ---
 
@@ -1465,7 +1481,7 @@ Sprint 9 / P3·P4
 | AC-17 | 三列全空时仍渲染完整三列结构（不降级为全屏空状态） | FE-21 |
 | AC-18 | 跨列拖拽后源列计数 -1、目标列计数 +1，无需刷新 | E2E-7 |
 | AC-19 | 拖到「已完成」列后，任务的 `completed_at` 被写入 | BE-3 + E2E-8 |
-| AC-20 | 从「已完成」拖回「进行中」后，`completed_at` 被清空 | BE-4 |
+| AC-20 | 从「已完成」拖回「进行中」后，`completed_at` 保留首次完成时间（**不清空**，与 BE-5 再次完成不覆盖一致） | BE-4 |
 | AC-21 | 跨列拖拽产生一条 `field="state"` 的 IssueActivity；同列拖拽**不产生**活动记录 | BE-11 / BE-12 |
 | AC-22 | 拖拽过程有明确视觉反馈：源卡片半透明、目标位置显示 2px 插入指示线、目标列高亮 | 手工（§3.3 八阶段表） |
 | AC-23 | 拖到看板边缘时自动横向滚动；拖到列顶/底时列内自动纵向滚动 | 手工 |
@@ -1474,16 +1490,16 @@ Sprint 9 / P3·P4
 | AC-26 | 点击卡片打开右侧详情 Drawer（复用 `TASK-001` 的 `IssuePeekDrawer`），URL 追加 `?peekIssue={id}` | E2E-11 |
 | AC-27 | 在 Drawer 中修改状态后，关闭 Drawer 时卡片已移动到对应列 | E2E-12 |
 | AC-28 | 拖拽结束后的 click 不会误触发详情打开 | FE-26 |
-| AC-29 | 列内快速创建：在某列顶部输入标题回车，新卡片出现在**该列列尾**，输入框保持聚焦 | E2E-13 + FE-27 / FE-28 |
+| AC-29 | 列内快速创建：点击某列列底「＋ 添加任务」展开输入框，输入标题回车，新卡片出现在**该列列尾**，输入框保持聚焦 | E2E-13 + FE-27 / FE-28 |
 | AC-30 | `PROJ_COMMENTER` / `PROJ_VIEWER` 卡片不可拖拽，但可点击查看详情 | E2E-14 + FE-18 |
-| AC-31 | 绕过 UI 直接调用 PATCH（低权限角色）返回 `403 PERM_DENIED` | BE-13 / BE-14 |
+| AC-31 | 绕过 UI 直接调用 PATCH（低权限角色）返回 `403 PERM_ROLE_INSUFFICIENT` | BE-13 / BE-14 |
 | AC-32 | 非项目成员访问看板接口返回 `404`（不泄露存在性） | BE-15 |
 | AC-33 | `sort_order` 精度耗尽后自动触发全列重排；重排前后用户看到的顺序完全一致 | E2E-17 + BE-31 |
 | AC-34 | 重排后各卡片 `sort_order` 恢复为 `65535` 的整数倍 | BE-31 |
 | AC-35 | 重排请求失败不影响业务（静默失败，下次拖拽再触发） | BE-40 |
 | AC-36 | 窄屏（`375px`）下三列横向可滚动并带 `scroll-snap`；卡片可正常打开详情 | E2E-16 |
 | AC-37 | `prefers-reduced-motion: reduce` 时动画降级为瞬时切换 | FE-29 |
-| AC-38 | 单列超过 25 条时显示「加载更多」，点击追加 25 条 | BE-28 + FE-30 |
+| AC-38 | 单列 `total_results` 超出首屏已加载数（组级 `next_cursor` 非空，§4.5）时显示「加载更多」，点击以组级游标追加 25 条 | BE-28 + FE-30 |
 | AC-39 | 归档与软删除的任务不出现在看板 | BE-25 / BE-26 |
 | AC-40 | 状态集异常（为空）时渲染错误态文案，不白屏 | FE-22 |
 
@@ -1535,7 +1551,7 @@ Sprint 9 / P3·P4
 - [ ] §7.3 质量门禁全绿，`sort-order.ts` 与 `resolveDropPosition` 达到 100% 分支覆盖
 - [ ] §5 中 12 条落点解析 + 11 条 sort_order + 41 条后端 + 30 条前端 + 18 条 E2E 用例全部通过
 - [ ] **上游确认（`PROJ-001`）**：项目创建后存在 4 条 `State`，其中 `group` 分别为 `unstarted` / `started` / `completed` / `cancelled`，色值为 `#9CA3AF` / `#3B82F6` / `#10B981` / `#6B7280`，`GET .../states/` 的四条契约（`sort_order` 升序、恰一条 `is_default`、`group` 为五枚举之一、含 `color` 与 `id`）成立
-- [ ] **上游确认（`TASK-001`）**：① `?group_by=state_id` 分组响应四条契约满足看板取数；② `PATCH .../issues/{id}/` 支持同时更新 `state_id` + `sort_order` 并在响应中返回派生的 `completed_at`；③ 服务端 `calculate_sort_order` 与前端 `calculateSortOrder` 五分支逐位一致；④ `IssuePeekDrawer` 可直接复用
+- [ ] **上游确认（`TASK-001`）**：① `?group_by=state_id` 分组响应四条契约满足看板取数，且已按本文 §4.5 登记的上游待回改项补充组级 `next_cursor`；② `PATCH .../issues/{id}/` 支持同时更新 `state_id` + `sort_order` 并在响应中返回派生的 `completed_at`；③ 服务端 `calculate_sort_order` 与前端 `calculateSortOrder` 五分支逐位一致；④ `IssuePeekDrawer` 可直接复用
 - [ ] **口径确认**：全体开发者已知悉「待办」列的 `group` 是 `unstarted` 而非 `backlog`（§1.2 口径校正）
 - [ ] `docker compose up` 后可从零完成「注册 → 默认团队 → 建项目 → 建 3 条任务 → 进入 Board → 拖拽分布到三列 → 刷新验证状态与顺序保持」完整链路
 - [ ] Sprint 0 技术风险清零确认：pdnd 跨列/同列拖拽、乐观更新与回滚、`sort_order` 浮点插值持久化、精度耗尽异步重排四项机制均已在真实环境验证通过

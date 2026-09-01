@@ -9,7 +9,7 @@
 | 文档状态 | 已确认（Approved） |
 | 最后更新日期 | 2026-09-01 |
 | 上游依赖 | `AUTH-001`（邮箱注册 / 登录 / 退出）、`AUTH-003`（最小权限隔离）、`INFRA-003`（Django ORM 初始数据模型） |
-| 下游消费 | `PROJ-001`（项目 CRUD，`Project.workspace_id` 非空外键）、`TEAM-002`（团队基础信息查询与编辑，**同属 Sprint 0**）、`TEAM-003`（邀请 / 移除成员）、`TEAM-005`（团队归档与全局模板） |
+| 下游消费 | `PROJ-001`（项目 CRUD，`Project.workspace_id` 非空外键）、`TEAM-002`（团队成员邀请 / 移除 / 角色分配，Sprint 1 · P1）、`TEAM-003`（团队归档与全局模板配置，Sprint 5 · P2） |
 | 上游依据 | `docs/需求文档.md` §3.2 团队管理、§8.3 POC 范围界定、§8.4 POC 验收标准 |
 | 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.3、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §2.2 §3.2、[`api-conventions.md`](../architecture/api-conventions.md) §2.5 §4.1、[`tech-stack.md`](../architecture/tech-stack.md) §2 |
 | 对标基线 | Plane Workspace 管理 · Ones 多团队管理 |
@@ -29,7 +29,9 @@ P0 阶段本功能只交付三件事：
 2. **查询** Workspace（列表 + 详情，列表只返回「我是成员」的记录）；
 3. **注册自动初始化**默认个人工作空间（用户注册成功后零操作即拥有可用工作空间）。
 
-成员邀请、角色调整、所有权转让、团队归档、统计报表**均不在本文档范围**，分别由 `TEAM-003` / `TEAM-004` / `TEAM-005` / `TEAM-006` 承接。
+成员邀请、角色调整、所有权转让、团队归档、统计报表**均不在本文档范围**：成员邀请 / 角色调整 / 所有权转让由 `TEAM-002`（团队成员邀请 / 移除 / 角色分配，Sprint 1 · P1）承接；团队归档（及全局标签 / 状态模板、成员活跃度统计）由 `TEAM-003`（团队归档与全局模板配置，Sprint 5 · P2）承接；统计报表由 `RPT` 系列承接（`RPT-001` ~ `RPT-005`，按 `README.md` §4 索引）。
+
+> **编号口径**：本文所有编号与标题以 `README.md` §4 索引与 §5.3 模块映射为准（TEAM 模块仅 `TEAM-001` ~ `TEAM-003`）。`rbac-permission-model.md` §7.5 / §9 仍沿用旧编号（如所有权转让记 `TEAM-004`、迭代分层记 `TEAM-005` / `TEAM-007`），属架构文档待回改，本文一律按 README 对齐后引用。logo 上传、自定义 slug、Onboarding 向导、Workspace 删除 / 配额、多工作空间集团层级等能力在 README 中**无编号文档承接**，标注为「本文档自身后续增强或暂不立项」。
 
 ### 1.2 术语对齐：「团队」= Workspace
 
@@ -54,34 +56,36 @@ P0 阶段本功能只交付三件事：
 
 | 能力 | P0（本文档） | 后续迭代 |
 | --- | --- | --- |
-| 创建 Workspace | ✅ 名称 + 描述 | `TEAM-002` 补 logo 上传 |
+| 创建 Workspace | ✅ 名称 + 描述 | logo 上传为本文档自身后续增强（暂未立项） |
 | slug 自动生成 + 唯一性消解 | ✅ | — |
 | 列表查询（仅自己是 member） | ✅ | — |
 | 详情查询 | ✅ | — |
 | 更新名称 / 描述 | ✅（`WS_OWNER` / `WS_ADMIN`） | — |
 | Workspace 切换器 | ✅ | — |
 | 注册后自动创建个人工作空间 | ✅ | — |
-| 删除 Workspace | ❌ | `TEAM-005` |
-| 成员邀请 / 移除 / 退出 | ❌ | `TEAM-003` |
-| 角色调整 / 所有权转让 / 层级保护 | ❌ | `TEAM-004` |
-| 归档 / 全局标签与状态模板 | ❌ | `TEAM-005` |
-| 团队统计 / 成员活跃度 | ❌ | `TEAM-006` |
-| 多工作空间集团层级 / 模板下发 | ❌ | `TEAM-007` |
+| 删除 Workspace | ❌ | 暂不立项（无编号文档承接；`workspace.delete` 权限码已在 `rbac-permission-model.md` §8.1 登记） |
+| 成员邀请 / 移除 / 退出 | ❌ | `TEAM-002`（Sprint 1 · P1） |
+| 角色调整 / 所有权转让 / 层级保护 | ❌ | `TEAM-002`（Sprint 1 · P1） |
+| 归档 / 全局标签与状态模板 | ❌ | `TEAM-003`（Sprint 5 · P2） |
+| 团队统计 / 成员活跃度 | ❌ | 成员活跃度 `TEAM-003`（Sprint 5 · P2）；统计报表 `RPT-001` ~ `RPT-005` |
+| 多工作空间集团层级 / 模板下发 | ❌ | 模板下发 `TEAM-003`；集团层级暂不立项（无编号文档承接） |
 
 ### 1.4 前置依赖
 
 | 依赖文档 | 依赖内容 | 阻塞原因 |
 | --- | --- | --- |
 | `AUTH-001` | `User` 模型（含 `display_name`）、注册 / 登录 / Session 建立 | Workspace 必须有 `owner`；默认工作空间初始化挂在注册成功钩子上 |
-| `AUTH-003` | `WorkspaceMember` 表已建、`IsAuthenticatedAndActive`（L0）与 `WorkspaceBasePermission`（L1）基类 | 列表查询的行级过滤与详情的成员校验直接复用 |
+| `AUTH-003` | `WorkspaceMember` 表已建、`Workspace.objects.accessible_by()` 行级过滤与 `BaseAPIView` 骨架 | 列表查询的行级过滤与详情的成员校验直接复用 |
 | `INFRA-003` | `BaseModel`（UUID 主键 + 软删除）、`Workspace` / `WorkspaceMember` 建表 migration | 无表无从谈起 |
+
+> **权限类层级口径**：Permission 类层级以 [`api-conventions.md`](../architecture/api-conventions.md) §10.1 / §10.3 为准（L0 `IsAuthenticatedAndActive` → L1 `WorkspaceBasePermission` → L2 `ProjectBasePermission` → L3 `ProjectEntityPermission`）。`AUTH-003` 明确其只交付第三层行级过滤与 ViewSet 骨架，L1 ~ L3 权限类的体系化交付归 P1 `AUTH-005`（L0 由 `AUTH-002` 交付）。本文 P0 **先行实现 L1 判定的一例**（§4.3.2 `WorkspacePermission`，含成员校验与角色等级比较），P1 `AUTH-005` 落地完整 L1 层时收编归位。
 
 ### 1.5 竞品参考
 
 | 竞品 | 参考点 | 本功能处置 |
 | --- | --- | --- |
 | Plane | Workspace 为顶层单元、`slug` 全局唯一并作为路由前缀、`WorkspaceMember` 双层 RBAC、注册后引导创建 Workspace | **完全对标**，仅将「引导创建」改为「自动创建」（见 §6.1） |
-| Ones | 多团队并列、顶部团队切换器、团队内独立配置项 | 对标切换器交互；「团队级配置项」P0 不做，`TEAM-005` 承接 |
+| Ones | 多团队并列、顶部团队切换器、团队内独立配置项 | 对标切换器交互；「团队级配置项」P0 不做，`TEAM-003`（全局标签 / 状态模板 / 活跃度）承接 |
 
 ---
 
@@ -148,7 +152,7 @@ sequenceDiagram
 | `display_name` 为空 | `null` | 回退用邮箱本地部分：`alice的工作空间` | `alice-workspace` |
 | 同名用户第二次 | `张三` | `张三的工作空间` | `zhang-san-workspace-1` |
 
-**幂等性**：初始化逻辑必须幂等。判定条件为 `WorkspaceMember.objects.filter(member=user).exists()`——已有任何工作空间归属则跳过。这一点保证注册接口被重试、或后续补数据脚本重跑时不会产出重复的「XX的工作空间」。
+**幂等性**：初始化逻辑必须幂等。判定条件为 `WorkspaceMember.objects.filter(member=user, is_active=True).exists()`——已有任何在职（`is_active=True`）的工作空间归属则跳过（与 §4.3.1 实现一致）。这一点保证注册接口被重试、或后续补数据脚本重跑时不会产出重复的「XX的工作空间」。
 
 **实现位置选择**：**在注册视图的事务内直接调用**，不使用 `post_save` signal。
 
@@ -200,10 +204,10 @@ flowchart LR
 | BR-4 | `slug` 必须 URL-safe：仅 `[a-z0-9-]`，长度 ≤ 48，不以 `-` 开头或结尾 | `generate_unique_slug()` |
 | BR-5 | `slug` **全局唯一**（不是 Workspace 内唯一），通过带 `condition=Q(deleted_at__isnull=True)` 的偏索引 `uniq_workspace_slug_alive` 保证；软删除的 slug 可被复用 | DB 约束 |
 | BR-6 | `slug` 冲突时追加数字后缀 `-1` / `-2` / …，最多重试 100 次，超限追加 6 位随机短码 | `generate_unique_slug()` |
-| BR-7 | slug 保留词黑名单：`api` / `admin` / `space` / `static` / `login` / `sign-in` / `sign-up` / `god-mode` / `create-workspace` / `installation`，命中时视为冲突走后缀逻辑 | `RESERVED_SLUGS` 常量 |
+| BR-7 | slug 保留词黑名单（**16 个**，以 §4.1.3 `RESERVED_SLUGS` 代码常量为准）：`api` / `admin` / `space` / `static` / `media` / `login` / `logout` / `sign-in` / `sign-up` / `god-mode` / `installation` / `create-workspace` / `invitations` / `onboarding` / `profile` / `settings`，命中时视为冲突走后缀逻辑 | `RESERVED_SLUGS` 常量 |
 | BR-8 | `description` 可空，纯文本，长度 ≤ 500 字符（P0 不用富文本） | Serializer |
 | BR-9 | 创建者自动成为 `WS_OWNER`（role=20），且是 `Workspace.owner` 外键指向的用户 | 创建服务函数 |
-| BR-10 | 一个用户可创建的 Workspace 数量 P0 **不限制**；`TEAM-007` 引入配额时通过 `QUOTA_*` 错误码返回 | — |
+| BR-10 | 一个用户可创建的 Workspace 数量 P0 **不限制**；配额能力暂不立项（无编号文档承接），引入时通过 `api-conventions.md` §8.7 预留的 `QUOTA_*` 错误码族返回 | — |
 | BR-11 | 中文名称的 slug 化：`slugify()` 对纯中文会返回空串，因此先经 `pypinyin` 转拼音再 slugify；仍为空则回退 `workspace-{6位随机}` | `generate_unique_slug()` |
 | BR-12 | `identifier` 概念不存在于 Workspace 层，只存在于 `Project`（见 `PROJ-001` §2.2） | — |
 
@@ -216,20 +220,20 @@ flowchart LR
 | 描述超长 | > 500 字符 | 400 | `VALIDATION_ERROR` + `TOO_LONG` | 「团队描述最多 500 个字符」 |
 | slug 冲突 | `generate_unique_slug` 检测到重名 | — | — | **无提示**：服务端静默追加后缀，对用户透明 |
 | slug 竞态冲突 | 两请求同时通过唯一性检查后 INSERT，DB 唯一约束报 `IntegrityError` | — | — | **无提示**：捕获 `IntegrityError` 后重试（最多 3 次，每次重新生成 slug）；3 次全失败才返回 409 `RESOURCE_ALREADY_EXISTS` |
-| 未登录 | 无有效 Session | 401 | `AUTH_UNAUTHENTICATED` | 跳转登录页 |
+| 未登录 | 无有效 Session | 401 | `AUTH_REQUIRED` | 跳转登录页 |
 | 非成员访问详情 | 目标 Workspace 存在但无 `WorkspaceMember` 记录 | 404 | `RESOURCE_NOT_FOUND` | 「团队不存在或你没有访问权限」 |
 | 成员越权更新 | `WS_MEMBER` / `WS_GUEST` 调用 PATCH | 403 | `PERM_ROLE_INSUFFICIENT` | 「仅团队所有者与管理员可修改团队信息」 |
 | slug 命中保留词 | `name="API"` → slug `api` | — | — | **无提示**：走后缀逻辑生成 `api-1` |
 
 ### 2.7 状态机
 
-Workspace 在 P0 无状态字段（`status` 由 `TEAM-005` 引入归档能力时添加）。当前生命周期仅有软删除维度：
+Workspace 在 P0 无状态字段（归档状态列 `archived_at` 由 `TEAM-003` 引入归档能力时添加，见其 §1.3）。当前生命周期仅有软删除维度：
 
 ```mermaid
 stateDiagram-v2
     [*] --> Active: 创建（含注册自动初始化）
     Active --> Active: PATCH 更新 name / description
-    Active --> Deleted: deleted_at 置值（TEAM-005）
+    Active --> Deleted: deleted_at 置值（删除能力暂未立项）
     Deleted --> [*]
     note right of Deleted
         软删除后 slug 释放，
@@ -320,7 +324,7 @@ Headless UI `Dialog`，宽 480px，居中，遮罩 `bg-black/30 backdrop-blur-sm
 | --- | --- |
 | 打开时 | 名称输入框自动 focus（`Dialog` 的 `initialFocus`） |
 | slug 预览 | 名称输入后 **300ms 防抖**，前端本地 `slugify()` 计算并展示。**明确标注为「预览」**——最终 slug 由服务端生成，冲突时会带数字后缀 |
-| slug 可用性提示 | P0 **不调用** `GET /api/v1/workspaces/slug-check/`。理由：服务端已保证冲突自动消解，实时校验只增加请求量而不改变结果。该端点保留给 `TEAM-002` 的「自定义 slug」能力 |
+| slug 可用性提示 | P0 **不调用** `GET /api/v1/workspaces/slug-check/`。理由：服务端已保证冲突自动消解，实时校验只增加请求量而不改变结果。该端点保留给后续「自定义 slug」增强（本文档后续增强，暂未立项） |
 | 名称校验 | `onBlur` + 提交前双重校验（Zod schema：`z.string().trim().min(1).max(80)`），错误以红字显示在输入框下方 |
 | 描述计数 | 右下角 `已输入/500`，超限时数字变红且提交按钮禁用 |
 | 提交中 | 按钮进入 loading（内嵌 `loader-2` 旋转图标 + 文案「创建中…」），Modal 不可关闭，遮罩点击无效 |
@@ -340,7 +344,7 @@ Headless UI `Dialog`，宽 480px，居中，遮罩 `bg-black/30 backdrop-blur-sm
 │ 📁 项目               │  ← P0 唯一实际可用入口
 │ ✓  我的任务           │  ← P0 置灰（RPT-001 交付）
 ├──────────────────────┤
-│ ⚙️  团队设置           │  ← P0 置灰（TEAM-002 交付）
+│ ⚙️  团队设置           │  ← P0 置灰（P1 TEAM-002 起交付）
 └──────────────────────┘
 ```
 
@@ -351,7 +355,7 @@ P0 未交付的入口**保留占位并置灰**（`text-neutral-400 cursor-not-al
 | 场景 | 是否存在空状态 | 处置 |
 | --- | --- | --- |
 | 新用户首次登录 | **不存在** | 注册时已自动创建默认 Workspace（§2.2），用户永远至少拥有 1 个 |
-| 用户被移除出所有 Workspace | 存在（`TEAM-003` 后才可能） | 展示全屏引导页「你还没有加入任何团队」+「创建团队」主按钮。P0 因无移除能力而不可达，但组件先实现以避免 `workspaces[0]` 越界崩溃 |
+| 用户被移除出所有 Workspace | 存在（`TEAM-002` 移除 / 退出能力交付后才可能） | 展示全屏引导页「你还没有加入任何团队」+「创建团队」主按钮。P0 因无移除能力而不可达，但组件先实现以避免 `workspaces[0]` 越界崩溃 |
 | Workspace 内无项目 | 存在 | 由 `PROJ-001` §3.4 定义 |
 
 ### 3.6 响应式与无障碍
@@ -381,8 +385,8 @@ class Workspace(BaseModel):
 
     name = models.CharField(max_length=255, verbose_name="工作空间名称")
     slug = models.SlugField(
-        max_length=48, unique=True, db_index=True, verbose_name="URL 标识",
-        help_text="全局唯一，用于 /:workspaceSlug/ 路由，小写字母数字与短横线",
+        max_length=48, db_index=True, verbose_name="URL 标识",
+        help_text="存活行内全局唯一，用于 /:workspaceSlug/ 路由，小写字母数字与短横线",
     )
     description = models.TextField(blank=True, verbose_name="描述")
     logo = models.URLField(max_length=800, blank=True, null=True, verbose_name="Logo 地址")
@@ -404,14 +408,16 @@ class Workspace(BaseModel):
         ]
 ```
 
+> **为何不设字段级 `unique=True`**：全量唯一约束比偏索引更严——若同时声明 `unique=True` 与 `uniq_workspace_slug_alive`，软删除后的 slug 复用（BR-5 / BE-38）将必然触发 `IntegrityError`。因此 slug 唯一性**仅由偏索引** `uniq_workspace_slug_alive`（`condition=Q(deleted_at__isnull=True)`）保证，字段级不再声明 `unique=True`。`unified-issue-model.md` §2.3 的 Workspace 定义仍同时声明二者，属架构文档待回改，实现以本文为准。
+
 | 字段 | 类型 | 约束 / 索引 | P0 使用 | 说明 |
 | --- | --- | --- | --- | --- |
 | `id` | UUID | PK | ✅ | 继承 `BaseModel`，`uuid4` |
 | `name` | varchar(255) | NOT NULL | ✅ | 业务层限 80 字符（BR-1/BR-2） |
-| `slug` | varchar(48) | UNIQUE + 偏索引 | ✅ | 路由标识，服务端生成 |
+| `slug` | varchar(48) | 偏索引 `uniq_workspace_slug_alive`（仅存活行唯一，无字段级 UNIQUE） | ✅ | 路由标识，服务端生成 |
 | `description` | text | 可空 | ✅ | 纯文本，业务层限 500 字符 |
-| `logo` | varchar(800) | 可空 | ❌ | `TEAM-002` 交付上传后启用；P0 前端用首字母占位 |
-| `owner` | UUID FK → User | 索引，CASCADE | ✅ | 创建者；`TEAM-004` 交付转让能力 |
+| `logo` | varchar(800) | 可空 | ❌ | logo 上传暂未立项（本文档后续增强），交付后启用；P0 前端用首字母占位 |
+| `owner` | UUID FK → User | 索引，CASCADE | ✅ | 创建者；`TEAM-002` 交付转让能力 |
 | `created_at` / `updated_at` / `deleted_at` | timestamptz | `created_at` 与 `deleted_at` 带索引 | ✅ | 继承 `BaseModel` |
 
 #### 4.1.2 WorkspaceMember
@@ -447,7 +453,7 @@ class WorkspaceMember(BaseModel):
 | 成员 | `WS_MEMBER` | 10 | ❌ 同上（Model default 值） |
 | 访客 | `WS_GUEST` | 5 | ❌ 同上 |
 
-> P0 阶段每个 Workspace 恰好有 1 条 `WorkspaceMember` 记录（role=20）。但**权限判定代码必须写成通用的 `role >= X` 比较**，不得硬编码「创建者即所有者」的捷径，否则 `TEAM-003` 引入多成员后需重写鉴权层。
+> P0 阶段每个 Workspace 恰好有 1 条 `WorkspaceMember` 记录（role=20）。但**权限判定代码必须写成通用的 `role >= X` 比较**，不得硬编码「创建者即所有者」的捷径，否则 `TEAM-002` 引入多成员后需重写鉴权层。
 
 #### 4.1.3 slug 生成算法
 
@@ -497,6 +503,8 @@ def generate_unique_slug(name: str) -> str:
     return candidate
 ```
 
+> **依赖登记（架构文档待回改 / 待登记）**：中文拼音兜底依赖 `pypinyin`（BR-11），但该依赖尚未在 [`tech-stack.md`](../architecture/tech-stack.md) §1 的版本锁定表中登记。按 tech-stack §1「本文档是全仓库依赖版本的唯一权威来源，新增依赖必须先修改本文档再改 `pyproject.toml`」的原则，实现前须先在 §1 登记——建议登记版本 **`pypinyin 0.54.x`**。前端 `packages/utils/src/slug.ts` 的拼音行为对齐（§4.4.5）同样依赖此决策落地。
+
 **为什么用 `Workspace.objects`（软删除管理器）而不是 `all_objects`**：软删除的 Workspace 其 slug 应当被释放复用，这与 DB 层偏索引 `uniq_workspace_slug_alive`（`condition=Q(deleted_at__isnull=True)`）的语义完全一致。若用 `all_objects` 检查，则应用层比 DB 约束更严格，会出现「DB 允许但应用拒绝」的不一致。
 
 **竞态处理**：`generate_unique_slug` 的「查—再写」不是原子的。两个并发请求可能拿到同一 candidate。因此创建服务必须捕获 `IntegrityError` 重试：
@@ -529,7 +537,7 @@ def create_workspace(*, owner, name: str, description: str = "") -> Workspace:
 | 3 | `GET` | `/api/v1/workspaces/{slug}/` | 详情 | Workspace 成员（任意角色） | `200` |
 | 4 | `PATCH` | `/api/v1/workspaces/{slug}/` | 更新 name / description | `WS_OWNER`(20) / `WS_ADMIN`(15) | `200` |
 
-`DELETE /api/v1/workspaces/{slug}/` 已在 `api-conventions.md` §2.5 端点清单中登记，但**由 `TEAM-005` 实现**，P0 路由不注册（访问返回 405 `METHOD_NOT_ALLOWED`）。
+`DELETE /api/v1/workspaces/{slug}/` 已在 `api-conventions.md` §2.5 端点清单中登记，但删除能力**暂未立项**（无编号文档承接，README §5.3 中 TEAM 仅 001 ~ 003），P0 路由不注册，访问返回 `405`——错误码按 [`api-conventions.md`](../architecture/api-conventions.md) §10.4 第 6 条（`MethodNotAllowed` → 对应 `VALIDATION_*` 码）映射为已注册的 `VALIDATION_ERROR`，不自造 §8 未注册的码。
 
 #### 4.2.1 `POST /api/v1/workspaces/` — 创建
 
@@ -724,9 +732,9 @@ GET /api/v1/workspaces/?fields=id,name,slug,logo,current_user_role,total_project
 | 约束 | 说明 |
 | --- | --- |
 | 仅支持 `PATCH`，不支持 `PUT` | `api-conventions.md` §3.2。`BaseAPIView.update()` 抛 `MethodNotAllowedError` |
-| `slug` 为 `read_only` | 改名**不改 slug**。已有路由链接、外部书签、Git commit 引用不会失效。自定义 slug 由 `TEAM-002` 通过独立端点提供 |
-| `owner_id` 为 `read_only` | 所有权转让由 `TEAM-004` 通过 `.../transfer-ownership/` 动作子资源提供 |
-| `logo` 为 `read_only`（P0） | `TEAM-002` 交付预签名上传后开放 |
+| `slug` 为 `read_only` | 改名**不改 slug**。已有路由链接、外部书签、Git commit 引用不会失效。自定义 slug 为本文档后续增强（暂未立项），引入时通过独立端点提供 |
+| `owner_id` 为 `read_only` | 所有权转让由 `TEAM-002` 通过 `.../ownership/transfer/` 动作子资源提供（其 §4.2 端点 10） |
+| `logo` 为 `read_only`（P0） | logo 预签名上传暂未立项（本文档后续增强），交付后开放 |
 
 **失败响应 `403`（`WS_MEMBER` 尝试更新）**
 
@@ -1134,7 +1142,7 @@ React Router v7 Framework Mode（SPA 模式，`ssr: false`），版本锁 `7.x`�
 | BE-09 | 名称恰好 80 字符 | — | `name` 80 字符 | `201`（边界值通过） |
 | BE-10 | 描述超长 | — | `description` 501 字符 | `400`；`details[0].field="description"` |
 | BE-11 | 名称首尾空格被 trim | — | `name="  Rabbit  "` | DB 存储 `"Rabbit"` |
-| BE-12 | 未登录创建 | 无 Session | `POST` | `401`；`error.code=AUTH_UNAUTHENTICATED` |
+| BE-12 | 未登录创建 | 无 Session | `POST` | `401`；`error.code=AUTH_REQUIRED` |
 | BE-13 | 创建时自动 seed IssueType | — | 创建后查 `IssueType` | 存在 1 条 `name="任务"`, `icon="circle-check"`, `color="#3B82F6"`, `is_default=True`, `is_system=True` |
 | BE-14 | 事务原子性 | mock `WorkspaceMember.objects.create` 抛异常 | `POST` | `500`；DB 中**无** `Workspace` 记录（已回滚），无孤儿数据 |
 | BE-15 | 列表只返回自己是成员的 | U1 有 WS-A；U2 有 WS-B | U1 `GET /api/v1/workspaces/` | `data` 长度 1，仅含 WS-A；`meta.total_count == 1` |
@@ -1152,8 +1160,8 @@ React Router v7 Framework Mode（SPA 模式，`ssr: false`），版本锁 `7.x`�
 | BE-27 | 改名不改 slug | 原 slug `rabbitprojects` | `PATCH {"name":"完全不同的名字"}` | `slug` 仍为 `rabbitprojects` |
 | BE-28 | slug 传入被忽略 | — | `PATCH {"slug":"hacked"}` | `200`；`slug` 未变（`read_only`） |
 | BE-29 | `owner_id` 传入被忽略 | — | `PATCH {"owner_id": "<其他用户>"}` | `200`；`owner` 未变 |
-| BE-30 | PUT 被拒绝 | — | `PUT /workspaces/{slug}/` | `405`；`error.code=METHOD_NOT_ALLOWED` |
-| BE-31 | DELETE 未实现 | — | `DELETE /workspaces/{slug}/` | `405`（P0 不注册该动作） |
+| BE-30 | PUT 被拒绝 | — | `PUT /workspaces/{slug}/` | `405`；`error.code=VALIDATION_ERROR`（`METHOD_NOT_ALLOWED` 未在 `api-conventions.md` §8 注册，按 §10.4 第 6 条 `MethodNotAllowed` → `VALIDATION_*` 映射；405 状态码见 §4.3） |
+| BE-31 | DELETE 未实现 | — | `DELETE /workspaces/{slug}/` | `405`（P0 不注册该动作）；`error.code=VALIDATION_ERROR`（同 BE-30，按 §10.4 映射） |
 | BE-32 | 尾斜杠强制 | — | `GET /api/v1/workspaces`（无尾斜杠） | `301` 重定向到带尾斜杠版本 |
 | BE-33 | 注册自动初始化 | — | `POST /api/v1/auth/sign-up/` | `201`；`data.default_workspace_slug` 非空；DB 存在 `Workspace(name="XX的工作空间")` 与 `WorkspaceMember(role=20)` |
 | BE-34 | 注册初始化幂等 | 用户已有 WS | 再次调 `create_default_workspace(user)` | 返回 `None`；DB Workspace 数量不变 |
@@ -1219,15 +1227,15 @@ React Router v7 Framework Mode（SPA 模式，`ssr: false`），版本锁 `7.x`�
 | 顶层单元命名 | Workspace | Workspace | ✅ 一致 | 直接沿用，便于对照源码 |
 | 路由形态 | `/:workspaceSlug/…` | `/:workspaceSlug/…` | ✅ 一致 | slug 作唯一状态载体，刷新与分享天然正确 |
 | slug 唯一性 | 全局唯一 | 全局唯一（+ 软删除偏索引） | ⬆️ 增强 | Plane 用普通 `unique=True`；我们用 `condition=Q(deleted_at__isnull=True)` 偏索引，使软删团队的 slug 可释放复用 |
-| slug 来源 | 用户在创建表单中手填，实时调 slug-check 校验 | **服务端从 name 自动生成 + 冲突自动加后缀** | ⚠️ 差异 | POC 追求「30 秒建团队」，少填一个字段、少一类校验失败。自定义 slug 由 `TEAM-002` 提供 |
+| slug 来源 | 用户在创建表单中手填，实时调 slug-check 校验 | **服务端从 name 自动生成 + 冲突自动加后缀** | ⚠️ 差异 | POC 追求「30 秒建团队」，少填一个字段、少一类校验失败。自定义 slug 为本文档后续增强（暂未立项） |
 | 中文名处理 | `slugify` 后为空则报错要求用户改 | 拼音兜底 + 随机码兜底 | ⬆️ 增强 | Plane 面向英文社区；本系统主场景为中文团队名，不能让「张三的工作空间」创建失败 |
 | 成员模型 | `WorkspaceMember(role int)` | 完全相同 | ✅ 一致 | 20/15/10/5 四档整数等级也完全相同 |
 | 角色等级整数化 | Owner=20 / Admin=15 / Member=10 / Guest=5 | 相同 | ✅ 一致 | `role__gte=15` 一次索引扫描完成等级比较 |
-| 首次登录流程 | Onboarding 向导：填个人信息 → **手动创建 Workspace** → 邀请成员 → 完成 | **注册即自动创建个人工作空间**，无向导 | ⚠️ 差异 | 需求文档 §8.4 要求「注册 1 分钟内自动进入个人默认团队」。向导虽体验完整但增加 3 步操作与 3 个页面，P0 不做，`TEAM-002` 视需要补 |
+| 首次登录流程 | Onboarding 向导：填个人信息 → **手动创建 Workspace** → 邀请成员 → 完成 | **注册即自动创建个人工作空间**，无向导 | ⚠️ 差异 | 需求文档 §8.4 要求「注册 1 分钟内自动进入个人默认团队」。向导虽体验完整但增加 3 步操作与 3 个页面，P0 不做，暂不立项（必要时作为本文档后续增强） |
 | Owner/Admin 绕过项目成员检查 | 支持 | 支持（`rbac-permission-model.md` §7.4） | ✅ 一致 | P0 虽只有单成员，但判定逻辑已按通用规则实现 |
 | Workspace 级 Issue 聚合查询 | 有（`/workspaces/{slug}/issues/`） | 端点已登记，P0 不实现 | ⏭️ 延后 | `TASK-015` 跨项目搜索承接 |
-| Workspace logo | MinIO 预签名上传 | P0 首字母占位 | ⏭️ 延后 | `TEAM-002`；`logo` 列已建，零 DDL |
-| 删除 Workspace | 支持（二次确认输入 slug） | P0 不支持 | ⏭️ 延后 | `TEAM-005` |
+| Workspace logo | MinIO 预签名上传 | P0 首字母占位 | ⏭️ 延后 | logo 上传暂未立项（本文档后续增强）；`logo` 列已建，零 DDL |
+| 删除 Workspace | 支持（二次确认输入 slug） | P0 不支持 | ⏭️ 延后 | 暂不立项（无编号文档承接） |
 
 **从 Plane 完全复用的三处实现**：
 
@@ -1242,13 +1250,13 @@ React Router v7 Framework Mode（SPA 模式，`ssr: false`），版本锁 `7.x`�
 | 顶层单元 | 团队（Team），支持一个账号加入多个团队 | Workspace，同样支持多归属 | ✅ 能力对等 |
 | 团队切换 | 顶部下拉切换器，列出全部已加入团队 | 同（§3.2） | ✅ 对标交互 |
 | 团队独立配置 | 每团队独立的成员、权限组、工作项类型、工作流、通知策略 | Workspace 级 `IssueType` 已隔离；权限组 / 工作流 P3 | ⏭️ 部分延后 |
-| 团队级组织架构 | 支持部门树、成员归属部门 | `WorkspaceMember.department` 列已预留（nullable FK） | ⏭️ `AUTH-008` |
-| 集团 / 多团队汇总 | 企业版支持跨团队报表 | `TEAM-007` | ⏭️ 延后 |
+| 团队级组织架构 | 支持部门树、成员归属部门 | `WorkspaceMember.department` 仅在模型**注释预留**，P0/P1/P2 不建外键列，P3 引入 `Department` 表后经独立 migration 添加（`rbac-permission-model.md` §3.2 / §9 第 4 条，本文 §4.1.2 同口径） | ⏭️ `AUTH-007`（部门层级组织架构，Sprint 8） |
+| 集团 / 多团队汇总 | 企业版支持跨团队报表 | 暂不立项（无编号文档承接） | ⏭️ 延后 |
 | 团队容量配额 | 按套餐限制成员数 | P0 无限制；`QUOTA_*` 错误码族已在 `api-conventions.md` §8.7 预留 | ⏭️ 延后 |
 
 **吸收的一点**：Ones 的切换器在每个团队项右侧显示当前用户角色，用户能一眼看出「我在这个团队是管理员还是普通成员」。本系统 §3.2 采纳此设计（Plane 的切换器不显示角色）。
 
-**不吸收的部分**：Ones 的「团队申请加入 / 审批」流程。P0 与 P1 的团队规模场景下，直接邀请（`TEAM-003`）足够；申请审批引入待办、通知、审批状态机三套依赖，成本远大于收益。
+**不吸收的部分**：Ones 的「团队申请加入 / 审批」流程。P0 与 P1 的团队规模场景下，直接邀请（`TEAM-002`）足够；申请审批引入待办、通知、审批状态机三套依赖，成本远大于收益。
 
 ### 6.3 三方能力矩阵
 
@@ -1258,13 +1266,13 @@ React Router v7 Framework Mode（SPA 模式，`ssr: false`），版本锁 `7.x`�
 | slug URL 标识 | ✅ | ❌（数字 ID） | ✅ | ✅ |
 | 注册自动建默认团队 | ❌（向导手动） | ❌ | ✅ | ✅ |
 | 中文名自动 slug | ❌ | — | ✅ | ✅ |
-| 自定义 slug | ✅ | ❌ | ❌ | ✅ `TEAM-002` |
-| 团队 logo | ✅ | ✅ | ❌ | ✅ `TEAM-002` |
-| 成员邀请 | ✅ | ✅ | ❌ | ✅ `TEAM-003` |
-| 所有权转让 | ✅ | ✅ | ❌ | ✅ `TEAM-004` |
-| 团队归档 | ❌ | ✅ | ❌ | ✅ `TEAM-005` |
-| 部门 / 组织架构 | ❌ | ✅ | ❌ | ✅ `AUTH-008` |
-| 集团多团队汇总 | ❌ | ✅ | ❌ | ✅ `TEAM-007` |
+| 自定义 slug | ✅ | ❌ | ❌ | 后续增强（暂未立项） |
+| 团队 logo | ✅ | ✅ | ❌ | 后续增强（暂未立项） |
+| 成员邀请 | ✅ | ✅ | ❌ | ✅ `TEAM-002` |
+| 所有权转让 | ✅ | ✅ | ❌ | ✅ `TEAM-002` |
+| 团队归档 | ❌ | ✅ | ❌ | ✅ `TEAM-003` |
+| 部门 / 组织架构 | ❌ | ✅ | ❌ | ✅ `AUTH-007` |
+| 集团多团队汇总 | ❌ | ✅ | ❌ | 暂不立项 |
 
 ---
 

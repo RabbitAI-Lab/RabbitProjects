@@ -13,6 +13,7 @@
 | 下游依赖 | `AUTH-003`（最小权限隔离）、`AUTH-005`（按钮级权限，P1）、以及全部需要登录态的页面与接口 |
 | 架构基线 | [`api-conventions.md`](../architecture/api-conventions.md) §2.5 / §4.3 / §8.2 / §8.9 / §9.2 / §10.1 / §10.3、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §1.1 / §1.2 / §5、[`tech-stack.md`](../architecture/tech-stack.md) §2 |
 | 竞品参考 | Plane 开源版（前端布局级守卫 + DRF 全局 `IsAuthenticated`）、Ones（会话超时策略、强制下线、IP 白名单） |
+| 工作量估算 | 后端 2 人日 / 前端 2 人日 / 联调与测试 1.5 人日，合计 **5.5 人日** |
 
 > **范围声明**：本文档只解决「**有没有登录**」这一个判定（认证 / Authentication）。「**登录了能不能做**」（授权 / Authorization）中的按钮级权限属于 `AUTH-005`（P1），行级数据可见性属于 `AUTH-003`。三者是 `rbac-permission-model.md` §1.1 三重权限模型的第 0 层与第一、二、三层的分工，边界见 §1.4。
 >
@@ -67,7 +68,7 @@
 
 - **Plane**：前端用布局级组件（`AuthenticationWrapper` / `UserAuthWrapper`）包裹全部工作台路由，未登录重定向登录页并携带 `next_path`；后端 DRF 全局默认 `IsAuthenticated`，公开端点显式放开。本系统与其结构一致。
 - **Ones**：企业侧提供可配置会话超时、强制下线、活跃会话查看、IP 白名单等访问控制策略。
-- **本系统 P0**：只做最小路由保护 + 接口鉴权；IP 白名单、会话超时配置化、强制下线排在 P3（`AUTH-009` / 实例配置），错误码 `PERM_IP_NOT_ALLOWED` 已在 `api-conventions.md` §8.3 预登记。
+- **本系统 P0**：只做最小路由保护 + 接口鉴权；IP 白名单、会话超时配置化排 P3 实例配置（README §4 索引未为其单列编号文档）；强制下线 / 活跃会话查看为 P1/P2（`api-conventions.md` §9.2 已预留 `GET /api/v1/users/me/sessions/`，与 §6.2 口径一致）；错误码 `PERM_IP_NOT_ALLOWED` 已在 `api-conventions.md` §8.3 预登记。
 
 ---
 
@@ -77,7 +78,7 @@
 
 ```mermaid
 flowchart TD
-    A["用户访问某个 URL"] --> B{"命中公开路由白名单？<br/>/login /register /404"}
+    A["用户访问某个 URL"] --> B{"命中公开路由白名单？<br/>/login /register /forgot-password /reset-password /404<br/>（forgot / reset 为 P0 占位路由，见 §2.3）"}
     B -- 是 --> B1{"AuthStore 已登录？"}
     B1 -- 是 --> B2["反向守卫：<br/>重定向到工作台（?next= 优先）"]
     B1 -- 否 --> B3["正常渲染公开页"]
@@ -112,7 +113,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     A["HTTP 请求到达 apps/proxy (Nginx)"] --> B["L1 限流 300 次/分钟/IP"]
-    B --> C["Django 中间件链<br/>SecurityMiddleware → Session → CORS → Common → CSRF → AuthenticationMiddleware → RequestIdMiddleware"]
+    B --> C["Django 中间件链<br/>RequestIDMiddleware（最外层）→ Security → Session → CORS → Common → CSRF → AuthenticationMiddleware"]
     C --> D["DRF Dispatch：APIView.initial()"]
     D --> E["perform_authentication：<br/>遍历 DEFAULT_AUTHENTICATION_CLASSES"]
     E --> E1{"存在 X-API-Key 请求头？"}
@@ -151,22 +152,25 @@ flowchart TD
 | --- | --- | --- |
 | 前端公开页 | `/login` | 登录页（`AUTH-001`） |
 | 前端公开页 | `/register` | 注册页（`AUTH-001`） |
-| 前端公开页 | `/forgot-password`、`/reset-password` | 占位路由，P1 `AUTH-004` 实现 |
-| 前端公开页 | `*`（404）、`/health` | 兜底页与前端健康检查 |
+| 前端公开页 | `/forgot-password`、`/reset-password` | P0 注册占位路由（挂入公开子树，仅重定向到 `/login`，见 §4.1），页面本体 P1 `AUTH-004` 交付 |
+| 前端公开页 | `*`（404） | 兜底页（顶层 `*` 路由，G3 断言的顶层节点之一） |
+| 非路由 | `/health` | 不进 `routes.ts`：容器与入口层健康探测归属 `INFRA-002` §2.3（`web` 探测 `/`、`proxy` 探测 `/healthz`、`api` 探测 `GET /api/v1/health/` §4.10），G3 断言不含此项 |
 | 后端公开端点 | `POST /api/v1/auth/sign-up/` | 注册 |
 | 后端公开端点 | `POST /api/v1/auth/sign-in/` | 登录 |
 | 后端公开端点 | `POST /api/v1/auth/sign-out/` | 退出（**公开但幂等**，见下） |
 | 后端公开端点 | `GET /api/v1/auth/csrf-token/` | 获取 CSRF token |
-| 后端公开端点 | `GET /health/`、`GET /api/schema/`（仅非生产） | 探针与 OpenAPI schema |
+| 后端公开端点 | `GET /api/v1/health/`、`GET /api/v1/schema/`（仅非生产） | 探针与 OpenAPI schema（路径与 `INFRA-002` §2.3 健康检查表 / §4.10 端点设计 / 路由测试 RT-05、`INFRA-004` 维护模式白名单及 `api-conventions.md` §10.6 的登记一致） |
 | **非公开** | `GET /api/v1/users/me/` | ★ 需认证。它是登录态探测端点，未登录时**必须**返回 401，不能返回 `{user: null}` |
 
 > **端点路径口径**：全部沿用 `api-conventions.md` §2.5 已登记的 `sign-up` / `sign-in` / `sign-out` / `users/me` 命名，不存在 `register` / `login` / `logout` / `auth/me` 别名路由（`AUTH-001` 决策 D7）。需求措辞与规范路径的映射表见 `AUTH-001` §4.2。
 
 **`sign-out` 为什么放在公开白名单**：`AUTH-001` §2.3 约定退出是幂等的——未登录时调用也返回 `204`。若它要求认证，则「Session 已过期的用户点退出」会收到 401，前端必须为「退出失败」写补偿分支。放开后语义变为「确保当前无会话」，永远成功。注意它**仍然校验 CSRF**，否则第三方站点可静默把用户登出（属于低危但真实的 CSRF 面）。
 
+> **与 `AUTH-001` §2.3 时序图的口径差异**：该时序图把服务端一步标注为「IsAuthenticated 校验 + CSRF 校验」，是其**已登录主路径**的简写，与同节下方的幂等约定（未登录调用返回 204 而非 401）表述不一致。两文档统一以**幂等口径**为准：视图权限为 `AllowAny`、必须过 CSRF，认证结果只决定是否执行 session 删除动作，未登录亦返回 `204`（本文 §2.3 白名单、IT-04 即按此口径；`AUTH-001` 时序图该步注记待回改为「CSRF 校验 + 幂等 204」）。
+
 **`/api/v1/instances/` 刻意不在白名单内**：`api-conventions.md` §2.5 把实例管理端点整组标注为「admin，需系统管理员」，因此它不能作为前端启动时的匿名 bootstrap 接口。P0 阶段注册功能恒定开放，前端无需在登录前读取实例配置；P3 引入「关闭注册 / 强制 SSO」等实例开关时，须**新增一个只返回开关位的公开端点**（如 `GET /api/v1/instances/public-config/`）并同步登记到 `api-conventions.md` §2.5，而不是把整个管理端点放开。
 
-**`/api/v1/public/*` 分组不在本文档白名单内**：该分组（`api-conventions.md` §2）服务于 `apps/space` 对外公开视图，有自己的匿名访问规则与独立限流，P2 `BOARD-005` 交付时单独定义，P0 不注册任何路由。
+**`/api/v1/public/*` 分组不在本文档白名单内**：该分组（`api-conventions.md` §2）服务于 `apps/space` 对外公开视图，有自己的匿名访问规则与独立限流，P3 `BOARD-005`（Sprint 8，见 README §4 索引）交付时单独定义，P0 不注册任何路由。
 
 ### 2.4 登录回跳（next）规则
 
@@ -189,7 +193,7 @@ stateDiagram-v2
     Unknown --> Probing: 进入受保护路由，发起 users/me
     Probing --> Authed: 200
     Probing --> Anon: 401
-    Probing --> ProbeFailed: 网络错误 / 5xx
+    Probing --> ProbeFailed: 网络错误 / 5xx / 8 秒超时
     ProbeFailed --> Probing: 用户点击「重试」
     Anon --> Redirecting: 计算 next 并跳转 /login
     Redirecting --> Authed: 登录成功（消费 next）
@@ -235,7 +239,7 @@ stateDiagram-v2
 | 已认证但角色不足 | 403 | `PERM_DENIED` | **不弹全局 toast**，由调用方渲染局部提示 | 「当前角色无权执行此操作」 |
 | 资源在该用户视角不存在 | 404 | `RESOURCE_NOT_FOUND` | 渲染空态 / 404 页 | 「内容不存在或你没有访问权限」（`AUTH-003`） |
 | 限流 | 429 | `RATE_LIMIT_EXCEEDED` | 读 `Retry-After` 退避 | 「请求过于频繁，请稍后再试」 |
-| 探测接口网络失败 | — | — | 渲染可重试错误态 | 「加载失败，点击重试」 |
+| 探测接口网络失败 / 8 秒超时无响应 | — | — | 渲染可重试错误态 | 「加载失败，点击重试」 |
 
 拦截器的分派规则严格照抄 `api-conventions.md` §8.9，不在业务代码里重复实现（BR-12、BR-13）。
 
@@ -270,7 +274,7 @@ stateDiagram-v2
 | 布局 | 视口居中：Logo（32px，`opacity-90`）+ 下方 24px 处 `lucide-react` 的 `LoaderCircle`（`animate-spin`，`size=20`，`text-custom-primary-100`） |
 | 背景 | `bg-custom-background-100`，与工作台同底色，避免白 → 深的闪烁 |
 | 文案 | **默认无文案**；超过 800ms 才淡入「正在加载…」（`transition-opacity duration-200`） |
-| 超时 | 超过 8 秒切换为错误态（§3.4） |
+| 超时 | 超过 8 秒切换为错误态（§3.4）；实现为 layout 层 8 秒计时器，不中断在途请求（机制见 §4.2），由 E2E-15 覆盖 |
 | 实现 | React Router v7 的 `HydrateFallback` + layout 级 `clientLoader`，保证子路由代码未执行前即可呈现 |
 
 **为什么 800ms 后才显示文案**：局域网内探测通常 50~100ms 返回，立刻显示文字会造成一次「闪一下就消失」的视觉噪声，比没有文案更糟。骨架屏在此处也不适用——此时还不知道要渲染哪个页面，画一个假布局再被替换会产生二次跳动。
@@ -299,8 +303,8 @@ stateDiagram-v2
 | --- | --- |
 | 提示形式 | Headless UI `Transition` + 自研 `Toast`，`role="status"`、`aria-live="polite"`；`info` 级（灰底信息色），不用 `error` 红色——会话过期是正常生命周期事件，不是用户犯错 |
 | 去重 | 同一次过期只弹一次（BR-13） |
-| 未保存内容 | P0 不做草稿保留；对已知的长表单（`TASK-001` 新建任务）在跳转前把表单值写入 `sessionStorage`，回跳后由页面自行恢复（P1 `TASK-002` 统一为草稿机制） |
-| 账号被禁用 | 不用 toast，登录页顶部渲染常驻 `Alert`（`error` 级，不可关闭）：「账号已被禁用，请联系管理员」，并禁用登录按钮直至用户修改邮箱输入 |
+| 未保存内容 | P0 不做草稿保留；对已知的长表单（`TASK-001` 新建任务）在跳转前把表单值写入 `sessionStorage`，回跳后由页面自行恢复（P1 统一草稿机制，归属文档待登记——README §4 索引暂无对应编号文档，登记后回改此处引用） |
+| 账号被禁用 | 分两个场景：**登录提交时被禁用**（`sign-in` 响应 401 `AUTH_ACCOUNT_DISABLED`）——不用 toast，登录页顶部渲染常驻 `Alert`（`error` 级，不可关闭）：「账号已被禁用，请联系管理员」，并禁用登录按钮直至用户修改邮箱输入；**会话中被禁用**（停留工作台时任意接口返回 401 `AUTH_ACCOUNT_DISABLED`）——由 §4.4 拦截器 `toast.error` 提示并跳登录页，落地后登录页同样渲染常驻 `Alert` 阻断再次提交（与 §4.4 拦截器实现对齐） |
 
 ### 3.4 探测失败与无权限的差异化空态
 
@@ -337,6 +341,9 @@ export default [
   layout("layouts/public.layout.tsx", [
     route("login", "routes/login.tsx"),
     route("register", "routes/register.tsx"),
+    // P0 占位路由（§2.3）：仅 redirect 到 /login，页面本体 P1 AUTH-004 交付
+    route("forgot-password", "routes/auth-stub.tsx"),
+    route("reset-password", "routes/auth-stub.tsx"),
   ]),
 
   // ── 受保护子树：新增页面放这里即自动受保护（BR-01）─────────
@@ -415,6 +422,8 @@ export default observer(function AuthLayout() {
   return <Outlet />;
 });
 ```
+
+**探测超时（8 秒）的实现位点（§3.1「超时」）**：超时不在 axios 层实现——实例级 `timeout` 会把 8 秒语义扩散到全部 API 请求；也不用 `Promise.race` 竞速——在途的 `fetchCurrentUser` 会悬挂为未决 Promise，与「重试」入口相互干扰。机制为 **layout 层计时器**：`auth.layout.tsx` 在探测发起时启动 8 秒 `setTimeout`（`HydrateFallback` 占位渲染期间持有，重试或导航离开时清除），到时若仍 `isBootstrapped === false` 则本层渲染 `ProbeFailedState`。计时器**不中断在途请求**：若 `users/me` 随后返回 200 / 401，store 置 `isBootstrapped = true`，守卫按正常流程继续、错误态自动让位；若最终网络错误，则与 `ErrorBoundary` 路径汇合、维持错误态。「重试」按钮清计时器并重跑 `fetchCurrentUser`。该路径由 E2E-15 覆盖。
 
 **`clientLoader` + 组件双层守卫的必要性**：`clientLoader` 只在**导航进入**该 layout 时执行；在受保护子树内部页面间跳转（`/:slug/projects` → `/:slug/board`）时，layout 的 loader 不会重跑。因此「停留期间会话过期」这条路径不经过 loader，由 §4.4 的拦截器负责；而组件内的两个判断是最后一道兜底，保证任何时刻 `isAuthenticated === false` 都不会有业务内容被渲染出来。两层加起来才无空窗（§2.1 设计点 3）。
 
@@ -510,7 +519,22 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "plane.app.permissions.IsAuthenticatedAndActive",
     ],
-    "DEFAULT_THROTTLE_CLASSES": ["plane.utils.throttles.UserRateThrottle"],
+    # 限流双闸（§5.2 IT-16 及其注）：匿名请求由 AnonRateThrottle 按 IP 计数，
+    # 生效配额 100 次/分钟/IP（本文补充口径，api-conventions.md §7.2 待回补登记）。
+    # ★ DRF initial() 默认顺序是 perform_authentication → check_permissions →
+    # check_throttles：匿名请求被 IsAuthenticatedAndActive 以 401 拒绝时
+    # check_throttles 不会执行，「匿名 401 计入 AnonRateThrottle 配额」在默认顺序下
+    # 不成立，IT-16 无法通过。因此本项目的 BaseAPIView（api-conventions.md §10.1）
+    # 覆写 initial() 调序：check_throttles 提前到 perform_authentication /
+    # check_permissions 之前执行——限流判定先于权限判定，匿名打到内部端点被 401
+    # 拒绝的响应同样计入该 IP 配额，IT-16「100 次触发 429」由此成立（超配额的
+    # 请求先得到 429，匿名枚举在权限判定前即被截断）；已认证请求仅按
+    # UserRateThrottle 的用户配额（§7.2：60 次/分钟）计数。两个 throttle 作用域
+    # 互斥不叠加，匿名 401 不消耗已认证用户配额。
+    "DEFAULT_THROTTLE_CLASSES": [
+        "plane.utils.throttles.UserRateThrottle",
+        "plane.utils.throttles.AnonRateThrottle",
+    ],
     "EXCEPTION_HANDLER": "plane.utils.exception_handler.custom_exception_handler",
     "DEFAULT_PAGINATION_CLASS": "plane.utils.pagination.CursorPagination",
     "UNAUTHENTICATED_USER": "django.contrib.auth.models.AnonymousUser",
@@ -563,7 +587,16 @@ def custom_exception_handler(exc, context):
     ...
 ```
 
-**Permission 继承链（P0 只用第 0 层，其余在 P0 建好基类）**，与 `api-conventions.md` §10.3、`rbac-permission-model.md` §5 一致：
+```python
+# apps/api/plane/urls.py（root URLconf）
+# 未命任何 URLConf 条目的请求不经过 DRF（无视图、无 EXCEPTION_HANDLER），
+# Django 默认返回 HTML 404 页。必须显式配置 handler404 把它收敛为统一
+# JSON envelope（code = RESOURCE_NOT_FOUND），否则「API 永不返回 HTML」
+# 的断言（EC-11 / IT-15 / ST-09 / AC-22）在未注册路径上不成立。
+handler404 = "plane.utils.exception_handler.handler404"
+```
+
+**Permission 继承链（P0 只用第 0 层，其余在 P0 建好基类）**，类名与层级以 `api-conventions.md` §10.3 为准（`rbac-permission-model.md` §5.1/§5.2 另登记了 `WorkspacePermission` / `ProjectPermission` 一套类名，与 §10.3 并存不一致——本文不另起名，rbac 侧待回改统一到 §10.3 的三级类名）：
 
 | 层 | 类 | 判定 | 失败 | 交付 |
 | :-: | --- | --- | :-: | :-: |
@@ -584,9 +617,16 @@ class SignInEndpoint(BaseAPIView):
 
 
 # 函数视图写法（仅用于 health / schema 这类无模型的简单端点）
+# health 即 INFRA-002 §2.3 / §4.10 登记的 GET /api/v1/health/（真实实现内部检查
+# DB 与 Redis 连接，此处示意省略）
 @api_view(["GET"])
 @permission_classes([AllowAny])
 @authentication_classes([])                 # 明确不做认证，避免无谓的 session 查询
+@throttle_classes([])                       # ★ 免限流（函数视图写法，等价于类视图的
+                                            # throttle_classes: list = []），对齐 INFRA-002
+                                            # §4.10「不限流」：DEFAULT_THROTTLE_CLASSES
+                                            # 全局生效，不显式置空则匿名探测会被
+                                            # AnonRateThrottle 计入 IP 配额
 def health_check(request):
     return Response({"status": "success", "data": {"ok": True}})
 ```
@@ -597,7 +637,8 @@ def health_check(request):
 # apps/api/plane/app/permissions/public.py
 PUBLIC_ENDPOINT_ALLOWLIST: frozenset[str] = frozenset({
     "auth-sign-up", "auth-sign-in", "auth-sign-out", "auth-csrf-token",
-    "health-check", "api-schema",
+    "health-check",   # GET /api/v1/health/（与 INFRA-002 §2.3 / §4.10 / RT-05、INFRA-004 维护模式白名单同一路径）
+    "api-schema",     # GET /api/v1/schema/（api-conventions.md §10.6 登记路径，仅非生产）
 })
 ```
 
@@ -609,9 +650,9 @@ PUBLIC_ENDPOINT_ALLOWLIST: frozenset[str] = frozenset({
 | --- | --- | --- |
 | G1 后端端点鉴权全覆盖 | 测试遍历 `drf_spectacular` 生成的全部 operation，取其视图的 `permission_classes`：若含 `AllowAny` 而 URL name 不在 `PUBLIC_ENDPOINT_ALLOWLIST` 中 → 失败 | 新增接口误设 `AllowAny`、白名单与代码漂移 |
 | G2 匿名冒烟 | 参数化测试：对全部非白名单端点发起匿名请求，断言状态码为 `401` 且 `code ∈ {AUTH_REQUIRED, AUTH_SESSION_EXPIRED}` | 视图私自覆盖 `permission_classes = []`；返回 403 而非 401 |
-| G3 前端路由结构 | 脚本解析 `routes.ts` AST，断言顶层只存在 `public.layout` / `auth.layout` / `*` 三个节点 | 新页面挂到顶层绕过守卫 |
+| G3 前端路由结构 | 脚本解析 `routes.ts` AST，断言顶层只存在 `public.layout` / `auth.layout` / `*` 三个节点；公开子树内仅允许 `login` / `register` 与 `AUTH-004` 的两个占位路由（§2.3） | 新页面挂到顶层绕过守卫；公开子树私增页面 |
 | G4 拦截器唯一性 | ESLint 自定义规则：除 `api.service.ts` 外禁止出现 `status === 401` 字面量 | 各页面自行处理 401，行为不一致 |
-| G5 开放重定向 | `resolveNextPath` 单测 + 15 条恶意用例参数化（UT-05~UT-09） | `next` 校验被简化或删除 |
+| G5 开放重定向 | `resolveNextPath` 单测：恶意用例参数化取 ST-01 20 条 payload 的代表性子集（UT-06 / UT-07 / UT-08 共 9 条），20 条全集以 ST-01 为准 | `next` 校验被简化或删除 |
 
 G1/G2 的价值在于**覆盖是自动枚举的**：即使某位开发者新增了一个从未被 review 到的端点，只要它注册进了 URLConf，就会被这两条关卡扫到。
 
@@ -619,23 +660,25 @@ G1/G2 的价值在于**覆盖是自动枚举的**：即使某位开发者新增�
 
 ```python
 MIDDLEWARE = [
+    "plane.middleware.RequestIDMiddleware",                     # M1 最外层（即 §10.4 六件套的 ①，自外向内首个）
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
-    "django.contrib.sessions.middleware.SessionMiddleware",      # ① 解析 session cookie
-    "corsheaders.middleware.CorsMiddleware",                     # ② 必须在 Common 之前（EC-12）
+    "django.contrib.sessions.middleware.SessionMiddleware",      # M2 解析 session cookie
+    "corsheaders.middleware.CorsMiddleware",                     # M3 必须在 Common 之前（EC-12）
     "django.middleware.common.CommonMiddleware",
-    "django.middleware.csrf.CsrfViewMiddleware",                 # ③ 依赖 ①
-    "django.contrib.auth.middleware.AuthenticationMiddleware",   # ④ 注入 request.user
-    "plane.middleware.RequestIdMiddleware",                      # ⑤ 生成 X-Request-Id
-    "plane.middleware.SensitiveLogFilterMiddleware",             # ⑥ 日志脱敏
+    "django.middleware.csrf.CsrfViewMiddleware",                 # M4 依赖 M2
+    "django.contrib.auth.middleware.AuthenticationMiddleware",   # M5 注入 request.user
+    "plane.middleware.SensitiveLogFilterMiddleware",             # M6 日志脱敏（本文档 P0 自有）
 ]
 ```
 
 | 约束 | 原因 |
 | --- | --- |
+| `RequestIDMiddleware` 必须是最外层（顺序 1，自外向内） | 对齐 `api-conventions.md` §10.4 配套中间件表；置于最外层使它包裹整条链路与异常处理，401 响应体也必须带 `request_id`（BR-12） |
 | `SessionMiddleware` 必须在 `AuthenticationMiddleware` 之前 | 后者从 `request.session` 读 `_auth_user_id`，顺序颠倒则 `request.user` 恒为匿名 |
 | `CorsMiddleware` 必须尽量靠前 | 否则 OPTIONS 预检会被 CSRF / 鉴权拦下，浏览器直接报 CORS 错误而非 401（EC-12） |
-| `RequestIdMiddleware` 在鉴权之后但覆盖异常响应 | 401 响应体也必须带 `request_id`（BR-12），因此它需包裹住异常处理器的输出 |
+
+> **与 `api-conventions.md` §10.4 六件套的调和**：上文代码块的 M1~M6 是本文 MIDDLEWARE 链的本地标记；§10.4 登记的配套自定义中间件共六个，沿用 §10.4 原编号 ①~⑥（① `RequestIDMiddleware` → ② `StructuredLoggingMiddleware` → ③ `RateLimitHeaderMiddleware` → ④ `AuditContextMiddleware` → ⑤ `ResponseEnvelopeMiddleware` → ⑥ `MaintenanceModeMiddleware`，顺序敏感、自外向内）。P0 阶段本文档只落其中的 ① `RequestIDMiddleware`（即本地 M1，最外层，保证 `request_id` 覆盖包括 401 在内的全部响应）；其余五个由 `INFRA-004`（Sprint 1，P1）统一增补，届时连同 ① 收编为 `plane.base.middleware` 的六件套且 ① 仍居最外层。`SensitiveLogFilterMiddleware`（本地 M6）是本文档 P0 自有的日志脱敏件，不在 §10.4 清单内，收编时与 ② `StructuredLoggingMiddleware` 合并评估。
 
 ### 4.9 前端状态与数据获取的分工
 
@@ -652,7 +695,7 @@ MIDDLEWARE = [
 
 ## 5. 测试用例
 
-覆盖率门禁：`plane/app/permissions/` 与 `apps/web/app/core/auth/` 行覆盖 ≥ 90%。
+覆盖率门禁：`plane/app/permissions/`、`apps/web/app/core/auth/`、`apps/web/app/layouts/`（守卫 `clientLoader` 所在）与 `apps/web/app/services/api.service.ts`（401 拦截器所在）行覆盖 ≥ 90%。
 
 ### 5.1 单元测试
 
@@ -678,7 +721,7 @@ MIDDLEWARE = [
 | --- | --- | --- |
 | IT-01 | 匿名 `GET /api/v1/users/me/` | 401 + `AUTH_REQUIRED`；响应体为标准错误 envelope 且含 `request_id` |
 | IT-02 | 匿名 `GET /api/v1/workspaces/` | 401 + `AUTH_REQUIRED`（不是 403，BR-09） |
-| IT-03 | 匿名 `POST /api/v1/auth/sign-in/`（白名单） | 非 401（进入业务校验，返回 200 / 400 / 401 凭据错误） |
+| IT-03 | 匿名 `POST /api/v1/auth/sign-in/`（白名单） | 未被 `AUTH_REQUIRED` / `AUTH_SESSION_EXPIRED` 拦截，请求进入业务校验；凭据错误为 401 `AUTH_INVALID_CREDENTIALS` |
 | IT-04 | 匿名 `POST /api/v1/auth/sign-out/` | 204（幂等，§2.3） |
 | IT-05 | 匿名 `GET /api/v1/auth/csrf-token/` | 200 且 `Set-Cookie` 含 `csrftoken` |
 | IT-06 | 登录后 `GET /api/v1/users/me/` | 200，`data.id` 与登录用户一致 |
@@ -691,14 +734,19 @@ MIDDLEWARE = [
 | IT-13 | **G1**：遍历全部 operation，校验 `AllowAny` ⊆ 白名单 | 无越界项 |
 | IT-14 | **G2**：对全部非白名单端点参数化发起匿名请求 | 全部 401 且 `code ∈ {AUTH_REQUIRED, AUTH_SESSION_EXPIRED}` |
 | IT-15 | 匿名请求 `/api/v1/anything/`（不存在的路由） | 404 JSON envelope，**不是** HTML，也不是 302（EC-11） |
-| IT-16 | 匿名请求受保护端点 100 次 | 触发限流 429，且 401 响应本身不消耗已认证用户配额 |
+| IT-16 | 匿名请求受保护端点 100 次 | 配额内为 401、超配额触发限流 429（限流判定先于权限判定，实现见 §4.5 注；匿名内部请求配额 100 次/分钟/IP，见下注），且全部响应不消耗已认证用户配额 |
 | IT-17 | 401 响应头 | 含 `X-Request-Id`；不含 `WWW-Authenticate: Basic`（避免浏览器弹原生登录框） |
+| IT-18 | 匿名 `POST /api/v1/auth/sign-up/`（白名单） | 未被 `AUTH_REQUIRED` / `AUTH_SESSION_EXPIRED` 拦截，请求进入业务校验：合法注册返回 201，重复邮箱返回 409（`AUTH-001` ST-01 同口径），均非 401 |
+| IT-19 | 匿名 `GET /api/v1/health/` | 200 且为 success envelope（免认证且免限流，§4.6；不被 `DEFAULT_PERMISSION_CLASSES` / `DEFAULT_THROTTLE_CLASSES` 拦截） |
+| IT-20 | 非生产 settings 下匿名 `GET /api/v1/schema/`（`api-schema` 白名单项，§2.3） | 200，未被认证闸门拦截（非 401）；另以静态断言校验生产 URLconf 不注册该路由，守住「仅非生产」口径（schema / 文档端点的其余行为归 `INFRA-004` 测试范围） |
+
+> **匿名内部请求限流口径（IT-16）**：`api-conventions.md` §7.2 的 L2 配额表只定义了「已认证用户（内部 API）60 请求/分钟」与「匿名（public API）30 请求/分钟」，未覆盖**匿名打到内部端点**（含被 401 拒绝）的请求。本迭代按 §7.2 的 L2 应用限流分层补充采用：匿名内部请求按 IP 计数，配额 **100 请求/分钟/IP**（取值介于已认证内部 60/min 与 L1 边缘 300/min 之间），已由 §4.5 `DEFAULT_THROTTLE_CLASSES` 中的 `AnonRateThrottle` 实现，并依赖 §4.5 注所述的 `BaseAPIView.initial()` 调序（`check_throttles` 先于 `check_permissions`）——DRF 默认顺序下被 401 拒绝的匿名请求不会进到限流判定，调序后该配额才对「含被 401 拒绝」的匿名内部请求整体生效；该维度为本文声明值，§7.2 配额表待回补登记（架构文档待回改）。
 
 ### 5.3 E2E 测试（Playwright）
 
 | 编号 | 用例 | 断言 |
 | --- | --- | --- |
-| E2E-01 | 未登录直接访问 `/:slug/projects` | 落地 `/login?next=%2F:slug%2Fprojects`；期间无工作台内容出现（对首帧截图断言） |
+| E2E-01 | 未登录直接访问 `/:slug/projects` | 落地 `/login?next=%2F%3Aslug%2Fprojects`（`encodeURIComponent` 将 `:` 编码为 `%3A`）；期间无工作台内容出现（对首帧截图断言）。`AUTH-001` E2E-05 为同款断言，两文档断言一致（均为 `%2F%3Aslug%2Fprojects` 写法） |
 | E2E-02 | 承接 E2E-01 完成登录 | 回到 `/:slug/projects`，项目列表可见 |
 | E2E-03 | 未登录访问带查询串的深层 URL `/:slug/projects?tab=all` | `next` 完整保留查询串，回跳后 `tab=all` 生效 |
 | E2E-04 | 手工访问 `/login?next=https://example.com` 并登录 | 落地本站工作台，**未离开本域**（BR-06） |
@@ -712,6 +760,7 @@ MIDDLEWARE = [
 | E2E-12 | 跳转登录页后焦点位置 | 焦点在邮箱输入框（§3.5） |
 | E2E-13 | 禁用 Cookie 后登录 | 出现「请允许浏览器存储 Cookie」提示，不陷入无限跳转（EC-07） |
 | E2E-14 | 慢网（`users/me` 延迟 1.2s） | 800ms 后出现「正在加载…」文案；无布局跳动（§3.1） |
+| E2E-15 | 拦截 `users/me` 延迟 9s 不返回，访问工作台 | 8 秒计时器到时即渲染「加载失败·重试」错误态（§3.1 / §4.2），未跳登录页、URL 保持原路径；点「重试」并放行请求后正常进入工作台。与 E2E-09（503 立即失败）互补，覆盖超时无响应分支 |
 
 ### 5.4 安全与边界测试
 
@@ -753,8 +802,8 @@ MIDDLEWARE = [
 | 强制下线 / 活跃会话查看 | 管理员可查看并终止会话 | P1/P2（`api-conventions.md` §9.2 已预留 `GET /users/me/sessions/`）；P0 已具备能力基础——session 存于服务端 Valkey，删除即生效 |
 | 单设备登录 | 合规场景可限制并发会话 | P3 实例配置项 |
 | IP 白名单 | 限制访问来源网段 | P3；错误码 `PERM_IP_NOT_ALLOWED`（403）已在 `api-conventions.md` §8.3 登记，实现时以中间件形式插在 L0 之前 |
-| MFA / SSO 强制 | 可要求二次验证或强制走 IdP | P3 `AUTH-010`；`AUTH-001` §4.5 策略模式已预留 |
-| 审计未授权访问 | 记录访问拒绝事件 | P3 `AUTH-009`；P0 仅结构化日志记录 401/403/404 的 `request_id` + 路径，不落库 |
+| MFA / SSO 强制 | 可要求二次验证或强制走 IdP | P3 `AUTH-009`（README §4.10：SSO 单点登录）；`AUTH-001` §4.5 策略模式已预留 |
+| 审计未授权访问 | 记录访问拒绝事件 | P3 `AUTH-010`（README §4.10：全站操作审计日志）；P0 仅结构化日志记录 401/403/404 的 `request_id` + 路径，不落库 |
 
 **结论**：Ones 的能力集中在「会话策略的**可配置性**」与「访问来源的**网络层限制**」，二者都建立在「已有一道可靠闸门」之上。P0 的任务是把这道闸门做成不可绕过且可扩展的（`IsAuthenticatedAndActive` 是唯一入口，P3 的 IP 白名单只需在其前面插一层中间件，不改任何视图），而不是提前实现策略配置界面。
 
@@ -770,7 +819,7 @@ MIDDLEWARE = [
 | D6 | 网络错误**绝不**判为未登录 | 避免把用户推入「登录页也连不上」的死胡同 | 需要一个额外的探测失败空态与重试入口（§3.4） |
 | D7 | `next` 校验放在**消费侧**并固化为纯函数 + CI 关卡 | 攻击输入只来自 URL，只有消费侧能拦；纯函数便于用 20 条 payload 覆盖 | 需维护一份恶意用例集（ST-01） |
 | D8 | 公开端点白名单**双写**（视图声明 + 集中常量），由 CI 双向校验 | 使「放开一个端点」成为必然出现在 diff 中、需评审的动作；同时得到一份机器生成的公开面清单 | 新增公开端点需改两个文件；靠 G1 保证二者不漂移 |
-| D9 | P0 不实现按钮级 / 角色级权限，但**建好四层 Permission 基类** | POC 阶段无角色差异可验证；提前实现会写出无法验证的代码 | `AUTH-005` 需补齐 L1~L3 子类；基类若设计失当会造成 P1 返工，故已与 `rbac-permission-model.md` §5 逐层对齐 |
+| D9 | P0 不实现按钮级 / 角色级权限，但**建好四层 Permission 基类** | POC 阶段无角色差异可验证；提前实现会写出无法验证的代码 | `AUTH-005` 需补齐 L1~L3 子类；基类若设计失当会造成 P1 返工，故已与 `api-conventions.md` §10.3 的类层级逐层对齐（`rbac-permission-model.md` §5 的判定语义一致，但其 §5.1/§5.2 登记的类名为 `WorkspacePermission` / `ProjectPermission`，与 §10.3 并存两套——本文以 §10.3 为准，rbac 待回改统一） |
 
 ### 6.4 设计模式应用
 
@@ -798,21 +847,21 @@ MIDDLEWARE = [
 | AC-04 | 已登录用户刷新受保护页不闪跳登录页 | E2E-08 | 导航监听中不出现 `/login`；仅 Loader → 内容两帧 |
 | AC-05 | 已登录访问 `/login` 被反向重定向 | E2E-05 | 落地工作台，`/login` 不出现在历史栈中 |
 | AC-06 | 会话中途失效有提示且可续 | E2E-07 | 恰好 1 个「登录已过期」toast + 1 次跳转，重新登录后回到原页面 |
-| AC-07 | 探测失败可自救 | E2E-09 | 渲染「加载失败·重试」，URL 未变；恢复网络后点重试可进入 |
+| AC-07 | 探测失败可自救 | E2E-09 / E2E-15 | 渲染「加载失败·重试」，URL 未变；恢复网络（或放行请求）后点重试可进入；503 与 8 秒超时两条失败分支均覆盖 |
 | AC-08 | 未认证 API 请求返回 401 | IT-01 / IT-02 / IT-14 | 全部非白名单端点匿名请求均为 401，错误码为 `AUTH_REQUIRED` / `AUTH_SESSION_EXPIRED` |
 | AC-09 | Session 过期的 API 请求返回 401 并清理 Cookie | IT-07 | `AUTH_SESSION_EXPIRED` + 响应含清理 `rp_sessionid` 的 `Set-Cookie` |
 | AC-10 | 账号被禁用后旧会话立即失效 | IT-08 | 401 `AUTH_ACCOUNT_DISABLED`，无需等待过期 |
-| AC-11 | 公开端点可匿名访问 | IT-03 ~ IT-05 | 四个认证端点与健康检查均非 401；白名单外的端点（含 `/api/v1/instances/`）匿名访问一律 401 |
+| AC-11 | 公开端点可匿名访问 | IT-03 ~ IT-05、IT-18 ~ IT-20 | 四个认证端点（`sign-in` / `sign-out` / `csrf-token` / `sign-up`，IT-18）与健康检查（IT-19）均未被认证闸门拦截（IT-03 口径：非 `AUTH_REQUIRED` / `AUTH_SESSION_EXPIRED`，凭据错误为 401 `AUTH_INVALID_CREDENTIALS`）；OpenAPI `schema` 在非生产 settings 下匿名 200（IT-20）；白名单外的端点（含 `/api/v1/instances/`）匿名访问一律 401 |
 
 ### 7.2 契约与规范验收
 
 | 编号 | 验收项 | 通过标准 |
 | --- | --- | --- |
 | AC-12 | 未认证一律 401、无权限一律 403、不可见一律 404，三者不混用 | IT-02 + ST-08 通过；全站无「未认证返回 403」的响应（G2 覆盖全部端点） |
-| AC-13 | 错误码全部出自 `api-conventions.md` §8.2 / §8.3 | 无自造码；前后端错误码枚举一致性脚本通过 |
+| AC-13 | 错误码全部出自 `api-conventions.md` §8.2 / §8.3 / §8.5 / §8.7 | 无自造码（§2.7 除 `AUTH_*` / `PERM_*` 外另用 §8.5 `RESOURCE_NOT_FOUND` 与 §8.7 `RATE_LIMIT_EXCEEDED`）；前后端错误码枚举一致性脚本通过 |
 | AC-14 | 401 响应体为标准错误 envelope 且含 `request_id` | IT-01 抓取核对；响应头含 `X-Request-Id`，不含 `WWW-Authenticate: Basic`（IT-17） |
 | AC-15 | 公开端点清单与代码一致 | G1（IT-13）通过；清单可由 `pnpm audit:public-endpoints` 一键导出并归档到评审记录 |
-| AC-16 | API 路径与 `api-conventions.md` §2.5 一致 | 白名单中仅 `sign-up` / `sign-in` / `sign-out` / `csrf-token`；无 `login` / `logout` / `auth/me` 别名 |
+| AC-16 | API 路径与 `api-conventions.md` §2.5 一致 | 认证类端点仅 `sign-up` / `sign-in` / `sign-out` / `csrf-token` 四个，无 `login` / `logout` / `auth/me` 别名路由；`health-check` / `api-schema` 为非认证类公开端点（§2.3 / §4.6），不属本项口径 |
 | AC-17 | `GET /api/v1/users/me/` 未登录时返回 401（而非 `{user:null}`） | IT-01 |
 
 ### 7.3 安全验收
@@ -830,7 +879,7 @@ MIDDLEWARE = [
 
 | 编号 | 验收项 | 通过标准 |
 | --- | --- | --- |
-| AC-24 | 测试覆盖率 | `plane/app/permissions/` 与 `apps/web/app/core/auth/` 行覆盖 ≥ 90%；第 5 章全部用例通过 |
+| AC-24 | 测试覆盖率 | `plane/app/permissions/`、`apps/web/app/core/auth/`、`apps/web/app/layouts/` 与 `apps/web/app/services/api.service.ts` 行覆盖 ≥ 90%；第 5 章全部用例通过 |
 | AC-25 | 静态检查 | `ruff` + `mypy`（`disallow_untyped_defs`）无告警；`oxlint` 无告警（含 G4 自定义规则）；前端零隐式 `any` |
 | AC-26 | 性能 | 鉴权链额外开销 P95 ≤ 8ms（Session 命中 Valkey）；受保护路由首屏探测 P95 ≤ 150ms；整个受保护子树只发**一次** `users/me` |
 | AC-27 | 无障碍 | E2E-11 通过（axe-core 无 critical / serious）；E2E-12 焦点落位正确 |
@@ -844,7 +893,7 @@ MIDDLEWARE = [
 | --- | --- | --- |
 | 三重权限模型分层与各层失败表现（401 / 403 / 404） | `rbac-permission-model.md` §1.1、`api-conventions.md` §4.3 | §1.4 边界表、§2.7、AC-12 |
 | 前端权限判定不可信，服务端必须独立校验 | `rbac-permission-model.md` §1.2 | §4.5（后端不依赖任何前端传入的登录态）、G2 |
-| Permission 四层继承链（L0~L4） | `api-conventions.md` §10.3、`rbac-permission-model.md` §5 | §4.5 分层表（P0 只落 L0） |
+| Permission 四层继承链（L0~L4，类名以 §10.3 为准；`rbac` §5.1/§5.2 的 `WorkspacePermission` / `ProjectPermission` 旧名待回改统一） | `api-conventions.md` §10.3、`rbac-permission-model.md` §5 | §4.5 分层表（P0 只落 L0） |
 | 认证端点清单与 `users/me` 路径 | `api-conventions.md` §2.5 | §2.3 白名单、AC-16 |
 | `AUTH_*` 错误码全表 | `api-conventions.md` §8.2 | §2.7、AC-13 |
 | `PERM_*` 与 `RESOURCE_NOT_FOUND` 的分工 | `api-conventions.md` §8.3 / §8.5 | §2.7、§3.4、ST-08 |
@@ -852,7 +901,7 @@ MIDDLEWARE = [
 | Session 认证细节（Cookie 名、CSRF 双提交、cache 后端） | `api-conventions.md` §9.2、`AUTH-001` §4.3.3 | §2.2、§4.5、IT-11 |
 | API Key 认证（`X-API-Key`） | `api-conventions.md` §9.3 | §2.2 流程图、IT-09 / IT-10 |
 | 统一异常处理器与错误 envelope | `rbac-permission-model.md` §5.5、`api-conventions.md` §4.2 | §4.5 处理器片段、AC-14 |
-| 限流分层（L1 Nginx / L2 DRF / 认证端点 10/min） | `api-conventions.md` §7.2 | §2.2 流程图、§4.6、IT-16 |
+| 限流分层（L1 Nginx / L2 DRF / 认证端点 10/min / 匿名内部 100/min 为本文补充口径；另经 `BaseAPIView.initial()` 调序实现「限流判定先于权限判定」，使被 401 拒绝的匿名请求也计入 IP 配额，否则 DRF 默认顺序下 IT-16 不成立） | `api-conventions.md` §7.2 | §2.2 流程图、§4.5、§4.6、IT-16 及其注 |
 | React Router v7 Framework Mode（SPA）+ MobX + SWR 分工 | `tech-stack.md` §2 / §2.1 | §4.1、§4.9 |
 | `AuthStore.isBootstrapped` 与 `fetchCurrentUser` 语义 | `AUTH-001` §4.4.1 | §2.1、§4.2、BR-03 |
 
@@ -860,8 +909,8 @@ MIDDLEWARE = [
 
 | 层 | 交付物 |
 | --- | --- |
-| 后端 | `plane/app/permissions/base.py`（`IsAuthenticatedAndActive` + L1~L3 基类骨架）、`permissions/public.py`（`PUBLIC_ENDPOINT_ALLOWLIST`）、`plane/utils/exceptions.py`（`NotAuthenticatedWithCode`）、`plane/utils/exception_handler.py` 的 401 分支、`settings/common.py` 的 `REST_FRAMEWORK` 与 `MIDDLEWARE` |
-| 前端 | `apps/web/app/routes.ts`（两个子树）、`layouts/auth.layout.tsx`、`layouts/public.layout.tsx`、`core/auth/next-path.ts`、`components/common/full-screen-loader.tsx`、`probe-failed-state.tsx`、`not-found-state.tsx`、`services/api.service.ts` 的 401/CSRF 拦截器 |
-| 测试 | `tests/permissions/`（UT-01~13、IT-01~17、ST-01~10）、`e2e/route-guard.spec.ts`（E2E-01~14） |
+| 后端 | `plane/app/permissions/base.py`（`IsAuthenticatedAndActive` + L1~L3 基类骨架）、`permissions/public.py`（`PUBLIC_ENDPOINT_ALLOWLIST`）、`plane/utils/exceptions.py`（`NotAuthenticatedWithCode`）、`plane/utils/exception_handler.py` 的 401 分支、root URLconf `plane/urls.py` 的 `handler404`（未注册路由返回 404 JSON envelope，IT-15）、`settings/common.py` 的 `REST_FRAMEWORK` 与 `MIDDLEWARE` |
+| 前端 | `apps/web/app/routes.ts`（两个子树）、`layouts/auth.layout.tsx`、`layouts/public.layout.tsx`、`routes/auth-stub.tsx`（`AUTH-004` 占位路由重定向，§2.3）、`core/auth/next-path.ts`、`components/common/full-screen-loader.tsx`、`probe-failed-state.tsx`、`not-found-state.tsx`、`services/api.service.ts` 的 401/CSRF 拦截器 |
+| 测试 | `tests/permissions/`（UT-01~13、IT-01~20、ST-01~10）、`e2e/route-guard.spec.ts`（E2E-01~15） |
 | CI | `scripts/audit-public-endpoints.py`（G1 清单导出）、`scripts/check-route-tree.ts`（G3）、`eslint-rules/no-inline-401-handling.js`（G4） |
 | 文档 | 公开端点清单（机器生成，随每次发布归档）；OpenAPI 中各端点的 401 响应示例 |

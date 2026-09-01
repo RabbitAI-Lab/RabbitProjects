@@ -11,7 +11,7 @@
 | 最后更新日期 | 2026-09-01 |
 | 上游依据 | `docs/需求文档.md` §8.3（POC 范围界定）、§8.4（POC 验收标准）、§9.2（并行节奏） |
 | 前置迭代 | 无（本迭代是全系统起点，仅依赖 7 份架构文档） |
-| 阻塞下游 | Sprint 1 全量（17 份文档）→ 进而阻塞 Sprint 2-9 全部迭代 |
+| 阻塞下游 | Sprint 1 全量（11 份文档）→ 进而阻塞 Sprint 2-9 全部迭代 |
 
 ---
 
@@ -72,13 +72,13 @@
 
 开关由 `apps/api/plane/settings/features.py` 集中控制（`ENABLE_CUSTOM_FIELDS = False` 等），详见 `INFRA-003` §4。
 
-> **「一次性建齐」的准确边界（两处例外与一处架构文档待回改项）**
+> **「一次性建齐」的准确边界（两处例外）**
 >
 > 上表第 7 行的 `department` / `custom_role` 是**建列原则的例外**：这两个列是 FK，分别指向 P3 才引入的 `Department` / `CustomRole` 表。**目标表不存在时 Django 无法生成 migration**（`ForeignKey` 需要对端表已注册），因此 P0 只能以注释形式预留，同理适用于 `Issue.cycle_id` / `module_id`。
 >
 > 因此「一次性把所有列建齐」的准确语义是：**不依赖未来新表的列，P0 全部建齐**。这不削弱原则的价值——后补一个可空 FK 列在 PostgreSQL 11+ 下是常数时间操作（`ADD COLUMN NULL` 不重写表），真正需要避免的是带 `DEFAULT` 非空值或需回填数据的列。
 >
-> [`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §3.2 在 `WorkspaceMember` 上直接写出了这两个 FK，§9 第 4 条又表述为「P0 建表时预留」。直接照抄两侧会导致 `makemigrations` 失败。**以本表与 [`INFRA-003`](./INFRA-003-django-models-init.md) §2.4 / §4.4 为准**，并已登记为架构文档待回改项。
+> 该例外方案已与架构文档同步一致（P0 注释预留、P3 migration 添加）：[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §3.2 与 §9 第 4 条、[`INFRA-003`](./INFRA-003-django-models-init.md) §2.4 / §4.4 均明确为「P0 不建 `department` / `custom_role` 外键列，仅在模型注释中预留，待 P3 引入 `Department` / `CustomRole` 表后通过独立 migration 添加」，与本表口径一致。
 
 ---
 
@@ -112,7 +112,7 @@
 | 视图自定义与保存 | 看板列固定三列，不可增删改 | P2 / P3 |
 | 分享导出 | 无 | P2+ |
 | 移动端适配 | 仅保证桌面 Chrome 可用 | P2+ |
-| 任务归档 | `archived_at` 列已建，功能不做 | P2（`TASK-010`） |
+| 任务归档 | `archived_at` 列已建，功能不做 | P2（`TASK-009`） |
 | 操作日志展示 | `IssueActivity` 表已建且写入，但**不提供查询接口与 UI** | P2（`TASK-010`） |
 | 任务复制 / 批量操作 | 无 | P2 |
 
@@ -160,7 +160,7 @@
 
 | 下游迭代 | 周期 | 依赖强度 | 说明 |
 | --- | --- | --- | --- |
-| **Sprint 1（MVP 能力补齐）** | 第 3 周 | **全面依赖** | 17 份文档无一例外建立在 Sprint 0 之上：`AUTH-004/005/006` 依赖 `AUTH-001~003` 的认证与权限骨架；`TEAM-003/004` 依赖 `TEAM-001` 的 `Workspace`；`TASK-002/003/010` 依赖 `TASK-001` 的 `Issue` 模型；`BOARD-003/004` 依赖 `BOARD-001` 的看板骨架；`FILE-001` / `COLLAB-001/002` 依赖 `INFRA-002` 的 MinIO 与 Celery 编排 |
+| **Sprint 1（MVP 能力补齐）** | 第 3 周 | **全面依赖** | 11 份文档（`AUTH-004/005`、`TEAM-002`、`PROJ-002`、`TASK-002/003`、`BOARD-002`、`FILE-001`、`COLLAB-001`、`RPT-001`、`INFRA-004`，见 README §4.3）无一例外建立在 Sprint 0 之上：`AUTH-004/005` 依赖 `AUTH-001~003` 的认证与权限骨架；`TEAM-002` 依赖 `TEAM-001` 的 `Workspace` / `WorkspaceMember` 基线；`PROJ-002` 依赖 `PROJ-001` 的项目模型与创建者 `ProjectMember` 记录；`TASK-002/003` 依赖 `TASK-001` 的 `Issue` 模型；`BOARD-002` 依赖 `BOARD-001` 的看板骨架；`FILE-001` / `COLLAB-001` 依赖 `INFRA-002` 的 MinIO 与 Celery 编排；`RPT-001` 依赖 `TASK-001` 的任务数据；`INFRA-004` 依赖 `INFRA-001~003` 的工程与模型底座 |
 | Sprint 2-9 | 第 4-12 周 | 间接依赖 | 经由 Sprint 1 传递依赖 |
 
 **结论：Sprint 0 验收不通过，整个 12 周排期全线顺延。** 这是全系统唯一一个"不可跳过、不可并行绕开"的迭代。
@@ -179,7 +179,7 @@ graph LR
     T1 --> P1["PROJ-001<br/>项目 CRUD"]
     P1 --> K1["TASK-001<br/>任务 CRUD"]
     K1 --> B1["BOARD-001<br/>固定三列看板"]
-    B1 --> S1["Sprint 1 全量<br/>（17 份文档）"]
+    B1 --> S1["Sprint 1 全量<br/>（11 份文档）"]
 ```
 
 | 阻塞边 | 强度 | 原因 |
@@ -218,7 +218,7 @@ graph LR
 
 ## 7. 本迭代 10 份功能文档清单
 
-> **文档数口径说明**：[`dependency-graph.md`](../architecture/dependency-graph.md) §2.1 将 Sprint 0 拆为 **13 个能力条目**，在文档层面按"同一模块的同批 CRUD 能力合并成一份规格"的原则收敛为 **10 份文档**，与 [`docs/README.md`](../README.md) §4.2 索引完全一致。合并映射为：`TEAM-002`（团队信息编辑）合入 `TEAM-001`、`PROJ-002`（项目信息编辑与详情页）合入 `PROJ-001`、`BOARD-002`（同列拖拽排序与顺序持久化）合入 `BOARD-001`。**能力范围不减，仅文档粒度合并**；被合并的编号在后续迭代中重新分配给新能力（`TEAM-002` = 团队成员邀请、`PROJ-002` = 项目成员管理与搜索收藏、`BOARD-002` = 看板筛选与卡片悬浮预览），编号一经分配不复用的规则在 README §5.2 中已声明。
+> **文档数口径说明**：[`需求文档.md`](../需求文档.md) §8.3 界定的 POC 必须交付为 **8 项**，在文档层面按"同一模块的同批能力收敛为一份规格、基础设施能力单列"的原则组织为 **10 份文档**，与 [`docs/README.md`](../README.md) §4.2 索引及 [`dependency-graph.md`](../architecture/dependency-graph.md) §2.1 归属矩阵完全一致：技术底座拆为 `INFRA-001`（Monorepo 骨架）/ `INFRA-002`（Compose 编排）/ `INFRA-003`（数据模型基线）；账号体系与最小权限隔离拆为 `AUTH-001` ~ `AUTH-003`；任务与看板分立为 `TASK-001` / `BOARD-001`。**能力范围不减，仅文档粒度调整**；模块编号在模块内跨迭代连续递增、一经分配永不复用（README §5.2）。
 
 | 编写顺序 | 文档 ID | 标题 | 模块 | 复杂度 | 核心风险点 |
 | --- | --- | --- | --- | --- | --- |
@@ -233,7 +233,7 @@ graph LR
 | 9 | [`TASK-001`](./TASK-001-task-crud.md) | 任务 CRUD（5 固定字段） | TASK | **高** | `sequence_id` 并发唯一；四格式描述派生；`accessible_by()` 过滤 |
 | 10 | [`BOARD-001`](./BOARD-001-fixed-kanban.md) | 固定三列看板 + 拖拽 | BOARD | **高** | `sort_order` 浮点插值；乐观更新与回滚；拖拽后刷新一致性 |
 
-> **`AUTH-003` 先于 `AUTH-002` 的原因**：`AUTH-002` 的"最小数据隔离"需要 `AUTH-003` 定义的角色枚举与成员关系模型作为过滤依据，否则 `accessible_by()` 无从实现。这与 `dependency-graph.md` §7.2 中"`AUTH-002` 可在 `AUTH-001` 后随时插入"的说法不冲突——`AUTH-002` 的**路由拦截部分**只依赖 `AUTH-001`，**数据隔离部分**依赖 `AUTH-003`，编写顺序按后者从严。
+> **`AUTH-003` 先于 `AUTH-002` 的原因**：`AUTH-002` 的"最小数据隔离"需要 `AUTH-003` 定义的角色枚举与成员关系模型作为过滤依据，否则 `accessible_by()` 无从实现。这与 `dependency-graph.md` §7.1 中将 `AUTH-002` / `AUTH-003` 并列排在 `AUTH-001` 之后（示意两份文档可并行开工）的分组并不冲突——`AUTH-002` 的**路由拦截部分**只依赖 `AUTH-001`，**数据隔离部分**依赖 `AUTH-003`，编写顺序按后者从严。
 
 ---
 
@@ -241,11 +241,13 @@ graph LR
 
 节奏依据需求文档 §9.2 第 2 条：**第 1 周后端数据模型 + API + 骨架，第 2 周前端 + 看板 + 联调**。
 
+> **排期口径说明**：§8.1 / §8.2 周表为**主线（后端优先的单线视角）**——单人全栈或后端负责人按此串行推进；2 人团队时前端自 Day 2-8 基于 API 契约 + MSW **并行开发**，不必等第 2 周才启动，并行流见 §8.3 时序图。
+
 ### 8.1 第 1 周（Day 1-5）：底座与后端
 
 | Day | 主线工作 | 交付物 | 对应文档 |
 | --- | --- | --- | --- |
-| Day 1 | Monorepo 骨架 + Docker 基础设施四件套（db/redis/mq/minio）拉起；**API 契约评审**（把 §7 全部端点的请求/响应体一次性定稿） | `pnpm install` 通过；`docker compose up db redis mq minio` healthy；OpenAPI 契约初稿 | `INFRA-001` `INFRA-002` |
+| Day 1 | Monorepo 骨架 + Docker 基础设施四件套（db/redis/mq/minio）拉起；**API 契约评审**（把 §7 所列 10 份文档定义的全部端点的请求/响应体一次性定稿） | `pnpm install` 通过；`docker compose up db redis mq minio` healthy；OpenAPI 契约初稿 | `INFRA-001` `INFRA-002` |
 | Day 2 | Django 项目骨架 + 全部 Model + 首个 migration；种子数据脚本 | `manage.py migrate` 零错误；Django Admin 可见全部模型 | `INFRA-003` |
 | Day 3 | 认证体系：注册 / 登录 / 退出 / `users/me`；Argon2；Session + CSRF；注册时原子初始化默认团队 | 认证 4 端点 curl 可通；注册后库中有 `Workspace` + `WorkspaceMember(OWNER)` | `AUTH-001` `TEAM-001` |
 | Day 4 | 权限三层落地：角色枚举 + DRF Permission 类 + `Manager.accessible_by()`；团队 / 项目端点 | 越权请求返回 404；项目创建自动种子四态状态集 | `AUTH-002` `AUTH-003` `PROJ-001` |
@@ -296,7 +298,7 @@ sequenceDiagram
 
 | # | 风险 | 影响 | 概率 | 应对措施 | 责任文档 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | **advisory lock 序列号并发正确性**：`pg_advisory_xact_lock` + `MAX()+1` 方案在高并发下是否真能保证 `(project, sequence_id)` 唯一，锁键碰撞概率是否可接受 | 高：序列号重复会直接触发唯一约束 500，且用户可见任务编号错乱 | 中 | ① 完全复用 Plane 的成熟实现（`project_id.int >> 65` 生成 64 位锁键）；② 数据库层保留 `uniq_issue_sequence_per_project` 唯一约束作为最终防线；③ Day 5 编写并发压测用例（20 并发 × 50 次创建，断言序列号集合 == 1..1000 无缺失无重复）；④ 事务内**严禁**任何外部 HTTP / 文件上传，防长事务持锁；⑤ 监控 `SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND NOT granted` | `INFRA-003` §3 / §5 |
+| 1 | **advisory lock 序列号并发正确性**：`pg_advisory_xact_lock` + `MAX()+1` 方案在高并发下是否真能保证 `(project, sequence_id)` 唯一，锁键碰撞概率是否可接受 | 高：序列号重复会直接触发唯一约束 500，且用户可见任务编号错乱 | 中 | ① 完全复用 Plane 的成熟实现（`project_id.int >> 65` 生成 64 位锁键）；② 数据库层保留 `uniq_issue_sequence_per_project` 唯一约束作为最终防线；③ Day 5 编写并发压测用例（20 并发 × 50 次创建，断言序列号集合 == 1..1000 无缺失无重复）；④ 事务内**严禁**任何外部 HTTP / 文件上传，防长事务持锁；⑤ 监控 `SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND NOT granted` | `INFRA-003` §4.11 / §5 |
 | 2 | **JSONB 扩展位预留是否到位**：P0 不使用 `custom_fields`，一旦漏建列或漏建 GIN 索引，P2 阶段需对已有数据做 `ALTER TABLE` + `CREATE INDEX`，在生产数据量下是长时间锁表操作 | 高：P2 迭代被迫安排停机窗口 | 中 | ① 把「一次性建齐全部列」写进 `INFRA-003` §7 验收标准，逐列 checklist 核对；② Day 2 migration 完成后执行 `\d+ issues` 与 `\di issues*` 快照留档；③ 验收标准明确包含"`custom_fields` JSONB 列存在且 `idx_issue_custom_fields` GIN 索引存在"；④ 索引 opclass 选定 `jsonb_ops`（非 `jsonb_path_ops`），因需支持 `custom_fields ? 'cf_xxx'` 键存在查询（`dynamic-fields-design.md`） | `INFRA-003` §4 / §7 |
 | 3 | **Docker 多服务编排复杂度**：12 个服务的启动顺序、健康检查、环境变量注入、Nginx 五路由、migrations 自动执行、MinIO 自动建桶，任一环节出错都导致"一键启动"失败——而这是验收标准第 6 条 | 高：直接卡验收 | **高** | ① 分层拉起，Day 1 先跑通 4 个基础设施服务，Day 5 才补齐应用层；② 每个有状态服务强制 `healthcheck` + `depends_on: {condition: service_healthy}`，不用 `sleep` 硬等；③ migrations 用**独立的一次性 `migrator` 服务**执行而非塞进 api 启动脚本，避免多副本并发 migrate；④ MinIO 建桶用一次性 `createbuckets` 服务；⑤ `.env.example` 作为唯一模板，CI 中校验其与代码读取的变量集合一致 | `INFRA-002` §2 / §4 |
 | 4 | 自定义 `User` 模型（继承 `AbstractUser`）的迁移时机 | 中：Django 要求 `AUTH_USER_MODEL` 在首个 migration 前确定，事后更换需重建数据库 | 低 | Day 2 首个 migration 就必须包含自定义 `User`，`INFRA-003` §2 明确 App 初始化顺序 | `INFRA-003` |

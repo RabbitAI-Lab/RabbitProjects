@@ -56,19 +56,19 @@ P0 阶段本功能交付：
 | 软删除项目 | ✅ | — |
 | 状态集查询 | ✅ | — |
 | 项目详情页框架（三 tab） | ✅ | — |
-| 项目成员邀请 / 子角色配置 | ❌ | `PROJ-003` |
-| 项目收藏 / 搜索 / 状态切换（draft/archived/closed） | ❌ | `PROJ-004` |
+| 项目成员邀请 / 子角色配置 | ❌ | `PROJ-002`（项目成员管理与搜索收藏） |
+| 项目收藏 / 搜索 / 状态切换（active ↔ archived 归档动作） | ❌ | `PROJ-002` |
 | 起止时间 / 项目负责人 / 项目图标 | ❌（列已建或 P1 补） | `PROJ-002` |
-| 状态集增删改排序 | ❌ | `BOARD-004` |
-| 项目生命周期 / 动态时间线 / 模板 | ❌ | `PROJ-005` |
-| 项目集 / 跨项目依赖 / 私密项目 | ❌ | `PROJ-006` |
+| 状态集增删改排序 | ❌ | `BOARD-003`（S3；状态集自定义归 BOARD-003，见 §4.2.6 归属勘误） |
+| 项目完整生命周期（draft / closed）/ 动态时间线 / 项目模板 | ❌ | `PROJ-003`（项目生命周期与动态时间线） |
+| 项目集 / 跨项目依赖 / 私密项目 | ❌ | 项目集与跨项目依赖 `PROJ-004`（portfolio）；私密项目 P3 预留（`rbac-permission-model.md` §7.4/§9，暂无编号，架构文档待回改） |
 
 ### 1.3 前置依赖
 
 | 依赖文档 | 依赖内容 | 阻塞原因 |
 | --- | --- | --- |
 | `TEAM-001` | Workspace 已存在且当前用户是其成员；Workspace 创建时已 seed 默认 `IssueType`（`name="任务"`, `is_default=True`） | `Project.workspace` 非空；`create_default_issue_types` 需取到默认类型 |
-| `AUTH-003` | `ProjectMember` 表已建；`WorkspaceBasePermission`（L1）、`ProjectBasePermission`（L2）基类 | 项目列表可见性与创建权限判定 |
+| `AUTH-003` | `ProjectMember` 表已建（含冗余 `workspace_id`）；第三层 DB 行级过滤最小版（`Project.objects.accessible_by` + `BaseAPIView` 强制注入）。**不含** L1/L2 权限基类：`WorkspaceBasePermission`（L1）/ `ProjectBasePermission`（L2）属 P1 `AUTH-005`（AUTH-003 §1.4 交付边界） | 项目列表可见性由第三层行级过滤承担；创建 / 更新 / 删除的角色判定由本文档**自建最小 L2 判定**（`PROJ_ADMIN`(20) 或 `WS_ADMIN`+，见 §4.3.4），P1 `AUTH-005` 落地后迁移至 `ProjectBasePermission` |
 | `INFRA-003` | `Project` / `ProjectMember` / `State` 三张表的 migration | 无表无从谈起 |
 
 ### 1.4 竞品参考
@@ -138,7 +138,7 @@ Issue.sequence_id  = 1
 
 | 编号 | 规则 | 约束位置 |
 | --- | --- | --- |
-| ID-1 | 格式：**2 ~ 5 个大写字母**，正则 `^[A-Z]{2,5}$` | Serializer 校验 |
+| ID-1 | 格式：**2 ~ 5 个字母**。序列化层接受 `^[A-Za-z]{2,5}$`（`IDENTIFIER_RE`，§4.3.5），`save()` 规范化为大写（ID-2），**落库最终满足 `^[A-Z]{2,5}$`** | Serializer 校验 + Model `save()` |
 | ID-2 | 服务端 `Project.save()` 中执行 `identifier.strip().upper()`，因此客户端传小写也能通过 | Model `save()` |
 | ID-3 | **Workspace 内唯一**（不是全局唯一），偏索引 `uniq_project_identifier_per_workspace`（`condition=Q(deleted_at__isnull=True)`） | DB 约束 |
 | ID-4 | 软删除的项目释放其 identifier，可被新项目复用 | 同上偏索引 |
@@ -231,9 +231,9 @@ P0 阶段 `settings.ENABLE_PER_TYPE_STATES = False`，因此 `State.issue_type =
 
 | 约束 | 说明 |
 | --- | --- |
-| `uniq_state_name_per_project_type` | `(project, name, issue_type)` 偏索引唯一。P0 `issue_type=NULL`，因此同项目内状态名唯一 |
-| `uniq_default_state_per_project_type` | `(project, issue_type)` 且 `is_default=True` 时唯一 —— **一个项目有且仅有一个默认状态** |
-| `seed_project_states` 用 `get_or_create` | 幂等：重复调用不产生重复状态，便于补数据脚本重跑 |
+| `uniq_state_name_per_project_type` | `(project, name, issue_type)` 偏索引唯一。**但 PostgreSQL 中 `NULL` 不参与唯一比较**：P0 `issue_type=NULL` 时该约束**不拦截**同项目同名状态（INFRA-003 §4.6）。P0 同项目状态名唯一由 `seed_project_states` 的 `get_or_create` **幂等** + **应用层校验**保证（P0 无其他状态写入路径；`BOARD-003` 开放写时须补 serializer / 服务层校验） |
+| `uniq_default_state_per_project_type` | `(project, issue_type)` 且 `is_default=True` 时唯一。同上，P0 `issue_type=NULL` 时该偏索引**不生效**——「**一个项目有且仅有一个默认状态**」由 seed 幂等 + serializer / 服务层唯一默认态校验保证（`BOARD-003` 开放写时启用：设新默认态须同事务清除旧默认态） |
+| `seed_project_states` 用 `get_or_create` | 幂等：重复调用不产生重复状态，便于补数据脚本重跑——这是 P0 两条唯一性保证的**实际执行者**（DB 偏索引对 NULL 不生效，见上两行） |
 | `State.group` 不可为空 | `TextChoices` 5 值之一，`db_index=True`。所有报表、进度、看板列只认 `group` 不认 `name` |
 
 **「结构由配置表承载、语义由枚举组承载」**是这里的核心设计。用户改名「待办」→「Backlog」不会破坏任何下游逻辑，因为下游全部按 `group` 判定。
@@ -255,9 +255,9 @@ P0 阶段 `settings.ENABLE_PER_TYPE_STATES = False`，因此 `State.issue_type =
 | `WS_MEMBER`(10) | 仅自己是 `ProjectMember` 的项目 | 工作空间角色不自动继承项目角色 |
 | `WS_GUEST`(5) | 仅自己是 `ProjectMember` 的项目，**且无工作空间级浏览权** | 访客看不到项目列表整体 |
 
-> P0 阶段每个 Workspace 只有创建者一人（`WS_OWNER`），因此实际效果是「自己的项目全可见」。但**判定代码必须按上述通用规则实现**，不得走「创建者即可见」的捷径，否则 `PROJ-003` 引入多成员后需重写鉴权层。
+> P0 阶段每个 Workspace 只有创建者一人（`WS_OWNER`），因此实际效果是「自己的项目全可见」。但**判定代码必须按上述通用规则实现**，不得走「创建者即可见」的捷径，否则 `PROJ-002` 引入多成员后需重写鉴权层。
 
-排序：`-created_at`（继承 `BaseModel.Meta.ordering`）。P0 不做收藏置顶与最近访问排序（`PROJ-004`）。
+排序：`-created_at`（继承 `BaseModel.Meta.ordering`）。P0 不做收藏置顶与最近访问排序（`PROJ-002`）。
 
 ### 2.5 项目详情页导航
 
@@ -306,7 +306,7 @@ flowchart TD
 | 权限 | `PROJ_ADMIN`(20) 或 `WS_OWNER`/`WS_ADMIN`（隐式 `PROJ_ADMIN`） |
 | 级联 | 软删除项目时，其 `State` / `Issue` / `ProjectMember` 一并置 `deleted_at`。使用**同事务批量 UPDATE**，不依赖 DB 级 CASCADE（DB CASCADE 是硬删除） |
 | identifier 释放 | 软删除后偏索引不再约束该 identifier，可被新项目复用（ID-4） |
-| 恢复 | P0 无 UI 恢复入口，但数据可恢复（`all_objects` 可查）。`PROJ-004` 提供归档/恢复能力 |
+| 恢复 | P0 无 UI 恢复入口，但数据可恢复（`all_objects` 可查）。`PROJ-002` 提供归档/恢复能力 |
 | 幂等 | 重复 DELETE 已软删的项目返回 `404`（`objects` 管理器已过滤） |
 
 ### 2.7 业务规则汇总
@@ -316,7 +316,7 @@ flowchart TD
 | BR-1 | `name` 必填，trim 后长度 1 ~ 255 字符 |
 | BR-2 | `identifier` 必填，`^[A-Z]{2,5}$`，Workspace 内唯一（见 §2.2） |
 | BR-3 | `description` 可空，纯文本，≤ 2000 字符（P0 不用富文本；`PROJ-002` 升级为 TipTap） |
-| BR-4 | `status` 默认 `active`。P0 只产生 `active`，`draft`/`archived`/`closed` 由 `PROJ-004` 启用 |
+| BR-4 | `status` 默认 `active`。P0 只产生 `active`，`archived` 由 `PROJ-002` 启用、`draft`/`closed` 由 `PROJ-003` 启用 |
 | BR-5 | `workspace` 由 URL 路径段推导，**不接受请求体传入**（防跨 Workspace 写入） |
 | BR-6 | 创建者自动成为 `PROJ_ADMIN`(20) |
 | BR-7 | 创建项目权限：Workspace 内 `role >= WS_MEMBER`(10)。`WS_GUEST`(5) 不可创建项目 |
@@ -340,8 +340,11 @@ flowchart TD
 | 项目不存在 / 无权可见 | 404 | `RESOURCE_NOT_FOUND` | 「项目不存在或你没有访问权限」 |
 | 非 `PROJ_ADMIN` 更新项目 | 403 | `PERM_ROLE_INSUFFICIENT` | 「仅项目管理员可修改项目信息」 |
 | 尝试修改 identifier | — | — | **无报错**：`read_only` 静默忽略；UI 中该输入框在编辑态直接禁用并附说明 |
-| PUT 请求 | 405 | `METHOD_NOT_ALLOWED` | — |
+| `?ordering=` 传非白名单字段 | 400 | `VALIDATION_INVALID_PARAM` | 「排序字段不合法」（api-conventions §5.4 / §8.4：此处不静默忽略） |
+| PUT 请求 | 405 | `VALIDATION_ERROR` + `details[].code=INVALID`（`field=method`） | — |
 | 跨 Workspace 访问项目（URL slug 与项目实际 workspace 不符） | 404 | `RESOURCE_NOT_FOUND` | 同上（`ProjectScopedAPIView` 强制 `workspace__slug` 过滤） |
+
+> **405 的错误码说明**：`METHOD_NOT_ALLOWED` 未在 api-conventions §8 错误码注册表中注册，全局异常处理器按 §10.4「MethodNotAllowed → 对应 `VALIDATION_*` 码」统一映射为 `VALIDATION_ERROR` + 字段级子码（`field="method"`、`code="INVALID"`）。
 
 ---
 
@@ -578,7 +581,7 @@ class Project(BaseModel):
 | `name` | varchar(255) | NOT NULL | ✅ | 同 Workspace 内可重复（BR-10） |
 | `description` | text | 可空 | ✅ | 纯文本，业务层限 2000 |
 | `identifier` | varchar(12) | 偏索引唯一（+ workspace） | ✅ | 业务层限 `^[A-Z]{2,5}$`，`save()` 强制大写 |
-| `status` | varchar(16) | `db_index`，default `active` | ⚠️ 仅 `active` | 其余值 `PROJ-004` 启用 |
+| `status` | varchar(16) | `db_index`，default `active` | ⚠️ 仅 `active` | 其余值由 `PROJ-002`（archived）/ `PROJ-003`（draft / closed）启用 |
 | `created_by` | UUID FK | SET_NULL | ✅ | 用户注销后项目保留 |
 | `created_at`/`updated_at`/`deleted_at` | timestamptz | 索引 | ✅ | 继承 `BaseModel` |
 
@@ -786,7 +789,7 @@ GET /api/v1/workspaces/rabbitprojects/projects/?fields=id,name,identifier,descri
 | `?search=` | ✅ | 按 `name` / `identifier` 模糊 |
 | `?ordering=` | ✅ | 白名单 `created_at` / `name` / `identifier`；服务端自动追加 `-created_at,-id` 保证游标稳定 |
 | `?status=` | ⚠️ | 端点支持但 P0 只有 `active` 数据 |
-| `?expand=` | ❌ | P0 无需展开的关联；`PROJ-003` 开放 `expand=members` |
+| `?expand=` | ❌ | P0 无需展开的关联；`PROJ-002` 开放 `expand=members` |
 | `?cursor=`/`?per_page=` | ✅ | 游标分页 |
 
 **成功响应 `200`**
@@ -865,8 +868,8 @@ GET /api/v1/workspaces/rabbitprojects/projects/?fields=id,name,identifier,descri
 | `name` | ✅ | — |
 | `description` | ✅ | — |
 | `identifier` | ❌ `read_only` | ID-7。已生成的 `TZXM-1` 编号被外部引用，修改需走管理员确认 + 全量历史编号重写迁移任务（P3） |
-| `workspace_id` | ❌ `read_only` | 项目不可跨 Workspace 迁移（`PROJ-006` 项目集能力再议） |
-| `status` | ❌ P0 `read_only` | `PROJ-004` 通过 `.../archive/` 动作子资源提供 |
+| `workspace_id` | ❌ `read_only` | 项目不可跨 Workspace 迁移（`PROJ-004` 项目集能力再议） |
+| `status` | ❌ P0 `read_only` | `PROJ-002` 通过 `.../archive/` 动作子资源提供（active ↔ archived）；draft / closed 由 `PROJ-003` 扩展 |
 | `created_by` | ❌ `read_only` | — |
 
 仅支持 `PATCH`，`PUT` 返回 `405`（[`api-conventions.md`](../architecture/api-conventions.md) §3.2）。
@@ -960,10 +963,12 @@ GET /api/v1/workspaces/rabbitprojects/projects/7b3e9c1a-.../states/ HTTP/1.1
 
 1. 排序：按 `sort_order` 升序（`State.Meta.ordering = ("sort_order",)`），前端无需再排；
 2. `group` 值必然是 5 个枚举之一，`BOARD-001` 按 `group` 过滤出三列；
-3. 恰好有一条 `is_default=True`（DB 约束 `uniq_default_state_per_project_type` 保证）；
+3. 恰好有一条 `is_default=True`（由 `seed_project_states` 的 `get_or_create` 幂等 + 应用层唯一默认态校验保证，见 §2.3.2；P0 `issue_type=NULL` 时 DB 偏索引不生效，INFRA-003 §4.6）；
 4. P0 `issue_type_id` 恒为 `null`。
 
-POST / PATCH / DELETE `states/` 由 `BOARD-004`（看板列自定义）实现，P0 不注册（返回 `405`）。
+POST / PATCH / DELETE `states/`（状态集增删改排序）由 `BOARD-003`（多个独立看板与视图配置，Sprint 3）承接实现，P0 不注册（返回 `405`）。
+
+> **归属勘误**：状态集自定义（增删改排序与 `states/` 写操作）按 README §4.5 索引归 `BOARD-003`（S3）承接（该能力需在 BOARD-003 规格书中补齐 states/ 写端点）。`INFRA-003` §4.6 中「`BOARD-004` 开放自定义状态」的表述与 README 索引（`BOARD-004` = 任务批量操作）不符，以 README 为准，架构文档待回改。
 
 ### 4.3 后端实现
 
@@ -1000,7 +1005,8 @@ def create_project(*, workspace, user, data: dict) -> Project:
 
     ProjectMember.objects.create(
         project=project,
-        workspace=workspace,                    # 反范式冗余，行级过滤依赖
+        # workspace 冗余列不手工赋值：由 save() 依 project.workspace_id 自动填充
+        # （rbac-permission-model.md §3.2：冗余 workspace 禁止手工赋值）
         member=user,
         role=ProjectRole.ADMIN,                 # 20
         is_active=True,
@@ -1084,8 +1090,9 @@ class ProjectViewSet(WorkspaceScopedAPIView):
     write_serializer_class = ProjectWriteSerializer
     permission_classes = [IsAuthenticatedAndActive, ProjectPermission]
     search_fields = ("name", "identifier")
-    ordering_whitelist = ("created_at", "name", "identifier")
-    filterset_fields = ("status",)
+    # 属性名对齐基类契约（api-conventions §10.1）：ordering_fields / filterset_class
+    ordering_fields = ("created_at", "name", "identifier")
+    filterset_class = ProjectFilter        # django-filter FilterSet，仅 status 等值筛选
 
     def get_queryset(self):
         return (
@@ -1122,6 +1129,8 @@ class ProjectViewSet(WorkspaceScopedAPIView):
         instance.deleted_at = now
         instance.save(update_fields=["deleted_at", "updated_at"])
 ```
+
+> **读写序列化器切换与响应组装**（api-conventions §10.2「一个资源三个 serializer」）：请求体校验用 `ProjectWriteSerializer`（`write_serializer_class`，`get_serializer_class()` 按 action / 方法选用写序化器），但 `201` / `200` 响应**不得**沿用 Write 序列化器的 `serializer.data`——它只含 `name` / `identifier` / `description` 三个可写字段，直接回传会缺失全部只读字段。组装机制：`perform_create` 将服务层返回的实例写回 `serializer.instance` 后，`create()` 以 Read 序列化器 `ProjectSerializer` 对 `self.get_queryset().get(pk=instance.pk)` **重新序列化**（重走一次带 annotate 的查询，保证 `current_user_role` / `total_members` / `total_issues` / `default_state_id` 存在），再经 `success_response` 包装并附 `Location` 头——§4.2.1 的 `201` 响应即由该路径产生。`PATCH` 同理：校验用 Write 序列化器，响应用 `ProjectSerializer` 对更新后实例重新序列化。
 
 #### 4.3.3 行级过滤与有效角色
 
@@ -1185,8 +1194,16 @@ def effective_project_role_subquery(user):
 
 ```python
 # apps/api/plane/app/permissions/project.py
-class ProjectPermission(ProjectBasePermission):
-    """L2 层：项目级动作鉴权"""
+class ProjectPermission(IsAuthenticatedAndActive):
+    """P0 自建最小 L2 判定：项目级动作鉴权（PROJ_ADMIN(20) 或 WS_ADMIN+ 可写）
+
+    与 AUTH-003 交付边界对齐（AUTH-003 §1.4）：AUTH-003 只交付第三层 DB 行级过滤
+    （accessible_by + BaseAPIView 强制注入），L1/L2 权限基类 WorkspaceBasePermission /
+    ProjectBasePermission 属 P1 AUTH-005。P0 由本文档实现该简单角色判定，
+    get_workspace_role / get_effective_project_role 为本类内辅助方法（判定语义与
+    rbac-permission-model.md §5.2 一致）；AUTH-005 落地后改继承 ProjectBasePermission，
+    判定语义不变。
+    """
 
     def has_permission(self, request, view):
         ws_role = self.get_workspace_role(request.user, view.workspace)
@@ -1269,7 +1286,7 @@ class StateSerializer(BaseSerializer):
         model = State
         fields = ("id", "project_id", "name", "color", "group",
                   "sort_order", "is_default", "issue_type_id")
-        read_only_fields = fields       # P0 只读；BOARD-004 开放写
+        read_only_fields = fields       # P0 只读；BOARD-003（S3）开放写（见 §4.2.6 归属勘误）
 ```
 
 ### 4.4 前端实现
@@ -1497,8 +1514,8 @@ apps/web/app/routes/$workspaceSlug/
 | BE-05 | 默认状态集正确创建 | 创建后查 `State` | 4 条；按 `sort_order` 为 待办/进行中/已完成/已取消 |
 | BE-06 | **待办的 group 是 unstarted 而非 backlog** | 同上 | `State(name="待办").group == "unstarted"` |
 | BE-07 | 默认状态颜色精确匹配 | 同上 | 颜色分别为 `#9CA3AF` / `#3B82F6` / `#10B981` / `#6B7280` |
-| BE-08 | 恰有一个默认状态 | 同上 | `State.objects.filter(project=p, is_default=True).count() == 1`，且为「待办」 |
-| BE-09 | `is_default` 唯一约束生效 | 手工再插一条 `is_default=True` | 抛 `IntegrityError`（`uniq_default_state_per_project_type`） |
+| BE-08 | 恰有一个默认状态 | 同上 | `State.objects.filter(project=p, is_default=True).count() == 1`，且为「待办」——由 `get_or_create` 幂等 seed 保证（P0 无其他状态写入路径，§2.3.2） |
+| BE-09 | `is_default` 唯一性不被 DB 偏索引兜底（P0） | 绕过 seed 用 ORM 直插第二条 `is_default=True`、`issue_type=None` 的 State | **不**抛 `IntegrityError`（PostgreSQL `NULL` 不参与唯一比较，INFRA-003 §4.6）——唯一默认态由 seed 幂等 + 应用层校验保证；`BOARD-003` 开放写后 serializer / 服务层须拒绝第二个默认态（`400 VALIDATION_ERROR`，`details[].field="is_default"`） |
 | BE-10 | P0 状态 `issue_type` 为 NULL | 同 BE-05 | 4 条全部 `issue_type_id is None` |
 | BE-11 | 默认任务类型存在 | 创建后查 `IssueType` | Workspace 下存在 `is_default=True` 的「任务」 |
 | BE-12 | 老 Workspace 缺类型时兜底补种 | 手工删除 Workspace 的 IssueType 后建项目 | `201`；`IssueType` 被重新 seed |
@@ -1531,7 +1548,7 @@ apps/web/app/routes/$workspaceSlug/
 | BE-39 | `?search=` 生效 | `?search=移动` | 仅返回名称含「移动」的项目 |
 | BE-40 | `?search=` 命中 identifier | `?search=MOB` | 返回 identifier 为 MOB 的项目 |
 | BE-41 | `?ordering=name` 生效 | — | 按名称升序 |
-| BE-42 | `?ordering=` 非白名单字段 | `?ordering=secret_field` | `400`；`VALIDATION_ERROR` |
+| BE-42 | `?ordering=` 非白名单字段 | `?ordering=secret_field` | `400`；`VALIDATION_INVALID_PARAM`（api-conventions §5.4 / §8.4） |
 | BE-43 | 详情：项目成员可读 | `PROJ_VIEWER(5)` | `200`；`current_user_role == 5` |
 | BE-44 | 详情：非成员 404 | U2 访问 U1 的项目 | `404`；`RESOURCE_NOT_FOUND` |
 | BE-45 | 详情：跨 Workspace 路径 404 | `GET /workspaces/{ws-b}/projects/{ws-a 的项目 id}/` | `404`（`WorkspaceScopedAPIView` 强制过滤） |
@@ -1541,7 +1558,7 @@ apps/web/app/routes/$workspaceSlug/
 | BE-49 | `PROJ_CONTRIBUTOR` 不可更新 | `role=15` 项目角色 | `403`；`PERM_ROLE_INSUFFICIENT` |
 | BE-50 | identifier 更新被忽略 | `PATCH {"identifier":"NEW"}` | `200`；`identifier` 未变 |
 | BE-51 | `status` 更新被忽略（P0） | `PATCH {"status":"archived"}` | `200`；`status` 仍为 `active` |
-| BE-52 | PUT 405 | `PUT` | `405`；`METHOD_NOT_ALLOWED` |
+| BE-52 | PUT 405 | `PUT` | `405`；`VALIDATION_ERROR` + `details[0].field="method"`、`code="INVALID"`（按 api-conventions §10.4 映射，`METHOD_NOT_ALLOWED` 未注册） |
 | BE-53 | 删除返回 204 空体 | `DELETE` | `204`；`response.content == b""` |
 | BE-54 | 删除级联软删 | 项目下 3 Issue、4 State | 全部 `deleted_at` 非空；`Issue.objects.count()==0` 而 `all_objects.count()==3` |
 | BE-55 | `PROJ_CONTRIBUTOR` 不可删除 | — | `403` |
@@ -1549,7 +1566,7 @@ apps/web/app/routes/$workspaceSlug/
 | BE-57 | 状态列表按 sort_order 排序 | `GET .../states/` | `data` 顺序为 待办→进行中→已完成→已取消 |
 | BE-58 | 状态列表字段完整 | 同上 | 每项含 `id`/`project_id`/`name`/`color`/`group`/`sort_order`/`is_default`/`issue_type_id` |
 | BE-59 | 状态列表非成员 404 | U2 请求 | `404` |
-| BE-60 | 状态 POST 未实现 | `POST .../states/` | `405`（`BOARD-004` 交付） |
+| BE-60 | 状态 POST 未实现 | `POST .../states/` | `405`（`BOARD-003` 交付） |
 | BE-61 | `seed_project_states` 幂等 | 连续调用 2 次 | State 数量仍为 4 |
 | BE-62 | 并发创建同 identifier | 10 线程并发同 `identifier` | 恰好 1 个 `201`，9 个 `409`；无 `500` |
 | BE-63 | 尾斜杠强制 | `GET .../projects`（无尾斜杠） | `301` 重定向 |
@@ -1627,17 +1644,17 @@ apps/web/app/routes/$workspaceSlug/
 | identifier 可修改 | 可改（有警告） | P0 不可改 | ⚠️ 差异 | 改 identifier 需重写全部历史编号引用。P0 不做，避免半成品能力造成数据不一致 |
 | 项目主键 | UUID，URL 用 UUID | UUID，URL 用 UUID | ✅ 一致 | 与 Workspace 用 slug 不同：项目名重复合法，无法保证 slug 唯一 |
 | 创建者角色 | 自动 `ADMIN(20)` | 相同 | ✅ 一致 | — |
-| 创建时 seed 默认状态 | 有（Backlog/Todo/In Progress/Done/Cancelled 五态） | **四态**（待办/进行中/已完成/已取消） | ⚠️ 差异 | Plane 的 Backlog + Todo 两态区分「未规划」与「已规划待做」，对 P0 单人演示场景过度设计。P0 用「待办」（`unstarted`）单态覆盖；`BOARD-004` 开放自定义后用户可自行拆分 |
+| 创建时 seed 默认状态 | 有（Backlog/Todo/In Progress/Done/Cancelled 五态） | **四态**（待办/进行中/已完成/已取消） | ⚠️ 差异 | Plane 的 Backlog + Todo 两态区分「未规划」与「已规划待做」，对 P0 单人演示场景过度设计。P0 用「待办」（`unstarted`）单态覆盖；`BOARD-003` 开放自定义后用户可自行拆分 |
 | State 5 语义组 | `backlog/unstarted/started/completed/cancelled` | 完全相同 | ✅ 一致 | 报表、进度、看板列全部按 group 判定，这是「改名不破坏下游」的关键 |
 | State 项目级 | 是 | 是 | ✅ 一致 | `TEAM-003` 提供团队级模板下发，不改变 State 的项目级归属 |
-| `is_default` 唯一约束 | 有 | 有（`uniq_default_state_per_project_type`） | ✅ 一致 | — |
+| `is_default` 唯一约束 | 有 | 约束已建，但 P0 `issue_type=NULL` 时偏索引不生效；唯一默认态由 seed 幂等 + 应用层校验保证（§2.3.2） | ⚠️ 差异 | PostgreSQL `NULL` 不参与唯一比较（INFRA-003 §4.6） |
 | 类型专属状态集 | Pro 特性 | `State.issue_type` 列已建（P0 为 NULL），P3 启用 | ⬆️ 开源实现 | 零 DDL 升级 |
-| 项目 status 生命周期 | 有（`archived_at`） | 列已建（`draft/active/archived/closed`），P0 只用 `active` | ⏭️ 延后 | `PROJ-004` |
+| 项目 status 生命周期 | 有（`archived_at`） | 列已建（`draft/active/archived/closed`），P0 只用 `active` | ⏭️ 延后 | `PROJ-002`（archived）/ `PROJ-003`（draft、closed 完整生命周期） |
 | 项目图标 / 封面 | 支持 emoji + 图片 | P0 首字母 + 哈希取色 | ⏭️ 延后 | `PROJ-002` |
-| 项目成员管理 | 完整 | P0 仅创建者 | ⏭️ 延后 | `PROJ-003` |
+| 项目成员管理 | 完整 | P0 仅创建者 | ⏭️ 延后 | `PROJ-002` |
 | 默认视图 | Issues 列表 | **Board** | ⚠️ 差异 | POC 演示核心是拖拽看板，缩短演示路径 |
 | Owner/Admin 绕过项目成员检查 | 支持 | 支持（`effective_project_role_subquery`） | ✅ 一致 | — |
-| 收藏 / 归档 / 取消归档 | 动作子资源 | 端点已在规范中登记，P0 不实现 | ⏭️ 延后 | `PROJ-004` |
+| 收藏 / 归档 / 取消归档 | 动作子资源 | 端点已在规范中登记，P0 不实现 | ⏭️ 延后 | `PROJ-002` |
 
 #### 专题：为什么 identifier + sequence_id 优于纯 UUID
 
@@ -1658,21 +1675,21 @@ apps/web/app/routes/$workspaceSlug/
 | --- | --- | --- | --- |
 | 项目列表形态 | 卡片式网格，显示进度条与成员头像 | **卡片式网格**（§3.1） | ✅ 对标（Plane 用列表行，此处选 Ones 方案） |
 | 项目编号前缀 | 有（项目 key） | 有（identifier） | ✅ 能力对等 |
-| 项目模板 | 支持，可从模板创建（含工作流、字段、成员配置） | ❌ | ⏭️ `PROJ-005` |
-| 项目集（Program） | 支持多项目聚合与跨项目依赖 | ❌ | ⏭️ `PROJ-006` |
-| 项目状态生命周期 | 未开始 / 进行中 / 已完成 / 已归档，含状态流转规则 | 列已建，P0 只用 `active` | ⏭️ `PROJ-004` |
+| 项目模板 | 支持，可从模板创建（含工作流、字段、成员配置） | ❌ | ⏭️ `PROJ-003`（模板与生命周期同批交付） |
+| 项目集（Program） | 支持多项目聚合与跨项目依赖 | ❌ | ⏭️ `PROJ-004` |
+| 项目状态生命周期 | 未开始 / 进行中 / 已完成 / 已归档，含状态流转规则 | 列已建，P0 只用 `active` | ⏭️ `PROJ-002`（归档）/ `PROJ-003`（完整生命周期） |
 | 项目起止时间与里程碑 | 支持 | ❌ | ⏭️ `PROJ-002` / `GANTT-001` |
 | 项目负责人字段 | 支持（独立于创建者） | ❌（P0 只有 `created_by`） | ⏭️ `PROJ-002` |
 | 项目级权限组 | 支持自定义权限组 | 四档固定项目角色 | ⏭️ `AUTH-008` |
-| 私密项目 | 支持 | ❌ | ⏭️ `PROJ-006` |
-| 项目回收站 | 支持，30 天内可恢复 | 软删除已实现（数据可恢复），无 UI 入口 | ⏭️ `PROJ-004` |
+| 私密项目 | 支持 | ❌ | ⏭️ P3 预留（`rbac-permission-model.md` §7.4/§9，暂无编号，架构文档待回改） |
+| 项目回收站 | 支持，30 天内可恢复 | 软删除已实现（数据可恢复），无 UI 入口 | ⏭️ `PROJ-002`（归档 / 恢复） |
 
 **从 Ones 吸收的两点**：
 
 1. **卡片式项目列表**。卡片能在同一屏内承载「名称 + 编号 + 描述 + 成员 + 任务量」五类信息，视觉扫描效率高于列表行；Plane 的列表行需要横向扫视，在项目数少（P0 场景）时空旷感明显。
 2. **危险操作要求输入项目名确认**。Ones 与 GitHub 同款范式，比单纯「确定/取消」显著降低误删率。
 
-**不吸收的部分**：Ones 的「项目模板」。模板需要先冻结「工作流 + 自定义字段 + 状态集 + 成员角色」四套配置的数据结构，而这四者在 P0~P2 均处于演进中。过早引入模板会导致模板格式反复破坏性变更，成本远大于收益。`PROJ-005` 在配置能力稳定后再落地。
+**不吸收的部分**：Ones 的「项目模板」。模板需要先冻结「工作流 + 自定义字段 + 状态集 + 成员角色」四套配置的数据结构，而这四者在 P0~P2 均处于演进中。过早引入模板会导致模板格式反复破坏性变更，成本远大于收益。项目模板由 `PROJ-003`（Sprint 5）在配置能力稳定后再落地。
 
 ### 6.3 三方能力矩阵
 
@@ -1684,11 +1701,11 @@ apps/web/app/routes/$workspaceSlug/
 | 创建时自动 seed 状态集 | ✅ | ✅ | ✅ | ✅ |
 | State 5 语义组 | ✅ | 类似 | ✅ | ✅ |
 | 卡片式项目列表 | ❌ | ✅ | ✅ | ✅ |
-| 项目成员与子角色 | ✅ | ✅ | ❌ | ✅ `PROJ-003` |
-| 状态集自定义增删改 | ✅ | ✅ | ❌ | ✅ `BOARD-004` |
-| 项目模板 | ❌ | ✅ | ❌ | ✅ `PROJ-005` |
-| 项目集 / 跨项目依赖 | Module | Program | ❌ | ✅ `PROJ-006` |
-| 私密项目 | ✅ | ✅ | ❌ | ✅ `PROJ-006` |
+| 项目成员与子角色 | ✅ | ✅ | ❌ | ✅ `PROJ-002` |
+| 状态集自定义增删改 | ✅ | ✅ | ❌ | ✅ `BOARD-003` |
+| 项目模板 | ❌ | ✅ | ❌ | ✅ `PROJ-003` |
+| 项目集 / 跨项目依赖 | Module | Program | ❌ | ✅ `PROJ-004` |
+| 私密项目 | ✅ | ✅ | ❌ | ✅ P3 预留（编号未定，架构文档待回改） |
 | 类型专属状态集 | Pro | ✅ | 列已建 | ✅ P3 |
 
 ---
@@ -1715,7 +1732,7 @@ apps/web/app/routes/$workspaceSlug/
 | AC-14 | 删除为软删除且级联 | 删除后查库 | `project.deleted_at` 非空；其下 `Issue` / `State` / `ProjectMember` 全部 `deleted_at` 非空；`all_objects` 仍可查到 |
 | AC-15 | 删除响应体为空 | 抓包 | `204` 且 `Content-Length: 0`，无 JSON 体 |
 | AC-16 | 事务原子性 | 注入 `create_default_states` 失败 | DB 中无 `Project`、无 `ProjectMember`、无 `State`，无半成品 |
-| AC-17 | 状态集接口契约满足 BOARD-001 | `GET .../states/` | 按 `sort_order` 升序；恰一条 `is_default`；`group` 为 5 枚举之一；含 `color` 与 `id` |
+| AC-17 | 状态集接口契约满足 BOARD-001 | `GET .../states/` | 按 `sort_order` 升序；恰一条 `is_default`（由 `get_or_create` 幂等 seed + 应用层校验保证，P0 DB 偏索引对 NULL 不生效，见 §2.3.2 / BE-09）；`group` 为 5 枚举之一；含 `color` 与 `id` |
 | AC-18 | 项目详情页默认进 Board | 点击项目卡片 | URL 为 `/…/board`，看板三列已渲染 |
 | AC-19 | 三 tab 框架可用 | 依次点击 | 任务列表（`TASK-001`）、看板（`BOARD-001`）、项目设置均可正常打开 |
 | AC-20 | 空状态文案准确 | 新 Workspace 进项目列表 | 显示「还没有项目」与「点击创建第一个项目」 |

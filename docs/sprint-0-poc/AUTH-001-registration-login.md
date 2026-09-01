@@ -13,6 +13,7 @@
 | 下游依赖 | `AUTH-002`（路由拦截与接口鉴权）、`AUTH-003`（最小权限隔离）、`TEAM-001`（团队 CRUD 与默认团队）、以及全部需要登录态的模块 |
 | 架构基线 | [`api-conventions.md`](../architecture/api-conventions.md) §2.5 / §4 / §7.2 / §8.2 / §9.2、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §2 / §3 / §9、[`tech-stack.md`](../architecture/tech-stack.md) §3.1 |
 | 竞品参考 | Plane 开源版（Django 自研认证：Session + Token + OAuth，不使用 NextAuth）、Ones（SAML 2.0 SSO + LDAP/AD 私有化部署） |
+| 工作量估算 | 后端 2 人日 / 前端 2 人日 / 联调与测试 1 人日，合计 **5 人日** |
 
 > **范围声明**：本文档只交付「邮箱 + 密码」的认证最小闭环。Magic Link、OAuth 第三方登录、SSO、LDAP、MFA、密码重置**均不在 P0 范围**，但认证链路的可扩展点在 §4.5 显式预留。
 
@@ -46,14 +47,14 @@ AUTH-001 是整个系统的**唯一入口**。在它交付之前，所有模块�
 | 依赖文档 | 依赖内容 | 缺失后果 |
 | --- | --- | --- |
 | `INFRA-001` | `apps/api`（Django + DRF）与 `apps/web`（React Router v7 + Vite）工程骨架、axios 实例与拦截器位点 | 无处落代码 |
-| `INFRA-002` | PostgreSQL 15.7 与 Valkey 7.2 容器（Session 后端指向 Valkey DB 1） | Session 无法持久化，刷新即掉登录 |
+| `INFRA-002` | PostgreSQL 15.7 与 Valkey 7.2 容器（Session 后端复用 api 的 Valkey DB 0，见 §4.3.3 说明） | Session 无法持久化，刷新即掉登录 |
 | `INFRA-003` | `BaseModel`（UUID 主键 + 审计字段 + 软删除位）、`User` 模型基线、`WorkspaceMember` 与 `SystemAdmin` 建表 | 注册无法落库；`WorkspaceMember.role` 若不是 `IntegerField` 则 P1 需要破坏性迁移（见 `rbac-permission-model.md` §9） |
 
 ### 1.4 竞品参考结论（详见第 6 章）
 
 - **Plane**：Django 自研认证，Session + Token + OAuth 三条链路并存，明确不使用 NextAuth；密码走 Django 内置哈希器体系；额外提供 Magic Link 与 Google/GitHub OAuth。
 - **Ones**：企业侧能力更厚——SAML 2.0 SSO、LDAP/AD（On-Premises）、MFA（Business 及以上）、密码安全规则可配置、会话管理与超时策略。
-- **本系统 P0**：只做邮箱 + 密码最小闭环，与 Plane 的基础认证链路一致；SSO / LDAP / MFA 对标 Ones，排在 `AUTH-010`（P3）与 `AUTH-011`（P4）。
+- **本系统 P0**：只做邮箱 + 密码最小闭环，与 Plane 的基础认证链路一致；SSO / LDAP / MFA 对标 Ones，排在 `AUTH-009`（P3，SSO 单点登录）与 `AUTH-011`（P4，LDAP / SCIM）。
 
 ---
 
@@ -74,22 +75,25 @@ flowchart TD
     F -- 已存在 --> F1["409 RESOURCE_ALREADY_EXISTS<br/>details: email / UNIQUE"] --> Z3["邮箱输入框下提示已注册 + 去登录"]
     F -- 可用 --> G["transaction.atomic 开启"]
     G --> H["1. 创建 User<br/>password 经 Argon2id 哈希"]
-    H --> I["2. 创建默认 Workspace<br/>name=显示名的工作空间, slug 唯一化"]
+    H --> I["2. 创建默认 Workspace（复用 TEAM-001 §4.3.1 create_default_workspace）<br/>name={display_name}的工作空间<br/>slug=generate_unique_slug(name)"]
     I --> J["3. 创建 WorkspaceMember<br/>role=WS_OWNER(20)"]
-    J --> K{"事务提交"}
+    J --> J2["4. seed_workspace_issue_types<br/>P0 仅种入「任务」IssueType"]
+    J2 --> K{"事务提交"}
     K -- IntegrityError（并发同邮箱） --> F1
     K -- 成功 --> L["django.contrib.auth.login()<br/>建立 Session + 轮换 session key"]
-    L --> M["on_commit：写 last_login_at<br/>（异步，不阻塞响应）"]
-    M --> N["201 Created + Location: /api/v1/users/me/<br/>data: user + default_workspace"]
+    L --> M["同步写 last_login_at<br/>（单列 UPDATE，随响应体返回）"]
+    M --> N["201 Created + Location: /api/v1/users/me/<br/>data: user + default_workspace_slug"]
     N --> O["前端写入 AuthStore<br/>SWR mutate('/api/v1/users/me/')"]
-    O --> P["跳转 /:workspaceSlug/ 工作台"]
+    O --> P["跳转 /:slug/projects 工作台"]
 ```
 
 **关键设计点**
 
-1. **默认工作空间在注册事务内创建**，不是注册成功后再发一个请求。理由：两步式会产生「用户已存在但没有任何工作空间」的中间态，前端必须为此写兜底分支，而这个中间态永远无法自愈（用户下次登录仍然没有工作空间）。放进同一个 `transaction.atomic()` 后，要么两者都有，要么都没有。
+1. **默认工作空间在注册事务内创建**，不是注册成功后再发一个请求。理由：两步式会产生「用户已存在但没有任何工作空间」的中间态，前端必须为此写兜底分支，而这个中间态永远无法自愈（用户下次登录仍然没有工作空间）。放进同一个 `transaction.atomic()` 后，要么全部成功，要么全部回滚。默认工作空间的创建**复用 `TEAM-001` §4.3.1 的 `create_default_workspace()`**——同事务完成 Workspace + WorkspaceMember + `seed_workspace_issue_types`（P0 仅种入「任务」IssueType）三步，命名与 slug 生成规则以 `TEAM-001` §2.2 为**唯一权威口径**，本文档不维护第二套规则。
 2. **自动登录复用登录路径的同一函数**，不另写一遍 `login()` 调用，避免两条路径的 Session 配置（有效期、key 轮换）出现漂移。
 3. **响应体不含任何 token**（`api-conventions.md` §9.2 硬性约定），凭据只在 HttpOnly Cookie 中。
+4. **`last_login_at` 在响应前同步写入，不进 `on_commit`**：注册（§4.2.1）与登录（§4.2.2）响应体都要返回该值，若置 `on_commit`（视图返回后才执行）则序列化时必为 `null`；且它只是一条单列 `UPDATE`（成本相对 Argon2id 哈希的约 50ms 可忽略），并非 `api-conventions.md` §10.5 针对的「通知 / Webhook / 索引」类外部副作用。注册首登录与普通登录（§2.2 步骤 H）统一此口径，写入位置在 `establish_session()`（§4.3.2）。
+5. **欢迎邮件 `on_commit` 副作用的显式登记（对齐 TEAM-001，矛盾显式化）**：被本文引为注册契约权威的 `TEAM-001` §4.3.1 `perform_sign_up`（及其 §2.2 注册初始化流程）明确包含 `transaction.on_commit(send_welcome_email.delay(...))`——这是 P0 认证链路**唯一**的 `on_commit` 落点（副作用投递策略见其 §2.1）。本文据此登记消解口径：**P0 不配置 SMTP**，`send_welcome_email` 为**落日志降级任务**（P0 不发真实邮件，仅写一条日志，非用户可见副作用），注册流程本身写一封「日志邮件」是 P0 可接受的降级。该任务在事务提交后异步执行，响应**无需等待**它完成，与本文「注册事务内禁止外部调用」及 `last_login_at` 同步写（设计点 4）的口径均不冲突。
 
 ### 2.2 登录流程
 
@@ -105,7 +109,7 @@ flowchart TD
     E --> F["login(request, user)<br/>cycle_key() 防会话固定攻击"]
     F --> G{"是否勾选「记住我」"}
     G -- 是 --> G1["set_expiry(30 天)"]
-    G -- 否 --> G2["set_expiry(14 天滑动)"]
+    G -- 否 --> G2["set_expiry(14 天)"]
     G1 --> H["更新 last_login_at"]
     G2 --> H
     H --> I["200 OK<br/>data: user + workspaces[]"]
@@ -149,9 +153,9 @@ P0 采用 **Session 为主 + API Key 为辅** 的双凭据模式，与 `api-conv
 
 | 凭据 | 消费方 | 载体 | 有效期 | P0 是否交付 |
 | --- | --- | --- | --- | --- |
-| Session | `apps/web` / `apps/admin` 浏览器登录态 | `HttpOnly` + `Secure` + `SameSite=Lax` 的 `sessionid` Cookie | 默认 14 天滑动过期；勾选「记住我」30 天 | ✅ 本文档 |
-| API Key（`APIToken`） | 脚本 / CI / 自建集成 | `X-API-Key: rp_live_xxxx` 请求头 | 默认 1 年 | ⭕ 模型与认证类在 P0 建好（供 E2E 与冒烟脚本使用），管理 UI 排在 P1 |
-| OAuth 2.0 Bearer | 第三方应用 | `Authorization: Bearer` | access 1h / refresh 30d | ❌ P4（`INTG-003`） |
+| Session | `apps/web` / `apps/admin` 浏览器登录态 | `HttpOnly` + `Secure` + `SameSite=Lax` 的 `rp_sessionid` Cookie | 默认 14 天滑动；勾选「记住我」30 天**滑动窗口**（与默认 14 天滑动的差别仅在窗口长度，见 §4.3.3） | ✅ 本文档 |
+| API Key（`APIToken`） | 脚本 / CI / 自建集成 | `X-API-Key: rp_live_xxxx` 请求头 | 默认 1 年 | ⭕ 模型与认证类在 P0 建好（供 E2E 与冒烟脚本使用）；管理端点与 UI 暂未立项（README §4 索引暂无承接文档，端点见 `api-conventions.md` §2.5）。P0 阶段令牌经 Django shell / 测试工厂（`APIToken.objects.create`）签发（UT-19 / IT-19） |
+| OAuth 2.0 Bearer | 第三方应用 | `Authorization: Bearer` | access 1h / refresh 30d | ❌ P4 远期增强（暂未立项，README §4 索引中无承接文档） |
 
 **滑动过期的实现**：`SESSION_SAVE_EVERY_REQUEST = True`，每次已认证请求都重写 session 的过期时间戳。代价是每请求一次 Valkey 写入（Session 后端为 cache backend，写入成本约 0.1ms，可接受）；收益是活跃用户永不被动掉线。
 
@@ -172,11 +176,11 @@ stateDiagram-v2
     Authenticated --> Anonymous: 主动退出 204
     Authenticated --> Expired: 超过 14 天无活跃
     Expired --> Anonymous: 下次请求 401 AUTH_SESSION_EXPIRED
-    Authenticated --> Disabled: 管理员禁用账号（AUTH-007）
+    Authenticated --> Disabled: 管理员禁用账号（账号治理能力，暂未单独立项）
     Disabled --> Anonymous: 全部 Session 与 API Key 即时吊销
 ```
 
-> `Disabled` 状态的转入动作属于 `AUTH-007`（P2），但**转出行为（401 `AUTH_ACCOUNT_DISABLED`）在 P0 即实现**，否则 P2 上线禁用功能时前端要临时补分支。
+> `Disabled` 状态的转入动作（管理员禁用账号）暂无承接的功能文档（编号待排期）：`rbac-permission-model.md` §9 P2 行与 `INFRA-003` §4 表注均把「账号禁用/启用」指向 `AUTH-007`，而 README §4 现行索引中 `AUTH-007` 为「部门层级组织架构」（Sprint 8，P3），编号不一致（架构文档待回改）；按 README 现行索引该能力暂无承接文档。但**转出行为（401 `AUTH_ACCOUNT_DISABLED`）在 P0 即实现**，否则后续上线禁用功能时前端要临时补分支。
 
 ### 2.6 业务规则表
 
@@ -188,14 +192,14 @@ stateDiagram-v2
 | BR-04 | 密码不得与邮箱本地部分相同、不得为常见弱密码（Django `CommonPasswordValidator` 内置约 2 万词表） | 后端校验器 | 400 `VALIDATION_ERROR` / `INVALID` |
 | BR-05 | 两次输入的密码必须一致 | 前端 + 后端 `validate()` | 400 `VALIDATION_ERROR` / `INVALID`（`details.field = password_confirm`） |
 | BR-06 | 密码只存哈希，算法为 **Argon2id**；数据库、日志、响应体、异常堆栈中都不得出现明文或哈希 | `make_password` + 日志脱敏中间件 | 视为安全缺陷，阻断合并 |
-| BR-07 | 注册成功必须在同一事务内创建默认 Workspace 且注册者为 `WS_OWNER(20)` | `AuthService.register()` | 事务回滚，注册整体失败 |
-| BR-08 | 默认工作空间名为 `{display_name} 的工作空间`；slug 由邮箱本地部分转 kebab-case，冲突时追加 `-2`、`-3`…，最多重试 5 次后改用随机 6 位后缀 | `slugify_unique()` | 5 次后仍冲突则 500（实际概率可忽略） |
+| BR-07 | 注册成功必须在同一事务内创建默认 Workspace（含 `seed_workspace_issue_types` 种入「任务」IssueType）且注册者为 `WS_OWNER(20)` | `AuthService.register()`（复用 `TEAM-001` `create_default_workspace()`） | 事务回滚，注册整体失败 |
+| BR-08 | 默认工作空间名为 `{display_name}的工作空间`；slug 复用 `TEAM-001` §4.1.3 的 `generate_unique_slug(name)` 生成（英文 slugify、中文经 pypinyin 转拼音兜底；基名截断至 40 字符、最终 ≤ 48 以适配 `SlugField(max_length=48)`），命中保留词或冲突时追加 `-1`、`-2`…，最多重试 100 次，超限改用 6 位随机短码 | `TEAM-001` `generate_unique_slug()` | ——（随机短码兜底，概率上必然成功，不再返回 500） |
 | BR-09 | `display_name` 缺省取邮箱本地部分（`zhangsan@x.com` → `zhangsan`），长度 ≤ 150 | Serializer `default` | —— |
 | BR-10 | 登录成功必须轮换 session key（`cycle_key()`） | `AuthService.login()` | 会话固定攻击（Session Fixation）风险 |
 | BR-11 | 登录 / 注册端点限流 10 请求/分钟（IP + 邮箱双维度）；登录连续失败 5 次锁定该邮箱 15 分钟 | DRF Throttle + Valkey 计数器 | 429 `RATE_LIMIT_EXCEEDED` / `AUTH_TOO_MANY_ATTEMPTS` |
 | BR-12 | 所有非安全方法（POST/PATCH/DELETE）必须通过 CSRF 双提交校验；注册与登录端点同样校验 | Django CSRF 中间件 | 403 `AUTH_CSRF_FAILED` |
 | BR-13 | 退出接口幂等：无论当前有无有效 Session 均返回 204 | `SignOutView` | —— |
-| BR-14 | `is_active=False` 的账号不得登录，且其既有 Session 与 API Key 即时失效 | 认证后端 + `AUTH-007` 吊销逻辑 | 401 `AUTH_ACCOUNT_DISABLED` |
+| BR-14 | `is_active=False` 的账号不得登录，且其既有 Session 与 API Key 即时失效 | 认证后端 + 账号治理吊销逻辑（暂未单独立项） | 401 `AUTH_ACCOUNT_DISABLED` |
 
 ### 2.7 异常处理表
 
@@ -210,7 +214,7 @@ stateDiagram-v2
 | 请求体非法 JSON | 400 | `VALIDATION_INVALID_JSON` | —— | 全局 toast（通常是客户端 bug） |
 | 凭据错误 | 401 | `AUTH_INVALID_CREDENTIALS` | —— | 表单顶部统一提示，密码框清空、邮箱保留 |
 | 账号被禁用 | 401 | `AUTH_ACCOUNT_DISABLED` | —— | 提示联系管理员，禁止自动重试 |
-| 未登录访问 `/users/me/` 或退出 | 401 | `AUTH_REQUIRED` | —— | 跳转登录页并带 `?next=` |
+| 未登录访问 `/users/me/` | 401 | `AUTH_REQUIRED` | —— | 跳转登录页并带 `?next=` |
 | Session 过期 | 401 | `AUTH_SESSION_EXPIRED` | —— | 静默跳登录 + toast「登录已过期」 |
 | CSRF 校验失败 | 403 | `AUTH_CSRF_FAILED` | —— | 重新拉取 CSRF token 后**自动重试一次** |
 | 注册/登录过于频繁 | 429 | `RATE_LIMIT_EXCEEDED` | `{field: "retry_after", code: "RETRY_AFTER"}` | 按 `Retry-After` 倒计时禁用提交按钮 |
@@ -227,7 +231,7 @@ stateDiagram-v2
 | EC-04 | 邮箱含大写与首尾空格 `  Zhang@X.com ` | 归一为 `zhang@x.com` 后落库；用任意大小写形式都能登录 |
 | EC-05 | 邮箱含 Unicode 域名（IDN） | P0 不支持，返回 400 `INVALID_EMAIL`（避免同形异义字钓鱼） |
 | EC-06 | **并发注册同一邮箱**（两个请求同时通过唯一性检查） | 依赖 DB 唯一约束兜底：先提交者成功，后者捕获 `IntegrityError` 转 409 `RESOURCE_ALREADY_EXISTS`。**不允许仅靠应用层 `exists()` 判重** |
-| EC-07 | 并发注册导致默认工作空间 slug 冲突 | `slugify_unique()` 在唯一约束冲突时重试，最多 5 次（BR-08） |
+| EC-07 | 并发注册导致默认工作空间 slug 冲突 | `generate_unique_slug()` 检测冲突追加 `-1`、`-2`…（最多 100 次，BR-08）；并发穿透唯一约束时由创建服务捕获 `IntegrityError` 重试（`TEAM-001` §4.1.3） |
 | EC-08 | 密码含空格 / emoji / 中文 | 允许（不做字符集限制，仅做长度与复杂度校验）；首尾空格**不 trim**（trim 会造成登录失败） |
 | EC-09 | 同一账号多设备同时登录 | 允许，各设备独立 Session；「单会话模式」为 P3 实例配置项 |
 | EC-10 | 用户禁用浏览器 Cookie | 登录接口成功但后续请求 401；前端在 `document.cookie` 不可写时展示「请启用 Cookie」提示 |
@@ -317,7 +321,7 @@ stateDiagram-v2
 ```
 
 - 「忘记密码？」链接在 P0 渲染为**禁用态灰字 + Tooltip「即将上线」**，不做隐藏。理由：位置提前占位可避免 P1（`AUTH-004`）上线时布局重排，也让用户知道该能力存在。
-- 「记住我」未勾选 = 14 天滑动过期；勾选 = 30 天固定过期。文案直接标注天数，不用「保持登录」这类无法自证的模糊表达。
+- 「记住我」未勾选 = 14 天滑动过期；勾选 = **30 天滑动窗口**（与默认 14 天滑动的差别仅在窗口长度——`SESSION_SAVE_EVERY_REQUEST = True` 下每次已认证请求都重写过期时间戳，§4.3.3，不存在「固定过期」语义）。文案直接标注天数，不用「保持登录」这类无法自证的模糊表达。
 
 ### 3.4 密码强度指示器
 
@@ -338,7 +342,7 @@ stateDiagram-v2
 | 实时校验策略 | **失焦时校验，输入时只清错**（`react-hook-form` 的 `mode: "onTouched"`）。边输入边报红会让用户在打完第 3 个字符时就看到「邮箱格式错误」，体验负面 |
 | 提交按钮禁用条件 | 表单存在已知错误、必填未填、请求进行中、限流倒计时中 |
 | Loading 态 | 按钮内联 spinner + 文案切换为「创建中…」/「登录中…」；整个表单 `aria-busy="true"` 且输入框只读，防止重复提交 |
-| 双击提交防护 | 前端按钮禁用 + 后端注册端点支持 `Idempotency-Key`（`api-conventions.md` §3.4） |
+| 双击提交防护 | 前端按钮禁用 + 后端注册端点支持 `Idempotency-Key`（`api-conventions.md` §3.4；匿名端点无 `user_id`，键组成约定见 §4.2.1） |
 | 字段级错误 | 后端 `details[]` 通过 `setError(field, ...)` 精确落到对应输入框，不弹 toast |
 | 全局错误 | 401 渲染为表单顶部 Alert 条（**不用 toast**，因为登录失败时用户视线在表单内）；429 / 5xx 用 toast |
 | 成功反馈 | 不弹「注册成功」toast，直接跳转工作台并在工作台顶部展示一次性欢迎条。少一次点击 |
@@ -425,7 +429,7 @@ class User(AbstractUser):
 
     # ── 状态与审计 ───────────────────────────────────────────
     is_active = models.BooleanField(default=True, db_index=True,
-                                    verbose_name="是否启用")   # BR-14 / AUTH-007
+                                    verbose_name="是否启用")   # BR-14
     last_login_at = models.DateTimeField(null=True, blank=True, verbose_name="最近登录时间")
     last_workspace_id = models.UUIDField(null=True, blank=True,
                                          verbose_name="最近访问的工作空间")
@@ -456,7 +460,7 @@ class User(AbstractUser):
 | `display_name` | varchar(150) | NOT NULL | 缺省取邮箱本地部分 |
 | `avatar_url` | varchar(800) | 可空 | P0 前端用姓名首字母生成占位头像，不落库 |
 | `is_active` | bool | 默认 true，索引 | `false` 时禁止登录且吊销既有凭据 |
-| `last_login_at` | timestamptz | 可空 | 登录成功后异步写入，避免阻塞登录响应 |
+| `last_login_at` | timestamptz | 可空 | 登录成功后**同步写入**（单列 `UPDATE`，登录 / 注册响应体即返回该值，见 §2.1 设计点 4） |
 | `last_workspace_id` | UUID | 可空，无外键约束 | 登录后回跳目标；**刻意不建外键**，工作空间被删时不需要级联清理 |
 | `deleted_at` | timestamptz | 可空，索引 | 软删除；`unique(email)` 在 P0 不带 `deleted_at` 条件（P2 账号注销时再评估偏索引） |
 
@@ -465,9 +469,12 @@ class User(AbstractUser):
 **注册时同步创建的关联记录**（模型定义见 `rbac-permission-model.md` §3.2 与 `unified-issue-model.md` §2.3）：
 
 ```python
-Workspace(name=f"{user.display_name} 的工作空间", slug=<唯一化>, owner=user)
+Workspace(name=f"{user.display_name}的工作空间", slug=<generate_unique_slug(name)>, owner=user)
 WorkspaceMember(workspace=<上者>, member=user, role=WorkspaceRole.OWNER, is_active=True)
+seed_workspace_issue_types(<上者>)   # P0 仅种入「任务」IssueType（TEAM-001 §2.1 步骤 J）
 ```
+
+> 以上三步**不由本文档自行实现**，而是整体复用 `TEAM-001` §4.3.1 的 `create_default_workspace(user)`（幂等，事务内完成），避免两份文档维护两套创建逻辑产生漂移；此处列出仅为说明注册事务的完整写入面。
 
 ### 4.2 API 定义
 
@@ -487,6 +494,8 @@ WorkspaceMember(workspace=<上者>, member=user, role=WorkspaceRole.OWNER, is_ac
 
 请求头：`Content-Type: application/json`、`X-CSRFToken: <token>`、可选 `Idempotency-Key: <uuid>`
 
+> **匿名端点的幂等键组成约定**：`api-conventions.md` §3.4 规定幂等唯一键为 `(user_id, endpoint, key)`，而注册是匿名端点，请求时不存在 `user_id`。本文约定：该匿名端点以 **客户端 IP + 归一化邮箱（小写、去首尾空格，规则同 BR-02）** 充当 `user_id` 维度，即唯一键为 `(client_ip, normalized_email, endpoint, key)`。同键重复提交（双击、网络重试）直接重放首次响应（IT-17、E2E-12）；并发同邮箱请求不携带同键时，仍由 DB 唯一约束兜底转 409（EC-06）。
+
 ```json
 {
   "email": "zhangsan@example.com",
@@ -503,7 +512,7 @@ WorkspaceMember(workspace=<上者>, member=user, role=WorkspaceRole.OWNER, is_ac
 | `password_confirm` | string | ✅ | 与 `password` 全等 |
 | `display_name` | string | ⭕ | ≤ 150，缺省取邮箱本地部分 |
 
-`201 Created`，响应头 `Location: /api/v1/users/me/`、`Set-Cookie: sessionid=…; HttpOnly; Secure; SameSite=Lax`：
+`201 Created`，响应头 `Location: /api/v1/users/me/`、`Set-Cookie: rp_sessionid=…; HttpOnly; Secure; SameSite=Lax`：
 
 ```json
 {
@@ -519,15 +528,12 @@ WorkspaceMember(workspace=<上者>, member=user, role=WorkspaceRole.OWNER, is_ac
       "created_at": "2026-09-01T02:11:07.318Z",
       "updated_at": "2026-09-01T02:11:07.412Z"
     },
-    "default_workspace": {
-      "id": "2c7d9e11-88a4-4f30-9b6c-77e1d2f3a4b5",
-      "name": "张三 的工作空间",
-      "slug": "zhangsan",
-      "role": 20
-    }
+    "default_workspace_slug": "zhang-san-workspace"
   }
 }
 ```
+
+> `default_workspace_slug` 为**字符串**而非对象：与 `TEAM-001` §4.3.1 `perform_sign_up` 的注册响应契约完全一致——前端读取后直接跳转 `/:slug/projects`，无需为落地工作台再发一次请求；工作台所需的完整对象（name / role 等）由 `TEAM-001` 的 `GET /api/v1/workspaces/` 提供。
 
 错误响应（示例：邮箱已注册）`409 Conflict`：
 
@@ -572,7 +578,7 @@ WorkspaceMember(workspace=<上者>, member=user, role=WorkspaceRole.OWNER, is_ac
 }
 ```
 
-`200 OK`，响应头 `Set-Cookie: sessionid=…; HttpOnly; Secure; SameSite=Lax; Max-Age=1209600`：
+`200 OK`，响应头 `Set-Cookie: rp_sessionid=…; HttpOnly; Secure; SameSite=Lax; Max-Age=1209600`：
 
 ```json
 {
@@ -588,13 +594,13 @@ WorkspaceMember(workspace=<上者>, member=user, role=WorkspaceRole.OWNER, is_ac
       "last_workspace_id": "2c7d9e11-88a4-4f30-9b6c-77e1d2f3a4b5"
     },
     "workspaces": [
-      { "id": "2c7d9e11-88a4-4f30-9b6c-77e1d2f3a4b5", "name": "张三 的工作空间", "slug": "zhangsan", "role": 20 }
+      { "id": "2c7d9e11-88a4-4f30-9b6c-77e1d2f3a4b5", "name": "张三的工作空间", "slug": "zhang-san-workspace", "role": 20 }
     ]
   }
 }
 ```
 
-> `workspaces` 内联返回的取舍：多一次 JOIN（成本极低，成员表有 `(member, workspace, role)` 索引），换掉登录后必然发生的一次 `GET /workspaces/` 往返，让「登录 → 落地工作台」少一个串行 RTT。`role` 为整数等级值（`rbac-permission-model.md` §2.2），前端 P1 的 `PermissionGate` 直接可用。
+> `workspaces` 内联返回的取舍：多一次 JOIN（成本极低，成员表有 `(member, workspace, role)` 索引），换掉登录后必然发生的一次 `GET /workspaces/` 往返，让「登录 → 落地工作台」少一个串行 RTT。`role` 为整数等级值（`rbac-permission-model.md` §2.2 定义，本例 `20` 即 `WS_OWNER`），为 `api-conventions.md` §4.5「枚举用小写下划线字符串」的**登记例外**（与 `rbac-permission-model.md` §4.1 权限快照的整数风格一致，属架构文档间张力，架构文档待回改）；前端 P1 的 `PermissionGate` 直接可用。
 
 错误响应 `401 Unauthorized`（邮箱不存在与密码错误**同码同文案**）：
 
@@ -628,7 +634,7 @@ WorkspaceMember(workspace=<上者>, member=user, role=WorkspaceRole.OWNER, is_ac
 
 请求体：无（`Content-Length: 0`）。请求头需带 `X-CSRFToken`。
 
-`204 No Content`，**响应体为空**（`api-conventions.md` §4.3：204 不得包装 envelope），响应头 `Set-Cookie: sessionid=; Max-Age=0`。
+`204 No Content`，**响应体为空**（`api-conventions.md` §4.3：204 不得包装 envelope），响应头 `Set-Cookie: rp_sessionid=; Max-Age=0`。
 
 #### 4.2.4 `GET /api/v1/users/me/` — 当前用户
 
@@ -708,17 +714,21 @@ AUTH_PASSWORD_VALIDATORS = [
 # apps/api/plane/authentication/services.py
 from django.contrib.auth import login as django_login
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
-from plane.db.models import User, Workspace, WorkspaceMember, WorkspaceRole
+from plane.db.models import User, Workspace
+from plane.db.services.workspace import create_default_workspace   # TEAM-001 §4.3.1
 from plane.utils.errors import ResourceAlreadyExistsError
-from plane.utils.slug import slugify_unique
 
 
 class AuthService:
-    """认证领域服务：把「注册 = 建用户 + 建默认工作空间 + 建成员关系」封装为原子操作。
+    """认证领域服务：把「注册 = 建用户 + 初始化默认工作空间」封装为原子操作。
 
-    刻意不放在 Serializer.create() 中：注册的副作用跨越三张表，
-    属于领域行为而非序列化职责（api-conventions.md §10.2「业务规则校验放领域服务层」）。
+    默认工作空间的创建（Workspace + WorkspaceMember + IssueType 种子，共三张表）
+    整体委托 TEAM-001 §4.3.1 的 create_default_workspace()，本文不维护第二套
+    命名 / slug / 种子逻辑。刻意不放在 Serializer.create() 中：注册的副作用
+    跨越四张表，属于领域行为而非序列化职责（api-conventions.md §10.2
+    「业务规则校验放领域服务层」）。
     """
 
     @staticmethod
@@ -731,18 +741,11 @@ class AuthService:
                 user = User.objects.create_user(
                     email=email, password=password, display_name=display_name
                 )
-                workspace = Workspace.objects.create(
-                    name=f"{display_name} 的工作空间",
-                    slug=slugify_unique(Workspace, email.split("@")[0]), # BR-08
-                    owner=user,
-                    created_by=user,
-                    updated_by=user,
-                )
-                WorkspaceMember.objects.create(
-                    workspace=workspace, member=user,
-                    role=WorkspaceRole.OWNER,                            # 等级 20
-                    is_active=True, created_by=user, updated_by=user,
-                )
+                workspace = create_default_workspace(user)              # BR-08：内部完成
+                                                                       # Workspace（name=f"{display_name}的工作空间"，
+                                                                       # slug=generate_unique_slug(name)）
+                                                                       # + WorkspaceMember(role=OWNER=20)
+                                                                       # + seed_workspace_issue_types
         except IntegrityError as exc:
             # EC-06：并发注册同邮箱时唯一约束兜底，绝不依赖应用层 exists() 判重
             if "users_email_key" in str(exc):
@@ -751,14 +754,18 @@ class AuthService:
                 ) from exc
             raise
 
-        user.last_workspace_id = workspace.id
-        user.save(update_fields=["last_workspace_id"])
+        if workspace is not None:                                        # 幂等分支见 TEAM-001 BE-34
+            user.last_workspace_id = workspace.id
+            user.save(update_fields=["last_workspace_id"])
         return user, workspace
 
     @staticmethod
     def establish_session(request, user: User, remember_me: bool = False) -> None:
         """注册自动登录与登录复用同一入口，杜绝两处 Session 策略漂移（BR-10）。"""
         django_login(request, user)          # 内部已调用 cycle_key() 防会话固定
+        user.last_login_at = timezone.now()  # 同步写（§2.1 设计点 4 / §2.2 步骤 H）：
+                                            # 响应体需返回该值，on_commit 时序上不可行
+        user.save(update_fields=["last_login_at"])
         request.session.set_expiry(
             60 * 60 * 24 * 30 if remember_me else 60 * 60 * 24 * 14
         )
@@ -771,7 +778,7 @@ class AuthService:
 ```python
 # apps/api/plane/settings/base.py
 SESSION_ENGINE = "django.contrib.sessions.backends.cache"
-SESSION_CACHE_ALIAS = "sessions"                  # 指向 Valkey DB 1（INFRA-002）
+SESSION_CACHE_ALIAS = "default"                   # 复用 api 的 REDIS_URL（Valkey DB 0，说明见下）
 SESSION_COOKIE_NAME = "rp_sessionid"
 SESSION_COOKIE_HTTPONLY = True                    # 防 XSS 读取
 SESSION_COOKIE_SECURE = not DEBUG                 # 生产强制 HTTPS
@@ -791,6 +798,8 @@ REST_FRAMEWORK = {
 ```
 
 > `DEFAULT_PERMISSION_CLASSES` 的「默认拒绝」策略与公开端点的 `AllowAny` 豁免清单属于 `AUTH-002` 的交付内容，本文档只声明注册 / 登录 / CSRF 三个端点必须显式 `permission_classes = [AllowAny]`。
+
+> **Session 的 Valkey DB 分配（对齐 `INFRA-002` §4.2 实际编排）**：`INFRA-002` 已将 Valkey **DB 0** 分配给 api 的 `REDIS_URL`（通用缓存）、**DB 1** 分配给 `CELERY_RESULT_BACKEND`、**DB 2** 分配给 `live` 服务。因此 Session 复用 **DB 0**（`SESSION_CACHE_ALIAS = "default"`），与业务缓存同库不同 key 前缀（Django session 键固定带 `django.contrib.sessions.` 前缀），**不占用 DB 1**。`api-conventions.md` §9.2 中「缓存指向 Valkey（DB 1）」的旧表述与 `INFRA-002` 编排冲突，以 `INFRA-002` 现文为准，架构文档待回改。
 
 Session 数据只存 `_auth_user_id` / `_auth_user_backend` / `_auth_user_hash`，**不缓存任何业务数据或权限快照**。原因：Session 一旦承载权限，角色变更就需要额外的失效机制；权限数据统一走 `GET /api/v1/users/me/permissions/`（P1，`AUTH-005`）并由 WebSocket 事件失效。
 
@@ -880,7 +889,7 @@ export class AuthStore {
     return this.currentUser !== null;
   }
 
-  register = async (payload: TRegisterPayload) => { /* POST sign-up → 写入 user + workspace */ };
+  register = async (payload: TRegisterPayload) => { /* POST sign-up → 写入 user，读 default_workspace_slug 跳转 */ };
   login = async (payload: TLoginPayload) => { /* POST sign-in → 写入 user + workspaces */ };
 
   logout = async () => {
@@ -952,11 +961,11 @@ class MagicLinkStrategy(AuthStrategy):  # 未排期（Plane 有，本系统暂�
     ...
 
 
-class OAuthStrategy(AuthStrategy):      # P4 INTG-003：Google / GitHub
+class OAuthStrategy(AuthStrategy):      # P4 远期增强（暂未立项/未排期）：Google / GitHub
     ...
 
 
-class SAMLStrategy(AuthStrategy):       # P3 AUTH-010：对标 Ones SSO
+class SAMLStrategy(AuthStrategy):       # P3 AUTH-009：对标 Ones SSO
     ...
 
 
@@ -991,21 +1000,21 @@ docker compose exec api python manage.py grant_system_admin zhangsan@example.com
 | UT-02 | 同一明文两次哈希结果不同，且均能通过 `check_password` | 盐值随机、校验正确 |
 | UT-03 | 数据库中 `password` 字段不含明文子串 | BR-06 |
 | UT-04 | 邮箱 `  Zhang@X.com ` 归一化为 `zhang@x.com` | BR-02 / EC-04 |
-| UT-05 | 邮箱格式非法（缺 `@`、多个 `@`、超 254 字符）逐项参数化 | 400 + `INVALID_EMAIL` / `TOO_LONG` |
+| UT-05 | 邮箱格式非法（缺 `@`、多个 `@`、超 254 字符、含 Unicode 域名 IDN 如 `user@münchen.de` / `用户@例证.中国`）逐项参数化 | 400 + `INVALID_EMAIL` / `TOO_LONG`；其中 IDN 两例断言 `INVALID_EMAIL`（EC-05） |
 | UT-06 | 密码 7 / 8 / 128 / 129 位边界参数化 | 7 与 129 拒绝，8 与 128 通过（EC-01） |
 | UT-07 | 密码缺大写 / 缺小写 / 缺数字 / 纯数字逐项参数化 | 均返回 `VALIDATION_ERROR` |
 | UT-08 | 密码为 `password123`（常见弱密码词表内） | 被 `CommonPasswordValidator` 拒绝（BR-04） |
 | UT-09 | 密码与邮箱本地部分相同 | 被 `UserAttributeSimilarityValidator` 拒绝 |
 | UT-10 | 密码含 emoji / 中文 / 首尾空格 | 通过，且首尾空格不被 trim（EC-08） |
 | UT-11 | `display_name` 缺省时取邮箱本地部分并截断至 150 | BR-09 / EC-03 |
-| UT-12 | `slugify_unique` 在 slug 冲突时依次产出 `-2`、`-3` | BR-08 |
-| UT-13 | `AuthService.register()` 成功后 User / Workspace / WorkspaceMember 各增 1 条，且 member role == 20 | BR-07 |
+| UT-12 | `generate_unique_slug`（复用 TEAM-001 用例 BE-04/BE-05）在 slug 冲突时依次产出 `-1`、`-2` | BR-08 |
+| UT-13 | `AuthService.register()` 成功后 User / Workspace / WorkspaceMember / IssueType 各增 1 条，且 member role == 20、IssueType 为「任务」 | BR-07 |
 | UT-14 | mock `Workspace.objects.create` 抛异常后 User 表无残留记录 | 事务原子性 |
 | UT-15 | `establish_session()` 前后 `session_key` 不同 | `cycle_key()` 生效（BR-10） |
 | UT-16 | `remember_me=True` / `False` 时 session 过期时间为 30 / 14 天 | §2.4 |
 | UT-17 | `LoginFailureLock` 第 5 次失败后 `check()` 抛 `TooManyAttemptsError` | BR-11 |
 | UT-18 | 登录成功后失败计数被清零 | §4.3.5 |
-| UT-19 | `APIToken` 生成的 key 形如 `rp_live_*`，库中仅存 SHA-256 与前 8 位前缀 | `api-conventions.md` §9.3 |
+| UT-19 | `APIToken` 生成的 key 形如 `rp_live_*`，库中仅存 SHA-256 与前 8 位前缀（令牌经测试工厂 `APIToken.objects.create` 签发——P0 仅交付模型与认证类，管理端点与 UI 暂未立项，见 §2.4） | `api-conventions.md` §9.3 |
 | UT-20 | 日志脱敏中间件把 `password` / `X-API-Key` 字段替换为 `***` | `api-conventions.md` §13.5 |
 
 ### 5.2 集成测试（DRF `APIClient` + Django `TestCase`）
@@ -1014,7 +1023,7 @@ docker compose exec api python manage.py grant_system_admin zhangsan@example.com
 | --- | --- | --- |
 | IT-01 | 完整闭环：`sign-up` → `users/me` → `sign-out` → `users/me` | 201 → 200 → 204 → 401 `AUTH_REQUIRED` |
 | IT-02 | 完整闭环：`sign-up` → `sign-out` → `sign-in` → `users/me` | 201 → 204 → 200 → 200，且两次 user.id 相同 |
-| IT-03 | 注册响应结构 | 含 `Location` 头；body 为 `{status:"success", data:{user, default_workspace}}`；`data` 中**不含任何 token 字段与 password 字段** |
+| IT-03 | 注册响应结构 | 含 `Location` 头；body 为 `{status:"success", data:{user, default_workspace_slug}}`；`data` 中**不含任何 token 字段与 password 字段** |
 | IT-04 | 注册后立即查询工作空间列表 | 返回 1 条，`role == 20`，创建者为当前用户 |
 | IT-05 | 重复邮箱注册（大小写不同） | 409 `RESOURCE_ALREADY_EXISTS` + `details[0].field == "email"` |
 | IT-06 | 空密码 / 缺字段注册 | 400 `VALIDATION_ERROR`，`details` 逐字段列出 |
@@ -1027,22 +1036,23 @@ docker compose exec api python manage.py grant_system_admin zhangsan@example.com
 | IT-13 | `sign-out` 后用原 session cookie 请求 `users/me` | 401 |
 | IT-14 | 退出响应体 | `Content-Length: 0`，**无 envelope**（§4.2.3） |
 | IT-15 | 手工把 session 过期时间改为过去后请求 `users/me` | 401 `AUTH_SESSION_EXPIRED` |
-| IT-16 | 连续 11 次调用 `sign-in` | 第 11 次 429 `RATE_LIMIT_EXCEEDED`；全部响应含 `X-RateLimit-*` 头 |
+| IT-16 | 连续 11 次调用 `sign-in`（**构造说明**：用同一格式非法邮箱连发，如 `bad@@example.com`——前 10 次均 400 `INVALID_EMAIL`，请求未到达 `authenticate()`，故**不计入 BR-11 失败锁定**、不触发 `AUTH_TOO_MANY_ATTEMPTS`；而 `AuthEndpointThrottle` 按 IP + 邮箱双维度计数、校验失败同样计数（§4.3.5），第 11 次即触达 10/min 上限，从而把两条 429 路径隔离） | 第 11 次 429 `RATE_LIMIT_EXCEEDED`；全部响应含 `X-RateLimit-*` 头 |
 | IT-17 | 携带相同 `Idempotency-Key` 重复注册 | 第二次返回首次响应 + `Idempotency-Replayed: true`，DB 只有一个用户 |
 | IT-18 | 所有响应（含错误） | 均含 `X-Request-Id`；错误体 `error.request_id` 与之同值 |
-| IT-19 | 用 `X-API-Key` 访问 `users/me` | 200，与 Session 路径返回同一结构 |
+| IT-19 | 用 `X-API-Key` 访问 `users/me`（令牌经测试工厂 `APIToken.objects.create` 签发——P0 管理端点与 UI 暂未立项，见 §2.4） | 200，与 Session 路径返回同一结构 |
 | IT-20 | 500 异常路径（mock DB 故障） | 响应为 `SERVER_DATABASE_ERROR`，body 中无堆栈、无 SQL、无文件路径 |
 | IT-21 | `assertNumQueries` 守护 `sign-in` | 查询数 ≤ 6 且不随该用户工作空间数量增长（无 N+1） |
+| IT-22 | 同一账号多设备会话独立：两个独立 `APIClient`（设备 A / B）先后 `sign-in`，再退出设备 A | 两次登录均 200 且 `session_key` 互不相同；设备 A 退出后，A 的 `users/me` 401 而 B 的 `users/me` 仍 200（各设备独立 Session，EC-09） |
 
 ### 5.3 E2E 测试（Playwright）
 
 | 编号 | 场景 | 步骤与断言 |
 | --- | --- | --- |
-| E2E-01 | 注册直达工作台 | 打开 `/register` → 填三项 → 提交 → URL 变为 `/:workspaceSlug/`，页面出现「张三 的工作空间」 |
+| E2E-01 | 注册直达工作台 | 打开 `/register` → 填三项 → 提交 → URL 变为 `/:slug/projects`，页面出现「张三的工作空间」 |
 | E2E-02 | 刷新保持登录 | E2E-01 后按 F5 → 仍在工作台，未闪现登录页（断言 `/login` 从未出现在导航历史中） |
 | E2E-03 | 关闭并重开浏览器 | 复用 storageState 新建 context → 直接进入工作台 |
 | E2E-04 | 退出跳转登录页 | 点击头像 → 退出 → URL 为 `/login`；点击浏览器「后退」→ 仍在 `/login`（`replace: true` 生效） |
-| E2E-05 | 退出后直接访问受保护 URL | 地址栏输入 `/:slug/projects` → 被拦截到 `/login?next=%2F:slug%2Fprojects`（与 `AUTH-002` 共用此断言） |
+| E2E-05 | 退出后直接访问受保护 URL | 地址栏输入 `/:slug/projects` → 被拦截到 `/login?next=%2F%3Aslug%2Fprojects`（`:` 编码为 `%3A`，与 `AUTH-002` 共用此断言） |
 | E2E-06 | 登录后回跳原目标 | 承接 E2E-05，登录成功 → 落在 `/:slug/projects` |
 | E2E-07 | 重复邮箱注册的界面反馈 | 用已注册邮箱提交 → 邮箱框下出现红字与「直接登录」链接，点击后邮箱已预填 |
 | E2E-08 | 密码强度指示器 | 依次输入 `abc` / `Abc12345` / `Abc12345!xyz` → 强度文案为 弱 / 中 / 强 |
@@ -1052,18 +1062,19 @@ docker compose exec api python manage.py grant_system_admin zhangsan@example.com
 | E2E-12 | 双击提交 | 快速点击「创建账号」两次 → 只创建一个账号（按钮禁用 + 幂等键双保险） |
 | E2E-13 | 已登录访问 `/login` | 直接重定向工作台，不渲染表单（EC-12） |
 | E2E-14 | 会话过期提示 | 后端删除 session 后触发任意操作 → toast「登录已过期」并跳登录页 |
+| E2E-15 | 禁用 Cookie 前端提示 | 以禁用 Cookie 的浏览器上下文（或 mock `document.cookie` 写入失败）完成登录提交 → 登录接口本身返回 200，但后续 `users/me` 401；检测到 `document.cookie` 不可写时页面展示「请启用 Cookie」提示（EC-10） |
 
 ### 5.4 边界与安全测试
 
 | 编号 | 用例 | 断言 |
 | --- | --- | --- |
 | ST-01 | **并发注册同一邮箱**：10 个线程同时 `sign-up` | 恰好 1 个 201，其余 9 个 409；DB 中该邮箱仅 1 行、Workspace 仅 1 行（EC-06） |
-| ST-02 | 并发注册 10 个不同邮箱但 slug 同源（`a@x.com`、`a@y.com`…） | 全部成功，slug 分别为 `a`、`a-2` …（BR-08 / EC-07） |
+| ST-02 | 并发注册 10 个不同邮箱但 slug 同源（`a@x.com`、`a@y.com`…） | 全部成功，slug 分别为 `a`、`a-1`、`a-2` …（BR-08 / EC-07） |
 | ST-03 | 超长输入：邮箱 255 / `display_name` 151 / 密码 129 | 均 400 `TOO_LONG`，无 500、无 DB 层报错泄露 |
 | ST-04 | 请求体为畸形 JSON / 非 JSON `Content-Type` | 400 `VALIDATION_INVALID_JSON` / 415 `VALIDATION_UNSUPPORTED_MEDIA_TYPE` |
 | ST-05 | 邮箱字段注入 SQL 与 XSS 载荷 | 被格式校验拒绝；即使入库也仅作为文本，响应中经转义（Django ORM 参数化 + React 默认转义） |
 | ST-06 | 会话固定攻击：登录前记录 session id，登录后比对 | 两者不同（BR-10） |
-| ST-07 | 篡改 `sessionid` Cookie 值 | 401，不返回任何用户信息 |
+| ST-07 | 篡改 `rp_sessionid` Cookie 值 | 401，不返回任何用户信息 |
 | ST-08 | 用 A 账号 session 请求 `users/me` | 只返回 A 的信息（为 `AUTH-003` 隔离测试的前置断言） |
 | ST-09 | Session 过期时间到达后请求 | 401 `AUTH_SESSION_EXPIRED`；Valkey 中该 key 已不存在 |
 | ST-10 | Valkey 停机后登录 | 500 `SERVER_ERROR`，不出现「登录成功但立刻掉线」的不一致态（EC-11） |
@@ -1096,7 +1107,7 @@ docker compose exec api python manage.py grant_system_admin zhangsan@example.com
 | 端点命名风格 | ✅ 一致 | `sign-up` / `sign-in` / `sign-out` |
 | PBKDF2 密码哈希 | ⚠️ **偏离**：改用 Argon2id | 见 §6.3 决策 D2 |
 | Magic Link | ❌ 不做（未排期） | 依赖 SMTP 可用性，私有化部署常无出网邮件通道；且它是「免密登录」而非「安全增强」，收益与 P0 目标无关 |
-| Google / GitHub OAuth | ❌ P4（`INTG-003`） | 私有化部署场景下外网 OAuth 回调常不可达，价值远低于 SSO |
+| Google / GitHub OAuth | ❌ P4 远期增强（暂未立项，README §4 索引中无承接文档） | 私有化部署场景下外网 OAuth 回调常不可达，价值远低于 SSO |
 | 多步 onboarding 引导 | ❌ 简化为「注册即自动建默认工作空间」 | 见 §6.3 决策 D1 |
 | 响应结构 | ⚠️ 改进：统一 `{status, data, meta}` envelope | Plane 各端点结构不统一（`api-conventions.md` §11.1） |
 | 机器可读错误码 | ⚠️ 改进：`AUTH_*` 全表 | Plane 主要靠 HTTP 状态码 + 文案（同上） |
@@ -1105,12 +1116,12 @@ docker compose exec api python manage.py grant_system_admin zhangsan@example.com
 
 | 能力 | Ones 的做法 | 本系统落点 |
 | --- | --- | --- |
-| SAML 2.0 SSO | 支持与企业 IdP 对接，可强制 SSO 登录 | P3 `AUTH-010`；策略模式已预留 `SAMLStrategy`（§4.5） |
+| SAML 2.0 SSO | 支持与企业 IdP 对接，可强制 SSO 登录 | P3 `AUTH-009`；策略模式已预留 `SAMLStrategy`（§4.5） |
 | LDAP / AD 同步 | On-Premises 版支持目录服务对接与账号同步 | P4 `AUTH-011`（`LDAPStrategy` + SCIM） |
 | MFA | Business 及以上版本提供二次验证 | P3；错误码 `AUTH_MFA_REQUIRED` 已在 `api-conventions.md` §8.2 登记，P0 不触发 |
 | 密码安全规则可配置 | 管理员可配置长度、复杂度、有效期、历史重复限制 | P0 规则**硬编码**（BR-03/BR-04）；配置化排在 P3（`Instance Config`） |
 | 会话管理与超时策略 | 可配置会话超时、强制下线、查看活跃会话 | P0 固定 14 天滑动；`GET /users/me/sessions/` 与远端下线为 P1/P2（`api-conventions.md` §9.2 已定义端点） |
-| IP 白名单 | 企业可限制访问来源网段 | P3；错误码 `PERM_IP_NOT_ALLOWED` 已登记（`rbac-permission-model.md` §11.5） |
+| IP 白名单 | 企业可限制访问来源网段 | P3；带前缀错误码 `PERM_IP_NOT_ALLOWED` 已登记于 `api-conventions.md` §8.3（`rbac-permission-model.md` §11.5 登记的为无前缀变体 `IP_NOT_ALLOWED`） |
 | 单会话模式 | 合规场景可限制单设备登录 | P3 实例配置项（EC-09） |
 
 **结论**：Ones 的认证优势集中在**企业身份治理**（SSO / LDAP / MFA / 策略配置），而非基础登录闭环。P0 阶段照搬这些能力没有验证价值——POC 要清零的技术风险是「Session 能否跨刷新保持」「事务能否保证注册与工作空间初始化的一致性」，而不是「能否对接 IdP」。因此 P0 与 Plane 的基础认证对齐，Ones 的企业能力整体后置到 P3/P4，并通过 §4.5 的策略模式保证后置不等于重写。
@@ -1132,7 +1143,7 @@ docker compose exec api python manage.py grant_system_admin zhangsan@example.com
 | 模式 | 应用位置 | 解决的问题 |
 | --- | --- | --- |
 | **策略模式（Strategy）** | `AuthStrategy` 协议 + `PasswordStrategy` / `OAuthStrategy` / `SAMLStrategy` / `LDAPStrategy`（§4.5） | 使新增认证方式**不修改** `sign-in` 视图与 Session 建立逻辑，满足开闭原则；P3 接 SSO 时只新增一个策略类与一条路由 |
-| **门面模式（Facade）** | `AuthService`（§4.3.2）对上层暴露 `register` / `establish_session` 两个入口，内部编排三张表写入与事务 | 视图层不感知「注册 = 建用户 + 建工作空间 + 建成员关系」的复杂度；Celery 任务与管理命令可复用同一入口 |
+| **门面模式（Facade）** | `AuthService`（§4.3.2）对上层暴露 `register` / `establish_session` 两个入口，内部编排用户建号与默认工作空间初始化（后者委托 `TEAM-001` §4.3.1 创建服务）的写入与事务 | 视图层不感知「注册 = 建用户 + 建工作空间 + 建成员关系 + 种默认类型」的复杂度；Celery 任务与管理命令可复用同一入口 |
 | **模板方法（Template Method）** | `BaseAPIView` 统一响应包装与异常收敛（`api-conventions.md` §10.1） | 认证端点无需各自拼 envelope |
 | **责任链（Chain of Responsibility）** | `AUTH_PASSWORD_VALIDATORS` 校验器链、Django 中间件链 | 密码规则可增删而不改调用方；新增规则只加一个配置项 |
 | **空对象（Null Object）** | 邮箱不存在时对 dummy hash 执行校验（§2.2） | 消除「存在」与「不存在」两条路径的时序差异 |
@@ -1146,7 +1157,7 @@ docker compose exec api python manage.py grant_system_admin zhangsan@example.com
 | 编号 | 验收项 | 验证方式 | 通过标准 |
 | --- | --- | --- | --- |
 | AC-01 | **新用户 1 分钟内完成注册登录，并自动进入个人默认团队** | 计时执行 E2E-01：打开注册页 → 填写 → 提交 → 落地工作台 | 全程 ≤ 60 秒（人工操作），且落地页展示其默认工作空间名称；自动化耗时 ≤ 5 秒 |
-| AC-02 | **注册后自动创建个人 Workspace** | IT-04 + 数据库核对 | `workspaces` 表新增 1 行，`owner` 为该用户；`workspace_members` 新增 1 行且 `role = 20`；三条记录（User / Workspace / Member）的 `created_at` 在同一事务内 |
+| AC-02 | **注册后自动创建个人 Workspace** | IT-04 + 数据库核对 | `workspaces` 表新增 1 行，`owner` 为该用户；`workspace_members` 新增 1 行且 `role = 20`；`issue_types` 新增 1 条「任务」（`is_default=True`，TEAM-001 AC-12）；四条记录（User / Workspace / Member / IssueType）的 `created_at` 在同一事务内 |
 | AC-03 | 登录后刷新页面保持登录态 | E2E-02 | 刷新后仍在工作台，导航历史中未出现 `/login` |
 | AC-04 | 关闭浏览器重开后仍为登录态 | E2E-03 | 14 天内直接进入工作台 |
 | AC-05 | 退出后 Session 失效 | E2E-04 + IT-13 | 退出后原 Cookie 请求 `users/me` 返回 401；浏览器后退无法回到工作台 |
@@ -1164,7 +1175,7 @@ docker compose exec api python manage.py grant_system_admin zhangsan@example.com
 | AC-12 | 响应格式合规 | 2xx 为 `{status, data, meta?}`；`204` 响应体为空；错误为 `{status, error:{code, message, details, request_id}}`；`201` 带 `Location` |
 | AC-13 | 错误码全部出自 `api-conventions.md` §8 | 无自造错误码；前后端错误码枚举一致性脚本通过 |
 | AC-14 | 所有响应携带 `X-Request-Id` 与 `X-RateLimit-*` | 抓包核对 |
-| AC-15 | OpenAPI schema 完整 | `drf-spectacular` 生成无警告；四个端点均有 `summary` / 请求体 / 成功与错误响应示例 |
+| AC-15 | OpenAPI schema 完整 | `drf-spectacular` 生成无警告；五个端点（sign-up / sign-in / sign-out / users/me / csrf-token）均有 `summary` / 请求体 / 成功与错误响应示例 |
 | AC-16 | 前端类型已生成并提交 | `pnpm gen:api-types` 后无 diff |
 
 ### 7.3 安全验收
@@ -1202,7 +1213,7 @@ docker compose exec api python manage.py grant_system_admin zhangsan@example.com
 | Argon2id 校验凭证 | §9.2、`tech-stack.md` §3 | §4.3.1、决策 D2 |
 | 登录失败 5 次锁 15 分钟、认证端点 10/min | §7.2 | §4.3.5、BR-11 |
 | 恒定时间响应防枚举 | §9.6 | §2.2、决策 D4、IT-08 |
-| 多资源写操作显式 `transaction.atomic` + 副作用置于 `on_commit` | §10.5 | §4.3.2、§2.1 |
+| 多资源写操作显式 `transaction.atomic` + 副作用置于 `on_commit` | §10.5 | §4.3.2、§2.1（P0 认证无**需等待的**通知类副作用：注册链路唯一的 `on_commit` 落点为欢迎邮件任务，P0 SMTP 不配置、该任务为日志降级、非用户可见副作用——显式登记见 §2.1 设计点 5；`last_login_at` 同步写的理由见设计点 4） |
 | `WorkspaceMember.role` 用 `IntegerField(choices=...)`，注册者为 `WS_OWNER(20)` | `rbac-permission-model.md` §2.2 / §3.2 / §9 | §4.1、§4.3.2、AC-02 |
 | `SystemAdmin` 独立表，不在 `User` 上加布尔位 | §3.3 | §4.6 |
 | 权限快照走独立端点，不塞进 Session | §4.1 | §4.3.3 |
@@ -1215,5 +1226,5 @@ docker compose exec api python manage.py grant_system_admin zhangsan@example.com
 | --- | --- |
 | 后端 | `plane/db/models/user.py`；`plane/authentication/`（`services.py` / `serializers.py` / `views.py` / `backends.py` / `strategies.py` / `throttles.py` / `validators.py` / `urls.py`）；`grant_system_admin` 管理命令；Session 与哈希器 settings；migrations |
 | 前端 | `apps/web/app/routes/login.tsx`、`register.tsx`；`core/store/user/auth.store.ts`；`services/auth.service.ts`；`components/auth/`（表单、强度指示器、错误 Alert）；axios CSRF 与 401 拦截器 |
-| 测试 | `tests/authentication/`（UT-01~20、IT-01~21、ST-01~12）；`e2e/auth.spec.ts`（E2E-01~14） |
-| 文档 | OpenAPI schema 中的四个端点；`packages/types` 中生成的 `TUser` 等类型 |
+| 测试 | `tests/authentication/`（UT-01~20、IT-01~22、ST-01~12）；`e2e/auth.spec.ts`（E2E-01~15） |
+| 文档 | OpenAPI schema 中的五个端点；`packages/types` 中生成的 `TUser` 等类型 |

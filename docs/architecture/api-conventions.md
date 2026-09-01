@@ -673,9 +673,13 @@ GET .../issues/?ordering=-priority,target_date,-created_at
 | --- | --- | --- | --- |
 | `PERM_DENIED` | 403 | 通用权限不足（兜底码） | 展示无权限空态 |
 | `PERM_ROLE_INSUFFICIENT` | 403 | 角色等级不足（如普通成员执行管理员操作） | 隐藏入口 + 提示所需角色 |
+| `PERM_PROJECT_ADMIN_REQUIRED` | 403 | 须项目管理员（PROJ_ADMIN）方可操作 | 提示所需角色（Sprint 5 注册） |
+| `PERM_WORKSPACE_ADMIN_REQUIRED` | 403 | 须工作空间管理员（WS_ADMIN+）方可操作 | 提示所需角色（Sprint 5 注册） |
+| `PERM_WORKSPACE_OWNER_REQUIRED` | 403 | 须工作空间所有者（WS_OWNER）方可操作（如归档工作空间） | 提示所需角色（Sprint 5 注册） |
 | `PERM_NOT_WORKSPACE_MEMBER` | 403 | 非该工作空间成员 | 引导申请加入 |
 | `PERM_NOT_PROJECT_MEMBER` | 403 | 非该项目成员 | 引导申请加入项目 |
 | `PERM_PROJECT_ARCHIVED` | 403 | 项目已归档，禁止写操作 | 界面切只读态 |
+| `PERM_PROJECT_CLOSED` | 403 | 项目已关闭（close 单向终态），禁止写操作 | 界面切只读态，引导查看状态历史（Sprint 5 `PROJ-003` 注册） |
 | `PERM_WORKSPACE_ARCHIVED` | 403 | 工作空间已归档 | 同上 |
 | `PERM_FIELD_READ_ONLY` | 403 | 字段级权限为只读（企业版字段权限） | 禁用对应表单控件，`details` 列出字段名 |
 | `PERM_FIELD_HIDDEN` | 403 | 试图访问对当前角色隐藏的字段 | 界面不渲染该字段 |
@@ -699,6 +703,7 @@ GET .../issues/?ordering=-priority,target_date,-created_at
 | `VALIDATION_BULK_LIMIT_EXCEEDED` | 400 | 批量操作条数超上限（100） | — |
 | `VALIDATION_FILE_TYPE_NOT_ALLOWED` | 400 | 附件类型不在白名单 | `details` 列出允许的类型 |
 | `VALIDATION_FILE_SIZE_EXCEEDED` | 400 | 附件体积超限 | `details` 给出上限 |
+| `VALIDATION_FILE_UPLOAD_MISMATCH` | 400 | 上传完成校验失败（对象不存在 / 实际大小与预签名声明不符） | 提示重新上传（Sprint 1 `FILE-001` 注册） |
 | `VALIDATION_INVALID_DATE_RANGE` | 400 | 截止时间早于开始时间 | — |
 | `VALIDATION_CUSTOM_FIELD_INVALID` | 400 | 自定义字段值不符合其定义（类型/枚举/正则/必填） | `details.field` 为 `property.<property_id>` |
 | `VALIDATION_REQUIRED_FIELD_MISSING` | 400 | 工作流流转要求的必填字段未提供 | `details` 列出缺失字段，前端弹出补齐表单 |
@@ -743,6 +748,7 @@ GET .../issues/?ordering=-priority,target_date,-created_at
 | `QUOTA_STORAGE_EXCEEDED` | 409 | 工作空间存储配额耗尽 |
 | `QUOTA_MEMBER_EXCEEDED` | 409 | 成员数超出许可 |
 | `QUOTA_PROJECT_EXCEEDED` | 409 | 项目数超出套餐限制 |
+| `QUOTA_AI_EXCEEDED` | 409 | AI 能力租户日配额耗尽（按 SKU 分项配额） | 提示次日重置或升级（P4 `AI-001` 注册） |
 
 ### 8.8 字段级子码（用于 `details[].code`）
 

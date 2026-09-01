@@ -10,11 +10,12 @@
 | 最后更新日期 | 2026-09-01 |
 | 上游依据 | `docs/需求文档.md` §3.1 账号与权限、§四 权限体系 |
 | 前置依赖 | `AUTH-001`（认证基础，提供 `request.user`）、`AUTH-002`（接口鉴权，保证 `request.user` 非匿名）、`INFRA-003`（`BaseModel` / `Workspace` / `Project` / `Issue` / `WorkspaceMember` / `ProjectMember` / `SystemAdmin` 建表） |
-| 下游依赖 | `TEAM-001`、`PROJ-001`、`TASK-001`、`BOARD-001`（四者的 ViewSet 必须继承本文档的 `BaseViewSet`）、`AUTH-005`（P1 角色级权限）、`AUTH-006`（P2 行级隔离完整版） |
+| 下游依赖 | `TEAM-001`、`PROJ-001`、`TASK-001`、`BOARD-001`（四者的 ViewSet 必须继承本文档交付的 `BaseAPIView` 及其作用域派生基类 `WorkspaceScopedAPIView` / `ProjectScopedAPIView`，类名与契约以 `api-conventions.md` §10.1 为准）、`AUTH-005`（P1 角色级权限，L1~L3 权限类不在本文交付，见 §1.4 交付边界）、`AUTH-006`（P2 行级隔离完整版） |
 | 架构基线 | [`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §1.1 / §3 / §5.5 / §6 / §9 / §10.5 / 附录 B、[`api-conventions.md`](../architecture/api-conventions.md) §4.3 / §8.3 / §8.5 / §10.1 / §10.4、[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.3 / §2.4 |
 | 竞品参考 | Plane 开源版（Workspace Member 仅见自身 workspace；Owner/Admin 绕过项目成员检查）、Ones（Project 与 Wiki 共享权限模型、字段级权限） |
+| 工作量估算 | 后端 2.5 人日 / 前端 1 人日 / 联调与测试（含 G1~G6 CI 关卡脚本）1.5 人日，合计 **5 人日** |
 
-> **范围声明**：本文档交付**第三层（DB 行级过滤）的最小版本**——「用户只能看到自己参与的工作空间 / 项目 / 任务」。它**不包含**：角色等级差异化的可见性（P1 `AUTH-005`）、私密项目与字段级可见性（P2 `AUTH-006` / P3 `TASK-012`）、部门维度的数据域（P3 `AUTH-007`）。但 §4 的 Manager 与 ViewSet 骨架**必须一次做对**，因为后续所有隔离规则都是在此骨架上加条件，而不是换一套实现（`rbac-permission-model.md` §9 的 P0 扩展位要求）。
+> **范围声明**：本文档交付**第三层（DB 行级过滤）的最小版本**——「用户只能看到自己参与的工作空间 / 项目 / 任务」。它**不包含**：角色等级差异化的可见性（P1 `AUTH-005`）、私密项目与字段级可见性（均 P3：私密项目隔离见 `rbac-permission-model.md` §7.4 / §9，字段级为 `TASK-012`）、部门维度的数据域（P3 `AUTH-007`）。但 §4 的 Manager 与 ViewSet 骨架**必须一次做对**，因为后续所有隔离规则都是在此骨架上加条件，而不是换一套实现（`rbac-permission-model.md` §9 的 P0 扩展位要求）。
 >
 > **编号约定**：本文档内的 `IR-` / `BR-` / `EC-` / `UT-` / `IT-` / `E2E-` / `ST-` / `AC-` / `D` 编号自成体系，引用时须带文档号（如 `AUTH-003 IT-05`）。
 
@@ -36,7 +37,7 @@ AUTH-003 缺失 → 每个登录用户都能看到全库数据  （功能"正常
 | 机制 | 落点 | 作用 |
 | --- | --- | --- |
 | 统一收口 | 每个受管模型只有一个 `objects.accessible_by(user)` | 过滤逻辑不散落在视图里，改规则只改一处 |
-| 强制注入 | `BaseViewSet.get_queryset()` 默认即调用 `accessible_by` | 子类**什么都不写**就是安全的；越权访问天然表现为 404 |
+| 强制注入 | `BaseAPIView.get_queryset()` 默认即调用 `accessible_by` | 子类**什么都不写**就是安全的；越权访问天然表现为 404 |
 | 开发期崩溃 | 缺 `model` 声明或 Manager 无 `accessible_by` 时抛 `ImproperlyConfigured` | 「忘了」变成启动即失败，而不是上线后泄漏 |
 | CI 静态检查 | 扫描 `get_queryset` 中的 `objects.all()` / 裸 `objects.filter(` | 阻止绕过基类的写法进入主干 |
 | 跨账号测试 | 每个受管资源必须有「用户 B 看不到用户 A 的数据」用例 | 把不可见性变成可回归的断言 |
@@ -56,7 +57,7 @@ AUTH-003 缺失 → 每个登录用户都能看到全库数据  （功能"正常
 | --- | --- | --- |
 | `AUTH-001` | 已登录用户与 `request.user`；注册即创建 `WorkspaceMember(role=WS_OWNER)` | 无判定主体；无成员关系则任何人看不到任何数据 |
 | `AUTH-002` | 接口鉴权保证进入视图的 `request.user` 一定非匿名 | 行级过滤对 `AnonymousUser` 返回 `none()`，虽安全但会把「未登录」表现为「空列表」，掩盖真实原因 |
-| `INFRA-003` | `WorkspaceMember`（`unique_together (workspace, member)`、`role` 为 `IntegerField`、`is_active`）、`ProjectMember`（**含冗余 `workspace_id`**）、`SystemAdmin` 独立表、`Issue.workspace_id` 反范式字段、以及 `rbac-permission-model.md` §3.2 要求的三个复合索引 | 缺 `role` 整数字段 → P1 需破坏性迁移；缺反范式 `workspace_id` → 每次过滤多一次 JOIN；缺索引 → 列表接口全表扫描 |
+| `INFRA-003` | `WorkspaceMember`（`unique_together (workspace, member)`、`role` 为 `IntegerField`、`is_active`）、`ProjectMember`（**含冗余 `workspace_id`**）、`SystemAdmin` 独立表、以及 `rbac-permission-model.md` §3.2 / `INFRA-003` §4.4-§4.5 定义的成员表复合索引。`Issue` **不冗余** `workspace_id`（`INFRA-003` §6.1 明确 P0-P2 不建该列，`IssueQuerySet` 经 `project__workspace_id` 跨表关联） | 缺 `role` 整数字段 → P1 需破坏性迁移；缺 `ProjectMember.workspace_id` 冗余列 → 工作空间维度的成员查询多一次 JOIN；缺索引 → 列表接口全表扫描 |
 | `unified-issue-model.md` §2.3/§2.4 | `Workspace.slug` 全局唯一、`Project.identifier` 工作空间内唯一、软删除 `deleted_at` 语义 | URL 定位与可见性判定的基础 |
 
 ### 1.4 与相邻文档的边界
@@ -64,16 +65,18 @@ AUTH-003 缺失 → 每个登录用户都能看到全库数据  （功能"正常
 | 判定 | 归属 | 失败表现 | 迭代 |
 | --- | --- | --- | --- |
 | 有没有登录 | `AUTH-002`（L0） | 401 | P0 |
-| **这一行能不能被看见** | **AUTH-003（L3，本文档）** | **404 `RESOURCE_NOT_FOUND`** | **P0** |
-| 看得见但角色不够改 | `AUTH-005`（L1/L2） | 403 `PERM_DENIED` | P1 |
-| 私密项目 / 字段级可见性 | `AUTH-006`（P2）/ `TASK-012`（P3） | 404 / 字段被裁剪 | P2+ |
+| **这一行能不能被看见** | **AUTH-003（第三层 DB 行级过滤，本文档）** | **404 `RESOURCE_NOT_FOUND`** | **P0** |
+| 看得见但角色不够改 | `AUTH-005`（L1~L3 权限类） | 403 `PERM_DENIED` | P1 |
+| 私密项目 / 字段级可见性 | 私密项目隔离（P3，`rbac-permission-model.md` §7.4 / §9 预留 `PROJ-006`）/ `TASK-012`（P3，字段级） | 404 / 字段被裁剪 | P3 |
 | 部门数据域、自定义角色组 | `AUTH-007` / `AUTH-008` | 404 / 403 | P3 |
+
+> **交付边界（P0）**：本文只交付第三层（QuerySet / Manager 行级过滤）与 `BaseAPIView` 的强制注入骨架，**不交付任何 L1~L3 DRF Permission 权限类**。按 `api-conventions.md` §10.3 的类名层级，`WorkspaceBasePermission`（L1）/ `ProjectBasePermission`（L2）/ `ProjectEntityPermission`（L3）属 P1 `AUTH-005`，L0 `IsAuthenticatedAndActive` 由 `AUTH-002` 交付。`TASK-001` 等下游文档中「从本文获取 `ProjectBasePermission` / `ProjectEntityPermission`」的表述按此边界修正（下游引用待回改，以本文为准）。
 
 ### 1.5 竞品参考结论（详见第 6 章）
 
 - **Plane**：Workspace Member 只能看到自己所属的 workspace；工作空间 Owner/Admin 可绕过项目成员检查看到全部项目；越权访问表现为资源不存在。本系统 P0 与之完全对齐。
 - **Ones**：Project 与 Wiki 共享同一套权限模型（同一份成员与角色定义驱动两类资源的可见性），并提供字段级权限。
-- **本系统 P0**：只做「成员可见」这一条规则的三级传递（Workspace → Project → Issue），把 Manager 与 ViewSet 骨架做实；私密项目、字段级、部门域后置到 P2/P3，届时只在 `_scoped_for()` 中追加条件。
+- **本系统 P0**：只做「成员可见」这一条规则的三级传递（Workspace → Project → Issue），把 Manager 与 ViewSet 骨架做实；私密项目、字段级、部门域后置到 P3，届时只在 `_scoped_for()` 中追加条件。
 
 ---
 
@@ -91,9 +94,9 @@ AUTH-003 缺失 → 每个登录用户都能看到全库数据  （功能"正常
 | IR-04 | `Project` | 或 user 在 `P.workspace` 中 `role >= WS_ADMIN(15)`（**工作空间管理员绕过项目成员检查**，对标 Plane） | — | ✅ |
 | IR-05 | `Project` | `SystemAdmin` → 全部可见 | — | ✅ |
 | IR-06 | `Issue` | 所属 `Project` 对该用户可见（即 IR-03 ∪ IR-04 ∪ IR-05）→ **项目内全部任务可见**，不因执行人 / 创建人而缩小 | 404 | ✅ |
-| IR-07 | `Issue` | 私密项目（`is_confidential=True`）即使工作空间管理员也需在项目成员白名单内 | 404 | ⭕ 条件已写入 `IssueQuerySet`，但 `is_confidential` 字段与管理界面属 P2 `AUTH-006` |
+| IR-07 | `Issue` | 私密项目（`is_confidential=True`）即使工作空间管理员也需在项目成员白名单内 | 404 | ⭕ P0 不启用：`Project` 无 `is_confidential` 列（`INFRA-003` 未建，照抄即 `FieldError`），条件在 §4.2 以注释预留，P3 私密项目（`rbac-permission-model.md` §7.4 / §9）加列后启用 |
 | IR-08 | 全部资源 | 软删除（`deleted_at IS NOT NULL`）的行一律不可见 | 404 | ✅（由 `SoftDeleteManager` 承担） |
-| IR-09 | 派生资源（`IssueComment` / 附件 / `Board` / `View`） | **委托上游**：`filter(issue__in=Issue.objects.accessible_by(user))` 等，不重复实现判定 | 404 | ⭕ P0 仅 `Board` 需要（`BOARD-001`），实现方式为委托 `Project` |
+| IR-09 | 派生资源（`IssueComment` / 附件 / `Board` / `View`） | **委托上游**：`filter(issue__in=Issue.objects.accessible_by(user))` 等，不重复实现判定 | 404 | ❌ P0 无需交付：`BOARD-001` 为固定三列看板，列由 `State.group` 派生，**无 `Board` 数据模型**；派生资源 Manager 随各自模型落地（评论 / 附件 P1，`Board` / `View` P2+） |
 | IR-10 | `Notification` | `filter(receiver=user)`（天然行级隔离） | — | ❌ P1 `COLLAB-001` |
 
 **IR-06 的关键取舍**：项目成员可见**项目内全部任务**，而不是「仅与我相关的任务」。理由是项目管理工具的基本协作前提就是任务对项目成员透明——若默认只见自己的任务，看板将无法使用（`BOARD-001` 的三列看板需要展示项目全部任务）。「只看我的」是一个**筛选器默认值**（`TASK-003` 的 `assignee=me`），属于视图层，不是权限层。把二者混在一起会导致「筛选器一放开就越权」。
@@ -114,12 +117,12 @@ flowchart TD
     PM --> P2["可见 Project = 显式加入的项目"]
     P1 --> P["可见 Project 集合"]
     P2 --> P
-    P --> I["可见 Issue = 可见 Project 下的全部 Issue<br/>（排除私密项目非成员，IR-07）"]
+    P --> I["可见 Issue = 可见 Project 下的全部 Issue<br/>（私密项目非成员的排除待 P3，IR-07）"]
     I --> DER["派生资源（Board / Comment / 附件）<br/>委托上游集合，不另行判定"]
     ALL --> DER
 ```
 
-**「委托而非复制」是这里唯一重要的纪律**。若 `Board` 自己再写一遍「查 ProjectMember…」，那么 P2 给 `Project` 加私密项目条件时，`Board` 会被漏改，产生「项目看不见但看板看得见」的泄漏。统一委托后，上游规则变更自动传导到全部下游（`rbac-permission-model.md` §6.2 的 Manager 收口表就是这条纪律的清单化）。
+**「委托而非复制」是这里唯一重要的纪律**。若 `Board` 自己再写一遍「查 ProjectMember…」，那么 P3 给 `Project` 加私密项目条件时，`Board` 会被漏改，产生「项目看不见但看板看得见」的泄漏。统一委托后，上游规则变更自动传导到全部下游（`rbac-permission-model.md` §6.2 的 Manager 收口表就是这条纪律的清单化）。
 
 ### 2.3 越权访问的响应流程
 
@@ -127,9 +130,9 @@ flowchart TD
 flowchart TD
     A["GET /api/v1/workspaces/acme/projects/{project_id}/"] --> B["L0：IsAuthenticatedAndActive"]
     B -- 匿名 --> B1["401 AUTH_REQUIRED（AUTH-002）"]
-    B -- 通过 --> C["BaseViewSet.get_queryset()<br/>= Project.objects.accessible_by(user)"]
+    B -- 通过 --> C["BaseAPIView.get_queryset()<br/>= Project.objects.accessible_by(user)"]
     C --> D["get_object()：在过滤后的 QuerySet 上按 pk 查找"]
-    D -- 命中 --> E["L1/L2 角色校验（P1 AUTH-005）"]
+    D -- 命中 --> E["L1~L3 权限类校验（P1 AUTH-005）"]
     D -- 未命中 --> F["Http404"]
     E -- 角色不足 --> E1["403 PERM_DENIED"]
     E -- 通过 --> G["200 返回数据"]
@@ -148,20 +151,20 @@ flowchart TD
 | 与 Plane 的一致性 | — | 一致（越权表现为资源不存在） |
 | 代价 | — | 用户误点无权链接时得到「不存在」，可能误以为是产品 bug；用 §3.2 的模糊文案「不存在**或**你没有访问权限」补偿 |
 
-**403 仍然存在，但只用于「看得见却不能改」**（`AUTH-005`，L1/L2）。二者的判据是清晰的：**能否看见由第三层决定（404），能否操作由第二层决定（403）**。顺序不能颠倒——先判角色再判可见性会导致「无权用户收到 403」，等于确认了资源存在（`rbac-permission-model.md` §5.5 的错误码分工表）。
+**403 仍然存在，但只用于「看得见却不能改」**（`AUTH-005`，L1~L3 权限类）。二者的判据是清晰的：**能否看见由第三层决定（404），能否操作由第二层决定（403）**。顺序不能颠倒——先判角色再判可见性会导致「无权用户收到 403」，等于确认了资源存在（`rbac-permission-model.md` §5.5 的错误码分工表）。
 
 ### 2.4 业务规则表
 
 | 编号 | 规则 | 落地位置 | 违反表现 |
 | --- | --- | --- | --- |
-| BR-01 | 每个受权限管控的模型必须提供 `objects.accessible_by(user)` | `AccessibleQuerySetMixin` 子类 | `BaseViewSet` 启动即抛 `ImproperlyConfigured` |
-| BR-02 | 所有 ViewSet 的 `get_queryset()` 必须以 `accessible_by(self.request.user)` 为起点 | `BaseViewSet` 默认实现 + CI 静态检查 | 跨账号数据泄漏 |
-| BR-03 | `list` / `retrieve` / `partial_update` / `destroy` / 自定义 action **全部**经由同一个 `get_queryset()` | `BaseViewSet` | 写操作绕过过滤 → 可修改他人数据 |
+| BR-01 | 每个受权限管控的模型必须提供 `objects.accessible_by(user)` | `AccessibleQuerySetMixin` 子类 | `BaseAPIView` 启动即抛 `ImproperlyConfigured` |
+| BR-02 | 所有 ViewSet 的 `get_queryset()` 必须以 `accessible_by(self.request.user)` 为起点 | `BaseAPIView` 默认实现 + CI 静态检查 | 跨账号数据泄漏 |
+| BR-03 | `list` / `retrieve` / `partial_update` / `destroy` / 自定义 action **全部**经由同一个 `get_queryset()` | `BaseAPIView` | 写操作绕过过滤 → 可修改他人数据 |
 | BR-04 | 匿名用户的 `accessible_by` 返回 `none()`，不抛异常 | `AccessibleQuerySetMixin.accessible_by` | 内部任务 / 系统调用传入匿名时崩溃 |
 | BR-05 | `SystemAdmin(is_active=True)` 全量可见，其余身份一律走 `_scoped_for` | 同上 | 实例管理后台无法运维 |
 | BR-06 | 成员关系判定必须带 `is_active=True` | 各 `_scoped_for` | 被移除的成员仍可见数据 |
 | BR-07 | 不可见资源统一 404 `RESOURCE_NOT_FOUND`，文案与真实不存在完全一致 | 异常处理器 + `get_object_or_404` | 存在性泄露 |
-| BR-08 | 嵌套路由中的父资源必须**先经过 `accessible_by` 校验**再用于过滤子资源 | `WorkspaceScopedMixin` / `ProjectScopedMixin` | 用他人 workspace slug + 自己的项目 ID 可探测父资源存在性 |
+| BR-08 | 嵌套路由中的父资源必须**先经过 `accessible_by` 校验**再用于过滤子资源 | `WorkspaceScopedAPIView` / `ProjectScopedAPIView`（`api-conventions.md` §10.1 作用域派生基类） | 用他人 workspace slug + 自己的项目 ID 可探测父资源存在性 |
 | BR-09 | 派生资源的可见性一律委托上游集合，禁止复制判定逻辑 | `IR-09` 对应的 Manager | 上游规则变更时下游漏改 |
 | BR-10 | 软删除行不可见（`deleted_at IS NULL` 过滤） | `SoftDeleteManager.get_queryset()` | 已删除数据在列表 / 详情中复现 |
 | BR-11 | 序列化输出中不得包含不可见资源的外键展开值 | Serializer 的 `expand` 走 `accessible_by` | 通过 `?expand=` 侧信道读到他人数据 |
@@ -181,7 +184,7 @@ flowchart TD
 | 已登录、可见、但角色不足 | 403 | `PERM_DENIED` | P1 `AUTH-005` |
 | 非工作空间成员（第二层显式判定） | 403 | `PERM_NOT_WORKSPACE_MEMBER` | P1；**P0 不使用**——P0 阶段该场景一律由第三层过滤成 404 |
 | 非项目成员（第二层显式判定） | 403 | `PERM_NOT_PROJECT_MEMBER` | P1；同上 |
-| Manager 未实现 `accessible_by` | 500 | `SERVER_MISCONFIGURED` | 开发期崩溃，生产不应出现（BR-01） |
+| Manager 未实现 `accessible_by` | 500 | `SERVER_ERROR` | 开发期崩溃，生产不应出现（BR-01） |
 
 > 表中两个 `PERM_NOT_*_MEMBER` 码在 `api-conventions.md` §8.3 已登记，但 **P0 刻意不使用**：P0 只有第三层过滤，非成员在第三层就已经「看不见」，若第二层再返回 403 就会泄露存在性。它们在 P1 引入第二层后用于「成员身份检查失败但资源本身可见」的场景（例如通过邀请链接访问）。
 
@@ -267,24 +270,28 @@ flowchart TD
 ### 4.1 数据模型依赖（引用 INFRA-003，此处只列过滤所需字段）
 
 ```python
-# apps/api/plane/db/models/workspace.py（字段定义权威出处：INFRA-003 与 rbac-permission-model.md §3.2）
+# apps/api/plane/db/models/workspace.py（权威定义见 INFRA-003 §4.4 / §4.5，此处只列过滤所需字段，
+# related_name 与索引逐字对齐 INFRA-003，勿在本文另行发明）
 class WorkspaceMember(BaseModel):
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="members")
-    member    = models.ForeignKey("db.User", on_delete=models.CASCADE, related_name="workspace_memberships")
+    workspace = models.ForeignKey("db.Workspace", on_delete=models.CASCADE, related_name="workspace_member")
+    member    = models.ForeignKey("db.User", on_delete=models.CASCADE, related_name="member_workspace")
     role      = models.IntegerField(choices=WorkspaceRole.choices, default=WorkspaceRole.MEMBER)
     is_active = models.BooleanField(default=True)
 
     class Meta(BaseModel.Meta):
         db_table = "workspace_members"
         unique_together = ("workspace", "member")
-        indexes = [models.Index(fields=["member", "workspace", "role"], name="idx_wsm_member_ws_role")]
+        indexes = [
+            models.Index(fields=["member", "workspace", "role"]),  # 权限判定主索引
+            models.Index(fields=["workspace", "role"]),            # 成员列表按角色筛选
+        ]
 
 
 class ProjectMember(BaseModel):
-    project   = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="members")
+    project   = models.ForeignKey("db.Project", on_delete=models.CASCADE, related_name="project_projectmember")
     # ★ 反范式：冗余 workspace_id，使「工作空间维度的成员查询」无需 JOIN projects 表
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="project_memberships")
-    member    = models.ForeignKey("db.User", on_delete=models.CASCADE, related_name="project_memberships")
+    workspace = models.ForeignKey("db.Workspace", on_delete=models.CASCADE, related_name="project_member")
+    member    = models.ForeignKey("db.User", on_delete=models.CASCADE, related_name="member_project")
     role      = models.IntegerField(choices=ProjectRole.choices, default=ProjectRole.CONTRIBUTOR)
     is_active = models.BooleanField(default=True)
 
@@ -292,8 +299,8 @@ class ProjectMember(BaseModel):
         db_table = "project_members"
         unique_together = ("project", "member")
         indexes = [
-            models.Index(fields=["member", "project", "role"], name="idx_pm_member_proj_role"),
-            models.Index(fields=["member", "workspace"], name="idx_pm_member_ws"),
+            models.Index(fields=["member", "project", "role"]),   # 权限判定主索引
+            models.Index(fields=["member", "workspace"]),          # 行级过滤子查询索引
         ]
 ```
 
@@ -302,8 +309,8 @@ class ProjectMember(BaseModel):
 | `WorkspaceMember.role`（**IntegerField**） | `role__gte=WS_ADMIN` 的等级比较（IR-04） | 用字符串枚举则无法做 `gte` 比较，P1 需破坏性迁移（`rbac-permission-model.md` §9 明确警告） |
 | `is_active`（两张成员表） | 停用成员立即失去可见性（BR-06） | 只能靠删行，丢失历史与审计能力 |
 | `ProjectMember.workspace_id`（反范式） | 工作空间维度聚合免 JOIN | 每次过滤多一次 JOIN，列表接口 P95 显著劣化 |
-| `Issue.workspace_id`（反范式） | `IssueQuerySet` 的 `ws_admin` 子查询直接对齐 `OuterRef("workspace_id")` | 需 `project__workspace_id` 跨表关联，索引利用率下降 |
-| 三个复合索引 | `Exists` 子查询走索引唯一扫描 | 成员表增长后过滤成为全表扫描 |
+| `Issue.project.workspace_id`（跨表关联） | `IssueQuerySet` 的 `ws_admin` 子查询对齐 `OuterRef("project__workspace_id")`——`Issue` 本身**无**反范式 `workspace_id` 列（`INFRA-003` §6.1：P0-P2 不建，P3 报表需要时再加列 + 触发器维护） | P0 若照抄 `OuterRef("workspace_id")` 即 `FieldError`，必须跨 `project` 关联 |
+| 成员表复合索引（`[member, workspace, role]` / `[workspace, role]` / `[member, project, role]` / `[member, workspace]`） | `Exists` 子查询走索引唯一扫描 | 成员表增长后过滤成为全表扫描 |
 
 ### 4.2 QuerySet 过滤器：`accessible_by`
 
@@ -355,13 +362,14 @@ class ProjectQuerySet(AccessibleQuerySetMixin, models.QuerySet):
 
 
 class IssueQuerySet(AccessibleQuerySetMixin, models.QuerySet):
-    """IR-06：所属项目可见即任务可见（IR-07 私密项目条件已就位，字段待 P2）。"""
+    """IR-06：所属项目可见即任务可见（IR-07 私密项目条件 P0 不启用，P3 加列后启用）。"""
 
     def _scoped_for(self, user):
         ws_admin = WorkspaceMember.objects.filter(
             member=user, is_active=True,
             role__gte=WorkspaceRole.ADMIN,
-            workspace_id=OuterRef("workspace_id"),      # 依赖 Issue 的反范式 workspace_id
+            # Issue 无反范式 workspace_id 列（INFRA-003 §6.1：P0-P2 不建），须跨 project 关联
+            workspace_id=OuterRef("project__workspace_id"),
         )
         is_member = ProjectMember.objects.filter(
             member=user, is_active=True, project_id=OuterRef("project_id"),
@@ -370,9 +378,10 @@ class IssueQuerySet(AccessibleQuerySetMixin, models.QuerySet):
             _ws_admin=Exists(ws_admin), _is_member=Exists(is_member),
         ).filter(
             Q(_ws_admin=True) | Q(_is_member=True)
-        ).exclude(
-            Q(project__is_confidential=True) & ~Q(_is_member=True)   # IR-07（P2 生效）
         )
+        # IR-07（P3 加列后启用，P0 注释预留）：Project 无 is_confidential 列（INFRA-003 未建），
+        # P0 照抄下方条件即 FieldError。P3 私密项目落地时补加：
+        # .exclude(Q(project__is_confidential=True) & ~Q(_is_member=True))
 ```
 
 各 Manager 由 `SoftDeleteManager` 与上述 QuerySet 组合，保证 `deleted_at IS NULL` 与行级过滤同时生效（BR-10）：
@@ -394,21 +403,25 @@ class IssueManager(SoftDeleteManager.from_queryset(IssueQuerySet)):
 
 ### 4.3 DRF ViewSet 基类：强制注入
 
+基类命名与契约以 `api-conventions.md` §10.1 的三级类名体系为准：`BaseAPIView`（内部 API 唯一基类）→ `WorkspaceScopedAPIView` / `ProjectScopedAPIView`（作用域派生基类）。`rbac-permission-model.md` §6.3 将同一基类写作 `BaseViewSet`，与 §10.1 冲突——以 `api-conventions.md` 为准（架构文档待回改）。
+
 ```python
 # apps/api/plane/app/views/base.py
-class BaseViewSet(FieldSelectionMixin, ExpandMixin, ModelViewSet):
-    """全站 ViewSet 基类（api-conventions.md §10.1 + rbac-permission-model.md §6.3）。
+class BaseAPIView(FieldSelectionMixin, ExpandMixin, ModelViewSet):
+    """全站内部 API ViewSet 唯一基类（api-conventions.md §10.1）。
 
-    子类只需声明 model，即自动获得行级过滤；不声明或 Manager 未实现
-    accessible_by 时在开发期直接崩溃，而不是静默泄漏数据。
+    本文在其上强制第三层行级过滤（rbac-permission-model.md §6.3 的 BaseViewSet
+    即本类的旧命名，以 api-conventions 为准）。子类只需声明 model，即自动获得
+    行级过滤；不声明或 Manager 未实现 accessible_by 时在开发期直接崩溃，
+    而不是静默泄漏数据。
     """
 
     model = None
-    permission_classes = [IsAuthenticatedAndActive]      # L0，AUTH-002
+    permission_classes = [IsAuthenticatedAndActive]      # L0，AUTH-002 交付（本文不新增权限类，见 §1.4 交付边界）
 
     def get_queryset(self):
         if self.model is None:
-            raise ImproperlyConfigured("BaseViewSet 子类必须声明 model")
+            raise ImproperlyConfigured("BaseAPIView 子类必须声明 model")
         manager = self.model.objects
         if not hasattr(manager, "accessible_by"):
             raise ImproperlyConfigured(
@@ -421,7 +434,7 @@ class BaseViewSet(FieldSelectionMixin, ExpandMixin, ModelViewSet):
 
 ```python
 # apps/api/plane/app/views/issue.py
-class IssueViewSet(BaseViewSet):
+class IssueViewSet(BaseAPIView):
     model = Issue
     serializer_class = IssueSerializer
 
@@ -433,11 +446,13 @@ class IssueViewSet(BaseViewSet):
     # return Issue.objects.filter(project_id=self.kwargs["project_id"])
 ```
 
-**嵌套路由的父资源校验（BR-08）**：
+**嵌套路由的父资源校验（BR-08）**（落在 `api-conventions.md` §10.1 的作用域派生基类上）：
 
 ```python
-class ProjectScopedMixin:
-    """为项目下的子资源视图注入已校验可见性的 self.project。"""
+# apps/api/plane/app/views/base.py（续）
+class ProjectScopedAPIView(BaseAPIView):
+    """项目作用域派生基类（api-conventions.md §10.1）：为项目下的子资源
+    视图注入已校验可见性的 self.project。"""
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
@@ -446,6 +461,11 @@ class ProjectScopedMixin:
         self.project = get_object_or_404(
             Project.objects.accessible_by(request.user), pk=kwargs["project_id"],
         )
+
+
+class WorkspaceScopedAPIView(BaseAPIView):
+    """工作空间作用域派生基类（api-conventions.md §10.1）：同理，对
+    Workspace.objects.accessible_by(request.user) 校验 URL 中的 slug。"""
 ```
 
 若父资源直接用 `Project.objects.get(pk=...)` 取，则攻击者可用他人项目 ID 拼接 URL，通过「404 vs 500 vs 403」的响应差异探测该项目是否存在——这是行级过滤最常见的绕过路径，因此父资源校验与子资源过滤**同等重要**。
@@ -471,13 +491,13 @@ if isinstance(exc, (Http404, ObjectDoesNotExist)):
 | 手段 | 做法 | 收益 |
 | --- | --- | --- |
 | `Exists` 而非 `IN` / `JOIN` | 全部子查询用 `Exists(...)` | ①命中即短路，代价与成员数量无关；②不产生笛卡尔积重复行（EC-07），无需 `.distinct()`（`distinct` 会强制排序去重，在大结果集上代价高昂） |
-| 反范式 `workspace_id` | `ProjectMember` 与 `Issue` 各冗余一列 | 工作空间维度过滤免 JOIN（§4.1） |
-| 三个复合索引 | `[member, workspace, role]`、`[member, project, role]`、`[member, workspace]` | 子查询走索引唯一扫描，`EXPLAIN` 中为 `Index Only Scan` |
+| 反范式 `workspace_id` | 仅 `ProjectMember` 冗余一列（`Issue` 不冗余，`INFRA-003` §6.1 明确 P0-P2 不建；`IssueQuerySet` 经 `project__workspace_id` 关联） | 工作空间维度的成员与项目查询免 JOIN（§4.1）；`Issue` 侧多一次走 `projects` 主键索引的关联 |
+| 成员表复合索引 | `[member, workspace, role]`、`[workspace, role]`、`[member, project, role]`、`[member, workspace]` | 子查询走索引唯一扫描，`EXPLAIN` 中为 `Index Only Scan` |
 | `SystemAdmin` 判定缓存 | 请求级 `request._is_system_admin` + Valkey 键 `sysadmin:{user_id}`（TTL 60s） | 消除每请求一次额外查询（EC-09）；授予 / 撤销时主动失效 |
-| 强制分页 | 游标分页，`page_size` 上限 100（`api-conventions.md` §5） | 过滤成本被限定在单页范围（BR-12） |
+| 强制分页 | 游标分页，`per_page` 上限 100（`api-conventions.md` §6.3） | 过滤成本被限定在单页范围（BR-12） |
 | 查询数门禁 | 列表端点 `assertNumQueries` 上限：`Workspace` ≤ 4、`Project` ≤ 5、`Issue` ≤ 7 | 防止 N+1 与「每行再判一次权限」的退化写法 |
 
-**`EXPLAIN` 基线**（10 万 Issue / 1 千 Project / 5 千成员关系的种子数据，见 IT-16）：`Issue` 列表查询必须为「`issues` 索引扫描 + 两个 `Index Only Scan` 子查询」，不得出现 `Seq Scan on project_members` 或 `Hash Join`。
+**`EXPLAIN` 基线**（10 万 Issue / 1 千 Project / 5 千成员关系的种子数据，见 IT-16）：`Issue` 列表查询必须为「`issues` 索引扫描 + 两个 `Index Only Scan` 子查询」，另允许一次经 `project__workspace_id` 对 `projects` 主键索引的关联，不得出现 `Seq Scan on project_members` 或 `Hash Join`。
 
 ### 4.5 `is_system_admin` 的实现
 
@@ -512,7 +532,7 @@ TTL 60s 是取舍：撤销系统管理员后最长 60 秒仍生效。因此 `gra
 | G1 静态检查 | 扫描 `plane/app/views/` 下所有 `get_queryset` 定义体：若出现 `objects.all()` 或 `objects.filter(` 且同一函数体内无 `accessible_by` / `super().get_queryset()` → 失败（`rbac-permission-model.md` §6.3） | 绕过基类的裸查询 |
 | G2 模型覆盖 | 遍历所有继承 `BaseModel` 且被任一 ViewSet 引用的模型，断言其默认 Manager 具备 `accessible_by` | 新增受管模型漏实现过滤 |
 | G3 跨账号回归 | 参数化测试：对每个受管资源的列表 / 详情端点，用「用户 B 的凭据 + 用户 A 的资源 ID」请求，断言列表不含该 ID 且详情为 404 | 任何一处过滤被移除 |
-| G4 ViewSet 基类 | 断言 `plane/app/views/` 下所有 `ModelViewSet` 子类均继承自 `BaseViewSet` | 直接继承 DRF 基类绕过强制注入 |
+| G4 ViewSet 基类 | 断言 `plane/app/views/` 下所有 `ModelViewSet` 子类均继承自 `BaseAPIView`（或其作用域派生基类 `WorkspaceScopedAPIView` / `ProjectScopedAPIView`，`api-conventions.md` §10.1 三级类名体系） | 直接继承 DRF 基类绕过强制注入 |
 | G5 Manager 语义文档 | 断言每个 `accessible_by` 实现所在 Manager 类含非空 docstring | 可见性契约无处可查 |
 | G6 查询数与执行计划 | `assertNumQueries` 上限 + 关键列表端点的 `EXPLAIN` 断言（无 `Seq Scan on *_members`） | 过滤逻辑退化为全表扫描 |
 
@@ -557,8 +577,8 @@ G3 是其中最有价值的一条：它把「隔离」从一个需要人工推�
 | UT-16 | 未实现 `_scoped_for` 的 Manager 调用 `accessible_by` | 抛 `NotImplementedError` |
 | UT-17 | `is_system_admin` 命中请求级缓存 | 第二次调用不产生 DB 查询（`assertNumQueries(0)`） |
 | UT-18 | `revoke_system_admin` 后立即判定 | 返回 `False`（缓存被主动失效，不等 TTL，§4.5） |
-| UT-19 | `BaseViewSet` 子类未声明 `model` | `get_queryset()` 抛 `ImproperlyConfigured`（BR-01） |
-| UT-20 | `BaseViewSet` 子类的 `model` 无 `accessible_by` | 抛 `ImproperlyConfigured`，异常消息含模型名 |
+| UT-19 | `BaseAPIView` 子类未声明 `model` | `get_queryset()` 抛 `ImproperlyConfigured`（BR-01） |
+| UT-20 | `BaseAPIView` 子类的 `model` 无 `accessible_by` | 抛 `ImproperlyConfigured`，异常消息含模型名 |
 | UT-21 | 子类 `get_queryset()` 调 `super()` 后 `filter` | 生成 SQL 同时含成员子查询与子类条件 |
 | UT-22 | 生成的 SQL 断言 | `Project._scoped_for` 的 SQL 含两个 `EXISTS`，不含 `DISTINCT`、不含 `INNER JOIN project_members` |
 
@@ -584,7 +604,7 @@ G3 是其中最有价值的一条：它把「隔离」从一个需要人工推�
 | IT-16 | 种子 10 万 Issue / 5 千成员关系后压列表端点 | `assertNumQueries` 在门禁内；`EXPLAIN` 无 `Seq Scan on project_members`；P95 ≤ 300ms（§4.4） |
 | IT-17 | 聚合端点（任务计数） | 计数值等于 `accessible_by` 结果集大小，不含不可见数据（BR-13） |
 | IT-18 | **G3**：参数化遍历全部受管资源的「B 访问 A 的资源」组合 | 全部列表不含、全部详情 404 |
-| IT-19 | **G4**：反射检查全部 `ModelViewSet` 子类 | 均继承 `BaseViewSet` |
+| IT-19 | **G4**：反射检查全部 `ModelViewSet` 子类 | 均继承 `BaseAPIView`（含其作用域派生基类） |
 | IT-20 | **G2**：遍历受管模型 | 全部具备 `accessible_by` 且 Manager 有 docstring（含 G5） |
 | IT-21 | 移除某 ViewSet 的过滤（人为注入缺陷）后跑 IT-18 | 用例失败（验证关卡自身有效，即「测试的测试」） |
 | IT-22 | 把 C 的 `ProjectMember.is_active` 置 `False` 后立即请求 | 立即 404，无需等待任何缓存过期（EC-02） |
@@ -635,9 +655,9 @@ G3 是其中最有价值的一条：它把「隔离」从一个需要人工推�
 | 项目可见性 | 项目成员可见；**Owner/Admin 绕过项目成员检查**可见全部项目 | `ProjectQuerySet`（IR-03 ∪ IR-04，`role__gte=WS_ADMIN`） | ✅ 一致 |
 | 任务可见性 | 项目成员可见项目内任务 | `IssueQuerySet`（IR-06） | ✅ 一致 |
 | 越权响应 | 表现为资源不存在 | 统一 404 `RESOURCE_NOT_FOUND` | ✅ 一致；⚠️ 改进：文案与真实不存在逐字节一致，并有响应时间一致性测试（ST-01） |
-| 过滤实现位置 | 主要在各 ViewSet 的 `get_queryset()` 中按需拼装 | **统一收口到 Manager**，`BaseViewSet` 强制注入 | ⚠️ 改进（`rbac-permission-model.md` §10.5 已登记为本系统增量）：过滤逻辑不散落，改一处即全站生效 |
+| 过滤实现位置 | 主要在各 ViewSet 的 `get_queryset()` 中按需拼装 | **统一收口到 Manager**，`BaseAPIView` 强制注入 | ⚠️ 改进（`rbac-permission-model.md` §10.5 已登记为本系统增量）：过滤逻辑不散落，改一处即全站生效 |
 | 遗漏防护 | 依赖开发规范与 code review | `ImproperlyConfigured` 开发期崩溃 + G1~G6 六条 CI 关卡 | ⚠️ 改进：把「不能忘」从约定变成机制 |
-| 私密项目 | 提供项目私密性 | IR-07 条件已写入 QuerySet，字段与界面排 P2 | ⏸ 后置但不返工 |
+| 私密项目 | 提供项目私密性 | IR-07 条件在 QuerySet 中以注释预留（P0 不启用），字段与界面排 P3（`rbac` §7.4 / §9） | ⏸ 后置但不返工 |
 | 派生资源 | 各自处理 | 统一「委托上游」纪律 + Manager 收口表（IR-09 / BR-09） | ⚠️ 改进：上游规则变更自动传导 |
 
 ### 6.2 Ones 的权限隔离
@@ -657,9 +677,9 @@ G3 是其中最有价值的一条：它把「隔离」从一个需要人工推�
 | 编号 | 决策 | 理由 | 代价 |
 | --- | --- | --- | --- |
 | D1 | 不可见资源返回 **404** 而非 403 | ①不泄露资源存在性（阻断 slug / ID 枚举）；②「在该用户视角下不存在」在语义上就是 404；③与 Plane 一致 | 用户误点无权链接时会得到「不存在」，可能误判为 bug；用模糊文案「不存在或你没有访问权限」+ 遥测观测误点率来缓解 |
-| D2 | 过滤逻辑**统一收口到 Manager 的 `accessible_by`**，而非写在各 ViewSet | ①一处改全站生效（P2 加私密项目条件不需改任何视图）；②可被单测直接覆盖（不必起 HTTP）；③是相对 Plane 的明确增量 | Manager 承担了业务语义，需靠 docstring + G5 关卡保证语义可查 |
-| D3 | `BaseViewSet.get_queryset()` **默认即安全**，子类必须以 `super()` 为起点 | 「什么都不写」是安全的默认值，遗漏即崩溃而非泄漏 | 子类若坚持重写起点仍可绕过，故必须配 G1 静态检查 + G4 基类断言 |
-| D4 | 缺 `model` / 缺 `accessible_by` 时抛 `ImproperlyConfigured` | 让配置错误在开发期第一次请求就崩溃，而不是在生产变成泄漏 | 引入一个只在开发期出现的 500 分支（生产不应出现，故 §2.5 标为 `SERVER_MISCONFIGURED`） |
+| D2 | 过滤逻辑**统一收口到 Manager 的 `accessible_by`**，而非写在各 ViewSet | ①一处改全站生效（P3 加私密项目条件不需改任何视图）；②可被单测直接覆盖（不必起 HTTP）；③是相对 Plane 的明确增量 | Manager 承担了业务语义，需靠 docstring + G5 关卡保证语义可查 |
+| D3 | `BaseAPIView.get_queryset()` **默认即安全**，子类必须以 `super()` 为起点 | 「什么都不写」是安全的默认值，遗漏即崩溃而非泄漏 | 子类若坚持重写起点仍可绕过，故必须配 G1 静态检查 + G4 基类断言 |
+| D4 | 缺 `model` / 缺 `accessible_by` 时抛 `ImproperlyConfigured` | 让配置错误在开发期第一次请求就崩溃，而不是在生产变成泄漏 | 引入一个只在开发期出现的 500 分支（生产不应出现，故 §2.5 标为 `SERVER_ERROR`） |
 | D5 | 工作空间 `Owner`/`Admin` **绕过项目成员检查** | 管理必需（新建项目、接管离职成员项目）；与 Plane 一致 | 该角色数据可见面很大，`TEAM-002` 的角色分配界面必须显式提示 |
 | D6 | 项目成员可见**项目内全部任务**，不按执行人缩小 | 协作透明是项目管理工具的基本前提；看板需要全量任务 | 「只看我的」必须以筛选器实现，不能与权限混淆，否则放开筛选即越权 |
 | D7 | 全部子查询用 `Exists` 而非 `IN` / `JOIN` + `distinct()` | ①避免重复行（EC-07）；②命中即短路，代价与成员规模无关；③`distinct()` 在大结果集上代价高 | SQL 可读性略降，靠 UT-22 的 SQL 断言锁定形态 |
@@ -673,7 +693,7 @@ G3 是其中最有价值的一条：它把「隔离」从一个需要人工推�
 | 模式 | 应用位置 | 解决的问题 |
 | --- | --- | --- |
 | **模板方法（Template Method）** | `AccessibleQuerySetMixin.accessible_by` 固定「匿名 → 系统管理员 → 作用域」三步骨架，`_scoped_for` 由子类实现 | 公共前置判定只写一次；子类无法遗漏匿名与系统管理员分支 |
-| **模板方法（Template Method）** | `BaseViewSet.get_queryset()` 定义强制过滤流程 | 子类只能收窄不能放宽 |
+| **模板方法（Template Method）** | `BaseAPIView.get_queryset()` 定义强制过滤流程 | 子类只能收窄不能放宽 |
 | **仓储 / 规格（Repository + Specification）** | Manager 作为唯一数据访问入口，`accessible_by` 是可复合的可见性规格 | 可见性规则成为可组合、可单测的一等对象 |
 | **委托（Delegation）** | 派生资源的 `accessible_by` 委托上游集合（IR-09） | 规则单一来源，变更自动传导 |
 | **空对象（Null Object）** | 匿名用户返回 `none()` 而非抛异常 | 调用方无需到处判空 |
@@ -708,7 +728,7 @@ G3 是其中最有价值的一条：它把「隔离」从一个需要人工推�
 | AC-13 | 不可见与不存在的响应不可区分 | IT-03 逐字节比对通过；ST-01 响应时间分布无显著差异 |
 | AC-14 | 错误码出自 `api-conventions.md` §8.5 | 仅使用 `RESOURCE_NOT_FOUND`，无自造码；响应含 `request_id` |
 | AC-15 | 每个受管模型均有 `accessible_by` 且语义有文档 | IT-20（G2 + G5）通过；`rbac-permission-model.md` §6.2 的 Manager 收口表与代码一致 |
-| AC-16 | 所有 ViewSet 继承 `BaseViewSet` 且不重置 QuerySet 起点 | IT-19（G4）+ G1 静态检查通过 |
+| AC-16 | 所有 ViewSet 继承 `BaseAPIView`（或作用域派生基类）且不重置 QuerySet 起点 | IT-19（G4）+ G1 静态检查通过 |
 | AC-17 | 全部列表端点强制分页且 `total_count` 不含不可见数据 | ST-04 通过 |
 
 ### 7.3 安全验收
@@ -742,9 +762,9 @@ G3 是其中最有价值的一条：它把「隔离」从一个需要人工推�
 | 三重权限模型第三层职责与失败表现（404） | `rbac-permission-model.md` §1.1 | §1.4、§2.3、决策 D1 |
 | `AccessibleQuerySetMixin` / `ProjectQuerySet` / `IssueQuerySet` 实现 | §6.2 | §4.2（逐行对齐，仅补充 `WorkspaceQuerySet`） |
 | Manager 收口表（派生资源委托上游） | §6.2 | IR-09、BR-09、决策 D9 |
-| `BaseViewSet` 强制注入 + `ImproperlyConfigured` + CI 静态检查 `objects.all()` | §6.3 | §4.3、G1、决策 D3 / D4 |
-| 性能保障（`Exists` 优于 `IN`、反范式 `workspace_id`、请求级缓存、`SystemAdmin` Valkey TTL 60s、强制分页） | §6.4 | §4.4、§4.5、决策 D7 / D8 |
-| `WorkspaceMember` / `ProjectMember` 字段与三个复合索引、`role` 为 `IntegerField` | §3.2、§9 | §4.1 及其后的字段用途表 |
+| `BaseViewSet` 强制注入 + `ImproperlyConfigured` + CI 静态检查 `objects.all()` | §6.3 | §4.3（类名统一为 `api-conventions.md` §10.1 的 `BaseAPIView`，rbac §6.3 旧命名——架构文档待回改）、G1、决策 D3 / D4 |
+| 性能保障（`Exists` 优于 `IN`、反范式 `workspace_id`、请求级缓存、`SystemAdmin` Valkey TTL 60s、强制分页） | §6.4 | §4.4、§4.5、决策 D7 / D8。注：`Issue` 不冗余 `workspace_id`（`INFRA-003` §6.1 为准，rbac §6.4 表述——架构文档待回改） |
+| `WorkspaceMember` / `ProjectMember` 字段与成员表复合索引（含 `[workspace, role]`）、`role` 为 `IntegerField` | §3.2、§9 | §4.1 及其后的字段用途表（片段逐字对齐 `INFRA-003` §4.4-§4.5） |
 | `SystemAdmin` 独立表、不在 `User` 上加布尔位 | §3.3 | §4.5 |
 | 错误码分工（403 `PERM_*` vs 404 `RESOURCE_NOT_FOUND`） | §5.5、`api-conventions.md` §8.3 / §8.5 | §2.5、决策 D1 / D10 / D11 |
 | 统一异常处理器与错误 envelope | §5.5、`api-conventions.md` §4.2 | §4.3 处理器片段、AC-14 |
@@ -752,7 +772,7 @@ G3 是其中最有价值的一条：它把「隔离」从一个需要人工推�
 | 相对 Plane 的增量（行级过滤统一收口 Manager、越权响应统一） | §10.5 | §6.1 差异列 |
 | Ones 对标（Project/Wiki 统一权限、字段级、自定义角色组、部门域） | §11 | §6.2 |
 | 新增受权限管控资源的 7 步落地清单 | 附录 B | §4.3 子类写法 + G2/G5 关卡（机制化该清单） |
-| `BaseAPIView` / `BaseViewSet` 模板方法与游标分页 | `api-conventions.md` §10.1 / §5 | §4.3、BR-12 |
+| `BaseAPIView` 模板方法与游标分页（`per_page` 上限 100） | `api-conventions.md` §10.1 / §6.3 | §4.3、BR-12 |
 | `Workspace.slug` 全局唯一、`Project.identifier` 工作空间内唯一、软删除语义 | `unified-issue-model.md` §2.2 / §2.3 / §2.4 | §1.3、IR-08、ST-06 |
 | `AuthStore` 退出时清空 SWR 全量缓存（防跨账号串味） | `AUTH-001` §4.4.2 | E2E-05 |
 | 未认证一律 401、由 L0 前置拦截 | `AUTH-002` §4.5 | §2.3 流程图、§2.5 |
@@ -761,7 +781,7 @@ G3 是其中最有价值的一条：它把「隔离」从一个需要人工推�
 
 | 层 | 交付物 |
 | --- | --- |
-| 后端 | `plane/db/models/managers.py`（`AccessibleQuerySetMixin` / `WorkspaceQuerySet` / `ProjectQuerySet` / `IssueQuerySet` + 三个 Manager）、`plane/utils/access.py`（`is_system_admin`）、`plane/app/views/base.py`（`BaseViewSet` 强制注入）、`plane/app/mixins/scoped.py`（`WorkspaceScopedMixin` / `ProjectScopedMixin`）、`plane/utils/exception_handler.py` 的 404 分支、`INFRA-003` 三个复合索引的 migration 校验 |
+| 后端 | `plane/db/models/managers.py`（`AccessibleQuerySetMixin` / `WorkspaceQuerySet` / `ProjectQuerySet` / `IssueQuerySet` + 三个 Manager）、`plane/utils/access.py`（`is_system_admin`）、`plane/app/views/base.py`（`BaseAPIView` 强制注入 + `WorkspaceScopedAPIView` / `ProjectScopedAPIView` 作用域派生基类，命名按 `api-conventions.md` §10.1）、`plane/utils/exception_handler.py` 的 404 分支、`INFRA-003` 成员表复合索引的 migration 校验。**不含任何 L1~L3 权限类**（P1 `AUTH-005` 交付，见 §1.4 交付边界） |
 | 前端 | `components/common/not-found-state.tsx`（与 `AUTH-002` 共用）、三类列表空态组件、侧边栏与内容区的 404 同步处理、`resource_not_accessible` 遥测埋点 |
 | 测试 | `tests/isolation/`（UT-01~22、IT-01~22、ST-01~14）、`tests/factories.py` 中 A~F 六个夹具用户、`e2e/isolation.spec.ts`（E2E-01~10）、10 万行种子数据脚本 |
 | CI | `scripts/check-queryset-filter.py`（G1）、`tests/test_access_coverage.py`（G2/G4/G5）、`tests/test_cross_account_matrix.py`（G3）、`tests/test_query_plan.py`（G6） |

@@ -11,3 +11,4 @@
 | lint-staged 与 harness 回滚冲突 | 未提及 | `.husky/pre-commit` 临时跳过 lint-staged（CI 仍跑） | lint-staged 修复 settings/migration 时被 harness 覆盖，无法提交 | **回改 INFRA-001 §7.4** 标注兜底 |
 | advisory lock 在 SQLite dev 环境 | INFRA-003 §4.11 强制 PostgreSQL | SQLite dev 跳过（`if connection.vendor != "postgresql": return`） | SQLite 不支持 `pg_advisory_xact_lock` | 仅 dev 环境生效，PG 生产路径不变 |
 | AUTH-001 §BR-02 错误码字面错位（DEV-8） | AUTH-001 §BR-02 错误表登记 `409 RESOURCE_ALREADY_EXISTS` | `apps/api/plane/app/views/auth.py:62` 实现 `AUTH_EMAIL_EXISTS` | 错误码字面错位（实现优先） | **当前实现优先；Sprint 1 文档回改统一**（统一为 AUTH_EMAIL_EXISTS 或统一为 RESOURCE_ALREADY_EXISTS） |
+| 9 | 详情端点信封遗漏（DEV-9） | `ProjectDetailView`/`IssueDetailView` 的 `retrieve()` 未包统一信封，裸 JSON 中 Project 的 `status:"active"` 字段与信封 `status` 键名冲突 → 前端拦截器误判解包为 undefined → 设置页白屏 | 已修复：两个 retrieve() 补 envelope（2026-09-02 真实使用发现） |

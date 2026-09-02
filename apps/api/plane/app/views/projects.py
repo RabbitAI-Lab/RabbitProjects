@@ -94,6 +94,11 @@ class ProjectDetailView(RetrieveUpdateDestroyAPIView):
         project, _, _ = _get_project_or_404(self.kwargs["slug"], self.kwargs["project_id"], self.request.user)
         return project
 
+    def retrieve(self, request, *args, **kwargs):
+        """GET 详情 —— 统一信封（api-conventions §4；裸 JSON 的 status 字段会与信封 status 键冲突）。"""
+        project = self.get_object()
+        return envelope(True, _serialize_project(project, request.user))
+
     def update(self, request, *args, **kwargs):
         project, _, member = _get_project_or_404(kwargs["slug"], kwargs["project_id"], request)
         # PATCH 需 PROJ_ADMIN 或 WS_ADMIN+
@@ -111,6 +116,15 @@ class ProjectDetailView(RetrieveUpdateDestroyAPIView):
         # identifier 不可修改（PROJ-001 §4.3.5 ID-7：read_only）
         project.save()
         return envelope(True, _serialize_project(project, request.user))
+
+    def destroy(self, request, *args, **kwargs):
+        """DELETE —— 软删除（deleted_at）+ PROJ_ADMIN/WS_ADMIN 角色校验（PROJ-001 §4.2 第 5 行）。"""
+        project, _, _ = _get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
+        ws_member_role = _get_workspace_or_404(kwargs["slug"], request.user)[1].role
+        if not (project.current_user_role >= ProjectRole.ADMIN or ws_member_role >= WorkspaceRole.ADMIN):
+            return envelope(False, None, {"code": "PERM_PROJECT_ADMIN_REQUIRED"}, http_status=403)
+        project.soft_delete(actor_id=request.user.id)
+        return envelope(True, None, None, http_status=204)
 
 
 class ProjectStateListView(ListCreateAPIView):

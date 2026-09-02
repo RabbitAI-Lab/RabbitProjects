@@ -1,69 +1,133 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router";
+import { useParams } from "react-router";
 import { Topbar } from "../components/Topbar";
-import { Sidebar } from "../components/Sidebar";
+import { ProjectSidebar } from "../components/ProjectSidebar";
+import { IssueDrawer } from "../components/IssueDrawer";
 import { StateBadge } from "../components/StateBadge";
-import { IssueAPI } from "../services/api";
+import { IssueAPI, ProjectAPI } from "../services/api";
 import type { Issue } from "@rp/types";
+
+const today = () => new Date().toISOString().slice(0, 10);
 
 export default function IssuesList() {
   const { workspaceSlug, projectId } = useParams<{ workspaceSlug: string; projectId: string }>();
   const [issues, setIssues] = useState<Issue[]>([]);
+  const [project, setProject] = useState<{ name: string; identifier: string } | null>(null);
   const [quick, setQuick] = useState("");
+  const [openIssueId, setOpenIssueId] = useState<string | null>(null);
+  const [showTaskModal, setShowTaskModal] = useState(false);
 
   async function load() {
-    const r = await IssueAPI.list(workspaceSlug!, projectId!, { ordering: "sort_order" });
-    setIssues((r as any).data);
+    const [iRes, pRes] = await Promise.all([
+      IssueAPI.list(workspaceSlug!, projectId!, { ordering: "sort_order" }),
+      ProjectAPI.detail(workspaceSlug!, projectId!),
+    ]);
+    setIssues((iRes as any).data);
+    setProject((pRes as any).data);
   }
   useEffect(() => { load(); }, [workspaceSlug, projectId]);
+
+  async function quickCreate() {
+    if (!quick.trim()) return;
+    await IssueAPI.create(workspaceSlug!, projectId!, { name: quick });
+    setQuick(""); await load();
+    document.getElementById("tq-input")?.focus();
+  }
 
   return (
     <div className="flex flex-col h-screen">
       <Topbar />
       <div className="flex flex-1 min-h-0">
-        <Sidebar workspaceSlug={workspaceSlug!} />
-        <main className="flex-1 overflow-y-auto p-4">
-          <div className="flex items-center gap-1.5 border border-dashed border-neutral-300 h-[38px] px-3 rounded-md mb-3.5 text-neutral-500">
-            <span>+</span>
-            <input id="tq-input" className="flex-1 bg-transparent outline-none text-[13px]" placeholder="输入任务标题后按回车快速创建…" value={quick} onChange={(e) => setQuick(e.target.value)}
-              onKeyDown={async (e) => {
-                if (e.key === "Enter" && quick.trim()) {
-                  e.preventDefault();
-                  await IssueAPI.create(workspaceSlug!, projectId!, { name: quick });
-                  setQuick(""); await load();
-                  document.getElementById("tq-input")?.focus();
-                }
-              }} />
-            <span className="text-xs">Enter 创建</span>
+        <ProjectSidebar projectName={project?.name ?? "…"} identifier={project?.identifier ?? ""} />
+        <main className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          <div className="h-[53px] border-b border-neutral-200 flex items-center gap-2 px-5 bg-white shrink-0">
+            <div><span className="text-[15px] font-semibold">任务列表</span>
+              <span className="text-[13px] text-neutral-500 ml-2">{issues.length} 个任务</span></div>
+            <button onClick={() => setShowTaskModal(true)} className="ml-auto inline-flex h-[34px] items-center gap-1.5 px-3.5 bg-brand-500 text-white rounded-md font-medium hover:bg-brand-600">+ 创建任务</button>
           </div>
-          {issues.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-12 text-neutral-500">
-              <div className="text-[15px] font-semibold text-neutral-700">暂无任务</div>
-              <div className="text-[13px]">创建第一个任务开始工作</div>
+          <div className="flex-1 overflow-y-auto p-5">
+            <div className="flex items-center gap-1.5 border border-dashed border-neutral-300 h-[38px] px-3 rounded-md mb-3.5 text-neutral-500 focus-within:border-brand-500 focus-within:bg-white">
+              <span>+</span>
+              <input id="tq-input" className="flex-1 bg-transparent outline-none text-[13px]" placeholder="输入任务标题后按回车快速创建…"
+                value={quick} onChange={(e) => setQuick(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); quickCreate(); } if (e.key === "Escape") { setQuick(""); (e.target as HTMLInputElement).blur(); } }} />
+              <span className="text-xs">Enter 创建</span>
             </div>
-          ) : (
-            <table className="w-full">
-              <thead><tr className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider text-left">
-                <th className="px-3 py-2 border-b border-neutral-200 w-24">编号</th>
-                <th className="px-3 py-2 border-b border-neutral-200">标题</th>
-                <th className="px-3 py-2 border-b border-neutral-200 w-[120px]">状态</th>
-                <th className="px-3 py-2 border-b border-neutral-200 w-[110px]">负责人</th>
-                <th className="px-3 py-2 border-b border-neutral-200 w-[130px]">截止时间</th>
-              </tr></thead>
-              <tbody>
-                {issues.map((i) => (
-                  <tr key={i.id} className="hover:bg-neutral-50 cursor-pointer">
-                    <td className="px-3 py-2.5 border-b border-neutral-100 font-mono text-xs text-neutral-500">{i.issue_key}</td>
-                    <td className="px-3 py-2.5 border-b border-neutral-100 text-[13px]"><Link to={`/${workspaceSlug}/projects/${projectId}/board`} className="hover:text-brand-600 hover:underline">{i.name}</Link></td>
-                    <td className="px-3 py-2.5 border-b border-neutral-100"><StateBadge group={i.state_group ?? "unstarted"} name={i.state_name ?? "—"} /></td>
-                    <td className="px-3 py-2.5 border-b border-neutral-100 text-[13px]">{i.assignee ? i.assignee.name : <span className="text-neutral-400">—</span>}</td>
-                    <td className="px-3 py-2.5 border-b border-neutral-100 text-[13px] text-neutral-500 font-mono text-xs">{i.target_date || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+            {issues.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-12 text-neutral-500">
+                <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#d4d4d4" strokeWidth="2"><rect width="8" height="4" x="8" y="2" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4M12 16h4M8 11h.01M8 16h.01"/></svg>
+                <div className="text-[15px] font-semibold text-neutral-700">暂无任务</div>
+                <div className="text-[13px]">创建第一个任务开始工作</div>
+                <button onClick={() => setShowTaskModal(true)} className="mt-2 inline-flex h-[34px] items-center gap-1.5 px-3.5 bg-brand-500 text-white rounded-md font-medium">+ 创建任务</button>
+              </div>
+            ) : (
+              <table className="w-full border-collapse">
+                <thead><tr>
+                  {["编号", "标题", "状态", "负责人", "截止时间"].map((h, i) => (
+                    <th key={h} className={`text-left px-3 py-2 border-b border-neutral-200 text-[11px] font-semibold text-neutral-400 uppercase tracking-wider ${["w-24", "", "w-[120px]", "w-[110px]", "w-[130px]"][i]}`}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {issues.map((it) => {
+                    const overdue = it.target_date && it.target_date < today() && it.state_group !== "completed";
+                    return (
+                      <tr key={it.id} className="cursor-pointer hover:bg-neutral-50" onClick={() => setOpenIssueId(it.id)}>
+                        <td className="px-3 py-2.5 border-b border-neutral-100">
+                          <button className="font-mono text-xs text-neutral-500 hover:text-brand-600"
+                            onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(it.issue_key); }}
+                            title="点击复制编号">{it.issue_key}</button>
+                        </td>
+                        <td className="px-3 py-2.5 border-b border-neutral-100 text-[13px]">{it.name}</td>
+                        <td className="px-3 py-2.5 border-b border-neutral-100"><StateBadge group={it.state_group ?? "unstarted"} name={it.state_name ?? "—"} /></td>
+                        <td className="px-3 py-2.5 border-b border-neutral-100 text-[13px]">{it.assignee ? it.assignee.name : <span className="text-neutral-400">—</span>}</td>
+                        <td className="px-3 py-2.5 border-b border-neutral-100 text-[13px]">
+                          {it.target_date ? (
+                            overdue
+                              ? <span className="text-red-500 inline-flex items-center gap-1"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>{it.target_date}</span>
+                              : <span className="font-mono text-xs text-neutral-500">{it.target_date}</span>
+                          ) : <span className="text-neutral-400">—</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
         </main>
+      </div>
+      {openIssueId && <IssueDrawer issueId={openIssueId} slug={workspaceSlug!} projectId={projectId!} onClose={() => { setOpenIssueId(null); load(); }} />}
+      {showTaskModal && <NewTaskModal slug={workspaceSlug!} projectId={projectId!} onClose={() => { setShowTaskModal(false); load(); }} />}
+    </div>
+  );
+}
+
+export function NewTaskModal({ slug, projectId, onClose }: { slug: string; projectId: string; onClose: () => void }) {
+  const [name, setName] = useState("");
+  const [targetDate, setTargetDate] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-xl shadow-lg w-[640px] p-6">
+        <div className="flex items-center justify-between mb-[18px]"><div className="text-base font-semibold">创建任务</div><button onClick={onClose}>✕</button></div>
+        {err && <div className="mb-3.5 px-3 py-2 bg-red-50 text-red-700 rounded-md text-[13px]">{err}</div>}
+        <form onSubmit={async (e) => {
+          e.preventDefault(); setErr(null);
+          if (!name.trim()) { setErr("请填写任务标题"); return; }
+          try { await IssueAPI.create(slug, projectId, { name, target_date: targetDate || undefined }); onClose(); }
+          catch (er: any) { setErr(er?.message ?? "创建失败"); }
+        }}>
+          <input className="w-full h-10 text-[17px] font-medium border-0 border-b-2 border-transparent focus:border-brand-500 focus:outline-none bg-transparent px-0 mb-3"
+            placeholder="任务标题" autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+          <div className="flex items-center gap-3">
+            <label className="text-[13px] text-neutral-500">截止时间</label>
+            <input type="date" className="h-9 border border-neutral-300 rounded-md px-2.5 text-[13px]" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
+          </div>
+          <div className="flex justify-end gap-2.5 mt-5">
+            <button type="button" onClick={onClose} className="h-[34px] px-3.5 bg-white border border-neutral-300 rounded-md">取消</button>
+            <button type="submit" className="h-[34px] px-3.5 bg-brand-500 text-white rounded-md hover:bg-brand-600">创建任务</button>
+          </div>
+        </form>
       </div>
     </div>
   );

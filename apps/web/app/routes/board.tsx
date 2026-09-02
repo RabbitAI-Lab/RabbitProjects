@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
 import { Topbar } from "../components/Topbar";
-import { Sidebar } from "../components/Sidebar";
+import { ProjectSidebar } from "../components/ProjectSidebar";
+import { IssueDrawer as SharedDrawer } from "../components/IssueDrawer";
 import { StateBadge } from "../components/StateBadge";
 import { IssueAPI, ProjectAPI } from "../services/api";
 import type { Issue } from "@rp/types";
@@ -21,14 +22,19 @@ export default function Board() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [openIssueId, setOpenIssueId] = useState<string | null>(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [projName, setProjName] = useState("…");
+  const [projIdentifier, setProjIdentifier] = useState("");
 
   async function load() {
     setLoading(true);
     try {
-      const [sRes, iRes] = await Promise.all([
+      const [sRes, iRes, pRes] = await Promise.all([
         ProjectAPI.states(workspaceSlug!, projectId!),
         IssueAPI.list(workspaceSlug!, projectId!, { ordering: "sort_order", per_page: 100 }),
+        ProjectAPI.detail(workspaceSlug!, projectId!),
       ]);
+      setProjName((pRes as any).data?.name ?? "…");
+      setProjIdentifier((pRes as any).data?.identifier ?? "");
       const states = (sRes as any).data as Array<{ id: string; name: string; group: string }>;
       const issues = (iRes as any).data as Issue[];
       const map = new Map<string | null, Col>();
@@ -65,7 +71,7 @@ export default function Board() {
     <div className="flex flex-col h-screen">
       <Topbar />
       <div className="flex flex-1 min-h-0">
-        <Sidebar workspaceSlug={workspaceSlug!} />
+        <ProjectSidebar projectName={projName} identifier={projIdentifier} />
         <main className="flex-1 min-w-0 flex flex-col">
           <div className="h-[56px] border-b border-neutral-200 flex items-center gap-2 px-5 bg-white">
             <span className="text-[15px] font-semibold">看板</span>
@@ -105,7 +111,7 @@ export default function Board() {
               );
             })}
           </div>
-          {openIssueId && <IssueDrawer issueId={openIssueId} slug={workspaceSlug!} projectId={projectId!} onClose={() => { setOpenIssueId(null); load(); }} />}
+          {openIssueId && <SharedDrawer issueId={openIssueId} slug={workspaceSlug!} projectId={projectId!} onClose={() => { setOpenIssueId(null); load(); }} />}
           {showTaskModal && <NewTaskModal slug={workspaceSlug!} projectId={projectId!} onClose={() => { setShowTaskModal(false); load(); }} />}
         </main>
       </div>

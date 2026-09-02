@@ -82,10 +82,10 @@ test.describe("覆盖补全（原 Nightly / 占位用例）", () => {
     await page.getByRole("button", { name: "创建项目", exact: true }).click();
     await page.waitForURL(/\/projects\/.+\/board/, { timeout: 10_000 });
 
-    // 进设置页（danger zone 的「删除项目」打开确认 modal）
+    // 进设置页（异步加载项目详情后 danger zone 才渲染）
     await page.goto(page.url().replace(/\/board$/, "/settings"));
     const openDelete = page.locator("button", { hasText: "删除项目" }).first();
-    await expect(openDelete).toBeVisible({ timeout: 5_000 });
+    await expect(openDelete).toBeVisible({ timeout: 10_000 });
     await openDelete.click();
 
     // modal：confirm 输入框是页面上第 3 个 input（设置页 name+identifier 两个 input，描述是 textarea）

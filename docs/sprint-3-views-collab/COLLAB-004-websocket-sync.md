@@ -7,11 +7,11 @@
 | 优先级 | P2（标准版完整级 · **实时层的奠基迭代**） |
 | 所属模块 | M8-COLLAB｜实时协作与通知 |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
+| 最后更新日期 | 2026-09-02 |
 | 上游依据 | `docs/需求文档.md` §3.8（实时消息推送、多人实时协同编辑、实时看板/任务数据同步）、§8.2 协作通知 P2 列；§五（live 按项目/实体隔离房间、精准推送） |
 | 前置依赖 | **`INFRA-002`（live 服务容器：Express + ws，`/live` 经 proxy WebSocket upgrade，`API_INTERNAL_URL`/`REDIS_URL` 注入，healthcheck `/health`）**、`COLLAB-001`（Notification 模型与轮询降级通道）、`COLLAB-003`（`stream_cursor` 水位契约）、`TASK-010`（事件管道与 Worker 尾部扇出挂点）、`INFRA-004`（信封与错误码） |
-| 下游依赖 | `BOARD-003/004`（看板实时拖拽同步消费 `board.moved`）、`GANTT-001`（甘特实时刷新）、P3 协同编辑（Hocuspocus 复用 live 进程与票据体系——本文档不实现 Yjs）、`INTG-002`（Webhook 与推送共用事件源） |
-| 架构基线 | [`api-conventions.md`](../architecture/api-conventions.md) **§9.5 live 协同票据（短时效 JWT / RS256 / 120s / room 声明）**、§8（`SERVER_LIVE_SERVICE_UNAVAILABLE`）、§4（信封）；[`tech-stack.md`](../architecture/tech-stack.md)（Node live 服务）；[`monorepo-structure.md`](../architecture/monorepo-structure.md)（apps/live 结构） |
+| 下游依赖 | `BOARD-003`（同列拖拽的远端顺序修正消费 `board.moved`——其 R1 版未列该消费挂点，**上游待登记**，事件契约以本文 §2.3 为准）、`BOARD-004`（批量变更逐实体复用 `issue.updated`/`issue.state.changed` 并附 `batch_id`——其 BR-15 声明的「`COLLAB-004` 待登记」由本文 §2.3 注落地）、`GANTT-001`（甘特实时刷新）、P3 协同编辑（Hocuspocus 复用 live 进程与票据体系——本文档不实现 Yjs）、`INTG-002`（Webhook 与推送共用事件源） |
+| 架构基线 | [`api-conventions.md`](../architecture/api-conventions.md) **§9.5 live 协同票据（短时效 JWT / RS256 / 120s / room 声明）**、§8（`SERVER_LIVE_SERVICE_UNAVAILABLE`）、§4（信封）；[`tech-stack.md`](../architecture/tech-stack.md)（Node live 服务；api 侧票据签发 = PyJWT §3 已登记，live 侧验签库登记见 §4.3.1 注）；[`monorepo-structure.md`](../architecture/monorepo-structure.md)（apps/live 结构；**`packages/shared-state/src/realtime/` = WebSocket 增量 patch 入口——前端实时层落位**） |
 | 竞品参考 | Plane（live 服务 + silo 家庭：silo-websocket 承载 socket.io 房间广播） · Ones（企业级实时与消息触达） |
 | 工作量估算 | 后端 3 人日（Django 1 + live 2）/ 前端 3 人日 / 联调与测试 2 人日，合计 **8 人日** |
 
@@ -27,11 +27,11 @@ P1/P2 至今的一切数据视图都是**拉**模式：列表 60s SWR、通知 3
 
 - **谁在变**：一切写操作（`TASK-010` 事件矩阵）经 Worker 尾部扇出到 live 服务；
 - **推给谁**：按「房间」隔离——项目房间（看板/列表/动态流）与任务房间（详情/评论），权限在换票时校验；
-- **推什么**：紧凑事件载荷（实体 ID + 版本 + 变更摘要），前端收到后**定向 SWR revalidate**——「推送负责知道、拉取负责拿到」，不推送全量实体。
+- **推什么**：紧凑事件载荷（实体 ID + 版本 + 变更摘要），前端经 `@rp/shared-state` 的 `realtime/` 入口（`monorepo-structure.md` 登记的 WebSocket 增量 patch 入口）对 MobX store 做**定向增量 patch**；正文补齐与断线/降级恢复的全量收敛走既有 REST 拉取通道（SWR）——「推送负责知道、patch 负责秒级可见、拉取负责最终一致」，不推送全量实体。
 
 三条设计红线先立：
 
-1. **推送是提示不是数据源**——事件只携带「什么变了」，正文一律走既有 REST 拉取收敛。掉一条事件的代价是「晚一轮 revalidate」，而非数据错误；
+1. **推送是提示不是数据源**——事件只携带「什么变了」，正文一律走既有 REST 拉取收敛。掉一条事件的代价是「晚一轮 SWR 拉取收敛」，而非数据错误；
 2. **鉴权不信任连接**——live 不自建账号体系，连接凭证是 api 签发的**短时效 JWT 票据**（120s，RS256 私钥仅 api 持有；live 持公钥验签，`api-conventions.md` §9.5 原文模式）；
 3. **降级一等公民**——live 不可达（`SERVER_LIVE_SERVICE_UNAVAILABLE`）时前端自动回落 P1 轮询通道，功能零损失、时效退化为分钟级。
 
@@ -43,7 +43,7 @@ P1/P2 至今的一切数据视图都是**拉**模式：列表 60s SWR、通知 3
 | 2 | 票据签发端点 | `POST …/realtime-token/`（项目/任务域声明 + 120s 有效期 + 续签） |
 | 3 | 事件协议 | 6 类核心事件（§2.3）统一信封：`event / seq / room / payload / occurred_at` |
 | 4 | Worker 扇出 | `TASK-010` Worker 尾部 `publish_event` → Redis Pub/Sub → live 房间广播（api 与 live 唯一通道） |
-| 5 | 前端实时层 | `RealtimeClient`（连接/房间/重连/水位补偿）+ `LiveEventBus → SWR mutate` 定向失效 |
+| 5 | 前端实时层 | `RealtimeClient`（连接/房间/重连/水位补偿）+ `LiveEventBus → MobX store 定向 patch`（增量提示）；断线重连/降级恢复走 SWR 全量收敛（§2.2） |
 | 6 | 在线感知（presence） | 项目房间内成员在线态（头像列 + 「正在看板」轻提示） |
 | 7 | 断线重连 | 指数退避重连 + `stream_cursor`/`updated_at` 水位补偿拉取（数据不丢） |
 | 8 | 降级与观测 | live 健康探测失败 → 轮询模式（横幅提示）；连接指标（在线/房间数/事件速率）结构化日志 |
@@ -119,7 +119,7 @@ sequenceDiagram
     participant R as Redis Pub/Sub
     participant CW as Celery Worker
 
-    FE->>API: POST …/realtime-token/ {rooms: [project:7b3e…, issue:8a1f…]}
+    FE->>API: POST …/realtime-token/ {client_tab_id, issue_rooms: [8a1f…]}
     API->>API: 校验 Session + 各房间读权限（accessible_by）
     API-->>FE: 200 {token: JWT(RS256, sub=user, rooms[…], exp=now+120s), renew_after: 90}
     FE->>LIVE: WSS /live/connect?token=…（经 proxy upgrade）
@@ -127,7 +127,7 @@ sequenceDiagram
     alt 票据无效/过期
         LIVE-->>FE: close(4001 TOKEN_INVALID) → FE 重新换票（≤2 次）
     else 通过
-        LIVE-->>FE: {event:"connected", seq:0, payload:{rooms, session_id, heartbeat:25}}
+        LIVE-->>FE: {event:"connected", seq:0, payload:{rooms, ws, heartbeat:25}}
         loop 每 25s
             FE->>LIVE: ping；LIVE-->>FE: pong（60s 无心跳即断开）
         end
@@ -136,7 +136,7 @@ sequenceDiagram
     R->>LIVE: 订阅 channel rp:events
     LIVE->>LIVE: 按 payload.rooms 路由到房间连接集
     LIVE-->>FE: {event:"issue.updated", seq:1042, room:"project:7b3e…", …}
-    FE->>FE: version 比对 → 定向 SWR mutate（看板列/详情/通知）
+    FE->>FE: version 比对 → MobX store 定向 patch（看板列/详情/通知）
 ```
 
 ### 2.2 断线重连与补偿（数据不丢的唯一承诺）
@@ -159,32 +159,39 @@ flowchart TD
 
 | event | room | 触发（事件源） | payload 要点 | 前端定向动作 |
 | --- | --- | --- | --- | --- |
-| `issue.updated` | project + 涉事 issue | Issue 任何字段变更（含 custom_fields） | issue_id / version / brief（字段族） | 看板列、列表行、详情 revalidate |
-| `issue.state.changed` | project + issue | 状态流转（含拖拽） | issue_id / from_group / to_group | 看板列计数迁移动画；统计卡 |
-| `board.moved` | project | 看板拖拽排序（sort_order） | issue_id / from_state / to_state / column_version | 同列其他卡片顺序修正 |
+| `issue.updated` | project + 涉事 issue | Issue 任何字段变更（含 custom_fields） | issue_id / version / brief（字段族）/ batch_id（批量时，见注 2） | 看板列、列表行、详情定向 patch（§4.4.2） |
+| `issue.state.changed` | project + issue | 状态流转（含拖拽） | issue_id / from_group / to_group / batch_id（批量时） | 看板列计数迁移动画；统计卡 |
+| `board.moved` | project | 看板拖拽排序（sort_order） | issue_id / from_state / to_state / column_version（见注 3） | 同列其他卡片顺序修正 |
 | `comment.created` | issue（+ project 摘要） | 评论/回复发表 | comment_id / issue_id / actor_id | 评论流乐观补齐；滚动提示 |
-| `activity.appended` | project | `TASK-010` 落库 | stream_cursor（新水位） | 动态流增量拉取 / 浮条 |
+| `activity.created` | project | `TASK-010` 落库 | stream_cursor（新水位） | 动态流增量拉取 / 浮条 |
 | `notification.created` | user（个人房间） | 通知生成 | notification_id / unread_delta | 铃铛计数 +1；抽屉顶部划入 |
 
 信封公共字段：`event / seq / room / payload / occurred_at`。`seq` 为**房间级单调递增**序号（live 内存维护，重启归零——仅用于乱序检测提示，不承担补偿语义，补偿靠水位，§2.2）。
+
+载荷字段登记注：
+
+1. **`activity.created` 命名对齐**：与下游 `COLLAB-003` 的声明（「`COLLAB-004` WebSocket `activity.created` 实时增量」）同名——WS 推送与 REST 动态流列表共用一个事件名，不另造 `appended` 动词；载荷只带 `stream_cursor` 新水位，条目正文由前端按水位增量拉取（`COLLAB-003` BR-12 契约）。
+2. **`batch_id`（可选，仅 `issue.updated` / `issue.state.changed` 携带）**：批量操作（`BOARD-004`）触发时逐实体附带，值 = 该批共享 `epoch` 同值（毫秒时间戳）；单条操作不携带该字段。对端按 `batch_id` 将同批事件聚合为单条 Toast（「张三 批量更新了 12 个任务」）而非逐条弹窗。本条即 `BOARD-004` BR-15 所声明「`batch_id` 载荷扩展待 `COLLAB-004` 登记」的**落地登记**：**不新增 `batch` 事件类型**——批量变更逐实体复用既有事件类型，经 BR-13 的 **100ms 合批通道**（`throttleAggregate`）收敛为一次网络批（合批后 `seq` 取最大、`batch_id` 保留）；对端聚合提示沿用 `COLLAB-001` 批量通知的归并范式（每 issue 各一行、携带 `merged_count`）。
+3. **`column_version`（`board.moved` 专用）**：目标列的排序版本 = 该列最近一次 `sort_order` 写入时间（受影响任务集的最大 `updated_at`，ISO 8601 时间戳）。前端与本地列版本比对，旧于等于本地即忽略（§1.4 `version` 比对规则的「列粒度」形态，防同列并发拖拽的乱序重排）。
+4. **`board.moved` 消费归属**：同列拖拽的远端顺序修正由 `BOARD-003` 前端消费（含 §3.2 本地拖拽保护）——其 R1 版未列该消费挂点，**上游待登记**；`BOARD-004` 批量操作**不**产生 `board.moved`（批量变更逐实体走 `issue.*` 事件，见注 2）。
 
 ### 2.4 业务规则表
 
 | 编号 | 规则 | 判定位置 | 违反后果 |
 | --- | --- | --- | --- |
 | BR-01 | 连接必须持有效票据：RS256 验签 + `exp` 校验 + `rooms` 声明与会话 sub 一致；无效 close(4001)，前端重换票 ≤ 2 次后降级 | live onConnection | 断开 |
-| BR-02 | 票据有效期 **120s**，连接期间每 **30s 静默续签**（`POST …/realtime-token/renew/`，滑动窗口）；续签失败 2 次主动断开走重连 | 前端定时器 | 断线重连 |
+| BR-02 | 票据有效期 **120s**，连接期间每 **90s 静默续签**（`POST …/realtime-token/renew/`，`renew_after` 提示值，留 30s 轮换余量）；续签失败 2 次主动断开走重连。续签（90s）与心跳（25s，BR-04）**分层独立、不共用定时器**——心跳探连接活性、续签轮换票据；`api-conventions.md` §9.5 的「每 30 分钟静默续签」为页面协同票据（collab-token，Hocuspocus 通道）口径，业务事件票据 TTL 短、房间随路由变化，续签更密——两通道各按各表（§9.5 补记业务事件通道时以此为准，架构文档待回改） | 前端定时器 | 断线重连 |
 | BR-03 | 房间订阅域 = 换票时校验的读权限；**权限在票据期后变更（移出成员）由 live 周期复核**（每 60s 批量向 api 内部端点校验 rooms 有效性）→ 失效即踢出房间 | live 定时复核 | 房间剔除 + 断开(4003 FORBIDDEN) |
 | BR-04 | 心跳 25s ping/pong；60s 无心跳服务端断开；前端 pong 超时 2 次视为断线进入重连 | 双向 | 断线重连 |
 | BR-05 | 事件载荷 ≤ **2KB**（提示语义红线：超限即说明在推数据，评审拒绝）；全量实体禁入 payload | Worker 扇出前校验 | 丢弃 + ERROR 日志 |
 | BR-06 | 事件不落库、不重放：唯一持久化痕迹是事件源本身的表（Issue/Notification/Activity）——推送链路无状态 | live | — |
-| BR-07 | 前端收到事件必须先比对本地 `version`/水位，**旧于等于本地即忽略**；新于本地才触发定向 revalidate | 前端 | — |
+| BR-07 | 前端收到事件必须先比对本地 `version`/水位，**旧于等于本地即忽略**；新于本地才触发 MobX store 定向 patch（正文需要时由 store 发起该域的 REST 增量拉取，§4.4.2） | 前端 | — |
 | BR-08 | 事件不回显给操作者本人连接（`actor_id == sub` 跳过）——自己的乐观更新已就位 | live 广播过滤 | — |
 | BR-09 | api→live 唯一通道 Redis Pub/Sub（channel `rp:events`）；**禁止 live 直连 PostgreSQL**（保持 live 无状态可横扩） | 架构约束 | — |
 | BR-10 | 降级判定：连接失败累计 30s 或 `/health` 探测失败 → 前端切轮询（`COLLAB-001` 通道）+ 顶部横幅「实时同步暂停」；恢复自动切回且补偿拉取 | 前端 | — |
 | BR-11 | presence 仅项目房间：进出广播 `presence.joined/left`（user 摘要 ≤200B）；「正在编辑」细粒度状态 P3 协同再上 | live | — |
-| BR-12 | 每用户同 workspace 并发连接 ≤ 5（多标签页）；超出的新连接踢最旧(4000 DUP_SESSION) | live | 断开旧连接 |
-| BR-13 | live 事件速率保护：单房间广播 > 200 msg/s 时聚合节流（100ms 窗口合批同类事件，`seq` 取最大）——批量拖拽 50 卡只广播聚合后若干包 | live | — |
+| BR-12 | 每用户同 workspace 并发连接 ≤ 5（多标签页，按票据 `sub` 计数）；**同 `client_tab_id` 重连为幂等替换**（踢同键旧连接，不占新额度）；超出 5 时新连接踢最旧(4000 DUP_SESSION) | live | 断开旧连接 |
+| BR-13 | live 事件速率保护：单房间广播 > 200 msg/s 时聚合节流（100ms 窗口合批同类事件，`seq` 取最大）——批量拖拽 50 卡只广播聚合后若干包；`BOARD-004` 批量操作的逐实体 `issue.*` 事件同经此 100ms 合批通道收敛（`batch_id` 保留，§2.3 注 2） | live | — |
 | BR-14 | 全链路可观测：连接数/房间数/事件速率/断开原因码结构化日志（`INFRA-004` JSON 格式），`/health` 附 `connections/rooms` 指标 | live | — |
 
 ### 2.5 异常处理表
@@ -205,7 +212,7 @@ flowchart TD
 | 边界场景 | 限制值 | 超出处理方式 |
 | --- | --- | --- |
 | 单连接房间数 | 10（页面上下文上限） | 拒订 + WARN |
-| 票据 rooms 声明 | 10 | 400 |
+| 票据 rooms 声明 | 10 | 400 `VALIDATION_INVALID_PARAM` |
 | 心跳间隔 | 25s（pong 容忍 60s） | 断开 |
 | 重连退避 | 1s 起 ×2 至 30s 封顶 | 降级轮询 |
 | 单房间连接数 | 500（通知型广播扇出上限） | 超出分片广播 |
@@ -315,7 +322,7 @@ flowchart LR
 
 - **api → live 唯一通道 Redis Pub/Sub**（BR-09）：live 无状态，多副本天然横扩（每副本都订阅 `rp:events`，各自只广播自己持有的房间连接）；
 - **票据密钥分离**：私钥仅 api（签发端点），live 只持公钥——live 被攻破也无法伪造票据（`api-conventions` §9.5 原文论证）；
-- 配置项（`INFRA-004` .env 模板追加）：`LIVE_JWT_PRIVATE_KEY` / `LIVE_JWT_PUBLIC_KEY` / `LIVE_TICKET_TTL=120` / `LIVE_HEARTBEAT=25`。
+- 配置项（`INFRA-004` .env 模板追加）：`LIVE_JWT_PRIVATE_KEY` / `LIVE_JWT_PUBLIC_KEY` / `LIVE_TICKET_TTL=120` / `LIVE_HEARTBEAT=25` / `INTERNAL_KEY`（live→api 服务间复核认证，§4.2 注）。
 
 #### 4.1.1 票据 JWT 结构
 
@@ -324,7 +331,7 @@ flowchart LR
 {
   "sub": "6c7d1a2b-…",              // 用户 ID
   "rooms": ["project:7b3e…", "issue:8a1f…", "user:6c7d…"],
-  "ws": "6c7d…:tab-3",              // 会话标识（BR-12 并发去重键）
+  "ws": "6c7d…:tab-3",              // 会话标识 = sub + client_tab_id（来源见 §4.2.1；BR-12 并发去重与重连幂等键）
   "iat": 1756727520, "exp": 1756727640,   // 120s
   "jti": "01JCC4D8W2GY6A0B4F3C5D6E7"       // 续签轮换追踪
 }
@@ -336,15 +343,23 @@ flowchart LR
 | --- | --- | --- | --- | --- | --- |
 | 1 | `POST` | `…/projects/{project_id}/realtime-token/` | 换票（项目上下文 + 打开任务 + 本人房间） | `project.read` | `200` |
 | 2 | `POST` | `/api/v1/users/me/realtime-token/renew/` | 静默续签（旧 jti 轮换） | 本人 | `200` |
-| 3 | `GET` | `/api/v1/internal/realtime/verify-rooms/` | live→api 内部复核（BR-03；仅内网） | 服务间（`X-Internal-Key`） | `200` |
+| 3 | `POST` | `/api/v1/internal/realtime/verify-rooms/` | live→api 内部复核（BR-03；仅内网） | 服务间（`X-Internal-Key`） | `200` |
+
+> **`verify-rooms` 内部契约（BR-03 周期复核）**：方法统一 **`POST`**（安全操作——复核的用户标识与房间清单走请求体，不经 URL/查询串，避免内部标识泄入访问日志）。请求体 `{ "tickets": [{ "sub": "…", "rooms": ["…"] }] }`；响应走**统一信封**（`api-conventions.md` §4）：`{ "status": "success", "data": { "invalid": [{ "sub": "…", "rooms": ["…"] }] } }`（仅返失效项，全有效时 `invalid: []`）。
+> **服务间认证登记声明（架构文档待回改）**：`X-Internal-Key` 请求头（共享密钥，`INTERNAL_KEY` 注入 live 容器）为本文新增的服务间机制，**尚未在 `api-conventions.md` §9（认证）登记**——实现前须在 §9 补「服务间内部认证」小节并随 `INFRA-004` .env 模板登记该配置项；其为服务态共享密钥、非用户态权限码，不涉 `rbac-permission-model.md` 附录 B 的七步清单。第二道防线：proxy 不路由 `/api/v1/internal/` 前缀（仅 compose 内网可达）。
 
 #### 4.2.1 `POST …/realtime-token/`
 
 **请求**
 
 ```json
-{ "issue_rooms": ["8a1f9c2e-6b3d-4a7e-9f11-2c4d5e6f7a8b"] }
+{
+  "client_tab_id": "0f1e2d3c-4b5a-4678-9cde-f0123456789a",
+  "issue_rooms": ["8a1f9c2e-6b3d-4a7e-9f11-2c4d5e6f7a8b"]
+}
 ```
+
+> `client_tab_id`：**前端每标签页生成一次**（`crypto.randomUUID()`，UUID v4，`sessionStorage` 持久化，标签页生命周期内不变）——服务端拼入票据 `ws` 声明（`{sub}:{client_tab_id}`），承担 BR-12 的并发去重键与**重连幂等键**（断线重连同值换票 → live 踢同键旧连接、复用订阅，不占新额度也不误杀其他标签页）。换票与续签请求体形态一致（§2.1 / §4.3.3）。
 
 **成功响应 `200`**
 
@@ -380,10 +395,12 @@ flowchart LR
 
 #### 4.3.1 live 服务（apps/live，TypeScript）
 
+> **依赖登记声明（架构文档待回改）**：live 侧验签库 `jsonwebtoken`（建议 `^9.0.x`，MIT 许可）**尚未在 [`tech-stack.md`](../architecture/tech-stack.md) §4（apps/live）版本表登记**——按其 §9.1 新增依赖准入清单「先改本文档再改 package.json」，实现前须在 §4 登记一行（用途：live 校验 api 侧 **PyJWT `2.10.x`（§3 已登记）** 签发的 RS256 短时效票据，两端算法/密钥对配对；自带 TS 类型、体积小）。其为 npm 依赖而非权限码，不涉 `rbac` 附录 B。
+
 ```typescript
 // apps/live/src/realtime/server.ts —— 房间路由与连接生命周期（节选）
-import { WebSocketServer, WebSocket } from "ws";
-import jwt from "jsonwebtoken";
+import { WebSocketServer, WebSocket } from "ws";          // tech-stack §4 已登记
+import jwt from "jsonwebtoken";                           // 登记声明见本节注（tech-stack §4 待登记）
 import { redisSub, publish } from "./bus";
 import { rooms, presence } from "./rooms";
 
@@ -458,15 +475,17 @@ export function verifyTicket(url: string): TicketClaims | null {
   }
 }
 
-// 权限周期复核（BR-03）：每 60s 批量向 api 内部端点校验
+// 权限周期复核（BR-03）：每 60s 批量向 api 内部端点校验（POST，契约见 §4.2 注）
 setInterval(async () => {
   const byUser = groupRoomsByUser();                      // { sub: rooms[] }
   const res = await fetch(`${API_INTERNAL_URL}/api/v1/internal/realtime/verify-rooms/`, {
     method: "POST",
-    headers: { "X-Internal-Key": process.env.INTERNAL_KEY!, "Content-Type": "application/json" },
+    headers: { "X-Internal-Key": process.env.INTERNAL_KEY!, "Content-Type": "application/json" },  // 登记状态见 §4.2 注
     body: JSON.stringify({ tickets: byUser }),
   });
-  const { invalid } = await res.json() as { invalid: Array<{ sub: string; rooms: string[] }> };
+  // 响应走统一信封（api-conventions §4）：{ status, data: { invalid } }
+  const body = await res.json() as { status: string; data?: { invalid: Array<{ sub: string; rooms: string[] }> } };
+  const invalid = body.data?.invalid ?? [];
   for (const { sub, rooms: bad } of invalid)
     for (const conn of allConnections().filter((c) => c.userId === sub))
       for (const room of bad) {
@@ -480,10 +499,10 @@ setInterval(async () => {
 
 ```python
 # apps/api/plane/app/realtime/ticket.py
-import jwt, uuid
+import jwt, uuid                                            # jwt = PyJWT（tech-stack §3 已登记）
 from datetime import timedelta
 
-def issue_realtime_token(*, user, project, issue_ids: list[uuid.UUID]) -> dict:
+def issue_realtime_token(*, user, project, issue_ids: list[uuid.UUID], client_tab_id: str) -> dict:
     """换票：rooms 由服务端按可见性裁决（§4.2.1 契约）——前端声明位置，服务端裁决权限。"""
     rooms = [f"project:{project.id}", f"user:{user.id}"]
     for iid in issue_ids[:10]:                                  # 上限 10
@@ -494,7 +513,7 @@ def issue_realtime_token(*, user, project, issue_ids: list[uuid.UUID]) -> dict:
     now = timezone.now()
     token = jwt.encode(
         {"sub": str(user.id), "rooms": rooms,
-         "ws": f"{user.id}:{request_session_tab}",               # BR-12 去重键
+         "ws": f"{user.id}:{client_tab_id}",                    # BR-12 去重/重连幂等键（来源 §4.2.1）
          "iat": int(now.timestamp()), "exp": int((now + timedelta(seconds=120)).timestamp()),
          "jti": ulid.new().str},
         settings.LIVE_JWT_PRIVATE_KEY, algorithm="RS256")
@@ -532,7 +551,7 @@ def publish_event(self, event: str, payload: dict) -> None:
 
 ### 4.4 前端实现
 
-#### 4.4.1 `RealtimeClient`（`packages/shared-state` 之外的独立传输层包内）
+#### 4.4.1 `RealtimeClient`（`@rp/shared-state` 包内 `src/realtime/`——monorepo-structure 登记的「WebSocket 增量 patch 入口」，包位置全文唯一口径）
 
 ```typescript
 // packages/shared-state/src/realtime/client.ts（节选）
@@ -540,9 +559,12 @@ export class RealtimeClient {
   private ws?: WebSocket;
   private backoff = new ExponentialBackoff({ base: 1000, max: 30_000, jitter: 0.2 });
   private ticket?: { token: string; renewAfterMs: number };
+  // clientTabId：标签页级 crypto.randomUUID()（sessionStorage 持久），
+  // 换票/续签随请求上送 → 票据 ws 声明（BR-12 去重与重连幂等键，§4.2.1）
+  constructor(private readonly clientTabId: string) {}
 
   async setContext(ctx: { projectId: string; issueIds: string[] }) {
-    this.ticket = await api.postRealtimeToken(ctx);          // 换票（服务端裁决 rooms）
+    this.ticket = await api.postRealtimeToken({ ...ctx, client_tab_id: this.clientTabId });  // 换票（服务端裁决 rooms）
     this.connect();
   }
 
@@ -559,7 +581,7 @@ export class RealtimeClient {
   private handleEnvelope(env: LiveEnvelope) {
     if (env.event === "connected") return this.onConnected(env);
     if (isStale(env)) return;                                          // BR-07 version/水位比对
-    liveEventBus.emit(env.event, env);            // → 各 Store 定向 SWR mutate（§4.4.2）
+    liveEventBus.emit(env.event, env);            // → 各 MobX Store 定向 patch（§4.4.2）
   }
 
   /** 断线窗口补偿：重连成功后对活跃 key 做一次带水位的拉取（§2.2） */

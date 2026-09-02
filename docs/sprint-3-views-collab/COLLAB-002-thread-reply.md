@@ -7,7 +7,7 @@
 | 优先级       | P2（标准版完整级）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | 所属模块     | M8-COLLAB｜实时协作与通知                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | 文档状态     | 待评审（Draft）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 最后更新日期 | 2026-09-01                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 最后更新日期 | 2026-09-02                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | 上游依据     | `docs/需求文档.md` §3.8（评论回复楼中楼、评论@成员提醒、**表情、图片评论**）、§8.2 协作通知 P2 列                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | 前置依赖     | `COLLAB-001`（评论 CRUD / @ 解析 / 净化 / 通知管道 / `IssueComment` 全列基线——**parent 与 accessory 预留列本迭代点亮**）、`FILE-001`（附件预签名直传通道与 `FileAsset` 多态挂载）、`TASK-010`（Activity 管道约定——评论不落 Activity，时间线 UNION 合并渲染，见 §1.6）                                                                                                                                                                                                                                                       |
 | 下游依赖     | `COLLAB-004`（WebSocket 评论实时推送——`comment.created` 事件源）、`INTG-003`（P4 Slack 回写评论）、`AI-001`（P4 评论摘要输入）                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -99,6 +99,7 @@ flowchart LR
 | `FILE-001`   | 预签名直传三步流、`FileAsset`（`entity_type` 多态挂载注册制）、类型/体积白名单、孤儿清理                                                               | 图片评论零新建上传设施                                                                        |
 | `TASK-010`   | Activity 管道约定：评论（含回复）不落 `IssueActivity`（其 BR-05——评论本体在 `IssueComment`，时间线 UNION 合并渲染）；reaction 同样不留痕（本档 BR-09） | 审计口径一致（避免双写与「reaction 留痕」误导）                                               |
 | `AUTH-005`   | `comment.create` 权限点（rbac §8.2，AUTH-005 归并命名）                                                                                                | 回复与表情的权限基线（表情与评论同级 COMMENTER+；低于图片上传 `file.upload` 的 CONTRIBUTOR+） |
+| 缩略图生成    | Sprint 3 内按需 Pillow 同步生成（上传回调 480px webp，缓存 MinIO）；`FILE-003`（Sprint 4）接管完整 derivatives 管线——**前向依赖已声明**                 | 评论列表缩略与灯箱原图分离（§2.6）；Sprint 3 不越界实现 FILE-003 的分片/预览/转码范围（FILE-002 边界表口径） |
 
 ### 1.7 竞品参考
 
@@ -193,7 +194,7 @@ flowchart TD
 | BR-12 | `comment.replied` 仅发**顶层评论作者**（回复的回复场景被回复人走 mentioned）；操作者本人 / 域外成员剔除                                                                                                                                              | Worker                          | —                                                                                                       |
 | BR-13 | 评论列表两层结构：顶层正序 + `replies[]` 正序；`replies` 默认全量返回（≤100），前端折叠纯展示行为                                                                                                                                                    | ViewSet                         | —                                                                                                       |
 | BR-14 | 解除 COLLAB-001 的「parent 强制 NULL」锁：本迭代起带 `parent_id` 的请求合法（契约翻转测试 UT-19 落 §5.1 清单——COLLAB-001 UT-13 同场景由 400 翻转为 201）                                                                                             | Serializer                      | —                                                                                                       |
-| BR-15 | 图片节点净化：`img` 标签进入白名单但**仅允许 `src="/api/v1/files/{asset_id}/…"` 服务端代理形态与 `alt`**——外链图片（`http://` src）剥离为链接文本（防盗链与隐私引用）                                                                                | 净化器                          | 静默降级                                                                                                |
+| BR-15 | 图片节点净化：`img` 标签进入白名单但**仅允许 `src` 为本任务附件下载端点相对路径（`…/issues/{issue_id}/attachments/{asset_id}/download/`，可选 `?variant=thumb` 缩略变体——FILE-001 §4.3.4 既有 302 预签名端点）与 `alt`**——外链图片（`http://` src）剥离为链接文本（防盗链与隐私引用） | 净化器                          | 静默降级                                                                                                |
 
 ### 2.5 异常处理表
 
@@ -451,8 +452,9 @@ erDiagram
 | 3   | `POST`   | `…/issues/{issue_id}/comments/{comment_id}/reactions/` | 添加表情（幂等）                                                              | `comment.create` | `200`  |
 | 4   | `DELETE` | `…/issues/{issue_id}/comments/{comment_id}/reactions/` | 撤销表情（幂等；body 带 `emoji`——路径参数仅 UUID/slug，api-conventions §2.3） | `comment.create` | `200`  |
 | 5   | `GET`    | `…/issues/{issue_id}/comments/?expand=reactions`       | 聚合含 `user_ids`（名单浮层数据）                                             | `project.read`   | `200`  |
+| 6   | `GET`    | `…/issues/{issue_id}/attachments/{asset_id}/download/` | **附件下载——引用行：复用 FILE-001 §4.3.4 既有端点，本文无新增端点**；图片评论 `img src` 锚定于此（302 预签名 GET，`file.read`；`?variant=thumb` 缩略变体） | `file.read`      | `302`  |
 
-> 编辑 / 删除端点复用 `COLLAB-001`（窗口与软删语义不变，回复同权适用）；图片上传复用 `FILE-001` presign 三步流——请求体选填 `entity_type=comment_image`（FILE-001 §1.4 已注册的 P2 挂载点，`entity_id` 落当前 issue，缺省 `issue` 语义不变；不占单任务 20 附件配额、不入附件区列表）。**上游待回改项**——presign 契约（架构 `api-conventions` §13.2，请求体字段仅 `file_name`/`file_size`/`content_type`，FILE-001 请求体据此对齐）需补 `entity_type` 选填参数（本迭代评论图域消费，P2 扩展登记）。
+> 编辑 / 删除端点复用 `COLLAB-001`（窗口与软删语义不变，回复同权适用）；图片上传复用 `FILE-001` presign 三步流——请求体选填 `entity_type=comment_image`（FILE-001 §1.4 已注册的 P2 挂载点，`entity_id` 落当前 issue，缺省 `issue` 语义不变；不占单任务 20 附件配额、不入附件区列表）。**上游待回改项**——presign 契约（架构 `api-conventions` §13.2，请求体字段仅 `file_name`/`file_size`/`content_type`，FILE-001 请求体据此对齐）需补 `entity_type` 选填参数（本迭代评论图域消费，P2 扩展登记）；同口径地，上表第 6 行 `download/` 端点（FILE-001 §4.3.4）需补 `?variant=thumb` 缩略变体查询参数说明（列表缩略消费，P2 扩展登记）——本文图片 `src` 全部锚定该既有端点，不引入 `/api/v1/files/` 新路由族。
 >
 > 路径深度锚定：上表第 3/4 行 `…/comments/{comment_id}/reactions/` 为第 5 层资源——api-conventions §2.4 放行示例止于第 4 层（`…/comments/{comment_id}/`），文义为项目层以下不设嵌套限制（`reactions` 系叶子资源评论的直接子资源），本端点第 5 层合规。
 
@@ -483,7 +485,7 @@ erDiagram
 
 ```json
 {
-  "comment_html": "<p>附件就是这两张：</p><img src=\"/api/v1/files/fa1b2c3d-…/thumb/\" alt=\"504 截图.png\"><img src=\"/api/v1/files/fa2b3c4d-…/thumb/\" alt=\"网关日志.png\">",
+  "comment_html": "<p>附件就是这两张：</p><img src=\"/api/v1/workspaces/acme/projects/1a2b3c4d-…/issues/2b3c4d5e-…/attachments/fa1b2c3d-…/download/?variant=thumb\" alt=\"504 截图.png\"><img src=\"/api/v1/workspaces/acme/projects/1a2b3c4d-…/issues/2b3c4d5e-…/attachments/fa2b3c4d-…/download/?variant=thumb\" alt=\"网关日志.png\">",
   "comment_json": {
     "type": "doc",
     "content": [
@@ -495,7 +497,7 @@ erDiagram
 }
 ```
 
-> `img src` 由服务端在净化时**重写**为受控代理路径（BR-15：外链剥离、内联仅留服务端形态）；`accessory.images` 由服务端从 `comment_json` 的 image 节点聚合生成（客户端不直传 accessory——单一真相）。
+> `img src` 由服务端在净化时**重写**为受控路径：锚定 `FILE-001` §4.3.4 既有附件下载端点 `…/attachments/{asset_id}/download/`（`file.read` 鉴权后 302 预签名 GET，5 分钟有效）——不引入 `/api/v1/files/` 新路由族；列表 / 正文缩略走同端点 `?variant=thumb` 查询参数（Sprint 3 Pillow 480px webp 产物，见 §1.6），灯箱原图无参直取（BR-15：外链剥离、内联仅留该形态）；`accessory.images` 由服务端从 `comment_json` 的 image 节点聚合生成（客户端不直传 accessory——单一真相）。
 
 **成功响应 `201`（回复）**
 
@@ -587,7 +589,9 @@ erDiagram
   ],
   "meta": {
     "next_cursor": "30:1:0",
+    "prev_cursor": null,
     "next_page_results": false,
+    "prev_page_results": false,
     "count": 1,
     "total_count": 3,
     "total_pages": 1,
@@ -751,16 +755,23 @@ ALLOWED_TAGS = ["p", "br", "strong", "em", "code", "a", "span", "img"]
 ALLOWED_ATTRS = {
     "a": ["href"],
     "span": ["data-mention-id", "class"],
-    "img": ["src", "alt"],          # 仅服务端代理形态存活（下方重写）
+    "img": ["src", "alt"],          # 仅附件下载端点形态存活（下方重写）
 }
-ASSET_SRC_RE = re.compile(r"^/api/v1/files/([0-9a-fA-F-]{36})/(thumb|raw)/$")
+# 受控 src 形态：FILE-001 §4.3.4 既有附件下载端点（302 预签名），
+# 不引入 /api/v1/files/ 路由族；?variant=thumb 为缩略变体（原图无参）
+ASSET_SRC_RE = re.compile(
+    r"^/api/v1/workspaces/[\w-]+/projects/[0-9a-fA-F-]{36}"
+    r"/issues/(?P<issue_id>[0-9a-fA-F-]{36})"
+    r"/attachments/(?P<asset_id>[0-9a-fA-F-]{36})/download/"
+    r"(?:\?variant=thumb)?$"
+)
 
 
 def sanitize_comment(html: str, *, allowed_asset_ids: set[str]) -> tuple[str, list[str]]:
     """返回 (净化 HTML, 存活 asset_id 列表)。
 
     - 外链图片（http/https src）剥离为链接文本（BR-15：防盗链与隐私引用）
-    - 内联代理路径 img 仅当 asset_id ∈ allowed_asset_ids（本任务评论图域，BR-07：
+    - 内联附件下载路径 img 仅当 issue_id 路径段 = 当前任务 且 asset_id ∈ allowed_asset_ids（本任务评论图域，BR-07：
       entity_type='comment_image' ∧ entity_id=issue_id ∧ status='uploaded'
       ∧ uploaded_by=当前用户——FileAsset 多态挂载无 issue_id 列）
       时保留；否则替换为「图片不可用」占位 span
@@ -798,7 +809,7 @@ def notify_comment(self, comment_id: str) -> int:
 - `CommentStore` 升级：`byIssue` 值结构变为 `TopLevelComment[]`（含 `replies[]`）；回复乐观插入 `target.replies.push(temp)`；`reply_count` 联动。
 - `ReplyContext`（Composer 状态机）：`null | {rootId, replyToUserId, replyToName}`；点行尾 ↩ 进入、`Esc`/清除退出；预填 @ 锚点随 `replyToUserId` 生成（可删，BR-04）。
 - `ReactionBar` 组件（`packages/ui` 无业务版 + web 组装）：chips 由聚合数据渲染；本地乐观 `count ± 1` + `reacted_by_me` 翻转，失败回滚重试一次。
-- `CommentImageNode`（Tiptap Image 扩展定制）：粘贴/拖入走 `usePresignUpload`（FILE-001 hook，presign 请求体带 `entity_type=comment_image`）；进度环内嵌节点；上传完成 `updateAttributes({asset_id, src: thumbUrl})`。
+- `CommentImageNode`（Tiptap Image 扩展定制）：粘贴/拖入走 `usePresignUpload`（FILE-001 hook，presign 请求体带 `entity_type=comment_image`）；进度环内嵌节点；上传完成 `updateAttributes({asset_id, src: buildAssetSrc(asset_id, "thumb")})`——`src` 生成本任务附件下载端点相对路径 `…/attachments/{asset_id}/download/`（列表 `?variant=thumb` 缩略、灯箱原图无参；FILE-001 §4.3.4 既有 302 预签名端点，浏览器 GET 经 302 落预签名对象，本文无新增路由）。
 - `Lightbox`：`packages/ui` 通用灯箱（图片数组 + 索引受控；键盘 ←→/Esc；懒加载原图）。
 - 折叠逻辑纯展示组件态（`ThreadCollapser`，阈值 3），不落库不入 URL。
 
@@ -889,7 +900,7 @@ def notify_comment(self, comment_id: str) -> int:
 | 后端              | `CommentService.create` 归并与上限扩展、`ReactionService`（toggle/聚合）、净化器 img 扩展（src 重写/域校验）、`notify_comment` 分派扩展（comment.replied + 互斥） |
 | API               | `POST …/comments/`（parent_id）、两层结构列表（含 replies/reply_count/reactions 聚合/expand）、`reactions/` toggle 两端点                                         |
 | 前端              | 线程化评论 Tab（缩进/引导线/折叠/回复态 Composer）、`ReactionBar` + 选择器 + 名单浮层、`CommentImageNode` 直传 + `Lightbox`、`CommentStore` 两层结构              |
-| 测试              | UT-01~~19、IT-01~~08、E2E-01~06（UT-19 为 parent 契约翻转——COLLAB-001 UT-13 同步翻转）                                                                            |
+| 测试              | UT-01~19、IT-01~08、E2E-01~06（UT-19 为 parent 契约翻转——COLLAB-001 UT-13 同步翻转）                                                                            |
 
 ### 7.2 可操作演示的验收标准
 

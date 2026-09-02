@@ -10,8 +10,8 @@
 | 最后更新日期 | 2026-09-01 |
 | 上游依据 | `docs/需求文档.md` §3.8（项目动态流、任务动态时间线）、§8.2 协作通知 P2 列 |
 | 前置依赖 | **`TASK-010`（全操作留痕管道——本视图是其首个跨任务消费方）**、`TASK-002~009`（各事件源已埋点）、`COLLAB-001`（IssueComment 表与评论时间线合并渲染）、`PROJ-002`（项目成员域 = 动态可见域） |
-| 下游依赖 | `COLLAB-004`（WebSocket `activity.created` 实时增量）、`RPT-002`（P2 末项目统计消费同源事件）、`INTG-002`（P2 末 Webhook 事件源）、`AUTH-010`（P3 全站审计视图复用聚合端点模式） |
-| 架构基线 | [`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.10（IssueActivity / epoch 分组 / 表体积控制）；[`api-conventions.md`](../architecture/api-conventions.md) §4（信封/游标）、§5.3（筛选）、§8（错误码）；[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §5.5（行级隔离） |
+| 下游依赖 | `COLLAB-004`（WebSocket `activity.appended` 实时增量——事件名与其 §2.3 事件协议统一：推送仅携带新 `stream_cursor` 水位，增量数据仍经本端点拉取）、`RPT-002`（P2 末项目统计消费同源事件）、`INTG-002`（P2 末 Webhook 事件源）、`AUTH-010`（P3 全站审计视图复用聚合端点模式） |
+| 架构基线 | [`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.10（IssueActivity / epoch 分组 / 表体积控制）；[`api-conventions.md`](../architecture/api-conventions.md) §4（信封/游标）、§5.3（筛选）、§8（错误码）；[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §6（第三层：DB 行级过滤） |
 | 竞品参考 | Plane（workspace/project 级 activity 端点 + 前端 recent activities 流） · Ones（项目时间线 + 全局动态企业视图） |
 | 工作量估算 | 后端 1.5 人日 / 前端 3 人日 / 联调与测试 1 人日，合计 **5.5 人日** |
 
@@ -42,14 +42,14 @@
 | --- | --- | --- |
 | 1 | 项目动态聚合端点 | 跨任务、时间倒序、游标分页（30 条/页）；`?actor_id=` / `?event=`（verb+field 语义化过滤） |
 | 2 | 批量动作汇总行 | 同 epoch 跨任务的多条记录聚合为「张三 批量更新了 50 个任务」+ 明细抽屉 |
-| 3 | 评论合流 | 评论（`IssueComment`）与 Activity 归并渲染（`COLLAB-001/002` BR-05 分工的服务端实现） |
+| 3 | 评论合流 | 评论（`IssueComment`）与 Activity 归并渲染（`TASK-010` BR-05 分工的服务端实现——评论不落 Activity，时间线 UNION 两表按 `created_at` 归并） |
 | 4 | 动态流页 UI | 项目侧栏「动态」入口 → 单列信息流：人 + 动作 + 任务链接 + 时间；过滤条；空态/骨架 |
-| 5 | 实时增量挂点 | 响应含 `stream_cursor`（最新事件水位），`COLLAB-004` WebSocket 到达后增量拉取（本迭代仍 60s SWR 轮询） |
+| 5 | 实时增量挂点 | 响应含 `stream_cursor`（最新事件水位），`COLLAB-004` WebSocket `activity.appended` 到达后增量拉取（本迭代仍 60s SWR 轮询） |
 | 6 | 索引与性能基线 | 项目维度取数的执行计划验证（10 万任务 / 百万 Activity 数据集 P95 < 150ms） |
 
 ### 1.4 关键约定：可见域 = 项目读权限
 
-动态是**派生数据**：任务对谁可见，其动态就对谁可见。判定不新建模型——聚合端点的 QuerySet 以 `Issue.objects.accessible_by(user)` 的项目域为根过滤（`PROJ_VIEWER`+ 可读全部项目动态；被移出项目的成员动态亦不可见，404）。这继承 `rbac-permission-model.md` §5.5 行级隔离，杜绝「任务看不见但动态能看见」的越权缝隙。
+动态是**派生数据**：项目对谁可读，其动态就对谁可见。判定不新建模型——聚合端点入口以 `Project.objects.accessible_by(user)` 收口项目读域（`PROJ_VIEWER`+ 可读全部项目动态；被移出项目的成员动态亦不可见，404），流内再按项目域**整圈**取任务 ID（含软删/归档任务——BR-06/07 的审计保留语义，与默认 Manager 软删过滤的调和见 §4.3.1）。这继承 `rbac-permission-model.md` §6 第三层 DB 行级过滤（`accessible_by`），杜绝「项目看不见但动态能看见」的越权缝隙。
 
 ### 1.5 范围边界
 
@@ -70,7 +70,7 @@
 | --- | --- | --- |
 | `TASK-010` | 全事件矩阵 + epoch 分组 + 预聚合端点 + 管道幂等 | 无事件源则无流 |
 | `COLLAB-001/002` | `IssueComment` 表 + 两层评论结构 | 评论合流的第二数据源 |
-| `PROJ-002` / `rbac §5.5` | `accessible_by` 项目域过滤 | 可见域判定 |
+| `PROJ-002` / `rbac §6` | `accessible_by` 项目域过滤 | 可见域判定 |
 | `TASK-003` | 游标分页与筛选白名单机制 | 端点契约复用 |
 
 ### 1.7 竞品参考

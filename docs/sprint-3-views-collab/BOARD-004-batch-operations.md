@@ -41,6 +41,8 @@
 
 采纳理由：交互场景下「一半成功」是最难收拾的状态——用户不知道哪些改了哪些没改，重试范围模糊；全成败让重试 = 原样重发（配合失败项定位修正后重试），心智最简。代价（一条阻塞全批）用**失败项精准定位**补偿（`details` 直接指出第几条为什么不满足）。
 
+> **与 `TEAM-002` 批量邀请的范式差异（显式声明）**：与 `TEAM-002` 批量邀请的「整体 200、`data[]` 逐条分态」豁免范式**不同**——本文为 `api-conventions.md` §10.5 全成败：结构性错误（载荷缺失 / 超上限 / 枚举非法）400 整请求拒绝，业务失败（守卫 / 权限 / 不可见）**整批回滚 + 失败项索引**。两者面向不同对象（任务写的一致性 vs 邀请的友好性），范式差异显式声明（`TEAM-002` 侧已按其 R1 修复声明豁免，其豁免范围不涵盖本文）；本文不复用「整体 200 分态」。
+
 ### 1.3 批量动作清单（P2 六类）
 
 | # | 动作 | 写语义收敛点（正规端点同源） | 逐条守卫 |
@@ -52,7 +54,7 @@
 | 5 | 批量归档 | `archive_subtree` 语义整树级联（`TASK-009`） | 权限 `issue.archive`（CONTRIBUTOR+，`TASK-009` BR-14）；项目 active（已归档项目整批 `403 PERM_PROJECT_ARCHIVED`，其 BR-13）；已归档目标幂等跳过（其 BR-10） |
 | 6 | 批量删除 | `delete_subtree` 语义（软删 + 中间表物理删除级联——**`TASK-004` 唯一归属，本文仅引用不认领**） | 权限逐条（CONTRIBUTOR 仅自己的 / ADMIN 任意）；**二次确认 + 输入数量确认** |
 
-> 批量改自定义字段（`cf_*`）与批量复制 P2 不做：前者待 `TASK-011` DSL 稳定后评估（P3），后者交互收益低（复制是「选一个复制一个」的语义，批量复制产生编号洪峰难追溯）。
+> 批量改自定义字段（`cf_*`）与批量复制 P2 不做：前者待 `TASK-008` 字段校验器稳定后评估（P3 预留，与头部上游依赖一致——`TASK-011` 为 DSL 筛选器、不涉批量写），后者交互收益低（复制是「选一个复制一个」的语义，批量复制产生编号洪峰难追溯）。
 
 ### 1.4 能力 × 迭代矩阵
 
@@ -74,7 +76,7 @@
 | 批量创建（`POST …/issues/bulk/`，§2.5 已登记端点行） | ❌ **显式排除**：单条创建 + 复制已覆盖需求，批量创建产生编号洪峰难追溯，且无失败项定位可借鉴的「同质写」结构 | P4（导入通道立项时再评估；该前瞻登记行的交付归属需**架构文档待回改登记**，见 §4.2 注） |
 | 批量移动到子任务下 / 批量建依赖 | ❌ | P4 评估（组合操作风险高） |
 | 批量复制 | ❌ | P3 评估 |
-| 批量改自定义字段 | ❌ | P3（`TASK-011` 后） |
+| 批量改自定义字段 | ❌ | P3（`TASK-008` 后） |
 | 跨项目批量移动 | ❌ | P4（与单条跨项目同步评估） |
 | 撤销批量操作 | ❌（每类动作有各自的「反向批量」；通用 Undo 需 Command 历史，成本不成比例） | P4 评估 |
 | 按角色限制批量动作集 | ❌ | P3（需求 §8.2 P3 列「批量操作权限管控」） |
@@ -185,7 +187,7 @@ stateDiagram-v2
 | BR-02 | 单事务全成败：任一条失败整批回滚；失败响应 `details` 逐项为 `{field, code, message}` 三键（`api-conventions.md` §8.9 `ApiFieldError`，不另立键名）——`field` 承载失败项位置（`issue_ids[<index>]`，请求内 0 基索引）、`code` 为守卫子码（登记状态见 §2.5 注）、`message` 内含 `issue_key` 与原因 | BulkService | — |
 | BR-03 | 每条走**单条同源写**：校验器 / 权限（含 CONTRIBUTOR 只能删自己的）/ 流转守卫 / 归档保护 / 级联——批量层零旁路、零简化 | BulkService | 评审拒绝 |
 | BR-04 | 同批**一次性** `select_for_update(nowait=True)` 锁定全部目标行（`FILE-001` `_check_task_limit`「先锁后判」求值先例同款——锁定先于逐条守卫判定，`api-conventions.md` §10.5 看板拖拽行锁同族）；任一行被并发事务持有 → 整批 `409 RESOURCE_CONFLICT` **快速失败不排队**（杜绝两批互等的长事务）；锁后重读状态再逐条判定（防「列表看到的」与「库里现在的」漂移） | BulkService | 409 |
-| BR-05 | 同批全部条目共享同一 `epoch` 与 `batch_id`（= epoch 同值）；Activity 逐条落库（每任务各有时间线）但 `comment` 统一「批量动作摘要」（`TASK-010` BR-12） | on_commit 单次投递 | — |
+| BR-05 | 同批全部条目共享同一 `epoch` 与 `batch_id`（= epoch 同值）；Activity 逐条落库（每任务各有时间线）但 `comment` 统一「批量动作摘要」（`TASK-010` BR-12）。**「单次投递 + 共享 epoch」兑现路径**：批量入口生成共享 epoch → 逐条调用单条服务（`delete_subtree` / `archive_subtree`）时以 epoch 参数传入并**抑制其内建 on_commit 投递**（**TASK-004/TASK-009 服务签名需补 epoch 参数——上游待回改登记**）→ 批量出口统一 `on_commit` 单次投递 batch 载荷——否则每条任务落两份 Activity 且 epoch 分裂（`TASK-010` BR-07 幂等键含 epoch，跨份无法去重），并破坏 `COLLAB-003` 同 epoch 折叠（实现见 §4.3.4） | on_commit 单次投递 | — |
 | BR-06 | 批量端点 throttle：**10 次/分钟/用户**（`api-conventions.md` §7.2）；超出 `429 RATE_LIMIT_EXCEEDED` + `Retry-After` | Throttle | 429 |
 | BR-07 | `issue_ids` 去重保序；非本项目 / 不可见 ID → 该项进入失败清单（`code=DOES_NOT_EXIST`），不 404 整批（批量语境下 404 是项级事实） | BulkService | 400 + 项级 detail |
 | BR-08 | 跨「全选视图」与手动多选混合：全选写入「当前视图结果集 id 列表」（截断 100 + 黄条「已选前 100 / 共 N」），本质仍是显式 id 列表——**服务端不隐式展开视图**（展开会引入「提交时刻与所见时刻不一致」的幽灵批次） | 前端 + Serializer | — |
@@ -195,7 +197,7 @@ stateDiagram-v2
 | BR-12 | `comment` 可选 ≤ 500 字，随批量 Activity 落库并展示于动态摘要 | Serializer | 400 TOO_LONG |
 | BR-13 | 批量操作进行中（请求未返回）：工具条锁定 + 选中冻结（防中途改选造成响应错配） | 前端 | — |
 | BR-14 | `Idempotency-Key` 可选支持（`api-conventions.md` §3.4）：批量删除等危险动作前端默认携带（UUID/批），重放返回首次响应 | 中间件 | `Idempotency-Replayed: true` |
-| BR-15 | WS 广播：批量操作产生的 N 次实体变更**逐条复用 `COLLAB-004` 既有事件类型**（`issue.updated` / `issue.state.changed`，每实体一条），由其 BR-13 100ms 合批通道（`throttleAggregate`）收敛为一次网络批；载荷附加 `batch_id`（= epoch 同值）供对端聚合提示而非弹 40 个 Toast——`batch_id` 载荷扩展与聚合提示语义 **`COLLAB-004` 待登记**（其现表未定义 `batch` 事件类型与 `batch_id` 字段）；对端「单条聚合 Toast」沿用 `COLLAB-001` `notify_issue_event_batch` 同款归并范式（epoch 归并、每 issue 各一行、`merged_count` 携带归并上下文） | COLLAB-004 契约（待登记） | — |
+| BR-15 | WS 广播：批量操作产生的 N 次实体变更**逐条复用 `COLLAB-004` 既有事件类型**（`issue.updated` / `issue.state.changed`，每实体一条），由其 **BR-13 阈值聚合保护（单房间 >200 msg/s 触发）**收敛为一次网络批；载荷附加 `batch_id`（= epoch 同值）供对端聚合提示而非弹 40 个 Toast——`batch_id` 载荷扩展与聚合提示语义 **`COLLAB-004` 待登记**（其现表未定义 `batch` 事件类型与 `batch_id` 字段）；对端「单条聚合 Toast」沿用 `COLLAB-001` `notify_issue_event_batch` 同款归并范式（epoch 归并、每 issue 各一行、`merged_count` 携带归并上下文） | COLLAB-004 契约（待登记） | — |
 
 ### 2.5 异常处理
 
@@ -690,7 +692,7 @@ def bulk_delete(*, project_id: uuid.UUID, actor, issue_ids: list[uuid.UUID],
 ### 4.4 前端实现
 
 - `SelectionStore`（`packages/shared-state`）：`selectedIds: Set<string>`（全局池，上限 100，BR-08）；跨页/跨视图保留、切项目清空；`来源高亮` 由各视图组件从池派生。
-- `BulkToolbar` 组件：动作分发到 `bulkService.patch / assign / label / archive / delete`；请求期冻结选中（BR-13）；失败弹层消费 `details[].index` 映射回卡片。
+- `BulkToolbar` 组件：动作分发到 `bulkService.patch / assign / label / archive / delete`；请求期冻结选中（BR-13）；失败弹层消费 `details[].field`（解析 `issue_ids[<index>]` 路径）映射回卡片。
 - 框选：列表/表格容器上 `pointerdown` 起点记录 + `getBoundingClientRect` 相交判定（看板卡片同理）；与 pdnd 拖拽互斥（按下即拖拽的元素不进入框选）。
 - `⌘A`：取当前视图 SWR 缓存结果集前 100（BR-08 前端显式展开，不做「服务端隐式全选」）。
 - 乐观策略：批量动作**不做逐条乐观**（12 条局部动画复杂度不值）；统一 loading → 成功后按动作类型批量更新 Store（改状态：逐条 `state_id` 写入；删除：逐条移除）+ SWR revalidate。
@@ -809,7 +811,7 @@ export class SelectionStore {
 | IT-03 | 批量归档级联 | 含子树的 3 条 | bulk/archive | 级联统计与 `TASK-009` 单条口径一致；列表退出 |
 | IT-04 | 批量删除预检→提交 | 40 条含 12 父 | preview → 确认输入 40 → delete | `affected_total=71` 与实际一致；`deleted_at` 全置 |
 | IT-05 | 性能门禁 | 100 条批量改状态 | 计时 20 次 | P95 < 1s（单事务行锁批） |
-| IT-06 | SQL 预算 | 100 条 | `assertNumQueries` | ≤ 210（1 锁批 + 100 行锁 + 聚合更新 + 1 投递，常数级） |
+| IT-06 | SQL 预算 | 100 条 | `assertNumQueries` | ≤ 210（1 次批量行锁（nowait，BR-04）+ 聚合更新 + 1 投递，常数级上限） |
 | IT-07 | 并发互斥 | 两用户批量交叠同 3 条 | 提交 | 后者 409 快速失败（nowait，BR-04），无脏写 |
 | IT-08 | 长事务监控 | 100 条慢注入 | 观测 | 锁等待 > 2s 告警日志 |
 

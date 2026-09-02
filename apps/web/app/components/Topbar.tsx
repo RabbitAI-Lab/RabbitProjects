@@ -16,12 +16,16 @@ export function Topbar() {
   const [showTeamModal, setShowTeamModal] = useState(false);
   const cur = session.workspaces.find((x) => x.slug === session.currentWsSlug);
 
-  // 点击外部 / Esc 关闭下拉
+  // 点击外部 / Esc 关闭下拉：mousedown 阶段判 target.closest，含下拉容器/触发按钮时保留
   useEffect(() => {
     if (!menu) return;
-    const close = () => setMenu(null);
-    document.addEventListener("click", close);
-    return () => document.removeEventListener("click", close);
+    const root = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest('[data-sb-scope="topbar-menu"]') || t?.closest("[data-sb-scope]")) return;
+      setMenu(null);
+    };
+    document.addEventListener("mousedown", root, true);
+    return () => document.removeEventListener("mousedown", root, true);
   }, [menu]);
 
   async function switchWs(slug: string) {
@@ -33,8 +37,7 @@ export function Topbar() {
     <header className="h-12 bg-white border-b border-neutral-200 flex items-center gap-2.5 px-3.5 relative z-30">
       {/* ── 团队切换器（左）── */}
       <div className="relative">
-        <button
-          onClick={(e) => { e.stopPropagation(); setMenu(menu === "switcher" ? null : "switcher"); }}
+        <button data-sb-scope="topbar-menu" onClick={(e) => { e.stopPropagation(); setMenu(menu === "switcher" ? null : "switcher"); }}
           aria-haspopup="listbox" aria-expanded={menu === "switcher"}
           className="flex items-center gap-2 h-9 px-2 rounded-md hover:bg-neutral-50">
           <span className="w-5 h-5 rounded-md text-white text-xs font-semibold flex items-center justify-center"
@@ -43,7 +46,7 @@ export function Topbar() {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-neutral-400"><path d="m6 9 6 6 6-6"/></svg>
         </button>
         {menu === "switcher" && (
-          <div className="absolute top-[42px] left-0 w-[260px] bg-white border border-neutral-200 rounded-lg shadow-lg py-1.5" role="listbox">
+          <div data-sb-scope="topbar-menu" className="absolute top-[42px] left-0 w-[260px] bg-white border border-neutral-200 rounded-lg shadow-lg py-1.5" role="listbox">
             <div className="text-[11px] font-semibold text-neutral-400 px-2.5 py-1.5">我的团队</div>
             {session.workspaces.map((w) => (
               <button key={w.id} role="option" aria-selected={w.slug === session.currentWsSlug}
@@ -74,14 +77,14 @@ export function Topbar() {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>⌘K
         </span>
         <div className="relative">
-          <button onClick={(e) => { e.stopPropagation(); setMenu(menu === "avatar" ? null : "avatar"); }}
+          <button data-sb-scope="topbar-menu" onClick={(e) => { e.stopPropagation(); setMenu(menu === "avatar" ? null : "avatar"); }}
             aria-haspopup="menu" aria-expanded={menu === "avatar"} aria-label="账号菜单"
             className="w-7 h-7 rounded-full text-white text-xs font-semibold flex items-center justify-center"
             style={{ background: hashColor(session.user?.id ?? "u") }}>
             {(session.user?.display_name ?? "?").slice(0, 1)}
           </button>
           {menu === "avatar" && (
-            <div className="absolute top-[36px] right-0 w-[190px] bg-white border border-neutral-200 rounded-lg shadow-lg py-1" role="menu">
+            <div data-sb-scope="topbar-menu" className="absolute top-[36px] right-0 w-[190px] bg-white border border-neutral-200 rounded-lg shadow-lg py-1" role="menu">
               <div className="px-3 py-2">
                 <div className="text-[13px] font-semibold truncate">{session.user?.display_name}</div>
                 <div className="text-xs text-neutral-400 truncate">{session.user?.email}</div>

@@ -7,7 +7,7 @@
 - button "登录"
 - alert: Request failed with status code 400
 - text: 邮箱
-- textbox "邮箱": cov-1788357683867-6984@rabbit.dev
+- textbox "邮箱": cov-1788357992337-1640@rabbit.dev
 - text: 密码
 - textbox "密码": Rabbit123
 - button "显示密码": 👁

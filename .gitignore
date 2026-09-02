@@ -18,3 +18,8 @@ __pycache__/
 apps/api/.venv/
 plan-output/
 jmeter.log
+
+# Playwright test artifacts (screenshots / traces / videos — 失败时的诊断产物)
+test-results/
+playwright-report/
+playwright/.cache/

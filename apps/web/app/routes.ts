@@ -1,4 +1,18 @@
-import { type RouteConfig, index } from "@react-router/dev/routes";
+import { type RouteConfig, index, layout, route } from "@react-router/dev/routes";
 
-/** Sprint 0 Day 6-9 按 AUTH-002 路由树扩展（loader 守卫 + 嵌套布局）。 */
-export default [index("routes/home.tsx")] satisfies RouteConfig;
+export default [
+  layout("layouts/public.tsx", [
+    index("routes/home.tsx"),
+    route("login", "routes/login.tsx"),
+    route("register", "routes/register.tsx"),
+  ]),
+  layout("layouts/app.tsx", [
+    route(":workspaceSlug", "routes/workspace.tsx"),
+    route(":workspaceSlug/projects", "routes/projects-list.tsx"),
+    route(":workspaceSlug/projects/new", "routes/project-new.tsx"),
+    route(":workspaceSlug/projects/:projectId", "routes/project.tsx"),
+    route(":workspaceSlug/projects/:projectId/board", "routes/board.tsx"),
+    route(":workspaceSlug/projects/:projectId/issues", "routes/issues-list.tsx"),
+    route(":workspaceSlug/projects/:projectId/settings", "routes/project-settings.tsx"),
+  ]),
+] satisfies RouteConfig;

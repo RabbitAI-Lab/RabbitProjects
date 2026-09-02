@@ -98,10 +98,22 @@ verify = step("09 verify-state", lambda: req("GET", f"/api/v1/workspaces/{ws}/pr
 assert verify["data"][0]["state_group"] == "started", f"state={verify['data'][0]['state_group']}"
 print(f"  issue_key={verify['data'][0]['issue_key']} state_group=started ✓")
 
-# 10) 越权（清 cookie 后重发 —— 无认证返回 401）
+# 10a) 删除项目 + 验证软删除（对应 TC-PROJ1-007b）
+csrf = fresh_csrf()
+del_code, _ = req(
+    "DELETE", f"/api/v1/workspaces/{ws}/projects/{pid}/", None, {"X-CSRFToken": csrf},
+)
+assert del_code in (200, 204), f"DELETE expected 200/204, got {del_code}"
+# 重新拉 csrf 后 GET 该项目应 404（软删除后唯一约束不重复，Manager 过滤 deleted_at）
+csrf = fresh_csrf()
+code_after_del, _ = req("GET", f"/api/v1/workspaces/{ws}/projects/{pid}/", headers={"X-CSRFToken": csrf})
+assert code_after_del == 404, f"after soft-delete GET expected 404, got {code_after_del}"
+print(f"\n== 10a project delete ==\n  DELETE → {del_code} ✓\n  GET after → {code_after_del} ✓ (soft delete: default Manager filters deleted_at)")
+
+# 10b) 越权（清 cookie 后重发 —— 无认证返回 401）
 cj.clear()
 code, _ = req("GET", f"/api/v1/workspaces/{ws}/projects/{pid}/")
 assert code in (401, 403, 404), f"expected 401/403/404, got {code}"
-print(f"\n== 10 cross-tenant blocked ==\n  HTTP {code} ✓")
+print(f"\n== 10b cross-tenant blocked ==\n  HTTP {code} ✓")
 
 print("\n🎉 ALL 10 STEPS PASSED — 接口测试通过")

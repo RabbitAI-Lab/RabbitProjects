@@ -1,6 +1,6 @@
 from django.db import transaction
 from rest_framework.exceptions import NotFound
-from rest_framework.generics import ListCreateAPIView, RetrieveUpdateAPIView
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
 
 from plane.app.permissions import IsAuthenticated
 from plane.app.serializers.common import envelope
@@ -86,7 +86,7 @@ class ProjectListCreateView(ListCreateAPIView):
         return envelope(True, _serialize_project(project, request.user), http_status=201)
 
 
-class ProjectDetailView(RetrieveUpdateAPIView):
+class ProjectDetailView(RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = ProjectSerializer
 

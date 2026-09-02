@@ -6,8 +6,6 @@ from celery import Celery
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "plane.settings.local")
 
-app = Celery(
-    "rabbit_projects", broker=os.environ.get("CELERY_BROKER_URL", "amqp://rp:rp@localhost:5672//")
-)
+app = Celery("rabbit_projects", broker=os.environ.get("CELERY_BROKER_URL", "amqp://rp:rp@localhost:5672//"))
 app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()

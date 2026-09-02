@@ -1,11 +1,8 @@
 """公共配置基线 —— 敏感与环境的差异项由 local/production 覆盖（monorepo-structure.md §9）。"""
-
 from pathlib import Path
-
 import environ
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-
 env = environ.Env()
 environ.Env.read_env(BASE_DIR / ".env")
 
@@ -20,11 +17,10 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    # 三方
     "rest_framework",
     "django_filters",
     "drf_spectacular",
-    # 本地 app（模型由 INFRA-003 交付后注册 plane.db）
+    "plane.db",
 ]
 
 MIDDLEWARE = [
@@ -39,17 +35,10 @@ MIDDLEWARE = [
 ROOT_URLCONF = "plane.urls"
 WSGI_APPLICATION = "plane.wsgi.application"
 ASGI_APPLICATION = "plane.asgi.application"
+AUTH_USER_MODEL = "db.User"
 
-# AUTH_USER_MODEL 在 INFRA-003 引入自定义 User 前保持 Django 默认；
-# 该决定必须在首个 migration 前落定（sprint-overview 风险 #4）
+DATABASES = {"default": env.db_url("DATABASE_URL", default="postgresql://rp:rp@localhost:5432/rabbit_projects")}
 
-DATABASES = {
-    "default": env.db_url(
-        "DATABASE_URL", default="postgresql://rp:rp@localhost:5432/rabbit_projects"
-    ),
-}
-
-# Argon2 密码哈希（AUTH-001 §4 要求，优先于 PBKDF2）
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.Argon2PasswordHasher",
     "django.contrib.auth.hashers.PBKDF2PasswordHasher",
@@ -63,12 +52,15 @@ USE_TZ = True
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-REST_FRAMEWORK = {
-    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-}
+TEMPLATES = [{
+    "BACKEND": "django.template.backends.django.DjangoTemplates",
+    "DIRS": [], "APP_DIRS": True,
+    "OPTIONS": {"context_processors": [
+        "django.template.context_processors.request",
+        "django.contrib.auth.context_processors.auth",
+        "django.contrib.messages.context_processors.messages",
+    ]},
+}]
 
-SPECTACULAR_SETTINGS = {
-    "TITLE": "RabbitProjects API",
-    "VERSION": "0.1.0",
-    # 统一响应信封 {status,data,meta} 由 api-conventions.md §4 定义，INFRA-003 起接入
-}
+REST_FRAMEWORK = {"DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema"}
+SPECTACULAR_SETTINGS = {"TITLE": "RabbitProjects API", "VERSION": "0.1.0"}

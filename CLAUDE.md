@@ -73,5 +73,6 @@ PG schema 准备（Django migrate 在 PG 上有已知问题，见下面"坑"）�
 ## 工作流约定
 
 - 有 UI 交互的迭代：开发前必须先有高保真可交互设计稿并评审冻结（需求文档 §8.3 修订）
+- **UI parity 三步纪律（ADR-0010，强制）**：① 新页面/弹窗先入 UI 表面清单（test-cases.md 附录 C）再实现；② 组件完成的定义 = 清单行核对通过 + `tests/e2e/parity.spec.ts` 补对应字段断言，不允许"能跑"即"完成"；③ e2e 断言由清单生成，不由实现反推（防自我印证）
 - 实现偏差 → ADR 登记 → 后续 Sprint 回改文档
 - GateGuard 事实陈述、lint/commitlint 钩子是刻意保留的纪律，不要绕过

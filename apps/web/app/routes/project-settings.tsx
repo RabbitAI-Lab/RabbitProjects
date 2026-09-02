@@ -45,17 +45,17 @@ export default function ProjectSettings() {
             <div className="bg-white border border-neutral-200 rounded-lg p-5 mb-4">
               <div className="text-[15px] font-semibold mb-3.5">基本信息</div>
               <div className="flex items-center gap-3 mb-3.5">
-                <label className="w-20 text-[13px] text-neutral-500 shrink-0">项目名称</label>
-                <input className="flex-1 h-9 border border-neutral-300 rounded-md px-2.5" value={name} onChange={(e) => setName(e.target.value)} />
+                <label htmlFor="st-name" className="w-20 text-[13px] text-neutral-500 shrink-0">项目名称</label>
+                <input id="st-name" className="flex-1 h-9 border border-neutral-300 rounded-md px-2.5" value={name} onChange={(e) => setName(e.target.value)} />
               </div>
               <div className="flex items-center gap-3 mb-3.5">
-                <label className="w-20 text-[13px] text-neutral-500 shrink-0">项目标识符</label>
-                <input className="w-[130px] h-9 border border-neutral-300 rounded-md px-2.5 font-mono shrink-0" disabled value={identifier} />
+                <label htmlFor="st-id" className="w-20 text-[13px] text-neutral-500 shrink-0">项目标识符</label>
+                <input id="st-id" className="w-[130px] h-9 border border-neutral-300 rounded-md px-2.5 font-mono shrink-0" disabled value={identifier} />
                 <span className="text-xs text-neutral-500 inline-flex items-center gap-1">🔒 创建后不可修改</span>
               </div>
               <div className="flex items-center gap-3 mb-3.5">
-                <label className="w-20 text-[13px] text-neutral-500 shrink-0">项目描述</label>
-                <textarea className="flex-1 border border-neutral-300 rounded-md p-2 text-sm" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
+                <label htmlFor="st-desc" className="w-20 text-[13px] text-neutral-500 shrink-0">项目描述</label>
+                <textarea id="st-desc" className="flex-1 border border-neutral-300 rounded-md p-2 text-sm" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
               </div>
               <div className="text-right flex items-center justify-end gap-2">
                 {saved && <span className="text-xs text-emerald-600 inline-flex items-center gap-1">✓ 已保存</span>}

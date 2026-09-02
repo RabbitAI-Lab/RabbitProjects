@@ -7,11 +7,11 @@
 | 优先级 | P2（标准版完整级 · **运维型用户的核心效率功能**） |
 | 所属模块 | M5-BOARD｜看板视图（作用于全部视图） |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
-| 上游依赖 | `TASK-001`（PATCH 写路径与 Serializer 校验）、`TASK-005`（流转拦截——批量改状态的逐条守卫）、`TASK-007`（`PUT assignees/` 语义——批量指派收敛点）、`TASK-009`（归档/删除服务——批量归档与删除复用）、`TASK-010`（**BR-12 批量 Activity 共享 epoch 约定**）、`BOARD-003`（视图结果集 = 批量的作用域来源）、`TASK-008`（批量改自定义字段的值校验器） |
-| 下游消费 | `WF-003`（P3 自动化规则的批量触发底座）、`COLLAB-003`（「批量更新了 N 个任务」动态聚合展示）、`COLLAB-004`（批量事件的单次 WS 广播）、`PROJ-003`（项目级批量归档语义对齐） |
+| 最后更新日期 | 2026-09-02 |
+| 上游依赖 | `TASK-001`（PATCH 写路径与 Serializer 校验）、`TASK-005`（流转拦截——批量改状态的逐条守卫）、`TASK-007`（`PUT assignees/` 语义——批量指派收敛点）、`TASK-009`（**归档服务 `archive_subtree`**——批量归档复用）、`TASK-004`（**`delete_subtree` 唯一归属**——批量删除逐条引用，本文仅引用不认领）、`TASK-010`（**BR-12 批量 Activity 共享 epoch 约定**）、`BOARD-003`（视图结果集 = 批量的作用域来源）、`TASK-008`（自定义字段值校验器——**P3 预留**：批量改自定义字段不在本迭代范围（§1.3/§1.5），该依赖供 P3 扩展使用，非 Sprint 3 交付阻塞项） |
+| 下游消费 | `WF-003`（P3 自动化规则的批量触发底座）、`COLLAB-003`（「批量更新了 N 个任务」动态聚合展示）、`COLLAB-004`（批量变更逐实体 WS 广播 + `batch_id` 聚合提示——`batch_id` 载荷扩展待其登记，§2.4 BR-15）、`PROJ-003`（项目级批量归档语义对齐） |
 | 上游依据 | `docs/需求文档.md` §3.5（任务批量操作——看板 P2 列）、§8.2 看板 P2 列；P3 列「批量操作权限管控」为边界依据 |
-| 关联架构文档 | [`api-conventions.md`](../architecture/api-conventions.md)（**§2.5 bulk 端点族；§10.5 批量事务纪律：全成败、上限 100、部分失败 400 + 失败项索引；§7.2 批量端点 throttle 10/min；§8.4 `VALIDATION_BULK_LIMIT_EXCEEDED`**；§3.4 幂等键）、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md)（`issue.update`/`issue.delete`/`issue.assign`/`board.update`）、[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.10（epoch 分组） |
+| 关联架构文档 | [`api-conventions.md`](../architecture/api-conventions.md)（**§2.5 bulk 端点族；§10.5 批量事务纪律：全成败、上限 100、部分失败 400 + 失败项索引；§7.2 批量端点 throttle 10/min；§8.4 `VALIDATION_BULK_LIMIT_EXCEEDED`；§8.8 字段级子码（`BLOCKED_BY`/`PERM_DENIED`/`LIMIT` 登记状态见 §2.5 注）；§13.1 202 异步约定（`bulk/archive/` 同步 200 的豁免声明见 §4.2.2）**；§3.4 幂等键）、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md)（`issue.update`/`issue.delete`/`issue.assign`/`issue.state.transition`/`issue.archive`）、[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.10（epoch 分组） |
 | 对标基线 | Plane bulk 端点族（`issues/bulk/` PATCH/DELETE + bulk-sort） · Ones 批量权限管控（P3） |
 | 工作量估算 | 后端 2.5 人日 / 前端 3 人日 / 联调与测试 1.5 人日，合计 **7 人日** |
 
@@ -24,7 +24,7 @@
 项目运转到中期，任务表里必然出现「把这 12 个缺陷都指派给李四」「季度结束，把这 40 个任务归档」——逐条点开的操作成本随规模线性上涨。批量操作把这类**同质大批量写**收敛为一次交互：
 
 1. **多选交互**：框选（列表/表格）、⌘/Shift 点选（列表与看板卡片）、全选当前视图结果集（受上限约束）；
-2. **批量端点**：`PATCH/DELETE …/issues/bulk/` 单事务全成败——要么 40 条全部归档，要么一条都不动（`api-conventions.md` §10.5 原文纪律）；
+2. **批量端点**：批量写端点族（`PATCH/DELETE …/issues/bulk/` 与 `POST …/issues/bulk/archive/`）单事务全成败——要么 40 条全部归档，要么一条都不动（`api-conventions.md` §10.5 原文纪律）；
 3. **批量留痕**：同批全部条目共享同一 `epoch` + `batch_id`，动态流聚合为「张三 批量更新了 40 个任务的执行人」（`TASK-010` BR-12 的兑现）；
 4. **失败定位**：事务整体回滚时，`details` 给出失败项索引与原因（不满足前置依赖的任务在第几条）。
 
@@ -49,8 +49,8 @@
 | 2 | 批量改优先级 | `priority`（枚举校验） | 枚举合法（单点校验） |
 | 3 | 批量指派 / 转交 | `PUT assignees/` 语义收敛为 `sync_assignees`（`TASK-007` 唯一入口） | 成员合法、≤10 人、去重保序 |
 | 4 | 批量替换标签 | `PUT labels/` 语义（`TASK-002`） | 标签属本项目 |
-| 5 | 批量归档 | `archive_subtree` 语义整树级联（`TASK-009`） | 项目 active；目标非已归档（幂等跳过） |
-| 6 | 批量删除 | `delete_subtree` 语义（软删 + 级联，`TASK-004/009`） | 权限逐条（CONTRIBUTOR 仅自己的 / ADMIN 任意）；**二次确认 + 输入数量确认** |
+| 5 | 批量归档 | `archive_subtree` 语义整树级联（`TASK-009`） | 权限 `issue.archive`（CONTRIBUTOR+，`TASK-009` BR-14）；项目 active（已归档项目整批 `403 PERM_PROJECT_ARCHIVED`，其 BR-13）；已归档目标幂等跳过（其 BR-10） |
+| 6 | 批量删除 | `delete_subtree` 语义（软删 + 中间表物理删除级联——**`TASK-004` 唯一归属，本文仅引用不认领**） | 权限逐条（CONTRIBUTOR 仅自己的 / ADMIN 任意）；**二次确认 + 输入数量确认** |
 
 > 批量改自定义字段（`cf_*`）与批量复制 P2 不做：前者待 `TASK-011` DSL 稳定后评估（P3），后者交互收益低（复制是「选一个复制一个」的语义，批量复制产生编号洪峰难追溯）。
 
@@ -71,6 +71,7 @@
 | --- | --- | --- |
 | 多选 + 批量工具条 + 六类动作 | ✅ | — |
 | 全选「当前视图结果集」（截断到 100 + 提示） | ✅ | — |
+| 批量创建（`POST …/issues/bulk/`，§2.5 已登记端点行） | ❌ **显式排除**：单条创建 + 复制已覆盖需求，批量创建产生编号洪峰难追溯，且无失败项定位可借鉴的「同质写」结构 | P4（导入通道立项时再评估；该前瞻登记行的交付归属需**架构文档待回改登记**，见 §4.2 注） |
 | 批量移动到子任务下 / 批量建依赖 | ❌ | P4 评估（组合操作风险高） |
 | 批量复制 | ❌ | P3 评估 |
 | 批量改自定义字段 | ❌ | P3（`TASK-011` 后） |
@@ -85,7 +86,8 @@
 | `TASK-001/002` | PATCH 校验器（状态/优先级/标签值域） | 批量逐条复用同一校验 |
 | `TASK-005` | `assert_completable` 流转守卫 | 批量改状态的逐条拦截与失败清单 |
 | `TASK-007` | `sync_assignees` 唯一入口 | 批量指派收敛点（禁旁路） |
-| `TASK-009` | `archive_subtree` / `delete_subtree` | 批量归档/删除复用（含级联） |
+| `TASK-009` | `archive_subtree`（归档服务，含整树级联与幂等口径） | 批量归档复用 |
+| `TASK-004` | `delete_subtree`（**唯一归属**——本文仅引用不认领；含中间表物理删除级联） | 批量删除逐条复用 |
 | `TASK-010` | epoch 语义 + BR-12 批量约定 + `issue_activity` 幂等管道 | 批量留痕（单次投递 N 条） |
 | `BOARD-003` | 视图结果集（`view_id` 参数域） | 「全选当前视图」的作用域 |
 | `INFRA-004` | `VALIDATION_BULK_LIMIT_EXCEEDED` 注册、批量 throttle 配置 | 错误契约 |
@@ -137,12 +139,12 @@ sequenceDiagram
     U->>FE: 工具条 [状态 ▾] → 已完成
     FE->>API: PATCH …/issues/bulk/ {"issue_ids":[…12], "state_id":"已完成"}
     API->>PG: BEGIN
+    API->>PG: SELECT … FOR UPDATE NOWAIT（一次锁 12 行——先锁后判，BR-04）
     loop 逐条（保持请求顺序）
-        API->>PG: SELECT … FOR UPDATE（行锁防并发漂移）
         API->>API: assert_completable（TASK-005 前置依赖守卫）
         alt 第 7 条被阻塞（前置未完成）
             API->>PG: ROLLBACK（整批）
-            API-->>FE: 400 VALIDATION_ERROR · details=[{index:6, issue_key:RBT-21, code:BLOCKED_BY,…}]
+            API-->>FE: 400 VALIDATION_ERROR · details=[{field:"issue_ids[6]", code:"BLOCKED_BY", message:"RBT-21：前置未完成（RBT-33）"}]
             Note over FE: 高亮第 7 条 +「移除该项重试」按钮
         else 全部通过
             API->>PG: UPDATE ×12（completed_at 派生随行）
@@ -180,9 +182,9 @@ stateDiagram-v2
 | 编号 | 规则 | 判定位置 | 违反后果 |
 | --- | --- | --- | --- |
 | BR-01 | 批量上限 **100 条/次**（去重后计数）；超限整体拒绝（不静默截断——静默截断会让用户误以为全部生效） | Serializer | `400 VALIDATION_BULK_LIMIT_EXCEEDED` |
-| BR-02 | 单事务全成败：任一条失败整批回滚；失败响应 `details` 逐项含 `index`（请求内 0 基索引）、`issue_key`、`code`（守卫错误码）、`message` | BulkService | — |
+| BR-02 | 单事务全成败：任一条失败整批回滚；失败响应 `details` 逐项为 `{field, code, message}` 三键（`api-conventions.md` §8.9 `ApiFieldError`，不另立键名）——`field` 承载失败项位置（`issue_ids[<index>]`，请求内 0 基索引）、`code` 为守卫子码（登记状态见 §2.5 注）、`message` 内含 `issue_key` 与原因 | BulkService | — |
 | BR-03 | 每条走**单条同源写**：校验器 / 权限（含 CONTRIBUTOR 只能删自己的）/ 流转守卫 / 归档保护 / 级联——批量层零旁路、零简化 | BulkService | 评审拒绝 |
-| BR-04 | 逐条 `select_for_update`（请求顺序）；行锁期间重读状态再判定（防「列表看到的」与「库里现在的」漂移） | BulkService | — |
+| BR-04 | 同批**一次性** `select_for_update(nowait=True)` 锁定全部目标行（`FILE-001` `_check_task_limit`「先锁后判」求值先例同款——锁定先于逐条守卫判定，`api-conventions.md` §10.5 看板拖拽行锁同族）；任一行被并发事务持有 → 整批 `409 RESOURCE_CONFLICT` **快速失败不排队**（杜绝两批互等的长事务）；锁后重读状态再逐条判定（防「列表看到的」与「库里现在的」漂移） | BulkService | 409 |
 | BR-05 | 同批全部条目共享同一 `epoch` 与 `batch_id`（= epoch 同值）；Activity 逐条落库（每任务各有时间线）但 `comment` 统一「批量动作摘要」（`TASK-010` BR-12） | on_commit 单次投递 | — |
 | BR-06 | 批量端点 throttle：**10 次/分钟/用户**（`api-conventions.md` §7.2）；超出 `429 RATE_LIMIT_EXCEEDED` + `Retry-After` | Throttle | 429 |
 | BR-07 | `issue_ids` 去重保序；非本项目 / 不可见 ID → 该项进入失败清单（`code=DOES_NOT_EXIST`），不 404 整批（批量语境下 404 是项级事实） | BulkService | 400 + 项级 detail |
@@ -193,21 +195,23 @@ stateDiagram-v2
 | BR-12 | `comment` 可选 ≤ 500 字，随批量 Activity 落库并展示于动态摘要 | Serializer | 400 TOO_LONG |
 | BR-13 | 批量操作进行中（请求未返回）：工具条锁定 + 选中冻结（防中途改选造成响应错配） | 前端 | — |
 | BR-14 | `Idempotency-Key` 可选支持（`api-conventions.md` §3.4）：批量删除等危险动作前端默认携带（UUID/批），重放返回首次响应 | 中间件 | `Idempotency-Replayed: true` |
-| BR-15 | WS 广播：批量事件压缩为每实体一条（复用 `COLLAB-004` 通道），广播载荷带 `batch_id` 供对端「聚合提示」而非弹 40 个 Toast | COLLAB-004 契约 | — |
+| BR-15 | WS 广播：批量操作产生的 N 次实体变更**逐条复用 `COLLAB-004` 既有事件类型**（`issue.updated` / `issue.state.changed`，每实体一条），由其 BR-13 100ms 合批通道（`throttleAggregate`）收敛为一次网络批；载荷附加 `batch_id`（= epoch 同值）供对端聚合提示而非弹 40 个 Toast——`batch_id` 载荷扩展与聚合提示语义 **`COLLAB-004` 待登记**（其现表未定义 `batch` 事件类型与 `batch_id` 字段）；对端「单条聚合 Toast」沿用 `COLLAB-001` `notify_issue_event_batch` 同款归并范式（epoch 归并、每 issue 各一行、`merged_count` 携带归并上下文） | COLLAB-004 契约（待登记） | — |
 
 ### 2.5 异常处理
 
 | 场景 | HTTP | 错误码 | details 形态 | 前端表现 |
 | --- | --- | --- | --- | --- |
 | 条数 > 100 | 400 | `VALIDATION_BULK_LIMIT_EXCEEDED` | `{field:"issue_ids", code:"LIMIT", message:"101 条超过上限 100"}` | Toast + 「仅保留前 100」按钮 |
-| 含不可见/他项目 ID | 400 | `VALIDATION_ERROR` | 项级 `index/issue_key/code=DOES_NOT_EXIST` | 失败项红标 + 「移除后重试」 |
-| 逐条守卫失败（流转被阻） | 400 | `VALIDATION_ERROR` | 项级 `code=BLOCKED_BY` + 阻塞源 message | 高亮对应卡片 + 阻塞详情浮层 |
-| 逐条权限失败（删他人任务） | 400 | `VALIDATION_ERROR` | 项级 `code=PERM_DENIED` | 同上 |
-| 值域非法（优先级枚举） | 400 | `VALIDATION_ERROR` | 载荷级 `field=priority` | 动作下拉红框 |
+| 含不可见/他项目 ID | 400 | `VALIDATION_ERROR` | 项级 `{field:"issue_ids[i]", code:"DOES_NOT_EXIST"}`，`message` 含编号 | 失败项红标 + 「移除后重试」 |
+| 逐条守卫失败（流转被阻） | 400 | `VALIDATION_ERROR` | 项级 `{field:"issue_ids[i]", code:"BLOCKED_BY"}`，`message` 含阻塞源编号 | 高亮对应卡片 + 阻塞详情浮层 |
+| 逐条权限失败（删他人任务） | 400 | `VALIDATION_ERROR` | 项级 `{field:"issue_ids[i]", code:"PERM_DENIED"}`，`message` 含编号 | 同上 |
+| 值域非法（优先级枚举） | 400 | `VALIDATION_ERROR` | 载荷级 `{field:"priority", code:"NOT_A_CHOICE"}` | 动作下拉红框 |
 | throttle 超限 | 429 | `RATE_LIMIT_EXCEEDED` | `RETRY_AFTER` | Toast 倒计时 |
-| 并发行锁超时 | 409 | `RESOURCE_CONFLICT` | 载荷级 | 「他人正在修改部分任务，请重试」 |
+| 并发行锁冲突（nowait 即刻失败，BR-04） | 409 | `RESOURCE_CONFLICT` | 载荷级 `{field:"issue_ids"}`，`message` 指明行被并发事务持有 | 「他人正在修改部分任务，请重试」 |
 | 事务中途 5xx | 500 | `SERVER_ERROR` | request_id | 整批未生效；保留选中重试 |
 | 视图全选超 100 | —（前端预拦截） | — | 黄条 | 「已选前 100 / 共 1,240」 |
+
+> **字段级子码登记**：本表使用的 `BLOCKED_BY` / `PERM_DENIED` / `LIMIT` 为 `details[].code` 字段级子码（不占用全局错误码注册表，由 [`api-conventions.md`](../architecture/api-conventions.md) §8.8「字段级子码」承载，先例为 `COLLAB-001` `EDIT_WINDOW_EXPIRED` 的补登模式）。§8.8 现表已注册 `DOES_NOT_EXIST` / `NOT_A_CHOICE`（本文直接复用）；`BLOCKED_BY`（前置阻塞）与 `LIMIT`（数量超上限）已由 `TASK-005` §2.5 登记「交付时补登」——本文同语义复用、不重复登记；`PERM_DENIED` 系 §8.3 全局 403 码名在批量项级场景的复用，交付时需在 §8.8 补登子码条目——**架构文档待回改登记**。
 
 ### 2.6 边界条件
 
@@ -218,7 +222,7 @@ stateDiagram-v2
 | 跨页选中累计 | 100（全局选中池上限） | 阻止追加 + 提示 |
 | 同批父子任务（归档/删除） | 幂等级联 | 无重复副作用 |
 | 批量 comment | 500 字 | 400 |
-| 事务时长 | 100 条 × 行锁 ≈ < 1s | 超时告警（IT-08） |
+| 事务时长 | 100 条 × 批量行锁（nowait 不排队）≈ < 1s | 锁冲突即刻 409（BR-04）；长事务告警（IT-08） |
 
 ---
 
@@ -252,7 +256,6 @@ stateDiagram-v2
 │ ☑ │ RBT-21  │ 导出限流配置         │ ●进行中 │ 👤李四  │ 9-02      │           │
 └───┴─────────┴──────────────────────┴─────────┴─────────┴───────────┴───────────┘
   行 hover 浮现 ⬜（点选）；已选行 bg-primary-50；Shift 点「RBT-4 → RBT-21」= 区间全选
-```
 ```
 
 | 元素 | 规格 |
@@ -373,7 +376,7 @@ stateDiagram-v2
 
 ### 4.1 数据模型
 
-**零新增表、零 DDL**。批量是纯服务层能力：消费 `issues` 全部字段与 `TASK-009/004` 的级联服务；Activity 落 `issue_activities`（`batch_id` 不加列——复用 `epoch` 同值 + `comment` 前缀 `batch:` 即可聚合，与 `TASK-010` BR-05 评论合并渲染同哲学）。
+**零新增表、零 DDL**。批量是纯服务层能力：消费 `issues` 全部字段与既有级联服务——`archive_subtree`（`TASK-009`）/ `delete_subtree`（`TASK-004` 唯一归属，本文仅引用）；Activity 落 `issue_activities`（`batch_id` 不加列——复用 `epoch` 同值 + `comment` 前缀 `batch:` 即可聚合，与 `TASK-010` BR-05 评论合并渲染同哲学）。
 
 ```mermaid
 erDiagram
@@ -393,11 +396,11 @@ erDiagram
 | # | 方法 | 路径 | 描述 | 权限 | 成功码 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `PATCH` | `…/projects/{project_id}/issues/bulk/` | 批量更新（状态 / 优先级 / 指派 / 标签） | 动作对应权限码（`issue.state.transition` / `issue.update` / `issue.assign`），逐条再判角色 | `200` |
-| 2 | `POST` | `…/projects/{project_id}/issues/bulk/archive/` | 批量归档（整树级联） | `issue.update` | `200` |
+| 2 | `POST` | `…/projects/{project_id}/issues/bulk/archive/` | 批量归档（整树级联） | `issue.archive`（`TASK-009` BR-14，CONTRIBUTOR+） | `200` |
 | 3 | `DELETE` | `…/projects/{project_id}/issues/bulk/` | 批量删除（软删 + 级联） | `issue.delete(.own)` 逐条 | `200` |
 | 4 | `POST` | `…/projects/{project_id}/issues/bulk/preview/` | 危险动作预检（级联统计，供确认弹层） | 读权限 | `200` |
 
-> 挂载与 `api-conventions.md` §2.5 工作项层级端点清单的 `POST/PATCH/DELETE …/issues/bulk/` 三行一致；`bulk/archive/` 为其 §2.6 动作子资源模式的批量变体。**PATCH/DELETE 复用路径**与 §10.5「批量端点：全成功或全失败；部分失败返回 400 并指出失败项索引」逐字对齐。
+> 挂载与 `api-conventions.md` §2.5 工作项层级端点清单的 `PATCH/DELETE …/issues/bulk/` 两行一致；§2.5 另登记的 `POST …/issues/bulk/`（**批量创建**）本文**显式排除**、P2 不交付（理由与归属见 §1.5——该前瞻登记行的交付归属需**架构文档待回改登记**）；`bulk/archive/` 为其 §2.6 动作子资源（`archive/`）的批量变体。**PATCH/DELETE 复用路径**与 §10.5「批量端点：全成功或全失败；部分失败返回 400 并指出失败项索引」逐字对齐。
 
 #### 4.2.1 `PATCH …/issues/bulk/` — 批量更新
 
@@ -463,7 +466,29 @@ erDiagram
 }
 ```
 
-#### 4.2.2 `DELETE …/issues/bulk/` — 批量删除
+#### 4.2.2 `POST …/issues/bulk/archive/` — 批量归档
+
+> **批量归档端点对 `api-conventions.md` §13.1「耗时操作（含批量归档）走 `202` 异步」约定的豁免声明**：本端点采用**同步 `200`**，不走 202。原因：① 批量归档受 §10.5 上限 100 条约束，级联归档是幂等轻写（仅置 `archived_at`，`TASK-009` BR-10 仅触及 `archived_at IS NULL` 行），单事务批量行锁实测 P95 < 1s（§5.3 IT-05 性能门禁）——远低于需要 202 解耦的耗时阈值；② 全成败语义要求失败项定位（第几条、为何被拦）随响应同步返回，`202 + task_id` 轮询会把「整批被拦在哪一条」推迟一个轮询周期，直接损害 §3.4 的失败定位体验。§13.1 的 202 模式保留给 P4 数据导入/导出等真正的大规模异步通道。
+
+**请求**
+
+```json
+{ "issue_ids": ["…5 项"], "comment": "季度收尾归档" }
+```
+
+**成功响应 `200`**（5 选含 1 父任务，子树级联 4 条，其中 2 条此前已归档）
+
+```json
+{
+  "status": "success",
+  "data": { "archived_count": 7, "affected_total": 9, "epoch": 1756727700000 },
+  "meta": { "batch_size": 5, "cascade": 4 }
+}
+```
+
+> **计数口径**：`archived_count` = 本批**实际新置 `archived_at` 的行数**（选中 + 级联子树中此前未归档的行，去重后——幂等重提交不重复计数，`TASK-009` BR-10「仅触及 NULL 行」同口径，恒 ≤ `affected_total`）；`affected_total` = 选中 + 级联子树总行数（含已归档行，与 `preview/` 统计一致）。失败语义同 §4.2.1 范式（如项级 `{field:"issue_ids[i]", code:"DOES_NOT_EXIST"}` → 整批 400 回滚）；已归档项目内提交整批 `403 PERM_PROJECT_ARCHIVED`（`TASK-009` BR-13）。
+
+#### 4.2.3 `DELETE …/issues/bulk/` — 批量删除
 
 **请求**（含预检回执展示后提交）
 
@@ -483,7 +508,7 @@ erDiagram
 
 > `affected_total` = 选中 + 级联子树（与 `preview/` 口径一致）；`confirm_count` 与 `issue_ids` 数不符即 400（防「确认后又改选择」的错配）。
 
-#### 4.2.3 `POST …/issues/bulk/preview/` — 危险动作预检
+#### 4.2.4 `POST …/issues/bulk/preview/` — 危险动作预检
 
 **请求**
 
@@ -526,7 +551,7 @@ class BulkActionError(Exception):
     """携带项级失败清单（details）→ 400 VALIDATION_ERROR"""
 
     def __init__(self, failures: list[dict]):
-        self.failures = failures          # [{index, issue_key, code, message}]
+        self.failures = failures          # [{field, code, message}]（BR-02：field=issue_ids[<index>]，message 含 issue_key）
 
 
 @transaction.atomic
@@ -538,10 +563,11 @@ def bulk_update(*, project_id: uuid.UUID, actor, issue_ids: list[uuid.UUID],
     if len(ids) > BULK_LIMIT:                                             # BR-01
         raise BulkLimitExceeded(got=len(ids), limit=BULK_LIMIT)
 
-    epoch = time.time() * 1000                                            # BR-05：批次唯一 epoch
+    epoch = time.time() * 1000                                            # BR-05：批次唯一 epoch（Service 入口生成，TASK-010 BR-04）
     failures, snapshots = [], []
-    issues = {i.id: i for i in Issue.objects.select_for_update()          # BR-04：逐行锁
+    issues = {i.id: i for i in Issue.objects.select_for_update(nowait=True)   # BR-04：一次锁全批（先锁后判）
               .filter(id__in=ids, project_id=project_id, deleted_at__isnull=True)}
+    # nowait：任一行被并发事务持有 → OperationalError → View 层统一 409 RESOURCE_CONFLICT（§2.5）
 
     for index, iid in enumerate(ids):
         issue = issues.get(iid)
@@ -575,7 +601,7 @@ def bulk_update(*, project_id: uuid.UUID, actor, issue_ids: list[uuid.UUID],
     return {"updated": len(snapshots), "epoch": epoch}
 ```
 
-> **为什么 Activity 单次投递一个 batch payload 而非 N 个任务各一个**：`TASK-010` 的幂等键是 `{issue_id}:{epoch}:{verb}`——同 epoch 的 N 条任务各自独立不冲突；单次投递让 Worker 一批落库、每任务时间线各有记录、comment 共享「批量动作摘要」，且动态流（`COLLAB-003`）按 epoch 聚合时天然得到「批量更新了 12 个任务」。
+> **为什么 Activity 单次投递一个 batch payload 而非 N 个任务各一个**：`TASK-010` 的幂等键 `event_key = sha256(verb + issue_id + actor_id + epoch)`（其 BR-07）——批内 N 条任务各持独立键，同 epoch 不冲突；单次投递让 Worker 一批落库、每任务时间线各有记录、comment 共享「批量动作摘要」，且动态流（`COLLAB-003`）按 epoch 聚合时天然得到「批量更新了 12 个任务」。
 
 #### 4.3.2 集合运算（批量指派/标签的三模式）
 
@@ -644,13 +670,14 @@ def bulk_delete(*, project_id: uuid.UUID, actor, issue_ids: list[uuid.UUID],
         raise ValidationError({"confirm_count": "与提交数量不一致"})
     epoch = time.time() * 1000
     affected, deleted = set(), 0
+    issues = {i.id: i for i in Issue.objects.select_for_update(nowait=True)  # BR-04 同口径：一次锁全批（先锁后判）
+              .filter(id__in=ids, project_id=project_id, deleted_at__isnull=True)}
     for index, iid in enumerate(ids):
-        issue = (Issue.objects.select_for_update()
-                 .filter(id=iid, project_id=project_id, deleted_at__isnull=True).first())
+        issue = issues.get(iid)
         if issue is None or not actor.can_delete(issue):
             raise BulkActionError([_fail(index, iid,
                 "DOES_NOT_EXIST" if issue is None else "PERM_DENIED", "…")])
-        result = delete_subtree(issue_id=iid, actor_id=actor.id)   # TASK-004 既有服务
+        result = delete_subtree(issue_id=iid, actor_id=actor.id)   # TASK-004 唯一归属，本文仅引用
         affected.update(result["descendant_ids"] or [])
         deleted += 1
     transaction.on_commit(lambda: issue_activity.delay(
@@ -667,7 +694,7 @@ def bulk_delete(*, project_id: uuid.UUID, actor, issue_ids: list[uuid.UUID],
 - 框选：列表/表格容器上 `pointerdown` 起点记录 + `getBoundingClientRect` 相交判定（看板卡片同理）；与 pdnd 拖拽互斥（按下即拖拽的元素不进入框选）。
 - `⌘A`：取当前视图 SWR 缓存结果集前 100（BR-08 前端显式展开，不做「服务端隐式全选」）。
 - 乐观策略：批量动作**不做逐条乐观**（12 条局部动画复杂度不值）；统一 loading → 成功后按动作类型批量更新 Store（改状态：逐条 `state_id` 写入；删除：逐条移除）+ SWR revalidate。
-- WS 联动（`COLLAB-004` 上线后）：他端收到 `batch` 事件按 `batch_id` 聚合为一条 Toast（BR-15）。
+- WS 联动（`COLLAB-004` 上线后）：批量变更逐实体复用其 `issue.updated` / `issue.state.changed` 事件（100ms 合批通道收敛为一次网络批），他端按 `batch_id`（= epoch）聚合为一条 Toast（BR-15；`batch_id` 载荷扩展与聚合提示语义待 `COLLAB-004` 登记）。
 
 ```typescript
 // packages/shared-state/src/selection.store.ts
@@ -740,7 +767,7 @@ export class SelectionStore {
 | UT-01 | 上限边界 | 恰 100 / 101 条 | 200 / 400 LIMIT | 边界 |
 | UT-02 | 去重保序 | 重复 id | 计数去重后判定；执行序 = 首现序 | 边界 |
 | UT-03 | 项级不可见 | 混入他项目 id | 该项 DOES_NOT_EXIST 进清单，整批 400 | 安全 |
-| UT-04 | 流转守卫逐条 | 12 条中 1 条被阻塞 | 整批回滚；details 含 index=6 + 阻塞源 | 异常 |
+| UT-04 | 流转守卫逐条 | 12 条中 1 条被阻塞 | 整批回滚；`details[0].field="issue_ids[6]"` + `code="BLOCKED_BY"`，message 含阻塞源与编号 | 异常 |
 | UT-05 | 权限逐条 | CONTRIBUTOR 混删他人任务 | 该项 PERM_DENIED 进清单 | 安全 |
 | UT-06 | 集合-并集 | add 模式 | current + 新者追加，去重 | 正常 |
 | UT-07 | 集合-差集 | remove 模式 | 差集结果；≤10 上限仍校验 | 正常 |
@@ -758,18 +785,18 @@ export class SelectionStore {
 | 编号 | 场景 | 输入 / 前置 | 期望 |
 | --- | --- | --- | --- |
 | BE-1 | PATCH bulk 改状态 12 条 | 全部可流转 | 200 `updated=12`；12 条 `state_id` 与 `completed_at` 齐写 |
-| BE-2 | 失败项索引准确性 | 第 7 条被阻塞 | `details[0].field="issue_ids[6]"`（0 基）+ `issue_key` + `BLOCKED_BY` |
+| BE-2 | 失败项索引准确性 | 第 7 条被阻塞 | `details[0].field="issue_ids[6]"`（0 基）+ `code="BLOCKED_BY"` + message 含 `issue_key` |
 | BE-3 | 整批回滚零残留 | 上例后查库 | 12 条 `updated_at` 全部未变（回滚验证） |
 | BE-4 | 指派 add/remove/replace | 三模式各一批 | 结果集合与 §4.3.2 语义一致；≤10 上限触发项级失败 |
 | BE-5 | 标签三模式 | 同上 | 同构 |
-| BE-6 | `bulk/archive/` | 含父子同批 | 级联幂等（子不重复 UPDATE）；`archived_count` 精确 |
+| BE-6 | `bulk/archive/` | 含父子同批（子树含已归档行） | 级联幂等（子不重复 UPDATE）；`archived_count` 精确（仅计新归档行，§4.2.2 口径；重提交不重复计数） |
 | BE-7 | `bulk/preview/` 统计 | 40 选含 12 父 31 级联 | `affected_total=71`；`denied` 含权限失败项 |
 | BE-8 | `preview/` 只读性 | 调用后查库 | 零写入（无锁无副作用） |
 | BE-9 | DELETE bulk 确认错配 | confirm_count=39 | 400 `VALIDATION_ERROR` |
 | BE-10 | Activity 批量留痕 | 批后查 | N 条同 epoch；comment=`batch: …` 摘要；`COLLAB-003` 聚合渲染正确 |
 | BE-11 | 幂等键重放 | 同 Key 二发 DELETE | 首次响应体回放 + `Idempotency-Replayed: true`；库中零二次删除 |
 | BE-12 | throttle | 60s 内 11 次 | 第 11 次 429 + `Retry-After` 头 |
-| BE-13 | 并发交叠 | 两用户同批 3 条 | 后者行锁等待完成或 409；无部分写 |
+| BE-13 | 并发交叠 | 两用户同批 3 条 | 后者 `nowait` 即刻 409 `RESOURCE_CONFLICT`（不排队等待）；无部分写 |
 | BE-14 | 权限矩阵 | VIEWER 发任何 bulk | 403 `PERM_ROLE_INSUFFICIENT` |
 | BE-15 | 跨项目 id | 混入他项目任务 | 项级 `DOES_NOT_EXIST`；不 404 整批 |
 
@@ -783,7 +810,7 @@ export class SelectionStore {
 | IT-04 | 批量删除预检→提交 | 40 条含 12 父 | preview → 确认输入 40 → delete | `affected_total=71` 与实际一致；`deleted_at` 全置 |
 | IT-05 | 性能门禁 | 100 条批量改状态 | 计时 20 次 | P95 < 1s（单事务行锁批） |
 | IT-06 | SQL 预算 | 100 条 | `assertNumQueries` | ≤ 210（1 锁批 + 100 行锁 + 聚合更新 + 1 投递，常数级） |
-| IT-07 | 并发互斥 | 两用户批量交叠同 3 条 | 提交 | 后者行锁等待或 409，无脏写 |
+| IT-07 | 并发互斥 | 两用户批量交叠同 3 条 | 提交 | 后者 409 快速失败（nowait，BR-04），无脏写 |
 | IT-08 | 长事务监控 | 100 条慢注入 | 观测 | 锁等待 > 2s 告警日志 |
 
 ### 5.4 E2E 测试
@@ -791,7 +818,7 @@ export class SelectionStore {
 | 用例 ID | 用户场景 | 操作路径 | 验收标准 |
 | --- | --- | --- |---|
 | E2E-01 | 框选批量指派 | 列表框选 8 条 → 指派-添加 张三 | 8 条执行人含张三；动态聚合一条；刷新保持 |
-| E2E-02 | 守卫失败定位 | 12 条含被阻塞 1 条 → 批量已完成 | 弹层定位 #7 与阻塞源；「移除重试」后 11 条生效 |
+| E2E-02 | 守卫失败定位 | 12 条含被阻塞 1 条 → 工具条「状态 ▾」批量改为已完成 | 弹层定位 #7 与阻塞源；「移除重试」后 11 条生效 |
 | E2E-03 | 全选截断 | 视图 1,240 条 → ⌘A | 选前 100 + 黄条；提交正常 |
 | E2E-04 | 批量归档 | 选 5 条（含 1 父）→ 归档 | 确认显示级联数；列表退出；归档视图可恢复 |
 | E2E-05 | 批量删除确认 | 选 40 → 删除 | 输入 40 才可提交；完成后 Toast 与回收站验证 |
@@ -804,7 +831,7 @@ export class SelectionStore {
 ### 6.1 Plane 实现分析
 
 - **端点形态对齐**：Plane 的 bulk 写在 View 层 for 循环逐条调单条逻辑（`issues/bulk/` 家族 + `bulk-delete/`）；`BOARD-001` §4.4.2 已对齐其 `bulk-sort/`。本系统把循环下沉到 `BulkService`（显式事务边界 + epoch 单点 + 行锁批读），端点面与其同构、工程面更严。
-- **Plane 的缺口 1（失败无定位）**：其 bulk 失败响应不携带项级索引，用户只能整批盲试；本系统 `details[].index + issue_key + code`（§4.2.1）+ 前端「移除该项重试」一键闭环。
+- **Plane 的缺口 1（失败无定位）**：其 bulk 失败响应不携带项级索引，用户只能整批盲试；本系统 `details[].field`（`issue_ids[<index>]` 路径承载索引）+ `code` + message 含 `issue_key`（§4.2.1）+ 前端「移除该项重试」一键闭环。
 - **Plane 的缺口 2（无批量预检）**：删除类动作无级联统计预检；本系统 `preview/` 把失败发现前移到确认阶段。
 - **Activity**：Plane 的 bulk 也共享 epoch 折叠展示（本系统 BR-05 与之一致），但其无单次投递优化（N 次 delay）。
 
@@ -828,7 +855,7 @@ export class SelectionStore {
 | 批量更新（状态/优先级/人/标签） | ✅ | ✅ | ✅ | — |
 | 批量归档 / 删除（级联） | 部分 | ✅ | ✅ | — |
 | 事务语义（全成败） | 部分（循环内无显式边界） | ✅ | ✅ **显式单事务** | — |
-| 失败项索引定位 | ❌ | 部分 | ✅ **领先**（index + issue_key + code） | — |
+| 失败项索引定位 | ❌ | 部分 | ✅ **领先**（field 路径承载索引 + code + message 含编号） | — |
 | 危险动作预检（级联统计） | ❌ | 部分 | ✅ **领先**（preview 端点） | — |
 | 集合三模式（替换/添加/移除） | 部分 | ✅ | ✅ | — |
 | 批量留痕聚合（epoch） | ✅ | ✅ | ✅ | P4 审计导出 |
@@ -856,7 +883,7 @@ export class SelectionStore {
 ### 7.2 可操作演示的验收标准
 
 1. 列表框选 8 条任务批量「指派-添加」张三：8 条执行人即时更新、动态流聚合为一条批量记录、他端（另一浏览器）仅见一条聚合 Toast。
-2. 批量把 12 条拖向「已完成」其中 1 条被前置依赖拦截：收到项级定位（第 7 项 + 阻塞源）；「移除该项重试」后其余 11 条全部完成、`completed_at` 齐写、首次提交零残留。
+2. 选中 12 条经批量工具条「状态 ▾ → 已完成」提交（本迭代批量动作仅工具条入口，无批量拖拽——与 §3.1 交互设计一致），其中 1 条被前置依赖拦截：收到项级定位（第 7 项 + 阻塞源）；「移除该项重试」后其余 11 条全部完成、`completed_at` 齐写、首次提交零残留。
 3. 在 1,240 条结果的视图按 ⌘A：选中前 100 条并黄条提示截断；批量改优先级全部生效。
 4. 批量删除 40 条（含子树）：预检显示「影响 71 个任务」；输入 40 确认后响应回传 `deleted=40 / affected_total=71`，回收站可验证；`confirm_count` 不符的提交被 400 拒绝。
 5. 同一分钟第 11 次批量请求收到 429 与 `Retry-After`；同 `Idempotency-Key` 重放返回首次结果且带 `Idempotency-Replayed: true`。
@@ -871,7 +898,7 @@ export class SelectionStore {
 | 批量 Activity 投递 | 1 次 delay（非 N 次） | 代码断言 + Worker 日志 |
 | 工具条浮现 / 滑出 | 160ms / 120ms 动画，选中 ≥1 即现 | 手工 |
 | 框选命中率 | 与视觉相交判定一致（边界容差 2px） | E2E 坐标断言 |
-| WS 聚合提示 | 他端单条 Toast（batch_id 聚合） | 双浏览器验证（COLLAB-004 上线后） |
+| WS 聚合提示 | 他端单条 Toast（batch_id 聚合，BR-15——batch_id 载荷扩展待 COLLAB-004 登记） | 双浏览器验证（COLLAB-004 上线后） |
 | 无 console error | 0 条 | E2E `page.on("console")` |
 
 ### 7.4 Definition of Done
@@ -879,7 +906,7 @@ export class SelectionStore {
 - [ ] §7.2 六条验收全部通过（E2E-02 守卫定位为核心，须自动化守护）
 - [ ] §5 全部用例通过：UT-15 + BE-15 + IT-8 + E2E-6
 - [ ] **上游确认（`TASK-005`）**：`assert_completable` 可在批量事务内逐条调用且异常携带阻塞源信息
-- [ ] **上游确认（`TASK-007/009`）**：`sync_assignees` / `archive_subtree` / `delete_subtree` 可被服务层直接复用（无 View 层耦合）
+- [ ] **上游确认（`TASK-007` / `TASK-009` / `TASK-004`）**：`sync_assignees`（TASK-007）/ `archive_subtree`（TASK-009）/ `delete_subtree`（**TASK-004 唯一归属，本文仅引用**）可被服务层直接复用（无 View 层耦合）
 - [ ] **上游确认（`TASK-010`）**：`issue_activity` Worker 接受 batch payload；epoch 幂等键在批量场景无冲突
 - [ ] **口径确认**：批量端点与 `BOARD-001` `bulk-sort/` 的语义分工（§4.2 端点表注）已写入 API 文档
 - [ ] CI 全绿（`pnpm test` / `pytest` / `pnpm test:e2e`）

@@ -188,7 +188,7 @@ flowchart TD
 | BR-07 | 图片 asset 必须属于当前任务**评论图域**——`FileAsset` 多态挂载无 `issue_id` 列，判定为 `entity_type='comment_image'` ∧ `entity_id=当前 issue_id` ∧ `status='uploaded'`（FILE-001 五态之一）∧ `uploaded_by=当前用户`——防跨任务 asset ID 盗链与旧值冒用 | Serializer                      | 400 `DOES_NOT_EXIST`                                                                                    |
 | BR-08 | 单条评论图片数 ≤ **9**（发表期计数超限 409 `RESOURCE_LIMIT_EXCEEDED` + `LIMIT`）；每张 ≤ 5MB、格式 png/jpg/jpeg/gif/webp（gif 不做帧数限制）——体积与格式在 presign 期对 `entity_type=comment_image` 收紧校验（FILE-001 25MB / 全量白名单的子集）     | Composer + presign + Serializer | 400 `VALIDATION_FILE_SIZE_EXCEEDED` / `VALIDATION_FILE_TYPE_NOT_ALLOWED`；409 `RESOURCE_LIMIT_EXCEEDED` |
 | BR-09 | Reaction：emoji ∈ 24 白名单；不产生通知、不产生 IssueActivity 逐条留痕（聚合变化不审计——降噪与表体积双重考量，P3 复议）                                                                                                                              | Serializer                      | 400 `NOT_A_CHOICE`                                                                                      |
-| BR-10 | Reaction 幂等：重复 POST 同 emoji 200 无变化；`bulk` 语义靠唯一约束 + `ignore_conflicts`                                                                                                                                                             | DB + Service                    | —                                                                                                       |
+| BR-10 | Reaction 幂等：重复 POST 同 emoji 200 无变化；幂等语义靠唯一约束 + `get_or_create`（§4.3.2 口径，软删行复活或新建）                                                                                                                                                             | DB + Service                    | —                                                                                                       |
 | BR-11 | 通知互斥（扩展 COLLAB-001 BR-06）：同一线程动作对同一人至多一条——优先级 `mentioned` > `comment.replied` > `issue.commented`                                                                                                                          | Worker 分派                     | —                                                                                                       |
 | BR-12 | `comment.replied` 仅发**顶层评论作者**（回复的回复场景被回复人走 mentioned）；操作者本人 / 域外成员剔除                                                                                                                                              | Worker                          | —                                                                                                       |
 | BR-13 | 评论列表两层结构：顶层正序 + `replies[]` 正序；`replies` 默认全量返回（≤100），前端折叠纯展示行为                                                                                                                                                    | ViewSet                         | —                                                                                                       |
@@ -404,9 +404,9 @@ accessory = models.JSONField(...)            # 启用 images 键：{"images": [a
 #### 4.1.3 迁移
 
 ```python
-# apps/api/plane/db/migrations/00XX_p3_collab002.py
+# apps/api/plane/db/migrations/00XX_p2_comment_reactions.py
 class Migration(migrations.Migration):
-    dependencies = [("db", "00XX_p2_tail")]
+    dependencies = [("db", "00XX_p2_issue_views")]  # 同迭代 BOARD-003 迁移（依赖链保持 p2_ 同族）
     operations = [
         migrations.CreateModel(...),   # CommentReaction（新表 + 唯一约束 + 索引）
         # issue_comments 零 DDL —— parent / accessory P1 已建（COLLAB-001 §4.1.1）
@@ -438,7 +438,7 @@ erDiagram
 | 索引 / 约束                                   | 服务的查询                                                                | 说明                                                                |
 | --------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | `idx_comment_issue_time`（既有）              | 顶层 + 回复一次取数（`WHERE issue_id=? ORDER BY created_at`，内存分两层） | 单任务评论量 < 数千，两层装配 O(n)                                  |
-| `uniq_reaction_comment_actor_emoji`           | toggle 幂等 + 去重                                                        | 软删偏条件（复活语义同 `IssueAssignee`：重按复活旧行）              |
+| `uniq_reaction_comment_actor_emoji`           | toggle 幂等 + 去重                                                        | 软删偏条件（复活语义同 `IssueAssignee`：重按复活软删行或新建——与 §4.3.2 `get_or_create`「复活或新建」同口径） |
 | `idx_reaction_comment_emoji`                  | 页面评论集的聚合 `GROUP BY`                                               | `comment_id IN (30)` + `COUNT(*) GROUP BY emoji, comment_id` 单查询 |
 | `(parent)` 复用 `idx_comment_issue_time` 首列 | `reply_count` annotate：`Count("replies")`                                | 无需新索引                                                          |
 
@@ -452,7 +452,9 @@ erDiagram
 | 4   | `DELETE` | `…/issues/{issue_id}/comments/{comment_id}/reactions/` | 撤销表情（幂等；body 带 `emoji`——路径参数仅 UUID/slug，api-conventions §2.3） | `comment.create` | `200`  |
 | 5   | `GET`    | `…/issues/{issue_id}/comments/?expand=reactions`       | 聚合含 `user_ids`（名单浮层数据）                                             | `project.read`   | `200`  |
 
-> 编辑 / 删除端点复用 `COLLAB-001`（窗口与软删语义不变，回复同权适用）；图片上传复用 `FILE-001` presign 三步流——请求体选填 `entity_type=comment_image`（FILE-001 §1.4 已注册的 P2 挂载点，`entity_id` 落当前 issue，缺省 `issue` 语义不变；不占单任务 20 附件配额、不入附件区列表）。
+> 编辑 / 删除端点复用 `COLLAB-001`（窗口与软删语义不变，回复同权适用）；图片上传复用 `FILE-001` presign 三步流——请求体选填 `entity_type=comment_image`（FILE-001 §1.4 已注册的 P2 挂载点，`entity_id` 落当前 issue，缺省 `issue` 语义不变；不占单任务 20 附件配额、不入附件区列表）。**上游待回改项**——presign 契约（架构 `api-conventions` §13.2，请求体字段仅 `file_name`/`file_size`/`content_type`，FILE-001 请求体据此对齐）需补 `entity_type` 选填参数（本迭代评论图域消费，P2 扩展登记）。
+>
+> 路径深度锚定：上表第 3/4 行 `…/comments/{comment_id}/reactions/` 为第 5 层资源——api-conventions §2.4 放行示例止于第 4 层（`…/comments/{comment_id}/`），文义为项目层以下不设嵌套限制（`reactions` 系叶子资源评论的直接子资源），本端点第 5 层合规。
 
 #### 4.2.1 `POST …/comments/` — 发表回复（含图片）
 
@@ -859,7 +861,7 @@ def notify_comment(self, comment_id: str) -> int:
 ### 6.1 Plane 实现分析
 
 - **楼中楼**：`IssueComment.parent` 自引用无限层级，前端展示两级——与我们的归并差异在于 Plane 允许数据层任意深（API 直改可造深树，渲染未知行为），本系统在 Service 层把「深」在写入点就归并为两级 + @ 补偿，**数据形状与展示形状强制一致**。
-- **Reactions**：存于 `accessory` JSONB 内联（读改写整列）。其 toggle 端点在并发下存在丢失更新窗口（两个用户同时反应，后者覆盖前者的数组）。本系统独立表 + 唯一约束从结构上消除该竞态（IT-10）——「抄结构时把它没做对的并发语义修掉」，与 `COLLAB-001` 修通知异步化是同一策略。
+- **Reactions**：存于 `accessory` JSONB 内联（读改写整列）。其 toggle 端点在并发下存在丢失更新窗口（两个用户同时反应，后者覆盖前者的数组）。本系统独立表 + 唯一约束从结构上消除该竞态（UT-10）——「抄结构时把它没做对的并发语义修掉」，与 `COLLAB-001` 修通知异步化是同一策略。
 - **图片评论**：评论图片与附件同通道（asset 层），本系统一致复用 `FILE-001`——不为一处 UI 重复建设上传设施。
 
 ### 6.2 Ones 实现分析

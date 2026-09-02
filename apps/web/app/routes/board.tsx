@@ -54,7 +54,7 @@ export default function Board() {
         if (col) col.issues.push(it);
       }
       setCols([...map.values()]);
-    } finally { setLoading(false); }
+    } catch { /* 鉴权失败由拦截器统一处理 */ } finally { setLoading(false); }
   }
 
   useEffect(() => { load(); }, [workspaceSlug, projectId]);

@@ -48,7 +48,7 @@ export class SessionStore {
   }
 
   async signUp(email: string, password: string, displayName?: string, justRegistered?: boolean): Promise<void> {
-    const r = await AuthAPI.signUp(email, password, displayName ?? (justRegistered ? undefined : undefined));
+    const r = await AuthAPI.signUp(email, password, displayName);
     this.setSession((r as any).data);
     if (justRegistered) this.justRegistered = true; // AUTH-001 §3.5：注册成功工作台顶部一次性欢迎条
   }

@@ -1,3 +1,17 @@
+# API 真相源（与 tests/e2e/no-console-errors.ts 的 API_TRUTH 镜像——跨语言同源 grep 锁定）
+# 状态码变更必须同步：TS 端的 API_TRUTH + 本表 + 后端契约
+HTTP = {
+  "OK":          200,   # GET 资源正常
+  "CREATED":     201,   # POST 建资源
+  "NO_CONTENT":  204,   # DELETE / sign-out 无 body
+  "FORBIDDEN":   401,   # DRF 未认证 401（CSRF/未登录）
+  "UNAUTHORIZED": 403,   # 越权 403（DRF SessionAuth 拒绝）
+  "NOT_FOUND":   404,   # 越权 404（AUTH-003 防 ID 枚举）
+  "CONFLICT":    409,   # identifier 重复
+  "TOO_MANY":    429,   # 限流
+  "SRV_ERR":     500,   # 期望失败用
+}
+
 """Sprint 0 接口端到端验证（JMeter jmx 等价的 Python 版）。
 用法：python3 tests/jmeter/sprint-0-flow.py http://localhost:8000
 前置：API 已启动并连接真实 PG；JMeter jmx 在 tests/jmeter/sprint-0-flow.jmx（结构已校验）。
@@ -27,7 +41,7 @@ def step(label, fn):
     print(f"\n== {label} ==")
     code, body = fn()
     print(f"  HTTP {code}")
-    if not (200 <= code < 300):
+    if not (HTTP["OK"] <= code < 300):
         print(f"  ✗ FAIL: {body}")
         raise SystemExit(1)
     print(f"  ✓ ok")
@@ -107,7 +121,7 @@ csrf = fresh_csrf()
 del_code, _ = req(
     "DELETE", f"/api/v1/workspaces/{ws}/projects/{pid}/", None, {"X-CSRFToken": csrf},
 )
-assert del_code in (200, 204), f"DELETE expected 200/204, got {del_code}"
+assert del_code in (HTTP["OK"], HTTP["NO_CONTENT"]), f"DELETE expected 200/204, got {del_code}"
 # 重新拉 csrf 后 GET 该项目应 404（软删除后唯一约束不重复，Manager 过滤 deleted_at）
 csrf = fresh_csrf()
 code_after_del, _ = req("GET", f"/api/v1/workspaces/{ws}/projects/{pid}/", headers={"X-CSRFToken": csrf})
@@ -117,7 +131,7 @@ print(f"\n== 10a project delete ==\n  DELETE → {del_code} ✓\n  GET after →
 # 10b) 越权（清 cookie 后重发 —— 无认证返回 401）
 cj.clear()
 code, _ = req("GET", f"/api/v1/workspaces/{ws}/projects/{pid}/")
-assert code in (401, 403, 404), f"expected 401/403/404, got {code}"
+assert code in (HTTP["FORBIDDEN"], HTTP["UNAUTHORIZED"], HTTP["NOT_FOUND"]), f"expected 401/403/404, got {code}"
 print(f"\n== 10b cross-tenant blocked ==\n  HTTP {code} ✓")
 
 print("\n🎉 ALL 10 STEPS PASSED — 接口测试通过")

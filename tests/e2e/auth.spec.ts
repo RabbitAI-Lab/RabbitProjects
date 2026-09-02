@@ -2,7 +2,8 @@
  *  真实 PG：`postgres:17-alpine` 容器跑 schema + extensions。
  *  执行：pnpm exec playwright test tests/e2e/auth.spec.ts */
 import { test, expect, type Page } from "@playwright/test";
-import { attachConsoleGuard, API_TRUTH } from "./no-console-errors";
+import { attachConsoleGuard, HTTP } from "./no-console-errors";
+// 断言与后端契约（tests/jmeter/sprint-0-flow.py）同源——sprint-0-flow.py 状态码与字段名必须与本表保持一致
 
 const ts = Date.now();
 const TEST_EMAIL = `e2e-${ts}@rabbit.dev`;
@@ -21,15 +22,13 @@ async function expectProjectsPage(page: Page) {
 }
 
 test.describe("Sprint 0 E2E", () => {
-  test.beforeEach(async ({ page }, testInfo) => {
-    testInfo.attachments.push({ name: "console-errors", body: Buffer.from("") });
-    (page as any).__errors = attachConsoleGuard(page);
+  let getErrs: () => string[] = () => [];
+  test.beforeEach(async ({ page }) => {
+    getErrs = attachConsoleGuard(page);
   });
-  test.afterEach(async ({ page }) => {
-    const errs = (page as any).__errors?.() ?? [];
-    expect.soft(errs, "console errors").toEqual([]);
+  test.afterEach(async () => {
+    expect(getErrs(), "console errors").toEqual([]);
   });
-  // console guard disabled during debug
   test("完整动线：注册 → 工作台 → 建项目 → 建任务 → 拖拽 → 刷新一致", async ({ page }) => {
     // 1) 打开登录页
     await page.goto("/login");
@@ -48,7 +47,9 @@ test.describe("Sprint 0 E2E", () => {
 
     // 4) 提交 → 自动跳到 /:ws/projects
     await page.getByRole("button", { name: "创建账号" }).click();
-    await expectProjectsPage(page); // 隐式断言：me/200、workspaces/200、projects/200（与 API_TRUTH 共享数据真相）
+    // 断言与 HTTP.CREATED 一致（sprint-0-flow.py step 03 同源）
+    await page.waitForResponse((r) => r.url().includes("/api/v1/workspaces/") && r.request().method() === "GET" && r.status() === HTTP.OK, { timeout: 8000 });
+    await expectProjectsPage(page);
 
     // 5) 工作台空态：点击创建项目（modal 标题为非语义 div）
     await page.getByRole("button", { name: /创建项目/ }).first().click();
@@ -92,10 +93,13 @@ test.describe("Sprint 0 E2E", () => {
   test("未登录访问受保护路由 → 跳登录页", async ({ page, context }) => {
     // 清空 cookie 模拟未登录
     await context.clearCookies();
+    // 断言：受保护页触发 /users/me/ → HTTP.OK 不在（401/403 因为未认证）
+    const meResp = page.waitForResponse((r) => r.url().includes("/api/v1/users/me/"), { timeout: 8000 });
     await page.goto("/any-workspace/projects");
+    const resp = await meResp;
+    expect([401, 403]).toContain(resp.status()); // 期望无认证的拒绝码
     await page.waitForURL(/\/login/, { timeout: 5_000 });
     await expect(page.getByRole("heading", { name: /登录 RabbitProjects/ })).toBeVisible();
-  // 接口数据与 JMeter 脚本（sprint-0-flow.py step 03）一致
-  expect(page.getByRole("button", { name: /一键进入演示账号/ })).toBeVisible();
+    expect(page.getByRole("button", { name: /一键进入演示账号/ })).toBeVisible();
   });
 });

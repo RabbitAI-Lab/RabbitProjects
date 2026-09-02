@@ -5,11 +5,22 @@
  *  - 断言对象是"冻结稿规定的字段必须存在/可见/可用"，不由实现反推（防自我印证）
  *  运行：E2E_NO_SERVER=1 pnpm exec playwright test tests/e2e/parity.spec.ts */
 import { test, expect } from "@playwright/test";
-import { attachConsoleGuard, API_TRUTH } from "./no-console-errors";
+import { attachConsoleGuard, HTTP } from "./no-console-errors";
 
-const ts = Date.now();
-const EMAIL = `parity-${ts}@rabbit.dev`;
+function freshEmail(prefix = "parity"): string {
+  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e4)}@rabbit.dev`;
+}
+
 const PW = "Rabbit123";
+
+test.describe("C.1-C.8 全屏字段级 parity 扫描", () => {
+  let getErrs: () => string[] = () => [];
+  test.beforeEach(async ({ page }) => {
+    getErrs = attachConsoleGuard(page);
+  });
+  test.afterEach(async () => {
+    expect(getErrs(), "console errors").toEqual([]);
+  });
 
 test("C.1-C.8 全屏字段级 parity 扫描", async ({ page }) => {
   test.setTimeout(60_000);
@@ -36,7 +47,7 @@ test("C.1-C.8 全屏字段级 parity 扫描", async ({ page }) => {
   await expect.soft(page.getByText("强度：中")).toBeVisible();
 
   /* ── 注册落地 → C.3 项目列表 ── */
-  await page.getByLabel("邮箱").fill(EMAIL);
+  await page.getByLabel("邮箱").fill(freshEmail());
   await page.getByLabel("密码", { exact: true }).fill(PW);
   await page.getByLabel("确认密码").fill(PW);
   await page.getByRole("button", { name: "创建账号" }).click();
@@ -113,7 +124,7 @@ test("C.1-C.8 全屏字段级 parity 扫描", async ({ page }) => {
   await expect.soft(page.getByText("状态", { exact: true })).toBeVisible();
   await expect.soft(page.getByText("负责人", { exact: true })).toBeVisible();
   await expect.soft(page.getByText("截止时间", { exact: true })).toBeVisible();
-  await page.locator("aside").getByRole("button", { name: "✕" }).click();
+  await page.locator("aside").getByRole("button", { name: "关闭" }).click();
 
   /* ── C.5 任务列表 ── */
   await page.getByRole("navigation").getByRole("link", { name: "任务列表" }).click();
@@ -127,7 +138,7 @@ test("C.1-C.8 全屏字段级 parity 扫描", async ({ page }) => {
   // 行点击 → 抽屉
   await page.locator("tbody tr").first().click();
   await expect.soft(page.locator("aside").getByText(/PRT-\d+/)).toBeVisible();
-  await page.locator("aside").getByRole("button", { name: "✕" }).click();
+  await page.locator("aside").getByRole("button", { name: "关闭" }).click();
 
   /* ── C.8 设置页 ── */
   await page.getByRole("navigation").getByRole("link", { name: "项目设置" }).click();
@@ -139,4 +150,5 @@ test("C.1-C.8 全屏字段级 parity 扫描", async ({ page }) => {
   await page.getByRole("button", { name: "删除项目" }).first().click();
   await expect.soft(page.getByText(/输入项目名称/)).toBeVisible();
   await expect.soft(page.getByRole("button", { name: "删除项目" }).last()).toBeDisabled(); // confirm≠name
+});
 });

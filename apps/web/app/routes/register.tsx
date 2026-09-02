@@ -27,7 +27,7 @@ export default function Register() {
     if (!s.hard) { setErr("密码不满足规则：至少 8 位，需含大小写字母与数字"); setLoading(false); return; }
     if (pw !== pw2) { setErr("两次输入的密码不一致"); setLoading(false); return; }
     try {
-      await session.signUp(email, pw, true /* justRegistered → 欢迎条 */);
+      await session.signUp(email, pw, undefined, true); // 第 4 参 justRegistered → 欢迎条（第 3 参是 displayName）
       nav(`/${session.currentWsSlug}/projects`);
     } catch (e: any) {
       if (e?.code === "AUTH_EMAIL_EXISTS") {

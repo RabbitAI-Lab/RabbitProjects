@@ -21,12 +21,14 @@ export default function IssuesList() {
   const [showTaskModal, setShowTaskModal] = useState(false);
 
   async function load() {
-    const [iRes, pRes] = await Promise.all([
-      IssueAPI.list(workspaceSlug!, projectId!, { ordering: "sort_order" }),
-      ProjectAPI.detail(workspaceSlug!, projectId!),
-    ]);
-    setIssues((iRes as any).data);
-    setProject((pRes as any).data);
+    try {
+      const [iRes, pRes] = await Promise.all([
+        IssueAPI.list(workspaceSlug!, projectId!, { ordering: "sort_order" }),
+        ProjectAPI.detail(workspaceSlug!, projectId!),
+      ]);
+      setIssues((iRes as any).data);
+      setProject((pRes as any).data);
+    } catch { /* 鉴权失败由 axios 拦截器统一跳转；此处吃掉 unhandled rejection */ }
   }
   useEffect(() => { load(); }, [workspaceSlug, projectId]);
   const [sp, setSp] = useSearchParams();

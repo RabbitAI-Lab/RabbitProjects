@@ -18,8 +18,8 @@ export default function ProjectsList() {
     WorkspaceAPI.list().then((r) => {
       const list = (r as any).data as WorkspaceSummary[];
       setWs(list.find((w) => w.slug === workspaceSlug) ?? null);
-    });
-    ProjectAPI.listByWs(workspaceSlug!).then((r) => setProjects((r as any).data));
+    }).catch(() => { /* 鉴权失败由 axios 拦截器统一跳转；此处吃掉 unhandled rejection */ });
+    ProjectAPI.listByWs(workspaceSlug!).then((r) => setProjects((r as any).data)).catch(() => {});
   }, [workspaceSlug]);
 
   return (

@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-echo "lint-staged skipped (workaround: harness reverts linted files; full CI runs lint)"
+echo "lint-staged skipped"

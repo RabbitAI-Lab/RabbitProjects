@@ -1,4 +1,7 @@
-#!/usr/bin/env bash
-# beat 入口占位 —— 实际启动逻辑由 INFRA-002 §4 交付（migrator 为一次性 migrate 服务）
-set -euo pipefail
-echo "[entrypoint:beat] pending INFRA-002"
+#!/usr/bin/env sh
+set -e
+rm -f /tmp/celerybeat.pid
+exec celery -A plane beat \
+    --loglevel="${CELERY_LOG_LEVEL:-INFO}" \
+    --scheduler django_celery_beat.schedulers:DatabaseScheduler \
+    --pidfile=/tmp/celerybeat.pid

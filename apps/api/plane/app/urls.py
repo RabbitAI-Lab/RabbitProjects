@@ -6,6 +6,7 @@ from plane.app.views.projects import ProjectDetailView, ProjectListCreateView, P
 from plane.app.views.workspaces import WorkspaceDetailView, WorkspaceListCreateView
 
 urlpatterns = [
+    path("health/", HealthView.as_view(), name="health"),
     path("auth/sign-up/", SignUpView.as_view(), name="auth-signup"),
     path("auth/sign-in/", SignInView.as_view(), name="auth-signin"),
     path("auth/sign-out/", SignOutView.as_view(), name="auth-signout"),

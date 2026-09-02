@@ -1,4 +1,7 @@
-#!/usr/bin/env bash
-# migrator 入口占位 —— 实际启动逻辑由 INFRA-002 §4 交付（migrator 为一次性 migrate 服务）
-set -euo pipefail
-echo "[entrypoint:migrator] pending INFRA-002"
+#!/usr/bin/env sh
+set -e
+echo "[migrator] applying migrations ..."
+python manage.py migrate --noinput --verbosity 1
+echo "[migrator] collecting static files ..."
+python manage.py collectstatic --noinput || true
+echo "[migrator] done."

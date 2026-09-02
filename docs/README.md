@@ -96,6 +96,12 @@ RabbitProjects 是一套复刻 [Ones](https://ones.cn/) 与 [Plane](https://gith
 | 16 | [sprint-0-poc/TASK-001-task-crud.md](sprint-0-poc/TASK-001-task-crud.md) | 任务 CRUD（5 固定字段） | Sprint 0 | P0 | TASK |
 | 17 | [sprint-0-poc/BOARD-001-fixed-kanban.md](sprint-0-poc/BOARD-001-fixed-kanban.md) | 固定三列看板 + 拖拽 | Sprint 0 | P0 | BOARD |
 
+#### 4.2.1 设计产物（不计入功能文档编号体系）
+
+| 产物 | 说明 |
+| --- | --- |
+| [design/sprint-0-hifi-prototype.html](design/sprint-0-hifi-prototype.html) | Sprint 0 高保真可交互原型 · **2026-09-02 冻结为设计基线**（依产品负责人裁决「有界面交互的迭代须先有高保真稿并评审冻结」，见需求文档 §8.3 第 8 条修订与 sprint-0-poc/sprint-overview.md §1.1；后续含 UI 的迭代沿用此流程） |
+
 ### 4.3 Sprint 1 — MVP 能力补齐（11 份 · P1 · 第 3 周）
 
 目标：补齐 10 人以内小团队日常真实协作必备能力。

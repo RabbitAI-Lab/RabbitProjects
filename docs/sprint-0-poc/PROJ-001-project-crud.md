@@ -1780,3 +1780,5 @@ apps/web/app/routes/$workspaceSlug/
 - [ ] 上游确认：`TEAM-001` 的 Workspace 创建已 seed 默认 `IssueType`，`create_default_issue_types` 的兜底分支在正常流程中不会被触发
 - [ ] 下游确认：`TASK-001` 开发者确认 `default_state_id` 与 `identifier` 足以支撑任务创建与编号展示；`BOARD-001` 开发者确认 `GET .../states/` 的四条契约（§4.2.6）足以构造 `BoardColumn[]`，无需追加字段
 - [ ] `docker compose up` 后可从零完成「注册 → 默认团队 → 创建项目 → 进入 Board 看到三列」完整链路
+
+| 文档状态 | **已实现**（2026-09-02 · Sprint 0 全部文档落地） |

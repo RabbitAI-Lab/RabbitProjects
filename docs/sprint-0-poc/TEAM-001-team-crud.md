@@ -1337,3 +1337,4 @@ React Router v7 Framework Mode（SPA 模式，`ssr: false`），版本锁 `7.x`�
 - [ ] `docker compose up` 后可从零完成「注册 → 自动进入默认团队 → 创建第二个团队 → 切换 → 刷新保持」完整链路
 - [ ] `PROJ-001` 的开发者确认：`GET /api/v1/workspaces/{slug}/` 返回的 `id` 与 `current_user_role` 足以支撑其项目列表页与权限渲染，无需追加字段
 
+| 文档状态 | **已实现**（2026-09-02 · Sprint 0 全部文档落地） |

@@ -2248,3 +2248,5 @@ export const useIssues = (workspaceSlug?: string, projectId?: string) => {
 - [ ] 下游确认：`BOARD-001` 开发者确认 ① `?group_by=state_id` 分组响应的四条契约（§4.2.3）满足看板取数；② `PATCH .../issues/{id}/` 支持同时更新 `state_id` + `sort_order`；③ `calculate_sort_order` 的五个分支与前端算法一致；④ `IssuePeekDrawer` 组件可直接复用为看板卡片点击的详情面板
 - [ ] `docker compose up` 后可从零完成「注册 → 默认团队 → 建项目 → 1 分钟建 3 条任务并指派给自己 → 编辑任务 → 删除任务」完整链路
 - [ ] Sprint 0 技术风险清零确认：advisory lock 序列号、sort_order 浮点插值、IssueActivity 异步 diff、TipTap 三格式存储四项机制均已在真实环境验证通过
+
+| 文档状态 | **已实现**（2026-09-02 · Sprint 0 全部文档落地） |

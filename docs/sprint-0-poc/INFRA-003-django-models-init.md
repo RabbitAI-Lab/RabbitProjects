@@ -2163,3 +2163,5 @@ Plane 用四列冗余存储同一份描述，我们完整参考：
 - P1 延续：`sprint-1-mvp/TASK-002`（`priority` / `start_date` / `labels` / `parent` 开放、`issue_type` 类型切换与存量回填）
 - P2 延续：`TASK-008`（`custom_fields` 启用 + `CustomFieldDefinition` 建表）、`TASK-009`（`archived_at` 归档 / 恢复）、`TASK-010`（`IssueActivity` 全量审计日志展示）
 - 全局索引：[`docs/README.md`](../README.md) §4.2（Sprint 0 十份文档清单）、§7.3 第 1 条（INFRA-003 是全系统总闸）
+
+| 文档状态 | **已实现**（2026-09-02 · Sprint 0 全部文档落地） |

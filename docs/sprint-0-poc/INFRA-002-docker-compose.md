@@ -1591,3 +1591,5 @@ class Command(BaseCommand):
 - P2 延续：`sprint-6-stabilize/INFRA-005-rate-limit-backup.md`（限流 / 备份 / 生产部署）
 - P4 延续：`sprint-future-p4/INFRA-006-ha-deploy.md`（高可用集群 / 气隙部署）
 - 原始需求：[`docs/需求文档.md`](../需求文档.md) §8.3 第 1 条、§8.4 第 6 条
+
+| 文档状态 | **已实现**（2026-09-02 · Sprint 0 全部文档落地） |

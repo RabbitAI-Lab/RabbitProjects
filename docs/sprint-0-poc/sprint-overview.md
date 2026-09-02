@@ -46,6 +46,19 @@
 
 **实现注意项（源自原型踩坑与已知未覆盖项）**：
 
+
+### 1.2 Sprint 0 实施收口（2026-09-02）
+
+10 份文档全部落地，验收 6 条全部通过：
+
+- 后端 14 个 Django Model（BaseModel/Role/User/Workspace/WorkspaceMember/Project/ProjectMember/SystemAdmin/IssueType/State/Label/Issue/IssueAssignee/IssueLabel/IssueActivity/IssueLink）+ 0001 migration（TrigramExtension + GIN）；
+- API 端点：注册/登录/退出/me/csrf · 工作空间 CRUD · 项目 CRUD + 状态列表 · 任务 CRUD（含拖拽 PATCH）+ 看板分组列表 + 健康检查；
+- 前端 @rp/web 完整六界面（登录/注册/工作台/项目列表/任务列表/三列看板拖拽/抽屉/路由守卫），admin/space 骨架就位；
+- Docker Compose 14 服务编排（12 业务 + migrator + createbuckets）。
+
+实现偏差 5+ 项登记于 [`docs/adr/0001-sprint-0-impl-deviations.md`](../adr/0001-sprint-0-impl-deviations.md)，待 Sprint 1 开工前回改对应架构文档段落。
+
+
 1. **HTML 禁止 `<button>` 嵌套 `<button>`**——解析器会自动闭合外层 button 导致 DOM 结构塌陷（原型切换器菜单曾因此整页错位）；React/JSX 不报此错，需在 code review 与 DOM 校验中显式防护。
 2. 原型未覆盖、实现时按各文档 §3 为准的项：菜单键盘 ↑↓ 导航（TEAM-001 §3.2）、拖拽边缘自动滚动（BOARD-001 §3.3）、TipTap 工具条在原型中为装饰外壳（实现按 TASK-001 §3.4 接真实命令）、移动端响应式（P0 仅桌面 Chrome）。
 3. 表单 ID 与查询选择器一致性（原型曾因 `reg-form`/`rg-form` 笔误导致提交监听器静默丢失）——建议实现期对关键表单挂载加最小冒烟断言。

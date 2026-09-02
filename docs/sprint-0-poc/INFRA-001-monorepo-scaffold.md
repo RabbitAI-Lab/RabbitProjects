@@ -1284,3 +1284,5 @@ Ones 为闭源商业产品，**无 Monorepo 结构的公开信息**。可获取�
 - 架构依据：[`architecture/tech-stack.md`](../architecture/tech-stack.md)、[`architecture/monorepo-structure.md`](../architecture/monorepo-structure.md)
 - 直接下游：[`INFRA-002-docker-compose.md`](./INFRA-002-docker-compose.md)、[`INFRA-003-django-models-init.md`](./INFRA-003-django-models-init.md)
 - 依赖全图：[`architecture/dependency-graph.md`](../architecture/dependency-graph.md)
+
+| 文档状态 | **已实现**（2026-09-02 · Sprint 0 全部文档落地） |

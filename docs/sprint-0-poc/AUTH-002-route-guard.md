@@ -6,7 +6,7 @@
 | 所属迭代 | Sprint 0：POC 技术验证（第 1-2 周） |
 | 优先级 | P0（POC 阻塞级） |
 | 所属模块 | M1-AUTH 账号与权限 |
-| 文档状态 | 待评审（Draft） |
+| 文档状态 | **已实现**（2026-09-02 · Sprint 0 全部文档落地） |
 | 最后更新日期 | 2026-09-01 |
 | 上游依据 | `docs/需求文档.md` §3.1 账号与权限、§四 权限体系 |
 | 前置依赖 | `AUTH-001`（认证基础：Session、`AuthStore.isBootstrapped`、`users/me` 端点）、`INFRA-001`（`apps/web` 路由与 axios 实例位点） |

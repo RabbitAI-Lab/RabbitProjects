@@ -11,7 +11,7 @@
 | 上游依赖 | `TASK-001`（Issue CRUD 与状态流转）、`TASK-004`（层级服务与 CTE 范式）、`INFRA-003`（`IssueLink` 建表与双索引） |
 | 下游消费 | **`GANTT-001`（甘特图依赖连线与前置约束，数据结构契约的唯一下游）**、`TASK-010`（关系变更 Activity）、`WF-004`（P3 流转守卫扩展位）、`PROJ-004`（P3 跨项目依赖评估） |
 | 上游依据 | `docs/需求文档.md` §3.4（任务依赖关系：前置任务/后置任务联动）、§8.2 任务核心 P2 列 |
-| 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md)（**§2.11 IssueLink 成对存储 / INVERSE_MAP / 依赖环检测 CTE**）、[`api-conventions.md`](../architecture/api-conventions.md)（§2.5 端点清单 `relations/`、§8.5 `RESOURCE_TRANSITION_BLOCKED` / `RESOURCE_CIRCULAR_DEPENDENCY`）、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) |
+| 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md)（**§2.11 IssueLink 成对存储 / INVERSE_MAP / 依赖环检测 CTE**、**§3 项目级 advisory lock**）、[`api-conventions.md`](../architecture/api-conventions.md)（§2.5 端点清单 `relations/`、§8.5 `RESOURCE_TRANSITION_BLOCKED` / `RESOURCE_CIRCULAR_DEPENDENCY`）、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) |
 | 对标基线 | Plane `IssueLink`（blocks/blocked_by/relates_to/duplicate 成对存储） · Ones Custom Link Types（Business+ 自定义关联类型） |
 | 工作量估算 | 后端 3 人日 / 前端 2.5 人日 / 联调与测试 1.5 人日，合计 **7 人日** |
 
@@ -23,7 +23,7 @@
 
 依赖关系回答「这件事为什么还不能做」：后端 API 没上线，前端联调任务就只能等。本迭代交付四类有向关联（`blocks` / `is_blocked_by` / `relates_to` / `duplicates`），并在此基础上交付两条硬约束：
 
-1. **依赖图无环**——`blocks` 关系构成有向图，创建时用递归 CTE 做可达性检查，任何会闭合回路的边直接拒绝（`409 RESOURCE_CIRCULAR_DEPENDENCY`）；
+1. **依赖图无环**——`blocks` 关系构成有向图，创建时用递归 CTE 做可达性检查（并发创建经项目级 advisory lock 串行化，见 §4.3.2），任何会闭合回路的边直接拒绝（`409 RESOURCE_CIRCULAR_DEPENDENCY`；环链达 101 条边、CTE 命中深度 100 仍回到起点的闭合判脏数据 `500`，见 §2.6）；
 2. **流转拦截**——任务存在未完成的前置阻塞项（`blocks` 本任务的那些任务）时，将其拖入 `completed` 组状态被拒绝（`409 RESOURCE_TRANSITION_BLOCKED`，`details` 列出阻塞项）。
 
 工程上最关键的一条契约是：**`GET …/issues/{id}/relations/` 的响应结构是 `GANTT-001` 甘特图连线渲染的直接数据源**，本迭代一经交付即冻结（加字段可以，改语义不可以）。
@@ -80,9 +80,9 @@ erDiagram
 | 流转拦截（未完成前置禁止完成） | ✅ 基础版（仅 `blocks`） | `WF-004` P3 扩展为可配置守卫（字段校验/工时必填/权限矩阵） |
 | 关系在详情页分组展示 | ✅ | — |
 | 甘特图连线数据契约 | ✅ 冻结 | `GANTT-001` 消费 |
-| 自定义关联类型（验证/衍生于…） | ❌ | P3 `IssueLinkType` 配置表（架构文档 §8.2 已设计升级路径） |
+| 自定义关联类型（验证/衍生于…） | ❌ | P3 `IssueLinkType` 配置表（架构文档 §2.11 P3 升级路径已设计） |
 | 关键路径计算 | ❌ | P3 `GANTT-003` |
-| 跨项目依赖 | ❌ 同项目限定（BR-02） | P4（`PROJ-004` 项目集跨项目依赖评估） |
+| 跨项目依赖 | ❌ 同项目限定（BR-02） | P3（`PROJ-004`，Sprint 9 项目集跨项目依赖评估） |
 | 依赖驱动的自动排期 / 日期联动 | ❌ | P4（甘特拖拽联动仅展示，不自动改期，`GANTT-002`） |
 
 ### 1.5 前置依赖
@@ -119,7 +119,8 @@ flowchart TD
     E -->|否| E1["400（Service 先拦，<br/>DB chk_issue_link_no_self 兜底）"]
     E -->|是| F{"A、B 同项目?"}
     F -->|否| F1["400 VALIDATION_ERROR"]
-    F -->|是| G{"关系已存在?<br/>（含镜像方向）"}
+    F -->|是| F2["pg_advisory_xact_lock(项目键)<br/>串行化「查重/环检测 → 写入」临界区"]
+    F2 --> G{"关系已存在?<br/>（含镜像方向）"}
     G -->|是| G1["409 RESOURCE_ALREADY_EXISTS"]
     G -->|否| H{"类型属于 blocks 族?"}
     H -->|relates_to/duplicates| I["直接成对写入（无需防环）"]
@@ -128,7 +129,7 @@ flowchart TD
     J -->|否| I
     I --> K["同事务 INSERT 两行（正 + 镜像）"]
     K --> L["on_commit → Activity(field=relations)"]
-    L --> M["201；两端详情页关联区刷新"]
+    L --> M["201 + Location；两端详情页关联区刷新"]
 ```
 
 ### 2.2 流转拦截（依赖 × 状态机交汇点）
@@ -186,10 +187,10 @@ stateDiagram-v2
 | 编号 | 规则 | 判定位置 | 违反后果 |
 | --- | --- | --- | --- |
 | BR-01 | 禁止自引用（A 关联 A） | Service 先拦 + DB `chk_issue_link_no_self` 兜底 | `400 VALIDATION_ERROR` |
-| BR-02 | 两端必须同项目（同 Workspace 蕴含）；跨项目关联 P4 评估 | Serializer | `400 VALIDATION_ERROR` + `DOES_NOT_EXIST` |
+| BR-02 | 两端必须同项目（同 Workspace 蕴含）；跨项目关联 P3 评估（`PROJ-004`，Sprint 9） | Serializer | `400 VALIDATION_ERROR` + `DOES_NOT_EXIST` |
 | BR-03 | 成对写入：正反两行同一事务；删除同步删镜像行；**任何路径不得绕过 `link_service` 直写 `IssueLink`** | Service 唯一入口 | 评审拒绝 |
 | BR-04 | 唯一性以「业务事实」判定：`(A,B,blocks)` 存在时，创建 `(A,B,is_blocked_by)` / `(B,A,blocks)` 均拒绝（防镜像方向重复建档） | Service（查正反两向）+ DB `uniq_issue_relation` 兜底 | `409 RESOURCE_ALREADY_EXISTS` |
-| BR-05 | `blocks` 族关系创建前执行可达性环检测（递归 CTE，深度保险丝 100）；`relates_to` / `duplicates` 不检测 | Service | `409 RESOURCE_CIRCULAR_DEPENDENCY` + 链路径 |
+| BR-05 | `blocks` 族关系创建前执行可达性环检测（递归 CTE；保险丝 100 **仅作脏数据告警线**——命中环且环链达 101 条边（CTE 命中深度 100）判脏数据 500，未命中环（含环链超 101 条边、扫描被截断）按不可达放行、不拦截合法深链，§2.6），检测与写入在项目级 advisory lock 串行化下进行（READ COMMITTED 下 CTE 看不到并发未提交边，§4.3.2）；`relates_to` / `duplicates` 不检测 | Service | `409 RESOURCE_CIRCULAR_DEPENDENCY` + 链路径；保险丝命中 → `500 SERVER_ERROR` + ERROR 告警 |
 | BR-06 | 拦截判定：目标迁入 `completed` 组时，存在 `blocks` 我方且 `state.group ∉ {completed, cancelled}` 的任务 → 拒绝 | 流转校验钩子 | `409 RESOURCE_TRANSITION_BLOCKED` + blockers 明细 |
 | BR-07 | 阻塞项 `cancelled` 视为解除阻塞（取消 = 明确不做，不再构成依赖）；`duplicates` 不参与拦截 | 流转校验 | — |
 | BR-08 | 单任务直接关联数上限 50（正反合并计数）；超出提示拆分 | Service | `409 RESOURCE_LIMIT_EXCEEDED` |
@@ -212,17 +213,19 @@ stateDiagram-v2
 | 关联数超 50 | 409 | `RESOURCE_LIMIT_EXCEEDED` | `LIMIT` | 「单任务最多 50 条关联」 |
 | 目标任务不存在/不可见 | 404 | `RESOURCE_NOT_FOUND` | — | 通用 404 提示 |
 | 删除已被他人先删 | 404 | `RESOURCE_NOT_FOUND` | — | 静默刷新关联区 |
-| CTE 保险丝触发（脏数据） | 500 | `SERVER_ERROR` | — | 通用错误 + request_id；ERROR 告警 |
+| CTE 保险丝命中（环链达 101 条边、CTE 命中深度 100 仍回到起点 → 判脏数据；合法深链未成环不触发，§2.6） | 500 | `SERVER_ERROR` | — | 通用错误 + request_id；ERROR 告警 |
+
+> **字段级子码登记**：本表使用的 `CYCLE` / `BLOCKED_BY` / `LIMIT` 为 `details[].code` 字段级子码，不占用全局错误码注册表，由 [`api-conventions.md`](../architecture/api-conventions.md) §8.8「字段级子码」承载。§8.8 现表已含 `DOES_NOT_EXIST` / `UNIQUE` 等（直接复用），但**未注册** `CYCLE`（依赖环，`message` 给出环链路径，与 `TASK-004` 同码）、`BLOCKED_BY`（前置阻塞，`details[].issue_key` 给出阻塞项编号，§4.2.4）与 `LIMIT`（关联数超上限，`message` 给出上限值与实际值）——交付时需在 §8.8 补登这三条子码条目，**架构文档待回改登记**（与 `TASK-007` `LIMIT` / `STATE` 的补登模式一致）。
 
 ### 2.6 边界条件
 
 | 边界场景 | 限制值 | 超出处理 |
 | --- | --- | --- |
 | 单任务直接关联数 | 50 | 拒绝并提示 |
-| 依赖链深度（防环扫描） | 100（保险丝） | 快速失败 + 告警 |
-| 依赖链业务深度 | 无硬限（甘特渲染按层级折叠） | `GANTT-001` 处理 |
+| 依赖链深度（防环 CTE 扫描） | 100（保险丝，**仅作脏数据告警线**，不构成业务深度限制） | 命中环且环链达 101 条边（§4.3.2 锚点邻点 depth=0、第 k 跳节点 depth=k−1，故 101 条边闭合时 target 命中 depth=100）仍回到起点 → 判脏数据：500 `SERVER_ERROR` + ERROR 告警；未命中环（含环链超 101 条边、target 落在截断层之外）→ 按不可达放行（合法深链不拦截）。闭合前环链超 101 条边的环仍可经 API 逐步建成——截断按不可达放行属已声明权衡（BR-05） |
+| 依赖链业务深度 | 无硬限（甘特渲染按层级折叠） | `GANTT-001` 处理——与上行保险丝正交：保险丝不拦截合法深链，仅在环检测场景命中「环链 101 条边（深度 100）仍回到起点」时告警 |
 | 并发互建镜像 | 同时建 `(A,B)` 与 `(B,A)` | 唯一约束兜底，后到者 409 |
-| 并发环构造 | 同时建 A→B 与 B→C→A 两条长链 | 后提交者环检测失败（检测与写入同事务） |
+| 并发环构造 | 同时建 A→B 与 B→C→A 两条长链 | 项目级 advisory lock 串行化临界区（§4.3.1），后提交者在已提交图上检测 → 409 |
 | 目标搜索结果 | 前 20 条（标题 trgm） | 关键词收窄 |
 
 ---
@@ -236,7 +239,7 @@ stateDiagram-v2
 │ TZXM-18  前端联调                          ⋯    ✕                │
 │ …（标题 / 描述区略）                                               │
 │ ──────────────────────────────────────────────────────────────── │
-│  关联 (3)                                        [+ 添加关联]    │
+│  关联 (4)                                        [+ 添加关联]    │
 │                                                                   │
 │  ⛔ 阻塞于此（前置）                                                │
 │    ├ TZXM-13  后端导出 API          ●已完成   →                  │
@@ -257,7 +260,7 @@ stateDiagram-v2
 | 行 | 图标 + 编号（`font-mono text-xs`）+ 标题（truncate）+ 状态圆点 + 跳转箭头 + 删除 ⓧ（悬浮显现） |
 | 阻塞语义强化 | 未完成的前置行前置 `alert-triangle`（amber）；已完成的为 `check`（green）——完成态视觉降级 |
 | 「+ 添加关联」 | 弹出关系选择 + 目标搜索的组合弹层（§3.2） |
-| 计数 | 分区标题 `(3)` 为三组合计（BR-08 的 50 上限进度提示：≥40 时计数变 amber） |
+| 计数 | 分区标题 `(4)` 为三组合计（前置 2 + 后置 1 + 相关 1；BR-08 的 50 上限进度提示：≥40 时计数变 amber） |
 
 ### 3.2 添加关联弹层
 
@@ -288,7 +291,7 @@ stateDiagram-v2
 | 元素 | 规格 |
 | --- | --- |
 | 类型下拉 | 四项固定（图标 + 中文名 + 代码角标）；选中后底部出现该类型的**语义提示行**（如上图 ⓘ，管理用户预期，尤其流转拦截后果） |
-| 目标搜索 | 防抖 300ms `GET …/issues/?q=<kw>&per_page=20&fields=id,issue_key,name,state_id`；排除自身；显示状态圆点 |
+| 目标搜索 | 防抖 300ms `GET …/issues/?search=<kw>&per_page=20&fields=id,issue_key,name,state_id`（`?search=` 为 issues 列表搜索参数，api-conventions §5.3/§5.5；`?q=` 仅 workspace 全局搜索端点，白名单外传入会被忽略进 `meta.ignored_params`）；排除自身；显示状态圆点 |
 | 预判提示 | 目标已被当前任务阻塞时搜索行内灰字「已关联」且不可选（前端预判，后端 409 兜底） |
 | 提交 | `[创建关联]` loading；成功关闭弹层、关联区乐观插入对应分组 |
 | 失败 | 409 环路径 → 弹层内红条完整展示依赖链；其他 → toast |
@@ -314,7 +317,7 @@ stateDiagram-v2
 | --- | --- |
 | 触发 | 拖拽 409 后卡片弹回原列 + 此对话框；详情页改状态同样触发 |
 | 阻塞项行 | 点击 `→` 跳转该任务详情（返回后对话框已关闭、原任务留在原地） |
-| 强制完成 | 仅 `PROJ_ADMIN` 可见（`<PermissionGate>` 联动）；点击展开必填 comment 输入（≥5 字符）后重发 `force=true` |
+| 强制完成 | 仅 `PROJ_ADMIN` 可见（rbac §8 矩阵无独立权限点，按 AUTH-005 `PermissionStore.effectiveProjectRole ≥ PROJ_ADMIN(20)` 判定，与后端 403 同口径）；点击展开必填 comment 输入（≥5 字符）后重发 `force=true` |
 | 看板弹回动画 | 卡片 300ms 弹回 + 列头 shake 一次（明确「没成功」的信号） |
 
 ### 3.4 列表 / 看板的依赖可见性
@@ -411,9 +414,9 @@ class IssueLink(BaseModel):
 
 | # | 方法 | 路径 | 描述 | 权限 | 成功码 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `GET` | `…/issues/{issue_id}/relations/` | 该任务全部关联（成对三组语义化结构，**契约冻结**） | `PROJ_VIEWER`(5)+ | `200` |
-| 2 | `POST` | `…/issues/{issue_id}/relations/` | 创建关联（成对两行） | `PROJ_CONTRIBUTOR`(15)+ | `201` |
-| 3 | `DELETE` | `…/issues/{issue_id}/relations/{link_id}/` | 删除关联（同事务删镜像行） | `PROJ_CONTRIBUTOR`(15)+ | `204` |
+| 1 | `GET` | `…/issues/{issue_id}/relations/` | 该任务全部关联（成对三组语义化结构，**契约冻结**） | `PROJ_VIEWER`(5)+（`issue.read`） | `200` |
+| 2 | `POST` | `…/issues/{issue_id}/relations/` | 创建关联（成对两行） | `PROJ_CONTRIBUTOR`(15)+（`issue.relation.manage`） | `201` + `Location` |
+| 3 | `DELETE` | `…/issues/{issue_id}/relations/{link_id}/` | 删除关联（同事务删镜像行） | `PROJ_CONTRIBUTOR`(15)+（`issue.relation.manage`） | `204` |
 | 4 | `PATCH` | `…/issues/{issue_id}/` | 状态迁入 `completed` 时触发拦截（`force` 可选参数） | `PROJ_CONTRIBUTOR`(15)+ | `200` |
 | 5 | `GET` | `…/issues/?blocked=true` | 筛选被阻塞任务（`TASK-003` 白名单新增参数） | `PROJ_VIEWER`(5)+ | `200` |
 
@@ -457,7 +460,7 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-.../issues/c4d5e6f7-.../relations/
         "id": "b7c8d9e0-f1a2-4b3c-8d9e-0f1a2b3c4d5e",
         "issue_key": "RBT-25",
         "name": "前端回归测试",
-        "state_id": "e3f4a5b6-7c8d-4e9f-8a1b-2c3d4e5f6a7b",
+        "state_id": "d4c3b2a1-0f9e-4d8c-8b6a-5c4d3e2f1a0b",
         "state_group": "unstarted",
         "start_date": null,
         "target_date": "2026-09-12"
@@ -470,7 +473,7 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-.../issues/c4d5e6f7-.../relations/
 
 **契约冻结条款（`GANTT-001` 依赖，破坏需开 v2）**：
 
-1. `data[]` 恒为数组（无分页——单任务关联 ≤ 50）；
+1. `data[]` 恒为数组（**无分页——api-conventions §6 分页约定的显式豁免**：单任务关联受 BR-08 的 50 上限约束，结果集天然有界，无需游标）；
 2. 每项含 `relation_type`（四枚举）、`is_blocking`（该关系是否参与防环/拦截：`blocks` 族 true，其余 false）、`related_issue` 内联对象（含甘特连线必需的 `id` / `issue_key` / `start_date` / `target_date` / `state_group`）；
 3. `related_issue.start_date` / `target_date` 可为 `null`——甘特渲染无日期任务时连线锚定到「今天」虚线节点（`GANTT-001` 处理）；
 4. 关联按创建时间倒序，三组由前端按 `relation_type` 分组渲染。
@@ -488,7 +491,12 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-.../issues/c4d5e6f7-.../relations/
 
 > 语义：**当前任务（URL 中的 issue）blocks 目标任务**。用户在 UI 若说「被…阻塞」，前端翻译为 `relation_type: "is_blocked_by"`——服务端统一归一化为「正方向 `blocks` + 镜像 `is_blocked_by`」两行落库。
 
-**成功响应 `201 Created`**
+**成功响应 `201 Created`**（必须带 `Location` 头指向新建的正向关联资源，api-conventions §4.3「201 必须带 `Location` 响应头」）
+
+```http
+HTTP/1.1 201 Created
+Location: /api/v1/workspaces/acme/projects/7b3e9c1a-.../issues/c4d5e6f7-.../relations/e6f7a8b9-.../
+```
 
 ```json
 {
@@ -560,13 +568,19 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-.../issues/c4d5e6f7-.../relations/
     "code": "RESOURCE_TRANSITION_BLOCKED",
     "message": "存在未完成的前置任务，无法完成该工作项",
     "details": [
-      { "field": "state_id", "code": "BLOCKED_BY", "message": "RBT-21 导出限流配置 · 进行中" },
-      { "field": "state_id", "code": "BLOCKED_BY", "message": "RBT-22 导出灰度方案 · 待办" }
+      { "field": "state_id", "code": "BLOCKED_BY", "issue_key": "RBT-21",
+        "message": "RBT-21 导出限流配置 · 进行中" },
+      { "field": "state_id", "code": "BLOCKED_BY", "issue_key": "RBT-22",
+        "message": "RBT-22 导出灰度方案 · 待办" }
     ],
     "request_id": "01JCB5T9N3YR8O0Q6W4X7Z9A2D"
   }
 }
 ```
+
+> `details[].issue_key` 为结构化阻塞项编号（api-conventions §8.5「`details` 列出阻塞原因与阻塞项 ID」的落位——§8.5 所指「阻塞项 ID」即服务层 `TransitionBlockedError.blockers` 内部的 `id`（任务 UUID，§4.3.3），序列化进 `details[]` 时以人类可读的 `issue_key` 承载）：前端跳转直接消费该字段，`message` 仅作展示串、不做解析（§4.4.2）。
+>
+> `issue_key` 是对 api-conventions §4.2 / §8.9 `ApiFieldError { field, code, message }` 的结构扩展：前端 `ApiFieldError` 类型需同步加 `issue_key?: string`（架构文档待回改登记）。
 
 **请求（管理员强制完成）**
 
@@ -589,6 +603,7 @@ from django.db import connection, transaction
 from django.db.models import Q
 
 from plane.db.models import Issue, IssueLink
+from plane.db.services.issue_sequence import acquire_project_lock
 
 
 @transaction.atomic
@@ -612,6 +627,11 @@ def create_relation(*, issue_id: uuid.UUID, related_issue_id: uuid.UUID,
         issue, related = related, issue
         relation_type = "blocks"
 
+    # BR-05 前置：项目级事务咨询锁（unified-issue-model §3 序列号同款，TASK-004 同空间复用）。
+    # READ COMMITTED 下环检测 CTE 只能看到已提交数据，两条长链并发合围会双双通过检测后落库成环；
+    # 锁把「查重 → 环检测 → 成对写入」临界区按项目串行化，事务提交/回滚自动释放，无死锁残留。
+    acquire_project_lock(issue.project_id)
+
     # BR-04 业务事实唯一性：正反两向查重（DB 约束仅兜底单方向）
     exists = IssueLink.objects.filter(
         deleted_at__isnull=True, relation_type__in=(relation_type,
@@ -628,7 +648,10 @@ def create_relation(*, issue_id: uuid.UUID, related_issue_id: uuid.UUID,
     _assert_link_budget(related_issue_id)
 
     if relation_type in IssueLink.BLOCKING_TYPES:                      # BR-05 防环
-        if _reaches(source=related_issue_id, target=issue_id):         # 新边 related→issue 反向可达即成环
+        hit_depth = _reaches(source=related_issue_id, target=issue_id)  # 新边 related→issue 反向可达即成环；-1 = 不可达
+        if hit_depth >= settings.CTE_GUARD_DEPTH:                      # 保险丝命中：命中深度 ≥100（环链 101 条边）仍回到起点 → 判脏数据（§2.6，合法深链未成环不会走到这里）
+            raise DirtyDependencyGraphError(source=related, target=issue)   # → 500 SERVER_ERROR + ERROR 告警（§2.5）
+        if hit_depth >= 0:                                             # 保险丝深度内的正常环
             raise CircularDependencyError(path=_render_chain(related, issue))
 
     forward = IssueLink.objects.create(
@@ -656,12 +679,19 @@ BLOCKS_REACH_SQL = """
          WHERE l.relation_type = 'blocks' AND l.deleted_at IS NULL
            AND r.depth < %(guard)s
     )
-    SELECT EXISTS(SELECT 1 FROM reachable WHERE id = %(target)s)
+    SELECT COALESCE(MAX(depth), -1) FROM reachable WHERE id = %(target)s
 """
 
 
-def _reaches(*, source: uuid.UUID, target: uuid.UUID) -> bool:
-    """source 沿 blocks 边是否可达 target（含间接）。
+def _reaches(*, source: uuid.UUID, target: uuid.UUID) -> int:
+    """source 沿 blocks 边是否可达 target（含间接）——回传命中深度而非布尔。
+
+    -1 = 不可达（含扫描深度超保险丝被截断、未命中 target 的情形：
+    依赖链业务深度无硬限（§2.6），合法深链按不可达放行，保险丝不拦截）；
+    0 ≤ depth < 保险丝 = 正常环（→ 409）；
+    depth ≥ 保险丝 = 扫描至保险丝深度（100）仍回到起点，判脏数据
+    （→ 500 SERVER_ERROR + ERROR 告警，§2.5/§2.6——布尔 EXISTS 无法区分
+    「不可达」与「截断」，回传命中深度才能兑现该口径）。
 
     新建 A blocks B 时调用 _reaches(source=B, target=A)：
     B 若已能到达 A，加边后 A→B→…→A 闭合为环。
@@ -675,7 +705,9 @@ def _reaches(*, source: uuid.UUID, target: uuid.UUID) -> bool:
         return cursor.fetchone()[0]
 ```
 
-> 成对存储与环检测的**正确性配合**：镜像行是 `is_blocked_by`，CTE 只沿 `blocks` 边走——若沿两族边同走，每条业务事实会被走两次且镜像边方向恰好构成「往返」，任何图都会误报成环。这是成对存储方案里最容易写错的一处，UT-03/UT-04/UT-05 专项锚定。
+> 成对存储与环检测的**正确性配合**：镜像行是 `is_blocked_by`，CTE 只沿 `blocks` 边走——若沿两族边同走，每条业务事实会被走两次且镜像边方向恰好构成「往返」，任何图都会误报成环。这是成对存储方案里最容易写错的一处，UT-03/UT-04/UT-05 专项锚定；保险丝语义（合法深链放行 × 环链 101 条边成环告警 500）由 UT-17/UT-18 锚定。
+
+> **并发正确性（advisory lock 的必要性）**：默认隔离级别 READ COMMITTED 下每条语句取独立快照，环检测 CTE **看不到并发事务未提交的新边**——两个请求同时各补一条链的最后一环（如并发建 B→C 与 C→A）时检测双双通过、提交后成环，CTE 本身不提供任何锁，「检测与写入同事务」并不足以串行化。因此 `create_relation` 在查重/检测前先取**项目级事务咨询锁**（`acquire_project_lock`，`unified-issue-model.md` §3 序列号生成同款、TASK-004 子任务挂载同空间复用），把「查重 → 环检测 → 成对写入」整个临界区按项目串行化；关系创建为低频人工操作（单项目 <1 QPS），串行化无吞吐顾虑。该锁同时关闭 BR-04「镜像方向并发双建」的窗口（`uniq_issue_relation` 只兜底完全相同的三元组，IT-02/IT-03 双锚定）。架构文档 §2.11 尚未记载该串行化要求——**架构文档待回改**。
 
 #### 4.3.3 流转拦截钩子（挂 `TASK-001` 更新路径）
 
@@ -684,10 +716,10 @@ def _reaches(*, source: uuid.UUID, target: uuid.UUID) -> bool:
 BLOCKER_SQL = """
     SELECT i.id, i.sequence_id, i.name, s."group"
       FROM issue_links l
-      JOIN issues i ON i.id = l.issue_id            -- l.issue_id = 阻塞我的任务
+      JOIN issues i ON i.id = l.related_issue_id    -- related_issue_id = 阻塞我的任务
       LEFT JOIN states s ON s.id = i.state_id
-     WHERE l.related_issue_id = %(me)s
-       AND l.relation_type = 'is_blocked_by'        -- 我被谁阻塞（镜像行方向）
+     WHERE l.issue_id = %(me)s
+       AND l.relation_type = 'is_blocked_by'        -- 我持有的镜像行（A blocks B 时 B 侧落 is_blocked_by）
        AND l.deleted_at IS NULL
        AND i.deleted_at IS NULL
        AND COALESCE(s."group", 'unstarted') NOT IN ('completed', 'cancelled')
@@ -804,6 +836,13 @@ export class IssueRelationStore {
 
 ```typescript
 // apps/web/src/routes/…/kanban/-components/card-dnd.ts（节选）
+// canForce 在组件层预计算后经闭包传入（AUTH-005 §4.5 范式，事件回调内不可调 hook）：
+//   - 有权限点的判定一律 usePermission / <PermissionGate>；
+//   - 「强制完成」是 PROJ_ADMIN 专属动作、rbac §8 矩阵无独立权限点，
+//     经 PermissionStore.effectiveProjectRole 比对角色（与后端 get_effective_project_role 同语义）
+const { root: { permission } } = useStore();
+const canForce = permission.effectiveProjectRole(issue.project_id) >= ProjectRole.ADMIN;  // 20
+
 try {
   await issueStore.patchState(issueId, targetStateId);
 } catch (err) {
@@ -811,8 +850,8 @@ try {
   if (err.code === "RESOURCE_TRANSITION_BLOCKED") {
     openBlockerDialog({                                 // §3.3 对话框
       issueId,
-      blockers: err.details.map(parseBlockerDetail),   // 服务端已渲染 "RBT-21 标题 · 状态"
-      canForce: session.hasProjectPermission("issue.state.transition", { minRole: "PROJ_ADMIN" }),
+      blockers: err.details,   // 结构化阻塞项：issue_key 直接用于跳转、message 直接展示（§4.2.4，api-conventions §8.5——不做展示串解析）
+      canForce,                // 语义同后端 actor.has_role("PROJ_ADMIN")
     });
   } else if (err.code === "RESOURCE_CIRCULAR_DEPENDENCY") {
     toast.error(err.details[0].message, { duration: 6000 });  // 完整依赖链
@@ -846,6 +885,8 @@ try {
 | UT-14 | 删镜像一致 | DELETE 正向行 | 镜像行同事务软删 | 正常 |
 | UT-15 | 关联数上限 | 第 51 条 | 409 LIMIT | 边界 |
 | UT-16 | 级联删除 | 删有 3 关联的任务 | 关联（含镜像）全部软删 | 正常 |
+| UT-17 | 保险丝触发（脏数据告警） | 构造 102 任务 / 101 条边链 T0→…→T101，再建 T101 blocks T0（闭合） | 500 `SERVER_ERROR` + ERROR 告警（非 409——闭合时 target 命中 depth=100 触发保险丝；若仅 101 任务/100 边，hit_depth=99 只走 409 正常环分支，§4.3.2）；关系零写入 | 异常 |
+| UT-18 | 合法深链不拦截 | 构造 120 层链后新建不闭合边（新任务 X blocks 链首） | 201；扫描超保险丝截断、未命中 target 按不可达放行，不触发 500 | 边界 |
 
 ### 5.2 集成测试
 
@@ -853,12 +894,14 @@ try {
 | --- | --- | --- | --- | --- |
 | IT-01 | 建链与查询 | 3 任务 | 依序建 A→B、B→C，查 A relations | 结构符合 §4.2.1 契约（含内联 related_issue） |
 | IT-02 | 并发镜像双写 | 空关系 | 并发建 (A,B) 与 (B,A) | 恰一个 201，一个 409（约束兜底） |
-| IT-03 | 并发环构造 | A→B 已建 | 并发建 B→C 与 C→A | 后提交者 409（检测与写入同事务串行） |
+| IT-03 | 并发环构造 | A→B 已建 | 并发建 B→C 与 C→A | 两事务被项目 advisory lock 串行化，后提交者检测到已提交边 → 409 `RESOURCE_CIRCULAR_DEPENDENCY`，无环落库 |
 | IT-04 | 看板拦截路径 | 前置未完成 | PATCH state → completed | 409 `RESOURCE_TRANSITION_BLOCKED`；状态未变 |
 | IT-05 | 解除后放行 | 前置未完成 → 完成前置 | 再 PATCH completed | 200，`completed_at` 写入 |
 | IT-06 | 删除任务级联 | C 有出入关联各 1 | DELETE C | 关联 4 行（含镜像）软删；对端关联区刷新后消失 |
 | IT-07 | 详情查询无 N+1 | 50 关联 | `assertNumQueries` GET relations | 常数级（select_related 内联） |
 | IT-08 | 性能门禁 | 1 万任务、密度 5 关联/任务 | 拦截检查 1000 次 | P95 < 2ms（索引点查） |
+| IT-09 | relations 三端点角色矩阵 | 项目内有 `PROJ_VIEWER` / `PROJ_COMMENTER` / `PROJ_CONTRIBUTOR` 三名成员，存在 1 条既有关联 | 三角色分别调 GET / POST / DELETE relations | VIEWER、COMMENTER：GET 200，POST / DELETE 403 `PERM_ROLE_INSUFFICIENT`；CONTRIBUTOR：POST 201 + `Location`，DELETE 204（rbac §8 `issue.read` / `issue.relation.manage`） |
+| IT-10 | 保险丝触发端到端（真库链路） | 1 项目、102 个任务（脚本批量建模） | 脚本依序构造 101 条边 blocks 链 T0→…→T101，再建闭合边 T101 blocks T0（闭合时 hit_depth=100；100 边链闭合仅 hit_depth=99 → 409，不足以触发） | 500 `SERVER_ERROR`（响应含 request_id）；服务端 ERROR 告警记录环两端 ID；关系零写入（UT-17 的集成版，UT-18 的深链放行在同一脚本中断言） |
 
 ### 5.3 E2E 测试
 
@@ -885,15 +928,15 @@ try {
 ### 6.2 Ones 实现分析
 
 - Custom Link Types（Business+）：管理员自定义关联类型，每类可配 `name`/`inverse_name`/`is_directional`/`is_blocking`——把本系统硬编码的枚举升级为配置表。`is_blocking` 开关意味着**哪些类型参与流转拦截可配置**，这与 Ones 的工作流守卫体系（P3 `WF-004`）同源。
-- Ones 的依赖还深度参与其「前置任务未完成禁止流转 + 字段锁定」的企业守卫矩阵，且在项目集场景支持跨项目依赖（本系统 P4 评估项）。
+- Ones 的依赖还深度参与其「前置任务未完成禁止流转 + 字段锁定」的企业守卫矩阵，且在项目集场景支持跨项目依赖（本系统 P3 `PROJ-004` 评估项，Sprint 9）。
 
 ### 6.3 本系统设计决策
 
-1. **抄 Plane 的结构、补 Plane 的两个洞**：成对存储 + 四枚举原样采纳（生态兼容、代码可平移）；环检测与流转拦截是需求文档明示而 Plane 缺失的能力，用 CTE 与流转钩子以 <10ms 的成本补齐。
+1. **抄 Plane 的结构、补 Plane 的两个洞**：成对存储 + 四枚举原样采纳（生态兼容、代码可平移）；环检测与流转拦截是需求文档明示而 Plane 缺失的能力，用 CTE + 项目级 advisory lock（§4.3.2）与流转钩子以 <10ms 的成本补齐。
 2. **拦截是读时判定而非物化状态**：避免事件级联维护「被阻塞」标志的一致性窗口；完成动作低频，索引点查的成本完全可接受（IT-08 门禁 P95 < 2ms）。
 3. **镜像一致性靠唯一入口制度**：`link_service` 封装全部读写，CI 静态检查禁止视图层直 `import IssueLink` 写操作——把 Plane 靠自觉的约定升级为工程约束。
 4. **契约冻结服务下游**：`relations/` 响应结构直接按甘特连线需要设计（内联日期与状态组），一经交付即冻结——`GANTT-001` 不需要二次聚合请求，甘特首屏 = 任务列表 + 各任务 relations 并行请求。
-5. **P3 升级零迁移**：`relation_type` → `IssueLinkType` 外键的迁移路径架构文档 §8.2 已锁定（枚举值转 `is_system` 记录、API 字段语义不变），本迭代的四枚举不会成为后续债。
+5. **P3 升级零迁移**：`relation_type` → `IssueLinkType` 外键的迁移路径架构文档 §2.11 P3 升级路径已锁定（枚举值转 `is_system` 记录、API 字段语义不变），本迭代的四枚举不会成为后续债。
 
 ---
 
@@ -907,7 +950,7 @@ try {
 | 后端 | `issue_link.py` 服务（create/delete/环检测/预算）、`issue_transition_guard.py`（拦截钩子 + force 通道）、`relations/` 三端点、`?blocked=true` 筛选参数、级联删除并入 `delete_subtree` |
 | Celery | `record_relation_change`（幂等） |
 | 前端 | 详情关联三分组区、添加关联弹层（类型语义提示）、拦截对话框（含强制完成）、看板 ⛔ 角标与弹回动画、`IssueRelationStore` |
-| 测试 | UT-01~16、IT-01~08、E2E-01~06 |
+| 测试 | UT-01~18、IT-01~10、E2E-01~06 |
 
 ### 7.2 可操作演示的验收标准
 

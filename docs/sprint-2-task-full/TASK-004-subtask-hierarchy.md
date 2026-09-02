@@ -7,9 +7,9 @@
 | 优先级 | P2（标准版完整级） |
 | 所属模块 | M4-TASK｜任务核心 |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
+| 最后更新日期 | 2026-09-02 |
 | 上游依赖 | `TASK-001`（Issue CRUD 与序列号机制）、`TASK-002`（一级子任务 API 与 `parent` 列启用）、`INFRA-003`（`idx_issue_parent` 索引已建） |
-| 下游消费 | `TASK-006`（子树工时汇总）、`TASK-009`（深拷贝含整树、归档级联）、`TASK-011`（树形视图与分组）、需求一键转子任务（`decompose` 动作子资源）、`GANTT-001`（树形任务条） |
+| 下游消费 | `TASK-006`（子树工时汇总）、`TASK-009`（深拷贝含整树、归档级联）、`TASK-011`（全字段 AND/OR 组合筛选器与视图保存——README §4 口径；其层级维度筛选间接依赖本文 `parent` 语义）、需求一键转子任务（`decompose` 动作子资源）、`GANTT-001`（树形任务条）。**回改登记**：`TASK-003` 的 `IssueFilterSet` 白名单需补登 `parent_id` 筛选参数——本文 §4.2 行 3 的懒加载入口挂靠该白名单（与 `TASK-009` 将 `archived` 参数登记到同一白名单同款先例） |
 | 上游依据 | `docs/需求文档.md` §3.4（子任务多层级创建、子任务进度联动父任务）、§8.2 任务核心 P2 列 |
 | 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md)（**§2.8 `parent` 自引用 / CASCADE 语义、§8.3 递归 CTE 与深度上限、§3 advisory lock**）、[`api-conventions.md`](../architecture/api-conventions.md)（§2.4 嵌套约定、§2.6 动作子资源）、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md)（L2/L3 权限层） |
 | 对标基线 | Plane `Issue.parent` 自引用（不限层级、不校验类型、子任务计数子查询） · Ones Issue Hierarchy（Business+ 类型层级强校验 + 进度上卷） |
@@ -49,8 +49,8 @@
 | 防线 | 机制 | 值 | 作用 |
 | --- | --- | --- | --- |
 | 业务层 | `MAX_ISSUE_DEPTH` | **5** | 产品上限：第 5 层任务不再提供「+ 子任务」入口；API 硬校验 |
-| 查询层 | CTE `depth < 5` 条件 | 5 | 子树查询天然截断，即使脏数据也不会无限递归 |
-| 保险丝 | `CTE_GUARD_DEPTH` | **100** | 防环上行扫描的硬上限；数据异常（人为改库）时快速失败并 ERROR 告警，而非慢查询拖垮数据库 |
+| 查询层 | `SUBTREE_SQL` 递归项 `depth < CTE_GUARD_DEPTH`(100) 保险丝截断 | 100 | 子树查询在保险丝深度截断，即使脏数据也不会无限递归；**业务深度 ≤5 由写入层校验（BR-02）保证，查询层不依赖 5 层截断**——与 §4.3.3 实现一致 |
+| 保险丝 | `CTE_GUARD_DEPTH` | **100** | 防环上行扫描的硬上限：链长触达 100 意味着脏数据（人为改库），抛 `SubtreeDepthGuardError` 快速失败并 ERROR 告警（500，§4.3.1），而非慢查询拖垮数据库 |
 
 **为什么业务上限是 5 而不是 3 或无限**：
 
@@ -131,7 +131,7 @@ flowchart TD
     M --> N["SWR revalidate 收敛"]
 ```
 
-> 子任务创建与普通创建**共用** `create_issue` 服务与 advisory lock（`unified-issue-model.md` §3.3），唯一差异是 payload 带 `parent_id` 并先行执行深度校验。序列号与父任务同一编号空间——子任务不重新从 1 编号，这保证「项目内编号全量无空洞」的审计承诺对树同样成立。
+> 子任务创建与普通创建**共用** `create_issue` 服务与 advisory lock（`unified-issue-model.md` §3.3），唯一差异是 payload 带 `parent_id` 并先行执行深度校验。序列号与父任务同一编号空间——子任务不重新从 1 编号，这保证「项目内编号全量无空洞」的审计承诺对树同样成立。**单父子任务数上限原样沿用 `TASK-002` §4.4.2 的 `MAX_SUB_ISSUES_PER_PARENT=100`**（P2 不放开，超限仍为 `400` + `details: TOO_LARGE`，见 §2.7），该校验在 `SubIssueService.create_sub` 中已存在，图中不再重复绘制。
 
 ### 2.2 移动子树（核心风险场景）
 
@@ -157,13 +157,13 @@ sequenceDiagram
         API-->>FE: 409 RESOURCE_CIRCULAR_DEPENDENCY + 环路径
         FE->>FE: 回滚乐观隐藏 + Toast 展示环路径
     else 合法
-        API->>PG: 检查 depth(B)+1 ≤ 5
+        API->>PG: 检查 depth(B)+1+height(A子树)-1 ≤ 5<br/>（被移子树高度一并校验，§4.3.2）
         API->>PG: UPDATE issues SET parent_id=B WHERE id=A
         API->>PG: COMMIT
-        API->>CW: on_commit → issue_activity.delay(field=parent)
+        API->>CW: on_commit → record_parent_change.delay(field=parent, epoch)
         API-->>FE: 200 完整 Issue
         FE->>FE: 依响应重排树；原父/新父计数 revalidate
-        CW->>PG: 写 IssueActivity（old/new_identifier 均落库）
+        CW->>PG: 写 IssueActivity（old/new_identifier 均落库；epoch 同次动作共享）
     end
 ```
 
@@ -194,29 +194,29 @@ stateDiagram-v2
 
 | 操作 | 数据层行为 | API 行为 | 恢复 |
 | --- | --- | --- | --- |
-| 删除父任务 | 同一事务内：软删整棵子树（沿 `parent` 下行）、级联软删 `IssueAssignee` / `IssueLabel` / `IssueAttachment` 关联 | `DELETE` 返回 `200` + `{ "affected_count": N }`（**不用 204**，因为要回传受影响数）；二次确认 UI 显示「将同时删除 N 个子任务」 | `all_objects` 可整树恢复（管理端，P2 无 UI） |
+| 删除父任务 | 同一事务内：软删整棵子树（沿 `parent` 下行）；`IssueAssignee` / `IssueLabel` 中间表**物理删除**（`TASK-001` §4.1.2 口径——中间表任何路径都不写 `deleted_at`，不留软删痕迹）；附件不在此事务内联处理——`FILE-001` 多态 `FileAsset` 按宿主软删进入每日 `purge_deleted_assets` 级联回收队列（30 天恢复窗；单表 `IssueAttachment` 已被 `FILE-001` 显式移除，架构文档待回改） | `DELETE` 返回 `200` + `{ "deleted_count": N }`（**不用 204**，因为要回传受影响任务数）；二次确认 UI 显示「将同时删除 N 个子任务」 | `all_objects` 可整树恢复（管理端，P2 无 UI；中间表行已物理消失，恢复时按快照重建） |
 | 归档父任务 | 父与全部后代 `archived_at = now()` | `POST …/archive/`（`TASK-009` 交付动作端点；本文档定义级联语义） | 取消归档同样整树恢复 |
 | 移动子树 | 仅 `parent_id` 变更，子树其余字段不动 | `PATCH` | — |
 
-> **为什么删除用 `200` 而非 `204`**：`api-conventions.md` §4.3 允许 DELETE 成功且需回传受影响信息时用 `200`。「删除了 1 条」与「删除了 1 父 + 7 后代」对用户的确认价值完全不同，这个数字必须回传。
+> **为什么删除用 `200` 而非 `204`**：`api-conventions.md` §3.1 方法约定表（DELETE 行）允许 DELETE 成功且需回传受影响信息时用 `200`。「删除了 1 条」与「删除了 1 父 + 7 后代」对用户的确认价值完全不同，这个数字必须回传。
 
 ### 2.5 业务规则汇总
 
 | 编号 | 规则 | 判定位置 | 违反后果 |
 | --- | --- | --- | --- |
 | BR-01 | 父子必须**同项目**（同 Workspace 蕴含）；跨项目 `parent_id` 拒绝 | Serializer + Service | `400 VALIDATION_ERROR` + `DOES_NOT_EXIST` |
-| BR-02 | 业务深度上限 `MAX_ISSUE_DEPTH=5`（根=1）；CTE 保险丝 `CTE_GUARD_DEPTH=100` | Service | `409 RESOURCE_LIMIT_EXCEEDED` |
+| BR-02 | 业务深度上限 `MAX_ISSUE_DEPTH=5`（根=1）——创建校验 `depth(parent)+1 ≤ 5`；**移动校验 `depth(新父)+1+height(被移子树)-1 ≤ 5`**（子树最高点不得越限，§4.3.2 `_subtree_height`——仅校验新父深度会把高子树挂深而静默越限）；CTE 保险丝 `CTE_GUARD_DEPTH=100` | Service | `409 RESOURCE_LIMIT_EXCEEDED` |
 | BR-03 | 新父不得为当前节点自身或其后代（任意深度）；`details` 给出环路径（`A → B → … → A`，用名称展示） | Service（CTE 上行） | `409 RESOURCE_CIRCULAR_DEPENDENCY` |
-| BR-04 | `sub_issues_count` / `completed_sub_issues_count` 仅统计**直接子级**且排除软删；整树统计走 `subtree/` 的 `stats` | ORM annotate | — |
+| BR-04 | `sub_issues_count` / `completed_sub_issues_count` 仅统计**直接子级**且排除软删与归档（`deleted_at IS NULL AND archived_at IS NULL`）；整树统计走 `subtree/` 的 `stats` | ORM annotate | — |
 | BR-05 | 完成判定 = `state.group='completed'`；`cancelled` 子任务**不计入分子也不计入分母**（与 `RPT-001` / 看板口径一致） | ORM | — |
-| BR-06 | 删除父任务 → 同事务软删整树 + 级联软删关联表；响应回传 `affected_count` | Service | — |
+| BR-06 | 删除父任务 → 同事务软删整树 + `IssueAssignee` / `IssueLabel` 中间表**物理删除**（`TASK-001` §4.1.2 口径）+ 附件走 `FILE-001` 延迟级联回收；响应回传 `deleted_count` | Service | — |
 | BR-07 | 移动子树不改变子树内任何 `sequence_id` / `sort_order` / 状态 | Service | — |
 | BR-08 | 子任务全部完成**不自动**改父状态（仅比例展示）；自动上卷归 P3 自动化规则 | Service | — |
 | BR-09 | 归档父任务 → 整树置 `archived_at`；所有默认查询（`archived_at IS NULL`）天然排除整树 | ORM 偏索引 | — |
 | BR-10 | 移动子树前对被移动任务行 `select_for_update`，防并发互换成环 | Service | — |
-| BR-11 | 子树查询返回节点数上限 500；超出截断并在 `meta.truncated=true` 提示 | Service | — |
+| BR-11 | 子树查询返回节点数上限 500；超出截断并在 `meta.truncated=true` 提示（截断在外层 `SELECT … LIMIT 501` 判定——PostgreSQL 不支持递归项内 LIMIT，见 §4.3.3） | Service | — |
 | BR-12 | 子任务创建与普通创建共用 advisory lock 序列号空间；子任务编号不重新起算 | Service | — |
-| BR-13 | 父任务 `state` 为 `cancelled` 时仍允许挂子任务（业务上取消的需求可能继续处理子缺陷）；归档任务禁止任何写（含挂子任务） | Permission + Service | `403 PERM_PROJECT_ARCHIVED` |
+| BR-13 | 父任务 `state` 为 `cancelled` 时仍允许挂子任务（业务上取消的需求可能继续处理子缺陷）；已归档**任务**只读——挂子任务 / 移动子树等任何写被拒（状态类）；已归档**项目**内一切写被拒（权限类，`TASK-009` BR-13 同口径） | Permission + Service | 任务级 `409 RESOURCE_STATE_INVALID`（与 `TASK-009` BR-08 完全同口径）；项目级 `403 PERM_PROJECT_ARCHIVED` |
 | BR-14 | 每次挂载 / 摘出 / 移动产生 1 条 `IssueActivity(field='parent')`，含 `old_identifier` / `new_identifier` | Service on_commit | — |
 | BR-15 | 悬挂孤儿子任务不存在：任何写路径保证 `parent` 指向同项目存活任务或 NULL（外键 + 事务保证）；管理端数据修复须整树操作 | DB 约束 | — |
 
@@ -225,24 +225,27 @@ stateDiagram-v2
 | 场景 | HTTP | 错误码 | details 子码 | 前端提示与表现 |
 | --- | --- | --- | --- | --- |
 | 挂到自己的后代下 | 409 | `RESOURCE_CIRCULAR_DEPENDENCY` | `CYCLE` | Toast 列出环路径：「导出功能 → 后端导出 API → 分页游标改造 ✕」；树高亮环上节点 2 秒 |
-| 超深度 | 409 | `RESOURCE_LIMIT_EXCEEDED` | `DEPTH` | 「层级已达 5 层上限，请平铺或重组任务」 |
+| 超深度（创建下挂 / 移动致子树越限） | 409 | `RESOURCE_LIMIT_EXCEEDED` | `DEPTH` | 「层级已达 5 层上限，请平铺或重组任务」；移动场景追加「移动后子树最深将达第 N 层」（§4.3.2 子树高度校验） |
 | 跨项目 parent | 400 | `VALIDATION_ERROR` | `DOES_NOT_EXIST` | 「所选父任务无效」（父选择器本就只检索本项目，直连 API 才会触发） |
 | 父任务已软删 / 不可见 | 404 | `RESOURCE_NOT_FOUND` | — | 「任务不存在或你没有访问权限」 |
 | 项目已归档时挂子任务 | 403 | `PERM_PROJECT_ARCHIVED` | — | 界面只读态提示 |
+| 对已归档任务挂子任务 / 移动子树 | 409 | `RESOURCE_STATE_INVALID` | `STATE` | 「任务已归档，恢复后才能编辑」+ 恢复入口（与 `TASK-009` 归档写保护同款文案与端点） |
 | `PROJ_VIEWER`/`COMMENTER` 创建子任务 | 403 | `PERM_ROLE_INSUFFICIENT` | — | 入口隐藏；直连返回 403 |
 | 移动时父被并发删除 | 404 | `RESOURCE_NOT_FOUND` | — | 回滚 UI + 提示刷新 |
 | CTE 触发保险丝（脏数据） | 500 | `SERVER_ERROR` | — | 通用错误 + request_id；服务端 ERROR 日志与告警 |
 | 子树超 500 节点 | 200 | —（截断） | — | 全屏树顶部黄条「树过大已截断显示前 500 节点，请用筛选收窄」 |
 
+> **字段级子码登记**：本表使用的 `DEPTH` 为 `details[].code` 字段级子码，不占用全局错误码注册表，由 [`api-conventions.md`](../architecture/api-conventions.md) §8.8「字段级子码」承载。§8.8 现表已含 `DOES_NOT_EXIST` / `TOO_LARGE`（直接复用），但**未注册** `DEPTH`（层级深度越限，`message` 给出上限值与移动后实际将达到的最深层级，§4.2.1 / §2.7）——交付时需在 §8.8 补登该条目，**架构文档待回改登记**（与 `TASK-005` `CYCLE` / `TASK-007` `LIMIT` / `STATE` 的补登模式一致；本表 `CYCLE` 与 `TASK-005` 依赖环同码、`STATE` 与 `TASK-007` 同码，均由对应文档的登记注记声明补登，本文不重复登记）。
+
 ### 2.7 边界条件
 
 | 边界场景 | 限制值 | 超出处理方式 |
 | --- | --- | --- |
-| 单任务直接子任务数 | 无硬上限（产品设计建议 < 200） | 列表分组分页；详情侧栏显示前 20 + 「查看全部」 |
+| 单任务直接子任务数 | 100（沿用 `TASK-002` §2.7 / §4.4.2 的 `MAX_SUB_ISSUES_PER_PARENT`，P2 **不放开**——层级已放开，超宽拆分应改用多层） | 超限 `400` + `details` 子码 `TOO_LARGE`（`SubIssueService.create_sub` 既有校验原样保留）；列表分组分页；详情侧栏显示前 20 + 「查看全部」 |
 | 子树查询返回节点 | 500 | 截断 + `meta.truncated` |
 | 展开懒加载每层 | 50 条（游标） | 「加载更多」 |
 | 深度 | 5 | 第 5 层「+ 子任务」入口消失；API 409 |
-| 移动子树体积 | 无限制（仅改 1 行） | — |
+| 移动子树体积 | 节点数无限制（仅改 1 行 `parent_id`），但受**目标深度约束**：`depth(新父)+1+height(被移子树)-1 ≤ 5` | 超限 `409 RESOURCE_LIMIT_EXCEEDED`（details: `DEPTH`，§4.3.2 子树高度校验） |
 | 并发同父子创建 | advisory lock 串行 | 编号正确，无冲突 |
 | 树缩进宽度 | 5 层 × 20px = 100px | 1280px 屏可用 |
 
@@ -310,7 +313,7 @@ stateDiagram-v2
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ 导出功能 的任务树   3 个任务 · 1 已完成 · 最深 2 层              ✕   │
+│ 导出功能 的任务树   4 个任务（含自身） · 1 已完成 · 最深 2 层     ✕   │
 ├──────────────────────────────────────────────────────────────────────┤
 │ ●进行中  RBT-12  导出功能                                ◔ 1/2      │
 │ ●已完成  RBT-13  └ 后端导出 API                          👤李四     │
@@ -325,7 +328,7 @@ stateDiagram-v2
 
 | 元素 | 规格 |
 | --- | --- |
-| 头部统计 | `total / completed / max_depth` 来自响应 `stats`；`font-mono` |
+| 头部统计 | `total / completed / max_depth` 来自响应 `stats`（**含根口径**：总数与完成数均计入任务自身，§4.2.2 契约要点 2）；`font-mono` |
 | 节点行 | 状态圆点（`state.color`）+ 编号 + 标题（truncate）+ 负责人头像；缩进 24px/层 |
 | 空态 | 「暂无子任务」+ 「添加第一个子任务」按钮（focus 到隐藏快速行） |
 | 加载 | 3 层 × 5 行骨架树 |
@@ -341,6 +344,7 @@ stateDiagram-v2
 | 列表 | 直接子级前 20 条（标题 + 状态圆点 + 复选完成）；尾部「查看全部 N 个 →」进全屏树 |
 | 完成勾选 | 点复选 = `PATCH state`（落项目「已完成」状态）；父徽标乐观 +1 |
 | 排序 | 拖拽把手在分区内重排（更新 `sort_order`，复用 `BOARD-001` 插值算法） |
+| 归档详情（`TASK-009` §3.2） | 已归档任务的详情侧栏为只读态：子任务分区**只读渲染**直接子级（取数走归档视图口径 `?archived=true`，无「＋」与完成勾选写入口）；「查看整棵树」入口**隐藏**——`subtree/` 对已归档根维持 `404`（BR-09 归档树整体不可见，UT-07 锚定），隐藏入口避免点击即 404 的死路；恢复归档后入口与写能力一并恢复 |
 
 ### 3.5 拖拽移动子树（列表行拖拽）
 
@@ -441,6 +445,10 @@ erDiagram
 | 5 | `DELETE` | `…/projects/{project_id}/issues/{issue_id}/` | 删除（整树级联软删，回传受影响数） | `PROJ_ADMIN`(20) 或创建者 | `200` |
 
 > `subtree/` 是第 4 层路径（`workspaces → projects → issues → subtree`），属 `api-conventions.md` §2.4 允许的「叶子资源直接子资源」。`parent_id` 作为列表筛选参数加入 `TASK-003` 的 `IssueFilterSet` 白名单。
+>
+> **`?parent_id=` 与 `TASK-002` 既有 `GET …/sub-issues/` 端点的去留裁决：两者并存、分工明确，均不废弃**。`sub-issues/`（`TASK-002` §4.3.5）是**父视角聚合**端点——详情侧栏「子任务」分区沿用，响应为父视角聚合的**子级列表**（annotate 计数挂在 Issue 序列化字段上——直接子级行自身携带 `sub_issues_count` / `completed_sub_issues_count`，孙级可继续下挂），`per_page` 上限 100，本迭代仅同步放开多层；`?parent_id=` 列表筛选是**列表页行级懒加载**入口——与 `TASK-003` 的排序 / 游标分页 / `fields` 投影正交组合（`per_page=50`，见 §3.1 行为规格）。前端新代码（列表树）一律走 `?parent_id=`，侧栏沿用 `sub-issues/`，禁止同一界面混用两个入口取数。
+>
+> **上游待回改（DELETE 成功码）**：本文将 `DELETE …/issues/{id}/` 定为 `200 + {deleted_count, descendant_ids}`（§2.4：级联删除必须回传受影响数），与上游 `TASK-001` §4.2.6（BE-69：`204` 空体）及 `TASK-002` §4.3 行 11 / §4.3.8（复用该端点，同 `204`）冲突——二选一后本文取 `200 + deleted_count`，**上游两处契约点需同步回改为 `200 + deleted_count`**，否则同一端点跨文档成功码漂移。
 
 #### 4.2.1 `POST …/sub-issues/` — 挂载创建
 
@@ -564,10 +572,11 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-.../issues/8a1f9c2e-.../subtree/ H
 **契约要点**：
 
 1. `root` 单列，`nodes` 平铺（非嵌套）——平铺结构序列化 / 前端建树都是 O(n)，嵌套 JSON 深层解析反而慢；
-2. `stats.completed` 按 `state_group='completed'` 全树统计（含根）；`cancelled` 单列（不污染完成率）；
-3. `truncated=true` 时 `nodes` 恰 500 条且无 `stats`（不完整数据不出统计）。
+2. `stats` 为**含根口径**：`total` / `completed` 均计入根节点（本例 `total=4` = 根 + 3 后代）；`completed` 按 `state_group='completed'` 全树统计；`cancelled` 单列（不污染完成率）——§3.3 头部统计与 E2E-01 断言同此口径；
+3. `truncated=true` 时 `nodes` 恰 500 条且无 `stats`（不完整数据不出统计）；
+4. `subtree` 内 `depth` 为**相对根层数（根=0）**，与 §4.2.1 / §4.3.1 的业务 `depth`（根=1）相差 1——相对口径用于树形缩进渲染与 `stats.max_depth`（本例最深节点 `depth=2`、`max_depth=2`），业务口径用于深度校验（BR-02）与「+ 子任务」入口预判；两套口径各自局部自洽，前端不得混用。
 
-**失败响应 `404`**（不存在 / 已软删 / 无权 / 跨项目，四态一致）：
+**失败响应 `404`**（不存在 / 已软删 / 已归档 / 无权 / 跨项目，五态一致——BR-09 归档树整体不可见，UT-07 锚定）：
 
 ```json
 {
@@ -580,7 +589,7 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-.../issues/8a1f9c2e-.../subtree/ H
 }
 ```
 
-#### 4.2.3 `GET …/issues/?parent_id=` — 懒加载某层
+#### 4.2.3 `GET …/issues/?parent_id=` — 懒加载某层（与 `sub-issues/` 端点的分工见 §4.2 裁决）
 
 ```http
 GET …/issues/?parent_id=b2c3d4e5-...&order_by=sort_order&per_page=50&fields=id,issue_key,name,state_id,assignee_ids,target_date,sort_order,sub_issues_count,completed_sub_issues_count HTTP/1.1
@@ -639,6 +648,8 @@ GET …/issues/?parent_id=b2c3d4e5-...&order_by=sort_order&per_page=50&fields=id
 
 ```python
 # apps/api/plane/db/services/issue_hierarchy.py
+import logging
+import time
 import uuid
 
 from django.conf import settings
@@ -646,38 +657,35 @@ from django.db import connection, transaction
 
 from plane.db.models import Issue
 
+logger = logging.getLogger(__name__)
+
 
 class CircularDependencyError(Exception):
     """携带环路径（人类可读）的业务异常 → 409 RESOURCE_CIRCULAR_DEPENDENCY"""
 
 
-def _is_descendant(candidate_id: uuid.UUID, of_id: uuid.UUID) -> bool:
-    """candidate 是否为 of 的后代（任意深度）——递归 CTE 沿 parent 上行。
+class SubtreeDepthGuardError(Exception):
+    """CTE 保险丝触达（链长 / 子树深度 ≥ CTE_GUARD_DEPTH，脏数据）
+    → 500 SERVER_ERROR + logger.error 结构化告警（§2.6 / UT-10）"""
 
-    每步 JOIN 走 idx_issue_parent 点查；guard 深度 100 为保险丝：
-    正常业务深度 ≤ 5，触达 100 意味着脏数据，快速失败优于慢查询。
+
+def _is_descendant(candidate_id: uuid.UUID, of_id: uuid.UUID) -> bool:
+    """candidate 是否为 of 的后代（任意深度）——复用 _ancestor_chain 的上行 CTE
+    （链含 candidate 自身，depth=0），保险丝判定随链一并生效。
+
+    每步 JOIN 走 idx_issue_parent 点查；先判等短路覆盖 A→A 自引用（UT-04）。
     """
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            WITH RECURSIVE ancestors(id, depth) AS (
-                SELECT %(start)s::uuid, 0
-                UNION ALL
-                SELECT i.parent_id, a.depth + 1
-                  FROM issues i
-                  JOIN ancestors a ON i.id = a.id
-                 WHERE i.parent_id IS NOT NULL
-                   AND i.deleted_at IS NULL
-                   AND a.depth < %(guard)s
-            )
-            SELECT EXISTS(SELECT 1 FROM ancestors WHERE id = %(of)s)""",
-            {"start": candidate_id, "of": of_id, "guard": settings.CTE_GUARD_DEPTH},
-        )
-        return cursor.fetchone()[0]
+    if candidate_id == of_id:
+        return True
+    return of_id in _ancestor_chain(candidate_id)
 
 
 def _ancestor_chain(issue_id: uuid.UUID) -> list[uuid.UUID]:
-    """取祖先链（用于环路径展示与深度计算，一次 CTE）"""
+    """取祖先链（**含节点自身**，自身 depth=0；用于环路径展示与深度计算，一次 CTE）。
+
+    保险丝在 SELECT 后判定而非 SQL 侧静默截断：链长触达 CTE_GUARD_DEPTH 即脏数据
+    （人为改库成环），抛 SubtreeDepthGuardError 快速失败并告警——被截断的链会让
+    环判定与深度计算双双漏判，宁可 500 不可错放。"""
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -691,21 +699,59 @@ def _ancestor_chain(issue_id: uuid.UUID) -> list[uuid.UUID]:
             SELECT id FROM chain ORDER BY depth DESC""",
             {"start": issue_id, "guard": settings.CTE_GUARD_DEPTH},
         )
-        return [row[0] for row in cursor.fetchall()]
+        chain = [row[0] for row in cursor.fetchall()]
+    if len(chain) >= settings.CTE_GUARD_DEPTH:
+        logger.error("issue_hierarchy.guard_triggered op=ancestor_chain "
+                     "issue_id=%s guard=%d", issue_id, settings.CTE_GUARD_DEPTH)
+        raise SubtreeDepthGuardError(
+            f"祖先链长度触达保险丝 {settings.CTE_GUARD_DEPTH}，疑似环状脏数据")
+    return chain
 
 
 def _depth_of(issue_id: uuid.UUID) -> int:
-    """节点深度（根=1）= 祖先链长度 + 1"""
-    return len(_ancestor_chain(issue_id)) + 1
+    """节点深度（根=1）= 祖先链长度——链首即节点自身：根链长 1 → depth 1，
+    第 5 层节点链长 5 → depth 5（BR-02 的 `depth(parent)+1 ≤ 5` 据此恰好放行 5 层）"""
+    return len(_ancestor_chain(issue_id))
 ```
 
 #### 4.3.2 移动子树（行锁 + 双校验 + 单行更新）
 
 ```python
+def _subtree_height(issue_id: uuid.UUID) -> int:
+    """被移子树高度（子树根自身=1）——下行 CTE 取最大相对深度 +1，单条聚合行返回。
+
+    保险丝与 §4.3.1 同源：max(depth) 触达 CTE_GUARD_DEPTH 即脏数据，抛
+    SubtreeDepthGuardError（500 + 告警），不得静默截断后错算高度。
+    不做 archived_at 可见性过滤：校验面向全量数据——已归档后代同样不能越限落地
+    （与 §4.3.3 展示查询的可见性过滤分工不同）。"""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            WITH RECURSIVE subtree(id, depth) AS (
+                SELECT id, 0 FROM issues WHERE id = %(root)s
+                UNION ALL
+                SELECT i.id, st.depth + 1 FROM issues i
+                  JOIN subtree st ON i.parent_id = st.id
+                 WHERE st.depth < %(guard)s
+            )
+            SELECT max(depth) FROM subtree""",
+            {"root": issue_id, "guard": settings.CTE_GUARD_DEPTH},
+        )
+        max_depth = cursor.fetchone()[0] or 0
+    if max_depth >= settings.CTE_GUARD_DEPTH:
+        logger.error("issue_hierarchy.guard_triggered op=subtree_height "
+                     "issue_id=%s guard=%d", issue_id, settings.CTE_GUARD_DEPTH)
+        raise SubtreeDepthGuardError(
+            f"子树深度触达保险丝 {settings.CTE_GUARD_DEPTH}，疑似环状脏数据")
+    return max_depth + 1
+
+
 @transaction.atomic
 def move_subtree(issue_id: uuid.UUID, new_parent_id: uuid.UUID | None,
                  actor_id: uuid.UUID) -> Issue:
-    """移动子树：BR-01 同项目 / BR-02 深度 / BR-03 防环 / BR-07 不动编号排序 / BR-10 行锁"""
+    """移动子树：BR-01 同项目 / BR-02 深度（含被移子树高度）/ BR-03 防环 /
+    BR-07 不动编号排序 / BR-10 行锁"""
+    epoch = time.time() * 1000      # TASK-010 BR-04：epoch 在动作入口生成（毫秒时间戳）
     issue = Issue.objects.select_for_update().select_related("project").get(id=issue_id)
 
     if new_parent_id is None:                       # 摘出为顶层
@@ -715,21 +761,31 @@ def move_subtree(issue_id: uuid.UUID, new_parent_id: uuid.UUID | None,
             id=new_parent_id, deleted_at__isnull=True)
         if parent.project_id != issue.project_id:   # BR-01
             raise ValidationError({"parent_id": "父子工作项必须属于同一项目"})
+        if parent.archived_at is not None:          # BR-13：挂到已归档父 = 对其写入
+            raise StateInvalidError(                # → 409 RESOURCE_STATE_INVALID
+                code="STATE", message="目标任务已归档，恢复后才能挂子任务")
         if _is_descendant(candidate=parent.id, of=issue.id):   # BR-03
             raise CircularDependencyError(path=_render_cycle(issue, parent))
-        if _depth_of(parent.id) + 1 > settings.MAX_ISSUE_DEPTH:  # BR-02
+        # BR-02：仅校验 depth(新父)+1 会漏算被移子树自身高度——把 3 层子树挂到
+        # 第 4 层父下会静默产生第 6/7 层节点。改为子树最高点整体校验：
+        # depth(新父)+1 = 被移根的新深度，再 +height-1 = 子树最深节点的新深度。
+        if (_depth_of(parent.id) + 1 + _subtree_height(issue.id) - 1
+                > settings.MAX_ISSUE_DEPTH):
             raise DepthLimitExceeded(limit=settings.MAX_ISSUE_DEPTH)
         issue.parent = parent
 
     issue.updated_by_id = actor_id
     issue.save(update_fields=["parent", "updated_by", "updated_at"])
-    # BR-14：单条 Activity，old/new_identifier 都落库（TASK-010 diff 管道消费）
+    # BR-14：单条 Activity，old/new_identifier 都落库（TASK-010 diff 管道消费）；
+    # epoch 随载荷传入（BR-04：Service 入口生成，Worker 不自行取值）
     transaction.on_commit(
-        lambda: record_parent_change.delay(str(issue_id), str(actor_id)))
+        lambda: record_parent_change.delay(str(issue_id), str(actor_id), epoch))
     return issue
 ```
 
 **为什么校验放在行锁之后**：`select_for_update` 先取得 A 行锁，随后读祖先链时并发的另一个移动（B→A 下）必然已提交或被阻塞——两个「互换父子」请求被串行化，后者校验时能看到前者已写入的 `parent_id`，环被正确拒绝。这是 BR-10 存在的全部理由。
+
+**归档写保护的收口分工**：被移动任务**自身**已归档时的写拦截不在本文重复实现——由 `TASK-009` §4.3.3 的 `ProjectEntityPermission` 统一收口（`409 RESOURCE_STATE_INVALID`）；本文仅在「**新父**已归档」处补一道 Service 校验（BR-13），两处错误码同源、均为状态类 409。
 
 #### 4.3.3 子树查询（递归 CTE 下行）
 
@@ -738,32 +794,39 @@ SUBTREE_SQL = """
     WITH RECURSIVE subtree(id, parent_id, sequence_id, name, state_group, assignees, depth) AS (
         SELECT i.id, i.parent_id, i.sequence_id, i.name, s."group",
                (SELECT array_agg(a.assignee_id) FROM issue_assignees a
-                 WHERE a.issue_id = i.id AND a.deleted_at IS NULL), 0
+                 WHERE a.issue_id = i.id), 0
           FROM issues i LEFT JOIN states s ON s.id = i.state_id
          WHERE i.id = %(root)s AND i.deleted_at IS NULL AND i.archived_at IS NULL
         UNION ALL
         SELECT i.id, i.parent_id, i.sequence_id, i.name, s."group",
                (SELECT array_agg(a.assignee_id) FROM issue_assignees a
-                 WHERE a.issue_id = i.id AND a.deleted_at IS NULL), st.depth + 1
+                 WHERE a.issue_id = i.id), st.depth + 1
           FROM issues i
           JOIN subtree st ON i.parent_id = st.id
           LEFT JOIN states s ON s.id = i.state_id
          WHERE i.deleted_at IS NULL
            AND i.archived_at IS NULL            -- BR-09：归档树整体不可见
-           AND st.depth < %(guard)s
-         LIMIT %(node_limit)s                    -- BR-11：500 节点截断（CTE 内截断，非取回后）
+           AND st.depth < %(guard)s             -- 保险丝：递归深度上限（CTE_GUARD_DEPTH）——
+                                              -- 查询层静默截断防无限递归（§1.3 第二防线）；
+                                              -- 上行链/子树高度校验的快速失败见 §4.3.1/§4.3.2
     )
-    SELECT * FROM subtree ORDER BY depth, sequence_id
+    SELECT * FROM subtree ORDER BY depth, sequence_id LIMIT %(fetch_limit)s
 """
+# assignee 子查询不滤 deleted_at：IssueAssignee 为物理删除中间表，不存在软删行（TASK-001 §4.1.2）。
+# BR-11 截断在外层 SELECT 判定——PostgreSQL 不支持递归项内 LIMIT
+# （ERROR: LIMIT is not supported in recursive queries），故取 node_limit+1 行，超出即截断。
 
 
 def fetch_subtree(root_id: uuid.UUID) -> dict:
+    NODE_LIMIT = 500
     with connection.cursor() as cursor:
         cursor.execute(SUBTREE_SQL, {
-            "root": root_id, "guard": settings.CTE_GUARD_DEPTH, "node_limit": 500})
+            "root": root_id, "guard": settings.CTE_GUARD_DEPTH,
+            "fetch_limit": NODE_LIMIT + 1})     # 多取 1 行仅用于截断判定
         rows = cursor.fetchall()
-    truncated = len(rows) >= 500
-    # 平铺结构装配（root 单列 + nodes 列表 + stats 聚合）
+    truncated = len(rows) > NODE_LIMIT
+    rows = rows[:NODE_LIMIT]
+    # 平铺结构装配（root 单列 + nodes 列表 + stats 聚合；truncated=true 时不装配 stats）
     ...
 ```
 
@@ -786,13 +849,18 @@ CTE Scan on subtree
 ```python
 @transaction.atomic
 def delete_subtree(issue_id: uuid.UUID, actor_id: uuid.UUID) -> dict:
-    """删除父任务 → 整树软删 + 关联表级联（BR-06）。
+    """删除父任务 → 整树软删 + 中间表物理删除（BR-06；中间表口径 = TASK-001 §4.1.2）。
 
-    两步 UPDATE 共用同一 CTE 结果集：
-      ① issues 整树 deleted_at = now()
-      ② issue_assignees / issue_labels / 后续 worklogs 按 issue_id IN (子树) 级联软删
+    主表 UPDATE 与中间表 DELETE 共用同一 CTE 结果集：
+      ① issues 整树软删 deleted_at = now()
+      ② issue_assignees / issue_labels 按 issue_id IN (子树) **物理删除**
+         （中间表任何路径不写 deleted_at，不留软删痕迹；整树恢复时按快照重建）
+    附件不在此事务内联处理：`FILE-001` 多态 FileAsset 无 FK，由每日
+    purge_deleted_assets 按「宿主 Issue 软删超 30 天」级联回收（30 天恢复窗）；
+    worklogs（TASK-006）交付时在同一 CTE 结果集上追加自身的级联口径。
     """
     now = timezone.now()
+    epoch = time.time() * 1000       # TASK-010 BR-04：epoch 在动作入口生成（毫秒时间戳）
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -800,18 +868,20 @@ def delete_subtree(issue_id: uuid.UUID, actor_id: uuid.UUID) -> dict:
                 SELECT id FROM issues WHERE id = %(root)s AND deleted_at IS NULL
                 UNION ALL
                 SELECT i.id FROM issues i JOIN target t ON i.parent_id = t.id
-                 WHERE i.deleted_at IS NULL AND i.archived_at IS NULL
+                 WHERE i.deleted_at IS NULL
+                 -- 级联必须包含已归档后代（否则残留指向软删父的孤儿，违反 BR-15）；
+                 -- archived_at 过滤只用于可见性查询（§4.3.3），不用于删除下行扫描
             ),
             marked AS (
                 UPDATE issues SET deleted_at = %(now)s, updated_by_id = %(actor)s
                  WHERE id IN (SELECT id FROM target) RETURNING id
             ),
-            marked_assignees AS (
-                UPDATE issue_assignees SET deleted_at = %(now)s
+            purged_assignees AS (
+                DELETE FROM issue_assignees
                  WHERE issue_id IN (SELECT id FROM target) RETURNING 1
             ),
-            marked_labels AS (
-                UPDATE issue_labels SET deleted_at = %(now)s
+            purged_labels AS (
+                DELETE FROM issue_labels
                  WHERE issue_id IN (SELECT id FROM target) RETURNING 1
             )
             SELECT (SELECT count(*) FROM marked),
@@ -819,7 +889,7 @@ def delete_subtree(issue_id: uuid.UUID, actor_id: uuid.UUID) -> dict:
             {"root": issue_id, "now": now, "actor": actor_id})
         deleted_count, ids = cursor.fetchone()
     transaction.on_commit(lambda: record_delete.delay(str(issue_id), str(actor_id),
-                                                      deleted_count))
+                                                      deleted_count, epoch))
     return {"deleted_count": deleted_count, "descendant_ids": ids[1:]}
 ```
 
@@ -831,9 +901,11 @@ def delete_subtree(issue_id: uuid.UUID, actor_id: uuid.UUID) -> dict:
 # 列表 QuerySet 统一装配（TASK-003 的 build_issue_queryset 扩展）
 from django.db.models import Count, Q
 
-SUBTREE_COUNT_FILTER = Q(sub_issues__deleted_at__isnull=True,
-                         sub_issues__archived_at__isnull=True,
-                         sub_issues__state__group__in=["unstarted", "started", "completed"])
+# 与 TASK-002 §1.3 决策 2 / §4.4.2 的表达式**完全同形**（排除式 ~Q(cancelled)，非白名单），
+# 唯一增量是追加 archived_at__isnull=True（见下方声明）：
+SUBTREE_COUNT_FILTER = (Q(sub_issues__deleted_at__isnull=True,
+                          sub_issues__archived_at__isnull=True)
+                        & ~Q(sub_issues__state__group="cancelled"))
 COMPLETED_COUNT_FILTER = Q(sub_issues__deleted_at__isnull=True,
                            sub_issues__archived_at__isnull=True,
                            sub_issues__state__group="completed")
@@ -847,20 +919,34 @@ qs = (Issue.objects.filter(project_id=pid, archived_at__isnull=True)
 ```
 
 - `distinct=True` 防止与其他 JOIN（assignees 预取）产生笛卡尔放大；
-- `cancelled` 既不在分子也不在分母（BR-05）——「2 个子任务中 1 个被取消」显示 `1/1` 而非 `1/2`，语义为「有效子任务完成率」。
+- `cancelled` 既不在分子也不在分母（BR-05）——「2 个子任务中 1 个被取消」显示 `1/1` 而非 `1/2`，语义为「有效子任务完成率」；
+- **与 TASK-002 的差异声明（仅一处，必须显式声明）**：TASK-002 的两个过滤器只排除软删与 `cancelled`（P1 无归档能力）；本迭代起 `TASK-009` 引入归档且 BR-09 规定归档树整体退出默认视图，故两个过滤器均**追加** `sub_issues__archived_at__isnull=True`。group 过滤不采用白名单 `group__in=[…]` 而沿用 TASK-002 的排除式 `~Q(group="cancelled")`——未来新增状态组（如 P3 backlog）时白名单会漏计、排除式天然兼容。**回改登记**：TASK-002 §1.3 决策 2 与 §4.4.2 的两处表达式需同步追加该条件（与本迭代同期落地，避免 P1/P2 计数口径漂移）。
 
 #### 4.3.6 Celery 任务
 
 ```python
 # apps/api/plane/bgtasks/issue_hierarchy.py
 @shared_task(bind=True, max_retries=3, retry_backoff=True)
-def record_parent_change(self, issue_id: str, actor_id: str) -> None:
-    """挂载/移动的 Activity 落库（TASK-010 管道的前置钩子）——幂等：按 (issue, epoch, field) 去重"""
+def record_parent_change(self, issue_id: str, actor_id: str, epoch: float) -> None:
+    """挂载/移动的 Activity 落库（TASK-010 管道的前置钩子）。
+
+    幂等键与 TASK-010 BR-07 同格式：event_key = sha256(verb + issue_id + actor_id + epoch)
+    （verb 固定 `updated`、field 固定 `parent`——本函数是该四元组键的**单字段特例**，
+    即 TASK-010 BR-07 所述「(issue, epoch, field) 口径为单字段特例」）。
+    epoch 由调用方 Service（move_subtree / create_sub）在动作入口生成并随载荷传入
+    （TASK-010 BR-04——Issue 表无 epoch 列，Worker 不得自行取值，否则同动作多日志
+    epoch 漂移破坏时间线分组）。Redis SETNX 前置去重 + DB 同键查询兜底，
+    与 TASK-010 §4.3.2 Worker 同一实现，本文不另造键格式。"""
     ...
 
 @shared_task(bind=True, max_retries=3)
-def record_delete(self, issue_id: str, actor_id: str, deleted_count: int) -> None:
-    """删除 Activity（verb=deleted，comment 携带级联数量）——幂等"""
+def record_delete(self, issue_id: str, actor_id: str, deleted_count: int,
+                  epoch: float) -> None:
+    """删除 Activity（verb=deleted，comment 携带级联数量）。
+
+    幂等同上：event_key = sha256(verb + issue_id + actor_id + epoch)（TASK-010
+    BR-07 同格式；epoch 由 delete_subtree 在动作入口生成传入），与 TASK-010 既有
+    delete 投递共用键空间，不重复落库。"""
     ...
 ```
 
@@ -962,11 +1048,13 @@ useDropTarget({
 | UT-07 | 归档树不可见 | 归档父任务 | `subtree/` 404；列表不含整树 | 正常 |
 | UT-08 | 摘出 | parent_id=null | 变顶层，`depth=1` | 正常 |
 | UT-09 | 跨项目 parent | parent 属项目 Y | `400 DOES_NOT_EXIST` | 安全 |
-| UT-10 | CTE 保险丝 | 人为构造 101 层脏数据 | 抛保险丝异常 + ERROR 日志 | 异常 |
+| UT-10 | CTE 保险丝 | 人为构造 101 层脏数据（上行祖先链） | 抛 `SubtreeDepthGuardError`（→500 SERVER_ERROR）+ ERROR 告警日志（§4.3.1 SELECT 后判定 `len(chain) ≥ CTE_GUARD_DEPTH`） | 异常 |
 | UT-11 | 子树截断 | 600 节点 | 500 条 + `truncated=true` + 无 stats | 边界 |
 | UT-12 | 级联软删计数 | 1 根 + 2 层共 6 后代 | `deleted_count=7`；整树 `deleted_at` 非空 | 正常 |
 | UT-13 | 权限矩阵 | VIEWER/COMMENTER 挂子任务 | `403 PERM_ROLE_INSUFFICIENT` | 安全 |
 | UT-14 | 归档项目写保护 | 归档项目挂子任务 | `403 PERM_PROJECT_ARCHIVED` | 安全 |
+| UT-15 | 归档任务写保护 | 对已归档任务挂子任务 / 挂到已归档父下 | 均 `409 RESOURCE_STATE_INVALID`（TASK-009 BR-08 同口径，BR-13） | 安全 |
+| UT-16 | 移动越限（子树高度漏算） | 把高 3 层子树挂到第 4 层父下（仅校验 `depth(parent)+1` 会放行、静默产生第 6/7 层） | `409 RESOURCE_LIMIT_EXCEEDED`（details: DEPTH）；子树零变更（§4.3.2 `_subtree_height` 整体校验） | 边界 |
 
 ### 5.2 集成测试
 
@@ -985,12 +1073,13 @@ useDropTarget({
 
 | 用例 ID | 用户场景 | 操作路径 | 验收标准 |
 | --- | --- | --- | --- |
-| E2E-01 | 需求多层拆解 | 需求下建两层共 5 个子任务，完成 3 个 | 父徽标 `3/5`；刷新保持；全屏树结构正确 |
+| E2E-01 | 需求多层拆解 | 需求下建两层共 5 个子任务（3 个直接子级 + 其中 1 个再拆 2 个孙级）；依次完成 2 个孙级、3 个直接子级，最后完成需求自身 | 父徽标 `3/3`（BR-04 **直接子级**口径——孙级不进父徽标）；中间父行徽标 `2/2`；全屏树 `stats.total=6 / completed=6 / max_depth=2`（**含根口径**：total/completed 均计入需求自身，§4.2.2 契约要点 2——操作序列共完成 2 孙级 + 3 直接子级 + 根 = 6）；刷新后层级与比例均保持 |
 | E2E-02 | 拖拽移动子树 | 把「分页游标改造」子树拖到「前端导出按钮」下 | 确认后树重排；原父计数 -1、新父 +1；编号不变 |
 | E2E-03 | 非法移动拦截 | 把父任务拖到自己子级下，确认 | Toast 显示完整环路径；树上环节点红显 2s；无数据变更 |
 | E2E-04 | 深度入口预判 | 在第 5 层任务行悬浮 | 无「＋」子任务入口；直连 API 409 |
 | E2E-05 | 级联删除确认 | 删除有 6 后代的父任务 | 确认弹层列数量；成功后整树从列表消失 |
 | E2E-06 | 折叠记忆 | 展开某分支后刷新 | 折叠状态还原（localStorage） |
+| E2E-07 | 移动深度拦截 | 把 3 层子树拖到第 4 层任务下并确认 | `409 RESOURCE_LIMIT_EXCEEDED` + Toast「移动后子树最深将达第 7 层，超出 5 层上限」；树无数据变更（§4.3.2 子树高度校验：被移根新深度 = 4+1 = 5，最深节点 = 5+(3−1) = 7，与 UT-16 括注同口径） |
 
 ---
 
@@ -1026,10 +1115,10 @@ useDropTarget({
 | 类型 | 交付物 |
 | --- | --- |
 | Model / Migration | 零 DDL；`settings/features.py` 增 `MAX_ISSUE_DEPTH=5`、`CTE_GUARD_DEPTH=100` |
-| 后端 | `plane/db/services/issue_hierarchy.py`（`_is_descendant` / `_ancestor_chain` / `move_subtree` / `fetch_subtree` / `delete_subtree`）；`subtree/` 端点；`sub-issues/` 深度放开改造；`parent_id` 进 `IssueFilterSet` 白名单；DELETE 级联改造 |
+| 后端 | `plane/db/services/issue_hierarchy.py`（`_is_descendant` / `_ancestor_chain` / `_subtree_height` / `move_subtree` / `fetch_subtree` / `delete_subtree`）；`subtree/` 端点；`sub-issues/` 深度放开改造；`parent_id` 进 `IssueFilterSet` 白名单；DELETE 级联改造 |
 | Celery | `record_parent_change` / `record_delete`（幂等） |
 | 前端 | 列表树形列（缩进/引导线/折叠/进度徽标/快速加子）、全屏树抽屉、拖拽移动双区判定 + 确认弹层、`IssueTreeStore`、折叠持久化 |
-| 测试 | UT-01~14、IT-01~08、E2E-01~06 |
+| 测试 | UT-01~16、IT-01~08、E2E-01~07 |
 
 ### 7.2 可操作演示的验收标准
 

@@ -136,7 +136,8 @@ class ProjectStateListView(ListCreateAPIView):
     def list(self, request, *args, **kwargs):
         project, _, _ = _get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         states = State.objects.filter(project=project, deleted_at__isnull=True).order_by("sort_order")
-        # 排除 cancelled（仅用于状态机，不渲染为看板列 —— sprint-overview §2.1）
-
-        visible = states.exclude(group=State.Group.CANCELLED)
-        return envelope(True, StateSerializer(visible, many=True).data)
+        # 默认排除 cancelled（不渲染为看板列，sprint-overview §2.1 / TC-PROJ1-006）；
+        # ?include_cancelled=1 供创建弹窗状态下拉取全四态（TASK-001 §3.2.2）
+        if request.query_params.get("include_cancelled") not in ("1", "true"):
+            states = states.exclude(group=State.Group.CANCELLED)
+        return envelope(True, StateSerializer(states, many=True).data)

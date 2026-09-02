@@ -34,9 +34,10 @@ export const ProjectAPI = {
   patch: (slug: string, projectId: string, payload: { name?: string; description?: string }) =>
     api.patch(`workspaces/${slug}/projects/${projectId}/`, payload),
   delete: (slug: string, projectId: string) => api.delete(`workspaces/${slug}/projects/${projectId}/`),
-  states: (slug: string, projectId: string) =>
+  states: (slug: string, projectId: string, params: { include_cancelled?: string } = {}) =>
     api.get<Array<{ id: string; name: string; color: string; group: string; sort_order: number; is_default: boolean }>>(
       `workspaces/${slug}/projects/${projectId}/states/`,
+      { params },
     ),
 };
 

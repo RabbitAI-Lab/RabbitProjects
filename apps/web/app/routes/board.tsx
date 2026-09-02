@@ -3,6 +3,7 @@ import { useParams } from "react-router";
 import { Topbar } from "../components/Topbar";
 import { ProjectSidebar } from "../components/ProjectSidebar";
 import { IssueDrawer as SharedDrawer } from "../components/IssueDrawer";
+import { NewTaskModal } from "../components/NewTaskModal";
 import { StateBadge } from "../components/StateBadge";
 import { IssueAPI, ProjectAPI } from "../services/api";
 import type { Issue } from "@rp/types";
@@ -112,7 +113,7 @@ export default function Board() {
             })}
           </div>
           {openIssueId && <SharedDrawer issueId={openIssueId} slug={workspaceSlug!} projectId={projectId!} onClose={() => { setOpenIssueId(null); load(); }} />}
-          {showTaskModal && <NewTaskModal slug={workspaceSlug!} projectId={projectId!} onClose={() => { setShowTaskModal(false); load(); }} />}
+          {showTaskModal && <NewTaskModal slug={workspaceSlug!} projectId={projectId!} projectName={projName} onClose={() => setShowTaskModal(false)} onCreated={() => load()} />}
         </main>
       </div>
     </div>
@@ -144,27 +145,6 @@ function IssueDrawer({ issueId, slug, projectId, onClose }: { issueId: string; s
           </div>
         </div>
       </aside>
-    </div>
-  );
-}
-
-function NewTaskModal({ slug, projectId, onClose }: { slug: string; projectId: string; onClose: () => void }) {
-  const [name, setName] = useState("");
-  const [err, setErr] = useState<string | null>(null);
-  return (
-    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl shadow-lg w-[640px] p-6">
-        <div className="flex items-center justify-between mb-[18px]"><div className="text-base font-semibold">创建任务</div><button onClick={onClose}>✕</button></div>
-        {err && <div className="mb-3.5 px-3 py-2 bg-red-50 text-red-700 rounded-md text-[13px]">{err}</div>}
-        <form onSubmit={async (e) => {
-          e.preventDefault(); setErr(null);
-          if (!name.trim()) { setErr("请填写任务标题"); return; }
-          try { await IssueAPI.create(slug, projectId, { name }); onClose(); } catch (er: any) { setErr(er?.message ?? "创建失败"); }
-        }}>
-          <input className="w-full h-10 text-[17px] font-medium border-0 border-b-2 border-transparent focus:border-brand-500 focus:outline-none bg-transparent px-0 mb-3" placeholder="任务标题" autoFocus value={name} onChange={(e) => setName(e.target.value)} />
-          <div className="flex justify-end gap-2.5 mt-5"><button type="button" onClick={onClose} className="h-[34px] px-3.5 bg-white border border-neutral-300 rounded-md">取消</button><button type="submit" className="h-[34px] px-3.5 bg-brand-500 text-white rounded-md hover:bg-brand-600">创建任务</button></div>
-        </form>
-      </div>
     </div>
   );
 }

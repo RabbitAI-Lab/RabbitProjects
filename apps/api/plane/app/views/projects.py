@@ -1,6 +1,7 @@
 from django.db import transaction
 from rest_framework.exceptions import NotFound
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.response import Response
 
 from plane.app.permissions import IsAuthenticated
 from plane.app.serializers.common import envelope
@@ -105,7 +106,7 @@ class ProjectDetailView(RetrieveUpdateDestroyAPIView):
         return envelope(True, _serialize_project(project, request.user))
 
     def update(self, request, *args, **kwargs):
-        project, _, member = _get_project_or_404(kwargs["slug"], kwargs["project_id"], request)
+        project, _, member = _get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         # PATCH 需 PROJ_ADMIN 或 WS_ADMIN+
         ws_member_role = _get_workspace_or_404(kwargs["slug"], request.user)[1].role
         proj_admin = project.current_user_role >= ProjectRole.ADMIN
@@ -129,7 +130,7 @@ class ProjectDetailView(RetrieveUpdateDestroyAPIView):
         if not (project.current_user_role >= ProjectRole.ADMIN or ws_member_role >= WorkspaceRole.ADMIN):
             return envelope(False, None, {"code": "PERM_PROJECT_ADMIN_REQUIRED"}, http_status=403)
         project.soft_delete(actor_id=request.user.id)
-        return envelope(True, None, None, http_status=204)
+        return Response(status=204)  # 204 禁带 body（Vite proxy 对 204+body 挂起）
 
 
 class ProjectStateListView(ListCreateAPIView):

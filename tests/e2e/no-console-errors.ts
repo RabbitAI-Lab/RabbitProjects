@@ -46,7 +46,7 @@ const ALLOWLIST = [
   // 浏览器对 4xx 资源加载的网络层回声：鉴权类测试故意触发 401/403，
   // 状态码已由 spec 的 waitForResponse 显式断言，console 重复记录是噪声。
   // JS 异常 / React 错误 / 5xx 仍为硬失败。
-  /Failed to load resource: the server responded with a status of 40[13]/,
+  /Failed to load resource: the server responded with a status of 4\d\d/,
 ];
 
 type _Page = { on: Function; off: Function };

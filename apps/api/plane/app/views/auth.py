@@ -1,8 +1,11 @@
 from django.contrib.auth import authenticate, login, logout
 from django.db import transaction
 from django.utils.text import slugify
+from rest_framework.response import Response
+from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from plane.app.permissions import IsAuthenticated
@@ -106,7 +109,7 @@ class SignOutView(APIView):
 
     def post(self, request):
         logout(request)
-        return envelope(True, None, None, http_status=204)
+        return Response(status=204)  # 204 禁带 body
 
 
 class MeView(APIView):

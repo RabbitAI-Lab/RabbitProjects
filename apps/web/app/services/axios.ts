@@ -41,7 +41,16 @@ api.interceptors.response.use(
   },
   (err) => {
     const status = err.response?.status;
-    const code = err.response?.data?.meta?.code;
+    const envelopeBody = err.response?.data;
+    const code = envelopeBody?.meta?.code;
+    // 信封错误统一解包：前端拿到 meta.message / err.code，而非 axios 的
+    // "Request failed with status code N"（登录 401、注册 409、项目 409 等场景）
+    const friendly: Error & { code?: string; meta?: unknown } = new Error(
+      envelopeBody?.meta?.message ?? err.message ?? "请求失败",
+    );
+    friendly.code = code;
+    friendly.meta = envelopeBody?.meta;
+    err.friendly = friendly;
     if (status === 401 && !location.pathname.startsWith("/login")) {
       if (code === "AUTH_ACCOUNT_DISABLED") {
         // 会话中被禁用（AUTH-002 §3.3）：toast.error + 落地常驻 Alert（经 ?disabled=1）
@@ -53,11 +62,11 @@ api.interceptors.response.use(
         location.href = "/login?next=" + encodeURIComponent(location.pathname);
       }
     } else if (status === 429) {
-      toast("请求过于频繁，请稍后再试", "error");
+      toast("请求过于频繁，请稍后再再试", "error");
     } else if (status !== undefined && status >= 500) {
       toast("服务器开小差了，请稍后重试", "error");
     }
-    return Promise.reject(err);
+    return Promise.reject(friendly);
   },
 );
 

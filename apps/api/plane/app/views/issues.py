@@ -1,7 +1,8 @@
 from django.db import transaction
 from django.db.models import Max
 from rest_framework.exceptions import NotFound, ValidationError
-from rest_framework.generics import ListCreateAPIView, RetrieveUpdateAPIView
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.response import Response
 
 from plane.app.permissions import IsAuthenticated
 from plane.app.serializers.common import envelope
@@ -90,7 +91,7 @@ class IssueListCreateView(ListCreateAPIView):
         return envelope(True, _serialize_issue(issue), http_status=201)
 
 
-class IssueDetailView(RetrieveUpdateAPIView):
+class IssueDetailView(RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = IssueSerializer
 
@@ -105,6 +106,19 @@ class IssueDetailView(RetrieveUpdateAPIView):
         except Issue.DoesNotExist:
             raise NotFound("RESOURCE_NOT_FOUND")
         return issue
+
+    def retrieve(self, request, *args, **kwargs):
+        """GET 详情 —— 统一信封（api-conventions §4）。"""
+        return envelope(True, _serialize_issue(self.get_object()))
+
+    def destroy(self, request, *args, **kwargs):
+        """DELETE —— 软删除 + PROJ_CONTRIBUTOR 角色校验（TASK-001 §4.2，P0 UI 唯一删除任务入口）。"""
+        project, _, _ = _get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
+        if project.current_user_role < ProjectRole.CONTRIBUTOR:
+            return envelope(False, None, {"code": "PERM_PROJECT_CONTRIBUTOR_REQUIRED"}, http_status=403)
+        issue = self.get_object()
+        issue.soft_delete(actor_id=request.user.id)
+        return Response(status=204)  # 204 禁带 body
 
     def update(self, request, *args, **kwargs):
         project, _, _ = _get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)

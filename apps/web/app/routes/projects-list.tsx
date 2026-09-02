@@ -12,6 +12,7 @@ export default function ProjectsList() {
   const [ws, setWs] = useState<WorkspaceSummary | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [showNew, setShowNew] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(session.justRegistered);
   const { session } = useStores();
 
   useEffect(() => {
@@ -31,10 +32,10 @@ export default function ProjectsList() {
           {!ws && <div className="text-sm text-neutral-500">加载中…</div>}
           {ws && (
             <>
-              {session.justRegistered && (
-                <div className="flex items-center gap-2.5 bg-brand-50 border border-brand-100 text-brand-600 rounded-lg px-3.5 py-2.5 text-[13px] mb-4">
+              {showWelcome && (
+                <div data-testid="welcome-banner" className="flex items-center gap-2.5 bg-brand-50 border border-brand-100 text-brand-600 rounded-lg px-3.5 py-2.5 text-[13px] mb-4">
                   🎉 欢迎使用 RabbitProjects！这是你的个人默认团队：<b>{ws.name}</b>
-                  <button className="ml-auto text-brand-600" onClick={() => session.justRegistered = false}>✕</button>
+                  <button className="ml-auto text-brand-600" onClick={() => { session.justRegistered = false; setShowWelcome(false); }}>✕</button>
                 </div>
               )}
               <div className="flex items-center gap-3 mb-5">

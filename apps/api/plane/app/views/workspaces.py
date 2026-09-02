@@ -86,9 +86,16 @@ class WorkspaceDetailView(RetrieveUpdateAPIView):
         ws.current_user_role = member.role
         return ws
 
+    def retrieve(self, request, *args, **kwargs):
+        """GET 详情 —— 统一信封（api-conventions §4；与 Project retrieve 同款修复）。"""
+        return envelope(True, self.get_serializer(self.get_object()).data)
+        return ws
+
     def update(self, request, *args, **kwargs):
-        ws, member = self.get_object(), None
-        ws_obj, member = _get_workspace_or_404(kwargs["slug"], request)
+        ws, member = _get_workspace_or_404(kwargs["slug"], request.user)
         if member.role < WorkspaceRole.ADMIN:
             return envelope(False, None, {"code": "PERM_WORKSPACE_ADMIN_REQUIRED"}, http_status=403)
-        return super().update(request, *args, **kwargs)
+        s = self.get_serializer(ws, data=request.data, partial=True)
+        s.is_valid(raise_exception=True)
+        s.save()
+        return envelope(True, s.data)

@@ -76,3 +76,13 @@ PG schema 准备（Django migrate 在 PG 上有已知问题，见下面"坑"）�
 - **UI parity 五步纪律（ADR-0010，强制）**：① 新页面/弹窗先入 UI 表面清单（test-cases.md 附录 C）再实现，**每行必须标来源（文档 §x.x），禁止凭记忆概括**——首版清单就因顶栏一行概括成"切换器（logo+名称+▾）"漏掉整个下拉/建团队/头像菜单；② 组件完成的定义 = 清单行核对通过 + `tests/e2e/parity.spec.ts` 补对应字段断言（带出处注释）；③ e2e 断言由清单生成，不由实现反推（防自我印证）；④ 迭代收口前由**未参与实现的 subagent** 反向扫全部文档 §3 核对清单覆盖率（文档 vs 清单，不是实现 vs 文档）；⑤ 条件态/下拉内容/禁用态/空态/加载态/toast 文案是漏项高发区，逐类过
 - 实现偏差 → ADR 登记 → 后续 Sprint 回改文档
 - GateGuard 事实陈述、lint/commitlint 钩子是刻意保留的纪律，不要绕过
+
+### 测试脚本规范（写 e2e/接口/静态检查时强制）
+
+- **API 真相源唯一**：`tests/jmeter/sprint-0-flow.py` 是后端契约的事实来源；`tests/e2e/no-console-errors.ts` 的 `API_TRUTH` 镜像同一份契约（status 码 + 字段名 + 错误码常量）。**所有 e2e 与静态断言必须 import 这两份，禁止各自硬编码**——双源必漂
+- **Playwright spec 必装 console guard**：`attachConsoleGuard(page)` + `expect.soft(errors).toEqual([])`（见 `no-console-errors.ts` 白名单示例：vite HMR / DevTools 下载提示）
+- **跨 test 状态边界**：每个 `test.describe` 必须自带 `beforeEach`/`afterEach`——`signOut/clearCookies/重置 store` 显式调用，**禁止依赖 Worker 复用 page 自动清理**（实测根因：跨 spec 缓存 `isBootstrapped=true`，下一个 spec 守卫直接 return 不重检）
+- **Playwright ≥ 1.62 + reporter = line**：1.54/1.56 的 list reporter 在 `expect.soft` 失败时 NPE（`base.js:320 undefined.startsWith`），CI/本地都改用 line 避开；CI 环境 reporter 切 `github`
+- **性能压测 vs 端到端分清**：`tests/jmeter/sprint-0-flow.py` 是 CI gate（10 步单线程）；`tests/jmeter/sprint-0-flow.jmx` 是性能压测（多线程 / 持续时间 / 报告），不要混用
+- **加/移 SerializerMethodField 必加 Meta.fields**：GET 路径不触发 `get_field_names` assert，PATCH/POST 路径触发 500（教训 #3）
+- **dropdown 全局点击监听禁 document click**：改 `mousedown` 阶段 + `target.closest('[data-sb-scope="..."]')` 判范围，破坏性操作（登出/删账户）继续用 `location.href` 全量重载（教训 #4）

@@ -67,3 +67,17 @@
 4. 收口前 → 派独立 subagent 反向扫文档 §3（评审对象=文档 vs 清单，审计者≠实现者）
 5. 提交前 → 自问"改过 Serializer？改了 dropdown？跑了 PATCH 路径？"
 6. 收尾 → 若发现新类别教训（如本 Sprint 的 3/4），追加到本文件 + ADR-0010 修订条目
+
+## 测试脚本规范（落地时同步登记）
+
+任何 sprint 写测试脚本（e2e / 接口 / 静态检查）强制遵守：
+
+1. **API 真相源唯一**：`tests/jmeter/sprint-0-flow.py` 是后端契约事实来源；`tests/e2e/no-console-errors.ts` 的 `API_TRUTH` 镜像同一份契约（status 码 + 字段名 + 错误码常量）。所有 e2e 与静态断言必须 import，禁止各自硬编码——双源必漂
+2. **Playwright spec 必装 console guard**：`attachConsoleGuard(page)` + `expect.soft(errors).toEqual([])`，白名单仅放 vite HMR / DevTools 下载提示等浏览器噪声
+3. **跨 test 状态边界**：每个 `test.describe` 自带 `beforeEach/afterEach`——`signOut/clearCookies/重置 store` 显式调用，**禁止依赖 Worker 复用 page 自动清理**（实测根因：跨 spec 缓存 `isBootstrapped=true`，下一个 spec 守卫直接 return 不重检）
+4. **Playwright ≥ 1.62 + reporter = line**：1.54/1.56 的 list reporter 在 `expect.soft` 失败时 NPE（`base.js:320 undefined.startsWith`），CI/本地都改用 line 避开；CI 环境 reporter 切 `github`
+5. **性能压测 vs 端到端分清**：`tests/jmeter/sprint-0-flow.py` 是 CI gate（10 步单线程）；`tests/jmeter/sprint-0-flow.jmx` 是性能压测（多线程 / 持续时间 / 报告），不要混用
+6. **加/移 SerializerMethodField 必加 Meta.fields**：GET 路径不触发 `get_field_names` assert，PATCH/POST 路径触发 500（教训 #3）
+7. **dropdown 全局点击监听禁 document click**：改 `mousedown` 阶段 + `target.closest('[data-sb-scope="..."]')` 判范围，破坏性操作（登出/删账户）继续用 `location.href` 全量重载（教训 #4）
+
+> 这 7 条与 `CLAUDE.md` 工作流约定的"测试脚本规范"块同源；新 sprint 写测试前先读这两处。

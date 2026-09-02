@@ -152,11 +152,11 @@ sequenceDiagram
 | BR-03 | 合流规则：Activity 与 Comment 在 SQL 层 `UNION ALL` 归并、全局时间排序——**不在应用层二次排序**（数据量下内存排序不可控） | ViewSet | — |
 | BR-04 | 批量折叠：同 `epoch` 且**跨 ≥2 个任务**的多条 Activity 折叠为汇总行（`batch_count`）；同任务同 epoch 不折叠（那是任务级一组，单条行直出） | ViewSet | — |
 | BR-05 | 明细抽屉按 `?epoch=` 拉取（复用本端点 + epoch 参数），仅返回摘要字段（issue_key/name/变更行），不重复全字段 | ViewSet | — |
-| BR-06 | 软删任务的动态**保留在流中**（行内任务链接置灰「已删除」；点击不跳转）——审计完整性优先于导航体验 | ViewSet + 前端 | — |
+| BR-06 | 软删任务的动态**保留在流中**（行内任务链接置灰「已删除」；点击不跳转）——审计完整性优先于导航体验；与 BR-01 可见域的调和（项目入口收口 + 整圈取数）见 §4.3.1 | ViewSet + 前端 | — |
 | BR-07 | 归档任务的动态保留（链接可跳转，详情只读态呈现） | 前端 | — |
 | BR-08 | 过滤白名单：`event` 取值限于 §2.3 表；未知值 400 `VALIDATION_INVALID_PARAM`（不静默忽略——过滤语义错误必须暴露） | FilterSet | 400 |
 | BR-09 | `actor_id` 过滤仅限项目成员域内用户；域外 ID 返回空集（不 404——过滤是缩小不是寻址） | FilterSet | — |
-| BR-10 | 游标锚 `(created_at, id)` 唯一键序列（两源 UNION 后必须显式复合键，防同秒记录漂移/重复） | 分页器 | — |
+| BR-10 | 游标锚 `(created_at, id)` 唯一键序列（两源 UNION 后必须显式复合键，防同秒记录漂移/重复）；锚编码进 `value:offset:is_prev` 三段式的规范见 §4.2.1 要点 5 | 分页器 | — |
 | BR-11 | 每页 30 条（`per_page` 上限 50）；明细抽屉单次 ≤100 | 分页器 | 静默截断 + `meta.degraded` |
 | BR-12 | `stream_cursor` = 首页最新一条的 `(created_at, id)` 水位；仅首页响应携带（增量拉取的起点契约，`COLLAB-004` 消费） | ViewSet | — |
 | BR-13 | 系统事件（复制/归档/自动化）以 `⚙系统` 或规则名展示，actor 为空时归入系统行 | 前端 | — |
@@ -184,7 +184,7 @@ sequenceDiagram
 | actor 过滤 + event 过滤组合 | AND 语义 | — |
 | 同秒并发动态 | 复合游标键 | 无重复无漂移（BR-10） |
 | 历史深度 | 无限翻页（游标） | 「加载更早」按钮式 |
-| 评论合流的软删评论 | is_deleted 占位 | 合流为「删除了一条评论」行（不显内容） |
+| 评论合流的软删评论 | 存储层 `deleted_at` 非空（契约层投影 `is_deleted=true`） | 合流为「删除了一条评论」行（不显内容） |
 
 ---
 
@@ -282,7 +282,11 @@ sequenceDiagram
 
 ### 4.1 数据模型
 
-**零新增表、零 DDL**。消费 `issue_activities`（`TASK-010` 全量点亮）与 `issue_comments`（`COLLAB-001/002`）。核心工作是**项目维度取数的索引论证**：
+**零新增表、零 DDL**。消费 `issue_activities`（`TASK-010` 全量点亮）与 `issue_comments`（`COLLAB-001/002`）。
+
+**软删双层口径（全篇统一）**：存储层一律 `deleted_at datetime`（`SoftDeleteModel`，NULL=未删）；契约层（响应 JSON）一律投影为 `is_deleted bool`。下文 SQL/ORM 过滤条件写 `deleted_at IS [NOT] NULL`，序列化输出 `is_deleted`——两层各司其职，不混写。
+
+核心工作是**项目维度取数的索引论证**：
 
 #### 4.1.1 项目维度取数路径
 
@@ -319,7 +323,7 @@ erDiagram
     }
     IssueComment {
         datetime created_at "合流行的时间戳"
-        bool deleted_at "软删评论→「删除了一条评论」行"
+        datetime deleted_at "存储层软删时间戳（NULL=未删）；契约层投影 is_deleted bool"
     }
 ```
 
@@ -348,7 +352,7 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/activities/?per_page=30 HTTP/1
   "data": [
     {
       "kind": "batch",
-      "epoch": 1756727520000,
+      "epoch": 1788589920000,
       "actor": { "id": "6c7d…", "display_name": "张三", "avatar_url": null },
       "summary": "批量更新了 50 个任务",
       "change_brief": "状态 待办 → 已完成",
@@ -358,13 +362,13 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/activities/?per_page=30 HTTP/1
     {
       "kind": "activity",
       "id": "9f8e7d6c-…",
-      "epoch": 1756713900000,
+      "epoch": 1788577500000,
       "actor": { "id": "2b3a…", "display_name": "李四", "avatar_url": null },
       "verb": "updated", "field": "worklog",
       "text": "⏱ 填报 2h · 联调收尾",
       "issue": { "id": "b2c3…", "issue_key": "RBT-131", "name": "导出限流配置",
                  "is_deleted": false, "is_archived": false },
-      "created_at": "2026-09-05T02:45:00.000Z"
+      "created_at": "2026-09-05T03:05:00.000Z"
     },
     {
       "kind": "comment",
@@ -379,7 +383,7 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/activities/?per_page=30 HTTP/1
     {
       "kind": "activity",
       "id": "1a2b3c4d-…",
-      "epoch": 1756708860000,
+      "epoch": 1788572460000,
       "actor": null,
       "verb": "created", "field": null,
       "text": "由 RBT-12 复制创建（含 3 个子任务）",
@@ -390,9 +394,11 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/activities/?per_page=30 HTTP/1
     }
   ],
   "meta": {
-    "next_cursor": "30:1:0", "next_page_results": true,
+    "next_cursor": "eyJhIjoiMjAyNi0wOS0wNVQwMTo0MTowMC4wMDBaIiwiaSI6IjFhMmIzYzRk…J9:1:0",
+    "prev_cursor": null,
+    "next_page_results": true, "prev_page_results": false,
     "count": 4, "total_count": 1284, "total_pages": 43, "page": 1, "per_page": 30,
-    "stream_cursor": "2026-09-05T06:32:00.000Z:1a2b3c4d-…"
+    "stream_cursor": "2026-09-05T06:32:00.000Z:e5f60713-…"
   }
 }
 ```
@@ -400,9 +406,10 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/activities/?per_page=30 HTTP/1
 **契约要点**：
 
 1. `kind ∈ {activity, comment, batch}` 三态行；`batch` 行无 `issue`（跨任务）；
-2. `stream_cursor` 仅首页携带（BR-12）——`(created_at, id)` 水位串，`COLLAB-004` 增量拉取起点；
-3. `issue` 内联 `is_deleted/is_archived` 供前端链接态渲染（BR-06/07）；软删任务的动态**保留**在流中；
-4. `total_count` > 50,000 时降级估算 + `total_count_estimated: true`（`api-conventions` §6.4）。
+2. `stream_cursor` 仅首页携带（BR-12）——`(created_at, id)` 水位串，`COLLAB-004` 增量拉取起点；首页首行为 batch 行时，水位取其底层**最新一条** Activity 的锚（汇总行本身无 id）；
+3. `issue` 内联 `is_deleted/is_archived`（存储层 `deleted_at/archived_at` 的契约层投影，§4.1 双层口径）供前端链接态渲染（BR-06/07）；软删任务的动态**保留**在流中；
+4. `total_count` > 50,000 时降级估算 + `total_count_estimated: true`（`api-conventions` §6.4）；
+5. **游标三段式语义与 keyset 锚编码（BR-10 的编码落地）**：沿用 [`api-conventions.md`](../architecture/api-conventions.md) §6.2 `value:offset:is_prev` 外壳——`value` 段为**作用域限定变体**（同 `BOARD-002` §4.3.2 组内游标先例，多绑定锚与过滤指纹）：`cursor = base64url(锚载荷) : offset : is_prev`，锚载荷 `{"a":"<本页末行 created_at>","i":"<末行 id>","f":"<过滤指纹>"}`（`f` = 归一化 `actor_id/event` 参数的 sha1 前 8 位，过滤变更后旧游标即失效）；`offset` 段为页序号（§6.2 示例流程口径，供 `meta.page`/`total_pages` 计算）；`is_prev` 恒 `0`——按钮式「加载更早」仅向后翻页，`prev_cursor=null` + `prev_page_results=false` 为 `TASK-010` 同款显式豁免，`meta` 必含 9 字段仍齐备（§6.3）。服务端解码/校验失败（Base64 损坏、锚字段缺失、`offset` 与锚偏移不一致、`f` 与当前过滤不符）一律 `400 VALIDATION_INVALID_CURSOR`（`BOARD-002` 统一口径——不作静默重解释，前端回首页重拉）。
 
 **失败响应 `400`（非法 event 值）**
 
@@ -469,18 +476,23 @@ STREAM_SQL = """
 # activity_filters：按 event 语义组拼（verb/field/LIKE 'cf_%' 族）
 # comment_filters：actor_id 过滤（event=comment 时启用）
 # 游标翻页：外包一层 WHERE (created_at, id) < (%(c_at)s, %(c_id)s) 复合键比较
+# 锚编解码见 §4.2.1 要点 5（value 段 = base64url 锚载荷；损坏/指纹不符 → 400 VALIDATION_INVALID_CURSOR）
 
 
 def project_activity_stream(*, project, user, filters: dict, cursor=None) -> dict:
-    issue_ids = list(             # BR-01 可见域根过滤：accessible_by 的项目任务 ID 集
-        Issue.objects.accessible_by(user)
-        .filter(project_id=project.id, archived_at__isnull=False | models.Q())
-        .values_list("id", flat=True))          # 含归档任务（动态保留，BR-07）
+    # BR-01 可见域：项目读权限在入口一次收口（rbac §6 第三层——非成员/不可见项目 404）
+    project = get_object_or_404(Project.objects.accessible_by(user), pk=project.id)
+    issue_ids = list(             # 项目域整圈取任务 ID：含软删（BR-06）与归档（BR-07）
+        Issue.all_objects          # 全量 Manager（不滤软删，TASK-009 回收站同源）
+        .filter(project_id=project.id)
+        .values_list("id", flat=True))
     rows = _execute_stream_sql(issue_ids, filters, cursor, limit=filters["per_page"])
     return assemble_stream(rows)                # §4.3.2 折叠装配
 ```
 
 > `issue_ids` 数组上限保护：单项目任务 > 5000 时改分片取数（chunk 2000 多轮归并——CI 基准数据集已覆盖该分支，BR-14 的一部分）。
+
+> **软删调和（BR-01 × BR-06）**：`Issue.objects` 默认 Manager 滤软删是**任务 CRUD 列表语义**（rbac §6.2 `get_queryset()`）；本流是**审计语义**（软删动态保留展示）——故可见域判定上移到项目入口（`Project.objects.accessible_by(user)` → 404），流内改用 `Issue.all_objects` 按项目域整圈取 ID。软删仅置 `deleted_at`、`project_id` 归属不变（`TASK-009`），不存在「项目不可见但经软删任务动态泄漏」的缝隙；归档（BR-07）同理。
 
 #### 4.3.2 批量折叠装配（页内后处理）
 
@@ -558,6 +570,7 @@ def batch_detail(*, project, epoch: float, limit=100) -> dict:
 | UT-12 | 明细上限 | epoch 内 150 条 | 100 + truncated | 边界 |
 | UT-13 | stream_cursor | 首页/翻页响应 | 仅首页携带 | 契约 |
 | UT-14 | 归档任务动态 | 归档后查流 | 保留且 is_archived=true | 正常 |
+| UT-15 | 非法游标 | 乱码 cursor / 篡改锚字段 / 变更过滤后复用旧游标（指纹不符） | 400 `VALIDATION_INVALID_CURSOR`（§4.2.1 要点 5 四类失败路径逐一断言） | 异常 |
 
 ### 5.2 集成测试
 
@@ -571,6 +584,7 @@ def batch_detail(*, project, epoch: float, limit=100) -> dict:
 | IT-06 | 过滤组合 | actor × event AND | 查流 | 交集结果；URL 还原 |
 | IT-07 | 软删链路 | 流中点击软删任务 | — | 置灰 + Toast，无路由跳转 |
 | IT-08 | 轮询增量 | 页面可见时产生新动态 | 60s 内 | 顶部划入或浮条提示 |
+| IT-09 | 非法游标端到端 | 构造损坏 cursor（乱码 / 过滤变更后的旧游标） | GET `…/activities/?cursor=<损坏>` | 400 `VALIDATION_INVALID_CURSOR`（信封 request_id 可查）；前端回首页重拉 |
 
 ### 5.3 E2E 测试
 
@@ -597,7 +611,7 @@ def batch_detail(*, project, epoch: float, limit=100) -> dict:
 
 ### 6.3 本系统设计决策
 
-1. **派生数据只读且同权**：动态无独立权限模型，完全继承任务可见域（BR-01）——少一套权限就少一类越权缝隙，审计视图的可信度来自数据源单一。
+1. **派生数据只读且同权**：动态无独立权限模型，完全继承项目读域（BR-01，§1.4——任务动态可见性随项目权限传导）——少一套权限就少一类越权缝隙，审计视图的可信度来自数据源单一。
 2. **排序下推 SQL、折叠留在应用**：UNION ALL + ORDER BY/LIMIT 收口数据库（内存排序不可控）；epoch 折叠是页内 O(n) 后处理（相邻性由排序保证）——两类计算各在其最擅长的层。
 3. **软删/归档任务的动态保留**：审计流的价值恰在「发生过什么」，删任务抹动态等于篡改历史；导航体验用置灰降级而非数据清除（BR-06/07）。
 4. **水位契约先行**：`stream_cursor` 在轮询时代就进入响应（BR-12），`COLLAB-004` 的增量推送直接消费——传输层升级不动数据契约，与 `COLLAB-001` 通知通道演进同一策略。
@@ -614,13 +628,13 @@ def batch_detail(*, project, epoch: float, limit=100) -> dict:
 | Model / Migration | 零 DDL（复用 `idx_activity_issue_time` / `idx_comment_issue_time`；冗余列迁移留 P3 期权） |
 | 后端 | `activity_stream.py`（合流 SQL / 折叠装配 / 明细查询 / 分片保护）、聚合端点 + `?epoch=` 明细、event 语义组白名单（前后端双源 CI 校验） |
 | 前端 | 动态流页（三态行 / 日期分区 / 过滤条 / 浮条刷新）、批量明细抽屉、`ActivityStreamStore`（60s 轮询 + 水位） |
-| 测试 | UT-01~14、IT-01~08、E2E-01~05、CI 基准门禁（BR-14） |
+| 测试 | UT-01~15、IT-01~09、E2E-01~05、CI 基准门禁（BR-14） |
 
 ### 7.2 可操作演示的验收标准
 
 1. 打开项目动态流：今天/昨天分区、时间倒序；评论与操作变更合流呈现；相对时间与绝对时间 hover 正确。
 2. 批量拖拽 50 个任务状态后刷新：流中出现一条「批量更新了 50 个任务」汇总行（非 50 行）；展开抽屉可见明细且点击任一条直达该任务动态 Tab 对应位置。
-3. 「只看状态变更」与「只看李四」组合过滤生效；过滤态 URL 分享还原；非法 event 值得到 400 与可用值提示。
+3. 「只看状态变更」与「只看李四」组合过滤生效；过滤态 URL 分享还原；非法 event 值得到 400 与可用值提示，非法游标得到 400 `VALIDATION_INVALID_CURSOR` 并回首页。
 4. 删除与归档任务后其历史动态保留在流中（链接分别置灰/可跳只读态）；软删评论显示「删除了一条评论」。
 5. 被移出项目的成员访问动态流返回 404；10 万任务/100 万 Activity 基准下首页与三类过滤 P95 < 150ms（CI 报告）。
 6. 页面停留期间新动态到达：≤5 条顶部划入、>5 条浮条提示；`stream_cursor` 水位在响应中可见（COLLAB-004 联调锚点）。

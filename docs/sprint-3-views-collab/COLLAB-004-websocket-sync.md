@@ -69,7 +69,7 @@ P1/P2 至今的一切数据视图都是**拉**模式：列表 60s SWR、通知 3
 ```
 
 - `version` = 实体 `updated_at`（Issue）/ 水位（流）——前端比对本地版本，**旧于本地则忽略**（乱序免疫）；
-- `brief` = 变更域提示（字段族），前端据此选择**定向** revalidate（改 `state` 只刷看板列，不刷全文搜索）；
+- `brief` = 变更域提示（字段族），前端据此选择**定向** patch 范围（改 `state` 只刷看板列，不刷全文搜索）；
 - 全量实体**永不上行广播**——带宽、序列化成本、权限二次过滤三重理由。
 
 ### 1.5 范围边界
@@ -261,7 +261,7 @@ flowchart TD
 | --- | --- |
 | 远端卡片迁移 | 300ms 淡入动画 + 列计数滚动 +1；不自动滚动视口 |
 | 本地拖拽保护 | 张三手上有拖拽中的卡片时，远端 `board.moved` 仅更新数据不重排该列 DOM（防拽飞）；松手后合并 |
-| 冲突兜底 | 两端同时拖同一卡片：后到服务端者收到 409 `RESOURCE_CONFLICT`（ETag）→ 弹回 + revalidate |
+| 冲突兜底 | 两端同时拖同一卡片：后到服务端者收到 409 `RESOURCE_CONFLICT`（ETag）→ 弹回 + 该列拉取收敛 |
 | 自己的操作 | 不回显（BR-08）；仅计数与列头即时更新 |
 
 ### 3.3 通知与动态流实时化
@@ -269,7 +269,7 @@ flowchart TD
 | 视图 | 事件 → 行为 |
 | --- | --- |
 | 铃铛 | `notification.created` → 徽标 +1（弹跳一次）+ 抽屉顶部划入（若打开） |
-| 动态流 | `activity.appended` → 页面在顶且可见：≤5 条顶部划入；否则浮条「N 条新动态 ↑」 |
+| 动态流 | `activity.created` → 页面在顶且可见：≤5 条顶部划入；否则浮条「N 条新动态 ↑」 |
 | 任务详情 Drawer | `issue.updated`（brief 匹配打开字段区）→ 该区轻闪（150ms 背景 pulse）+ `已更新` 角标 |
 | 评论流 | `comment.created` → 非本人评论乐观插入 + 底部「新回复 ↓」浮条（不抢滚动位置） |
 
@@ -532,7 +532,7 @@ EVENT_MAP = {
     "issue.state.changed":  lambda r, p: ROOM_OF_ISSUE(p["issue"]),
     "board.moved":          lambda r, p: [f"project:{p['project_id']}"],
     "comment.created":      lambda r, p: [f"issue:{p['issue_id']}", f"project:{p['project_id']}"],
-    "activity.appended":    lambda r, p: [f"project:{p['project_id']}"],
+    "activity.created":    lambda r, p: [f"project:{p['project_id']}"],   # 命名对齐 COLLAB-003（§2.3 注 1）
     "notification.created": lambda r, p: [f"user:{p['receiver_id']}"],
 }
 
@@ -595,17 +595,18 @@ export class RealtimeClient {
 }
 ```
 
-#### 4.4.2 事件 → 定向 revalidate 映射（`LiveEventBus` 订阅侧）
+#### 4.4.2 事件 → MobX 定向 patch 映射（`LiveEventBus` 订阅侧）
 
-| 事件 | mutate 目标（SWR key 族） | 附带动作 |
+| 事件 | MobX patch 目标（store 域） | 附带动作 |
 | --- | --- | --- |
-| `issue.updated` | `project:{p}:issues*`（brief 过滤列）、`issue:{id}:detail` | 详情区轻闪 |
-| `issue.state.changed` | 看板两列 group key、`user:me:stats`（工作台卡） | 列计数动画 |
-| `board.moved` | 目标列 `project:{p}:board:{state}` | 本地拖拽保护（§3.2） |
-| `comment.created` | `issue:{id}:comments` | 非本人插入 + 浮条 |
-| `activity.appended` | `project:{p}:stream:head` | 顶部划入 / 浮条 |
-| `notification.created` | `user:me:notifications*` | 徽标 +1（一次弹跳） |
+| `issue.updated` | `IssueStore`：`byId[issue_id]` 版本/摘要 patch + 受影响分组与筛选派生标记重算（`brief` 圈定范围）；详情域正文按需单实体增量拉取 | 详情区轻闪 |
+| `issue.state.changed` | `IssueStore`：两列 group 派生迁移；`UserStore` 工作台统计派生重算 | 列计数动画 |
+| `board.moved` | `BoardStore`：目标列 `sort_order` 序列补丁（`column_version` 比对，§2.3 注 3） | 本地拖拽保护（§3.2） |
+| `comment.created` | `CommentStore`：`issue:{id}` 评论流水位 patch → 单条增量拉取补正文 | 非本人插入 + 浮条 |
+| `activity.created` | `StreamStore`：`stream_cursor` 水位推进 → 按 `COLLAB-003` 增量契约拉取 | 顶部划入 / 浮条 |
+| `notification.created` | `NotificationStore`：未读计数 +1（按 `notification_id` 去重） | 徽标 +1（一次弹跳） |
 
+- **两层调和（与架构口径对齐，全文唯一口径）**：WS 增量提示 → **MobX store 定向 patch**（`monorepo-structure.md` 登记 `packages/shared-state/src/realtime/` 为 WebSocket 增量 patch 入口）；patch 携带不了正文的域由 store 发起**定向 REST 增量拉取**补齐（仍是提示语义，红线一）；**断线重连与降级恢复的全量收敛走既有 SWR 通道**（§2.2 水位补偿、60s 轮询）——增量 MobX、全量 SWR，两层各司其职；
 - 连接状态机（connected/reconnecting/degraded）注入 `UiStore`，驱动顶栏指示与降级横幅（BR-10）；
 - 根组件挂载 `RealtimeClient` 单例；路由变化 `setContext`（连接复用，仅换票重订，§1.3）。
 
@@ -619,16 +620,16 @@ export class RealtimeClient {
 | --- | --- | --- | --- | --- |
 | UT-01 | 票据验签 | 伪造/过期/算法降级(alg=none) | 全部 close 4001 | 安全 |
 | UT-02 | 公钥-only | live 进程无私钥可伪造 | 无法签出有效票（结构验证） | 安全 |
-| UT-03 | rooms 上限 | 声明 11 房间 | 换票 400 / 连接拒绝 | 边界 |
+| UT-03 | rooms 上限 | 声明 11 房间 | 换票 400 `VALIDATION_INVALID_PARAM` / 连接拒绝 | 边界 |
 | UT-04 | 不回显 | actor 自己在线同房 | 无事件送达本人连接 | 正常 |
 | UT-05 | 载荷红线 | 3KB payload | 丢弃 + ERROR 日志 | 边界 |
 | UT-06 | 心跳断开 | 停 pong 60s | 服务端 terminate | 异常 |
-| UT-07 | 并发去重 | 同 ws 标识第 6 连接 | 最旧被踢 4000 | 边界 |
+| UT-07 | 并发上限与重连去重（两语义分立） | ① 同用户第 6 条连接（6 个不同 `client_tab_id`）；② 同 `client_tab_id` 二次连接（重连） | ① 最旧连接被踢 4000 `DUP_SESSION`（BR-12 每用户上限）；② 同键旧连接即时清理、不占新额度（重连幂等） | 边界 |
 | UT-08 | 事件合批 | 房间 250 msg/s | 100ms 窗口合批，包数骤减 | 性能 |
-| UT-09 | version 过滤 | 事件 version 旧于本地 | 前端忽略（无 mutate） | 正常 |
+| UT-09 | version 过滤 | 事件 version 旧于本地 | 前端忽略（无 patch、无拉取） | 正常 |
 | UT-10 | 权限复核 | 移出成员后 60s | 房间剔除 + 4003 | 安全 |
 | UT-11 | 退避曲线 | 连续断线 | 1/2/4/…/30s 封顶（±20% 抖动内） | 正常 |
-| UT-12 | 续签轮换 | 30s 续签 | 新 jti 生效、旧票过期拒用 | 正常 |
+| UT-12 | 续签轮换 | 90s 续签（`renew_after`） | 新 jti 生效、旧票过期拒用 | 正常 |
 | UT-13 | 通道隔离 | live 直连 DB 尝试 | 架构测试断言无 PG 依赖（静态检查） | 契约 |
 | UT-14 | Redis 断连 | 停 Redis | `/health` 503；恢复后自动重订 | 异常 |
 
@@ -688,10 +689,10 @@ export class RealtimeClient {
 
 | 类型 | 交付物 |
 | --- | --- |
-| Model / Migration | 零 DDL（.env 增 4 个 LIVE_* 配置 + RS256 密钥对生成脚本） |
-| 后端（api） | `realtime/ticket.py`（签发/续签）、`verify-rooms` 内部复核端点、`publish_event` 扇出任务、`TASK-010` Worker 尾部 6 类事件挂点 |
+| Model / Migration | 零 DDL（.env 增 5 项配置：`LIVE_JWT_PRIVATE_KEY`/`LIVE_JWT_PUBLIC_KEY`/`LIVE_TICKET_TTL`/`LIVE_HEARTBEAT`/`INTERNAL_KEY`（§4.2 注登记声明）+ RS256 密钥对生成脚本） |
+| 后端（api） | `realtime/ticket.py`（签发/续签）、`verify-rooms` 内部复核端点（POST + 信封，§4.2 注）、`publish_event` 扇出任务、`TASK-010` Worker 尾部 6 类事件挂点 |
 | 后端（live） | `realtime/server.ts`（连接/房间/心跳/去重）、`ticket.ts`（验签/复核）、`bus.ts`（Redis 订阅）、合批节流、presence、`/health` 指标 |
-| 前端 | `RealtimeClient`（重连/续签/补偿）、`LiveEventBus → mutate` 映射、连接指示与降级横幅、presence 头像列、看板远端同步与拖拽保护 |
+| 前端 | `RealtimeClient`（`@rp/shared-state` 包内 `src/realtime/`；重连/续签/补偿）、`LiveEventBus → MobX patch` 映射、连接指示与降级横幅、presence 头像列、看板远端同步与拖拽保护 |
 | 测试 | UT-01~14、IT-01~10、E2E-01~05 |
 
 ### 7.2 可操作演示的验收标准

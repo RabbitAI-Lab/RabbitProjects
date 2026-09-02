@@ -17,3 +17,4 @@ __pycache__/
 .mypy_cache/
 apps/api/.venv/
 plan-output/
+jmeter.log

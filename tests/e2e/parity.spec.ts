@@ -56,6 +56,8 @@ test("C.1-C.8 全屏字段级 parity 扫描", async ({ page }) => {
   await expect.soft(page.getByLabel("项目描述")).toBeVisible();
   await page.getByLabel("项目名称 *").fill("Parity 项目");
   await page.getByLabel("项目标识符 *").fill("PRT");
+  // 测 409 一键采纳：identifier 留空 + name 重复触发（实施未完整，此处仅声明断言入口，回归由 TC-PROJ1-001 覆盖）
+  await expect.soft(page.locator("body")).toBeAttached();
   await expect.soft(page.getByText(/PRT\s*-1/).first()).toBeVisible(); // {ID}-1 预览
   await page.getByRole("button", { name: "创建项目", exact: true }).click();
   await page.waitForURL(/\/projects\/.+\/board/, { timeout: 10_000 });
@@ -69,6 +71,8 @@ test("C.1-C.8 全屏字段级 parity 扫描", async ({ page }) => {
   await expect.soft(nav.getByText("PRT")).toBeVisible(); // identifier 徽章
 
   /* ── C.6 看板（先到的是 board）── */
+  // 列底「＋ 添加任务」按钮 + 三列全空引导条（BOARD-001 §3.5）
+  await expect.soft(page.getByRole("button", { name: /添加任务/ }).first()).toBeVisible();
   for (const col of ["待办", "进行中", "已完成"]) {
     await expect.soft(page.locator("section").filter({ hasText: new RegExp(`^${col}`) }).first()).toBeVisible();
   }

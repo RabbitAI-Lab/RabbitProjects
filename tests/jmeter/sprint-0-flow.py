@@ -62,13 +62,17 @@ print(f"  ws={ws}")
 csrf = fresh_csrf()
 step("04 me", lambda: req("GET", "/api/v1/users/me/"))
 
-# 5) 建项目
+# 5) 建项目（identifier 唯一化避免同工作区重复 PYT 撞 409；新建账户无项目也走此步）
+csrf = fresh_csrf()
+import time
+proj_id = f"PYT{int(time.time()) % 10000:04d}"[:5]
 proj = step("05 create-project", lambda: req(
     "POST", f"/api/v1/workspaces/{ws}/projects/",
-    {"name": "Py Test Project", "identifier": "PYT", "description": "Python generated"},
+    {"name": "Py Test Project", "identifier": proj_id, "description": "Python generated"},
     {"X-CSRFToken": csrf},
 ))
 pid = proj["data"]["id"]
+assert pid, f"create-project returned no id: {proj}"
 
 # 6) 项目状态
 states = step("06 project-states", lambda: req("GET", f"/api/v1/workspaces/{ws}/projects/{pid}/states/"))

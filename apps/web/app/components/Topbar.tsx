@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { useStores } from "../stores";
 import { WorkspaceAPI } from "../services/api";
+import { toast } from "./Toast";
 
 const ROLE_LABEL: Record<number, string> = { 20: "所有者", 15: "管理员", 10: "成员", 5: "访客" };
 const hashColor = (id: string) =>
@@ -123,6 +124,7 @@ function CreateTeamModal({ onClose }: { onClose: () => void }) {
     try {
       const r = await WorkspaceAPI.create(name.trim(), desc.trim() || undefined);
       const slug = (r as any).data?.slug as string | undefined;
+      toast("团队创建成功");
       await session.bootstrap(); // 刷新工作区列表（含新团队 OWNER 角色）
       if (slug) session.setCurrentWs(slug); // 顶栏跟随新团队（bootstrap 会把 currentWs 重置为默认团队）
       onClose();

@@ -7,6 +7,7 @@ export class SessionStore {
   workspaces: WorkspaceSummary[] = [];
   currentWsSlug: string | null = null;
   isBootstrapped = false;
+  justRegistered = false;
 
   constructor() {
     makeAutoObservable(this);
@@ -46,9 +47,10 @@ export class SessionStore {
     this.setSession((r as any).data);
   }
 
-  async signUp(email: string, password: string, displayName?: string): Promise<void> {
-    const r = await AuthAPI.signUp(email, password, displayName);
+  async signUp(email: string, password: string, displayName?: string, justRegistered?: boolean): Promise<void> {
+    const r = await AuthAPI.signUp(email, password, displayName ?? (justRegistered ? undefined : undefined));
     this.setSession((r as any).data);
+    if (justRegistered) this.justRegistered = true; // AUTH-001 §3.5：注册成功工作台顶部一次性欢迎条
   }
 
   async signOut(): Promise<void> {

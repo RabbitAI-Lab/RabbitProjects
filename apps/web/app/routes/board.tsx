@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 import { Topbar } from "../components/Topbar";
 import { ProjectSidebar } from "../components/ProjectSidebar";
 import { IssueDrawer as SharedDrawer } from "../components/IssueDrawer";
 import { NewTaskModal } from "../components/NewTaskModal";
 import { StateBadge } from "../components/StateBadge";
 import { IssueAPI, ProjectAPI } from "../services/api";
+import { toast } from "../components/Toast";
 import type { Issue } from "@rp/types";
 
 interface Col { id: string | null; name: string; group: string; issues: Issue[]; }
@@ -23,6 +24,7 @@ export default function Board() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [openIssueId, setOpenIssueId] = useState<string | null>(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [quickCol, setQuickCol] = useState<string | null>(null);
   const [projName, setProjName] = useState("…");
   const [projIdentifier, setProjIdentifier] = useState("");
 
@@ -56,16 +58,31 @@ export default function Board() {
   }
 
   useEffect(() => { load(); }, [workspaceSlug, projectId]);
+  // ?peekIssue URL 同步（TASK-001 §3.3）：卡片/行点击 push 参数；关闭/back 移除即关抽屉
+  const [sp, setSp] = useSearchParams();
+  const peekId = sp.get("peekIssue");
+  function openPeek(id: string) { setSp((prev) => { const n = new URLSearchParams(prev); n.set("peekIssue", id); return n; }, { preventScrollReset: true }); }
+  function closePeek() { setSp((prev) => { const n = new URLSearchParams(prev); n.delete("peekIssue"); return n; }, { preventScrollReset: true }); }
 
   async function move(id: string, targetGroup: string) {
     const col = cols.find((c) => c.group === targetGroup);
     if (!col?.id) return;
     const last = col.issues[col.issues.length - 1];
     const sort = last ? last.sort_order + 65535 : 65535;
+    // 记录源列（拖拽失败时红环反馈，BOARD-001 §3.3）
+    const srcCol = cols.find((c) => c.issues.some((x) => x.id === id));
     try {
       await IssueAPI.patch(workspaceSlug!, projectId!, id, { state_id: col.id, sort_order: sort });
       await load();
-    } catch (e) { console.error(e); await load(); }
+    } catch {
+      if (srcCol) {
+        const el = document.querySelector(`[data-col="${srcCol.group}"]`);
+        el?.classList.add("ring-2", "ring-red-300");
+        setTimeout(() => el?.classList.remove("ring-2", "ring-red-300"), 400);
+      }
+      toast("移动失败，已回滚到原位置", "error");
+      await load();
+    }
   }
 
   return (
@@ -91,11 +108,28 @@ export default function Board() {
                     <span className="ml-auto font-mono text-xs text-neutral-400">{col?.issues.length ?? 0}</span>
                   </div>
                   <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-2 min-h-[56px]">
+                    {quickCol === n.group && (
+                      <div className="flex flex-col gap-1">
+                        <input autoFocus id={`qi-${n.group}`} className="h-[34px] border border-brand-500 rounded-md px-2.5 text-[13px] focus:outline-none focus:ring-[3px] focus:ring-brand-50 bg-white"
+                          placeholder="输入任务标题…"
+                          onKeyDown={async (e) => {
+                            if (e.key === "Enter") {
+                              const v = (e.target as HTMLInputElement).value.trim();
+                              if (!v) return;
+                              setQuickCol(null);
+                              if (col?.id) { await IssueAPI.create(workspaceSlug!, projectId!, { name: v, state_id: col.id }); load(); }
+                            }
+                            if (e.key === "Escape") setQuickCol(null);
+                          }}
+                          onBlur={(e) => { if (!e.target.value.trim()) setQuickCol(null); }} />
+                        <div className="text-[11px] text-neutral-400 px-1">回车创建 · Esc 取消</div>
+                      </div>
+                    )}
                     {col?.issues.length ? col.issues.map((it) => (
                       <article key={it.id} draggable tabIndex={0} className={`bg-white border border-neutral-200 rounded-md p-2.5 pl-3.5 shadow-sm cursor-grab relative hover:shadow-md hover:border-neutral-300 transition ${dragId === it.id ? "opacity-40 scale-[0.98]" : ""}`}
                         onDragStart={(e) => { setDragId(it.id); e.dataTransfer.setData("text/plain", it.id); }}
                         onDragEnd={() => setDragId(null)}
-                        onClick={() => setOpenIssueId(it.id)}>
+                        onClick={() => openPeek(it.id)}>
                         <div className="absolute left-0 top-2 bottom-2 w-[3px] rounded" style={{ background: { unstarted: "#9ca3af", started: "#3b82f6", completed: "#10b981" }[it.state_group ?? "unstarted"] }} />
                         <div className="text-[13px] text-neutral-900 line-clamp-3">{it.name}</div>
                         <div className="flex items-center justify-between mt-2 text-xs">
@@ -108,11 +142,14 @@ export default function Board() {
                       </article>
                     )) : <div className="border-2 border-dashed border-neutral-300 rounded-md py-4 text-center text-xs text-neutral-400">将任务拖拽到这里</div>}
                   </div>
+                  <button onClick={() => setQuickCol(n.group)} className="h-8 mt-1.5 flex items-center gap-1.5 px-2.5 rounded-md text-[13px] text-neutral-400 hover:bg-neutral-200/60 w-full shrink-0">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>添加任务
+                  </button>
                 </section>
               );
             })}
           </div>
-          {openIssueId && <SharedDrawer issueId={openIssueId} slug={workspaceSlug!} projectId={projectId!} onClose={() => { setOpenIssueId(null); load(); }} />}
+          {peekId && <SharedDrawer issueId={peekId} slug={workspaceSlug!} projectId={projectId!} onClose={() => { closePeek(); load(); }} onChanged={() => load()} />}
           {showTaskModal && <NewTaskModal slug={workspaceSlug!} projectId={projectId!} projectName={projName} onClose={() => setShowTaskModal(false)} onCreated={() => load()} />}
         </main>
       </div>

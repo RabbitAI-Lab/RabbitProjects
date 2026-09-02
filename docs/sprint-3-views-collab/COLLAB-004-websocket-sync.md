@@ -161,7 +161,7 @@ flowchart TD
 | --- | --- | --- | --- | --- |
 | `issue.updated` | project + 涉事 issue | Issue 任何字段变更（含 custom_fields） | issue_id / version / brief（字段族）/ batch_id（批量时，见注 2） | 看板列、列表行、详情定向 patch（§4.4.2） |
 | `issue.state.changed` | project + issue | 状态流转（含拖拽） | issue_id / from_group / to_group / batch_id（批量时） | 看板列计数迁移动画；统计卡 |
-| `board.moved` | project | 看板拖拽排序（sort_order） | issue_id / from_state / to_state / column_version（见注 3） | 同列其他卡片顺序修正 |
+| `board.moved` | project | 看板拖拽排序（sort_order） | issue_id / from_group / to_group（同列排序时 `from == to`，仅 sort_order 变）/ column_version（见注 3） | 同列其他卡片顺序修正 |
 | `comment.created` | issue（+ project 摘要） | 评论/回复发表 | comment_id / issue_id / actor_id | 评论流乐观补齐；滚动提示 |
 | `activity.created` | project | `TASK-010` 落库 | stream_cursor（新水位） | 动态流增量拉取 / 浮条 |
 | `notification.created` | user（个人房间） | 通知生成 | notification_id / unread_delta | 铃铛计数 +1；抽屉顶部划入 |
@@ -170,7 +170,7 @@ flowchart TD
 
 载荷字段登记注：
 
-1. **`activity.created` 命名对齐**：与下游 `COLLAB-003` 的声明（「`COLLAB-004` WebSocket `activity.created` 实时增量」）同名——WS 推送与 REST 动态流列表共用一个事件名，不另造 `appended` 动词；载荷只带 `stream_cursor` 新水位，条目正文由前端按水位增量拉取（`COLLAB-003` BR-12 契约）。
+1. **`activity.created` 命名登记（协议唯一口径）**：事件名以本协议 §1.2 交付物 3 登记的 `activity.created` 为准——与 `comment.created` / `notification.created` 同构（`TASK-010` 动词表含 `created`），不另造 `appended` 动词。`COLLAB-003` 现行版（L13 下游依赖、L47 §1.3#5）仍写 `activity.appended`（R1 双文档并行修复方向对穿的产物），**上游待回改登记**：COLLAB-003 待回改为 `activity.created`；载荷只带 `stream_cursor` 新水位，条目正文由前端按水位增量拉取（`COLLAB-003` BR-12 契约）。
 2. **`batch_id`（可选，仅 `issue.updated` / `issue.state.changed` 携带）**：批量操作（`BOARD-004`）触发时逐实体附带，值 = 该批共享 `epoch` 同值（毫秒时间戳）；单条操作不携带该字段。对端按 `batch_id` 将同批事件聚合为单条 Toast（「张三 批量更新了 12 个任务」）而非逐条弹窗。本条即 `BOARD-004` BR-15 所声明「`batch_id` 载荷扩展待 `COLLAB-004` 登记」的**落地登记**：**不新增 `batch` 事件类型**——批量变更逐实体复用既有事件类型，经 BR-13 的 **100ms 合批通道**（`throttleAggregate`）收敛为一次网络批（合批后 `seq` 取最大、`batch_id` 保留）；对端聚合提示沿用 `COLLAB-001` 批量通知的归并范式（每 issue 各一行、携带 `merged_count`）。
 3. **`column_version`（`board.moved` 专用）**：目标列的排序版本 = 该列最近一次 `sort_order` 写入时间（受影响任务集的最大 `updated_at`，ISO 8601 时间戳）。前端与本地列版本比对，旧于等于本地即忽略（§1.4 `version` 比对规则的「列粒度」形态，防同列并发拖拽的乱序重排）。
 4. **`board.moved` 消费归属**：同列拖拽的远端顺序修正由 `BOARD-003` 前端消费（含 §3.2 本地拖拽保护）——其 R1 版未列该消费挂点，**上游待登记**；`BOARD-004` 批量操作**不**产生 `board.moved`（批量变更逐实体走 `issue.*` 事件，见注 2）。
@@ -190,7 +190,7 @@ flowchart TD
 | BR-09 | api→live 唯一通道 Redis Pub/Sub（channel `rp:events`）；**禁止 live 直连 PostgreSQL**（保持 live 无状态可横扩） | 架构约束 | — |
 | BR-10 | 降级判定：连接失败累计 30s 或 `/health` 探测失败 → 前端切轮询（`COLLAB-001` 通道）+ 顶部横幅「实时同步暂停」；恢复自动切回且补偿拉取 | 前端 | — |
 | BR-11 | presence 仅项目房间：进出广播 `presence.joined/left`（user 摘要 ≤200B）；「正在编辑」细粒度状态 P3 协同再上 | live | — |
-| BR-12 | 每用户同 workspace 并发连接 ≤ 5（多标签页，按票据 `sub` 计数）；**同 `client_tab_id` 重连为幂等替换**（踢同键旧连接，不占新额度）；超出 5 时新连接踢最旧(4000 DUP_SESSION) | live | 断开旧连接 |
+| BR-12 | 每用户全局并发 WS 连接 ≤ 5（多标签页，按票据 `sub` 跨 workspace 全局计数）；**同 `client_tab_id` 重连为幂等替换**（踢同键旧连接，不占新额度）；超出 5 时新连接踢最旧(4000 DUP_SESSION) | live | 断开旧连接 |
 | BR-13 | live 事件速率保护：单房间广播 > 200 msg/s 时聚合节流（100ms 窗口合批同类事件，`seq` 取最大）——批量拖拽 50 卡只广播聚合后若干包；`BOARD-004` 批量操作的逐实体 `issue.*` 事件同经此 100ms 合批通道收敛（`batch_id` 保留，§2.3 注 2） | live | — |
 | BR-14 | 全链路可观测：连接数/房间数/事件速率/断开原因码结构化日志（`INFRA-004` JSON 格式），`/health` 附 `connections/rooms` 指标 | live | — |
 
@@ -332,7 +332,7 @@ flowchart LR
   "sub": "6c7d1a2b-…",              // 用户 ID
   "rooms": ["project:7b3e…", "issue:8a1f…", "user:6c7d…"],
   "ws": "6c7d…:tab-3",              // 会话标识 = sub + client_tab_id（来源见 §4.2.1；BR-12 并发去重与重连幂等键）
-  "iat": 1756727520, "exp": 1756727640,   // 120s
+  "iat": 1788591120, "exp": 1788591240,   // 120s（2026-09-05T06:52/06:54Z，与 §4.2.1 信封 expires_at 同日同窗口）
   "jti": "01JCC4D8W2GY6A0B4F3C5D6E7"       // 续签轮换追踪
 }
 ```
@@ -532,7 +532,7 @@ EVENT_MAP = {
     "issue.state.changed":  lambda r, p: ROOM_OF_ISSUE(p["issue"]),
     "board.moved":          lambda r, p: [f"project:{p['project_id']}"],
     "comment.created":      lambda r, p: [f"issue:{p['issue_id']}", f"project:{p['project_id']}"],
-    "activity.created":    lambda r, p: [f"project:{p['project_id']}"],   # 命名对齐 COLLAB-003（§2.3 注 1）
+    "activity.created":    lambda r, p: [f"project:{p['project_id']}"],   # 命名登记见 §2.3 注 1（COLLAB-003 待回改登记）
     "notification.created": lambda r, p: [f"user:{p['receiver_id']}"],
 }
 
@@ -632,6 +632,7 @@ export class RealtimeClient {
 | UT-12 | 续签轮换 | 90s 续签（`renew_after`） | 新 jti 生效、旧票过期拒用 | 正常 |
 | UT-13 | 通道隔离 | live 直连 DB 尝试 | 架构测试断言无 PG 依赖（静态检查） | 契约 |
 | UT-14 | Redis 断连 | 停 Redis | `/health` 503；恢复后自动重订 | 异常 |
+| UT-15 | 续签失败主动断开（BR-02） | 续签端点连续失败 2 次（mock 5xx / 网络错误，间隔 < 90s） | 连接主动断开并进入退避重连（不等票据自然过期）；新票据生效前事件按水位补偿拉取兜底 | 异常 |
 
 ### 5.2 集成测试
 
@@ -647,6 +648,7 @@ export class RealtimeClient {
 | IT-08 | 权限实时收缩 | B 在线时被移出项目 | 复核周期到 | B 断开 4003；视图 404 |
 | IT-09 | 事件风暴 | 批量拖 100 卡 | 房间速率 | 合批后 B 端流畅（无卡顿断连） |
 | IT-10 | 多副本横扩 | 起 2 个 live | A/B 连不同副本 | 事件经 Pub/Sub 双副本均达（BR-09 验证） |
+| IT-11 | presence 进出广播（BR-11） | A、B 同项目房间在线 | C 进入项目页后直接关闭标签页 | B 头像列先增后减（`presence.joined/left`，user 摘要 ≤200B）；C 连接关闭即触发 left 广播，断开清理 |
 
 ### 5.3 E2E 测试
 
@@ -693,7 +695,7 @@ export class RealtimeClient {
 | 后端（api） | `realtime/ticket.py`（签发/续签）、`verify-rooms` 内部复核端点（POST + 信封，§4.2 注）、`publish_event` 扇出任务、`TASK-010` Worker 尾部 6 类事件挂点 |
 | 后端（live） | `realtime/server.ts`（连接/房间/心跳/去重）、`ticket.ts`（验签/复核）、`bus.ts`（Redis 订阅）、合批节流、presence、`/health` 指标 |
 | 前端 | `RealtimeClient`（`@rp/shared-state` 包内 `src/realtime/`；重连/续签/补偿）、`LiveEventBus → MobX patch` 映射、连接指示与降级横幅、presence 头像列、看板远端同步与拖拽保护 |
-| 测试 | UT-01~14、IT-01~10、E2E-01~05 |
+| 测试 | UT-01~15、IT-01~11、E2E-01~05 |
 
 ### 7.2 可操作演示的验收标准
 

@@ -14,5 +14,6 @@ export default [
     route(":workspaceSlug/projects/:projectId/board", "routes/board.tsx"),
     route(":workspaceSlug/projects/:projectId/issues", "routes/issues-list.tsx"),
     route(":workspaceSlug/projects/:projectId/settings", "routes/project-settings.tsx"),
+    route("*", "routes/not-found.tsx"),
   ]),
 ] satisfies RouteConfig;

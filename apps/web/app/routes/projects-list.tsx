@@ -3,6 +3,8 @@ import { Link, useParams } from "react-router";
 import { Topbar } from "../components/Topbar";
 import { Sidebar } from "../components/Sidebar";
 import { ProjectAPI, WorkspaceAPI } from "../services/api";
+import { toast } from "../components/Toast";
+import { useStores } from "../stores";
 import type { ProjectSummary, WorkspaceSummary } from "@rp/types";
 
 export default function ProjectsList() {
@@ -10,6 +12,7 @@ export default function ProjectsList() {
   const [ws, setWs] = useState<WorkspaceSummary | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [showNew, setShowNew] = useState(false);
+  const { session } = useStores();
 
   useEffect(() => {
     WorkspaceAPI.list().then((r) => {
@@ -28,6 +31,12 @@ export default function ProjectsList() {
           {!ws && <div className="text-sm text-neutral-500">加载中…</div>}
           {ws && (
             <>
+              {session.justRegistered && (
+                <div className="flex items-center gap-2.5 bg-brand-50 border border-brand-100 text-brand-600 rounded-lg px-3.5 py-2.5 text-[13px] mb-4">
+                  🎉 欢迎使用 RabbitProjects！这是你的个人默认团队：<b>{ws.name}</b>
+                  <button className="ml-auto text-brand-600" onClick={() => session.justRegistered = false}>✕</button>
+                </div>
+              )}
               <div className="flex items-center gap-3 mb-5">
                 <div><div className="text-lg font-semibold">项目</div><div className="text-[13px] text-neutral-500">{ws.name} · {projects.length} 个项目</div></div>
                 <button onClick={() => setShowNew(true)} className="ml-auto inline-flex h-[34px] items-center gap-1.5 px-3.5 bg-brand-500 text-white rounded-md font-medium hover:bg-brand-600">+ 创建项目</button>
@@ -42,13 +51,16 @@ export default function ProjectsList() {
               ) : (
                 <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(265px,1fr))]">
                   {projects.map((p) => (
-                    <Link key={p.id} to={`/${workspaceSlug}/projects/${p.id}/board`} className="block bg-white border border-neutral-200 rounded-lg p-4 hover:border-brand-100 hover:shadow-md transition">
+                    <Link key={p.id} to={`/${workspaceSlug}/projects/${p.id}/board`} className="group/block relative block bg-white border border-neutral-200 rounded-lg p-4 hover:border-brand-100 hover:shadow-md transition">
                       <div className="flex items-start gap-2.5">
                         <span className="w-6 h-6 rounded-md text-white text-xs font-semibold flex items-center justify-center" style={{ background: ["#3b82f6","#10b981","#f59e0b","#8b5cf6","#ec4899"][(p.id?.charCodeAt(0) ?? 0) % 5] }}>{p.name.slice(0, 1)}</span>
                         <div className="min-w-0"><div className="text-[15px] font-medium truncate">{p.name}</div><div className="flex items-center gap-1.5 mt-1 text-xs text-neutral-600"><span className="font-mono px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-600">{(p as any).identifier ?? ""}</span><span className="inline-flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full" style={{ background: "#10b981" }} />进行中</span></div></div>
                       </div>
                       <div className="text-[13px] text-neutral-500 mt-2 line-clamp-2">企业级项目管理系统</div>
-                      <div className="flex items-center justify-between mt-3.5"><span className="text-xs text-neutral-400">0 个任务</span></div>
+                      <div className="flex items-center justify-between mt-3.5">
+                        <span className="text-xs text-neutral-400">0 个任务</span>
+                        <span className="absolute top-2.5 right-2.5 opacity-0 group-hover/block:opacity-100 text-neutral-400 text-sm">⋯</span>
+                      </div>
                     </Link>
                   ))}
                 </div>
@@ -68,18 +80,33 @@ function NewProjectModal({ slug, onClose }: { slug: string; onClose: () => void 
   const [identifierDirty, setIdentifierDirty] = useState(false);
   const [description, setDescription] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [suggestion, setSuggestion] = useState<string | null>(null);
   return (
     <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-xl shadow-lg w-[520px] p-6">
         <div className="flex items-center justify-between mb-[18px]"><div className="text-base font-semibold">创建项目</div><button onClick={onClose}>✕</button></div>
-        {err && <div className="mb-3.5 px-3 py-2 bg-red-50 text-red-700 rounded-md text-[13px]">{err}</div>}
+        {err && (
+          <div className="mb-3.5 px-3 py-2 bg-red-50 text-red-700 rounded-md text-[13px] flex items-center gap-2 flex-wrap">
+            <span>{err}</span>
+            {suggestion && (
+              <button type="button" onClick={() => { setIdentifier(suggestion); setSuggestion(null); setErr(null); }}
+                className="h-7 px-2.5 border border-neutral-300 rounded-md text-xs bg-white hover:bg-neutral-50">试试 {suggestion}</button>
+            )}
+          </div>
+        )}
         <form onSubmit={async (e) => {
-          e.preventDefault(); setErr(null);
+          e.preventDefault(); setErr(null); setSuggestion(null);
           if (!name.trim() || !/^[A-Z]{2,5}$/.test(identifier)) { setErr("请填写项目名称和 2-5 个大写字母的标识符"); return; }
           try {
             const r = await ProjectAPI.create(slug, { name, identifier, description });
+            toast("项目创建成功");
             location.href = `/${slug}/projects/${(r as any).data.id}/board`;
-          } catch (e: any) { setErr(e?.message ?? "创建失败"); }
+          } catch (e: any) {
+            if (e?.code === "PROJECT_IDENTIFIER_EXISTS") {
+              setErr(e.message ?? "标识符已被占用");
+              setSuggestion(e?.meta?.suggestion ?? null);
+            } else { setErr(e?.message ?? "创建失败"); }
+          }
         }}>
           <div className="mb-4"><label htmlFor="pj-name" className="block text-[13px] font-medium text-neutral-700 mb-1.5">项目名称 *</label><input id="pj-name" className="w-full h-9 border border-neutral-300 rounded-md px-2.5" value={name} onChange={(e) => {
             setName(e.target.value);

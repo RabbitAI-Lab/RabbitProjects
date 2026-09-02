@@ -59,10 +59,15 @@ class ProjectListCreateView(ListCreateAPIView):
         s.is_valid(raise_exception=True)
         identifier = s.validated_data["identifier"]
         if Project.objects.filter(workspace_id=ws.id, identifier=identifier, deleted_at__isnull=True).exists():
+            # PROJ-001 §3.2：生成可用建议供前端「试试 XXX」一键采纳
+            suggestion, sfx = identifier, "A"
+            while Project.objects.filter(workspace_id=ws.id, identifier=suggestion, deleted_at__isnull=True).exists():
+                suggestion = identifier + sfx
+                sfx = chr(ord(sfx) + 1)
             return envelope(
                 False,
                 None,
-                {"code": "PROJECT_IDENTIFIER_EXISTS", "message": f"标识符 {identifier} 已被占用，请换一个"},
+                {"code": "PROJECT_IDENTIFIER_EXISTS", "message": f"标识符 {identifier} 已被占用，请换一个", "suggestion": suggestion},
                 http_status=409,
             )
         with transaction.atomic():

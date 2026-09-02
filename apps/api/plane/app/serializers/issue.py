@@ -10,6 +10,7 @@ class IssueSerializer(serializers.ModelSerializer):
     state_name = serializers.SerializerMethodField()
     state_group = serializers.SerializerMethodField()
     assignee = serializers.SerializerMethodField()
+    created_by = serializers.SerializerMethodField()
 
     class Meta:
         model = Issue
@@ -28,6 +29,7 @@ class IssueSerializer(serializers.ModelSerializer):
             "start_date",
             "target_date",
             "sort_order",
+            "created_by",
             "created_at",
             "updated_at",
             "archived_at",
@@ -43,6 +45,11 @@ class IssueSerializer(serializers.ModelSerializer):
 
     def get_state_group(self, obj):
         return obj.state.group if obj.state_id else None
+
+    def get_created_by(self, obj):
+        if not obj.created_by_id:
+            return None
+        return {"id": str(obj.created_by_id), "name": obj.created_by.display_name}
 
     def get_assignee(self, obj):
         first = obj.issue_assignees.select_related("assignee").first()

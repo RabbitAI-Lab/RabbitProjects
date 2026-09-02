@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router";
 import { RootStore, StoreProvider } from "./stores";
+import { Toaster } from "./components/Toast";
+import { LoaderFullscreen, ProbeFailed } from "./components/ErrorStates";
 import "./styles/app.css";
 
 const root = new RootStore();
@@ -13,6 +15,7 @@ function Guard({ children }: { children?: ReactNode }) {
   const nav = useNavigate();
   const loc = useLocation();
   const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false);
   const allowedPublic = loc.pathname === "/login" || loc.pathname === "/register";
   useEffect(() => {
     if (allowedPublic) { setReady(true); return; }
@@ -20,25 +23,20 @@ function Guard({ children }: { children?: ReactNode }) {
       if (!root.session.isLoggedIn) nav(`/login?next=${encodeURIComponent(loc.pathname + loc.search)}`, { replace: true });
       return;
     }
+    setFailed(false);
     let cancel = false;
+    const timer = setTimeout(() => { if (!cancel && !root.session.isBootstrapped) setFailed(true); }, 8000); // §3.1：8s 超时切错误态
     root.session.bootstrap().then((ok) => {
       if (cancel) return;
+      clearTimeout(timer);
       if (!ok) nav(`/login?next=${encodeURIComponent(loc.pathname + loc.search)}`, { replace: true });
       setReady(true);
-    });
-    return () => { cancel = true; };
+    }).catch(() => { if (!cancel) { clearTimeout(timer); setFailed(true); } });
+    return () => { cancel = true; clearTimeout(timer); };
   }, [loc.pathname, loc.search, allowedPublic, nav]);
   if (!ready && !allowedPublic) {
-    const showText = typeof window !== "undefined" && (performance.now() > 800);
-    return (
-      <div className="fixed inset-0 bg-neutral-50 z-[110] flex flex-col items-center justify-center gap-3.5" role="status" aria-busy="true" aria-label="正在验证登录状态">
-        <div className="text-[32px] opacity-90">🐰</div>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-brand-500 animate-spin" aria-hidden>
-          <path d="M21 12a9 9 0 1 1-6.22-8.56" />
-        </svg>
-        {showText && <div className="text-[13px] text-neutral-500">正在加载…</div>}
-      </div>
-    );
+    if (failed) return <ProbeFailed onRetry={() => { setFailed(false); setReady(false); root.session.isBootstrapped = false; location.reload(); }} />;
+    return <LoaderFullscreen />;
   }
   return children ?? <Outlet />;
 }
@@ -54,6 +52,7 @@ export default function AppLayout({ children }: { children?: ReactNode }) {
       <body className="min-h-screen bg-neutral-50 text-neutral-900 antialiased">
         <StoreProvider value={root}>
           <Guard>{children ?? <Outlet />}</Guard>
+          <Toaster />
         </StoreProvider>
       </body>
     </html>

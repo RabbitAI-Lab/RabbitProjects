@@ -50,6 +50,8 @@ export const IssueAPI = {
   patch: (slug: string, projectId: string, issueId: string, payload: {
     name?: string; state_id?: string; sort_order?: number; target_date?: string; assignee_ids?: string[];
   }) => api.patch(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/`, payload),
+  del: (slug: string, projectId: string, issueId: string) =>
+    api.delete(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/`),
   detail: (slug: string, projectId: string, issueId: string) =>
     api.get(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/`),
 };

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { Logo } from "../components/Logo";
 import { useStores } from "../stores";
 
@@ -12,32 +12,37 @@ function pwScore(p: string) {
 export default function Register() {
   const { session } = useStores();
   const nav = useNavigate();
-  const [email, setEmail] = useState("");
+  const [params] = useSearchParams();
+  const [email, setEmail] = useState(params.get("email") ?? "");
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [show, setShow] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [err, setErr] = useState<React.ReactNode | null>(null);
   const [loading, setLoading] = useState(false);
   const s = pwScore(pw);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null); setLoading(true);
-    if (!s.hard) { setErr("密码不满足规则"); setLoading(false); return; }
+    if (!s.hard) { setErr("密码不满足规则：至少 8 位，需含大小写字母与数字"); setLoading(false); return; }
     if (pw !== pw2) { setErr("两次输入的密码不一致"); setLoading(false); return; }
     try {
-      await session.signUp(email, pw);
+      await session.signUp(email, pw, true /* justRegistered → 欢迎条 */);
       nav(`/${session.currentWsSlug}/projects`);
     } catch (e: any) {
-      setErr(e?.message ?? "注册失败");
+      if (e?.code === "AUTH_EMAIL_EXISTS") {
+        setErr(<span>该邮箱已注册，<Link className="underline" to={`/login?email=${encodeURIComponent(email)}`}>直接登录</Link> →</span>);
+      } else {
+        setErr(e?.message ?? "注册失败");
+      }
     } finally { setLoading(false); }
   }
 
   return (
     <div className="w-[420px] max-w-full bg-white border border-neutral-200 rounded-xl shadow-sm px-9 pt-8 pb-6">
       <div className="flex flex-col items-center gap-2.5 mb-[18px]"><Logo /><h1 className="text-2xl font-semibold text-center">创建你的账号</h1></div>
-      <div className="flex justify-center gap-1.5 text-[13px] text-neutral-500 mb-3.5">已有账号？<button className="text-brand-600" onClick={() => nav("/login")}>登录</button></div>
-      {err && <div className="mb-3.5 px-3 py-2 bg-red-50 text-red-700 rounded-md text-[13px]">{err}</div>}
+      <div className="flex justify-center gap-1.5 text-[13px] text-neutral-500 mb-3.5">已有账号？<button className="text-brand-600" onClick={() => nav(`/login${email.trim() ? `?email=${encodeURIComponent(email.trim())}` : ""}`)}>登录</button></div>
+      {err && <div className="mb-3.5 px-3 py-2 bg-red-50 text-red-700 rounded-md text-[13px]" role="alert">{err}</div>}
       <form onSubmit={submit}>
         <div className="mb-4"><label htmlFor="rg-email" className="block text-[13px] font-medium text-neutral-700 mb-1.5">邮箱</label><input id="rg-email" className="w-full h-9 border border-neutral-300 rounded-md px-2.5" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
         <div className="mb-4">
@@ -64,7 +69,7 @@ export default function Register() {
         </div>
         <button type="submit" disabled={loading} className="w-full h-[34px] bg-brand-500 text-white rounded-md font-medium hover:bg-brand-600 disabled:opacity-50">{loading ? "创建中…" : "创建账号"}</button>
       </form>
-      <div className="border-t border-neutral-200 mt-5 pt-4 text-[13px] text-neutral-500 text-center">已有账号？ <button className="text-brand-600" onClick={() => nav("/login")}>登录</button></div>
+      <div className="border-t border-neutral-200 mt-5 pt-4 text-[13px] text-neutral-500 text-center">已有账号？ <button className="text-brand-600" onClick={() => nav(`/login${email.trim() ? `?email=${encodeURIComponent(email.trim())}` : ""}`)}>登录</button></div>
     </div>
   );
 }

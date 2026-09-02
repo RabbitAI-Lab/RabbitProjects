@@ -1,5 +1,6 @@
 import axios, { type AxiosInstance } from "axios";
 import { API_BASE_URL } from "../config";
+import { toast } from "../components/Toast";
 
 /** 统一 axios 实例（INFRA-001 §4.11：业务组件不得直连 axios，统一经 services/ 层）。
  *  - withCredentials 携带 session cookie
@@ -39,9 +40,22 @@ api.interceptors.response.use(
     return r;
   },
   (err) => {
-    // 401：会话过期
-    if (err.response?.status === 401 && !location.pathname.startsWith("/login")) {
-      location.href = "/login?next=" + encodeURIComponent(location.pathname);
+    const status = err.response?.status;
+    const code = err.response?.data?.meta?.code;
+    if (status === 401 && !location.pathname.startsWith("/login")) {
+      if (code === "AUTH_ACCOUNT_DISABLED") {
+        // 会话中被禁用（AUTH-002 §3.3）：toast.error + 落地常驻 Alert（经 ?disabled=1）
+        toast("账号已被禁用，请联系管理员", "error");
+        location.href = "/login?disabled=1";
+      } else {
+        // 会话过期（AUTH-002 §3.3）：info 级 toast（去重见 Toast 系统）+ next 回跳
+        toast("登录已过期，请重新登录");
+        location.href = "/login?next=" + encodeURIComponent(location.pathname);
+      }
+    } else if (status === 429) {
+      toast("请求过于频繁，请稍后再试", "error");
+    } else if (status !== undefined && status >= 500) {
+      toast("服务器开小差了，请稍后重试", "error");
     }
     return Promise.reject(err);
   },

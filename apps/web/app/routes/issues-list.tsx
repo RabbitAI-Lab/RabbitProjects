@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 import { Topbar } from "../components/Topbar";
 import { ProjectSidebar } from "../components/ProjectSidebar";
 import { IssueDrawer } from "../components/IssueDrawer";
 import { NewTaskModal } from "../components/NewTaskModal";
 import { StateBadge } from "../components/StateBadge";
 import { IssueAPI, ProjectAPI } from "../services/api";
+import { toast } from "../components/Toast";
 import type { Issue } from "@rp/types";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -15,6 +16,7 @@ export default function IssuesList() {
   const [issues, setIssues] = useState<Issue[]>([]);
   const [project, setProject] = useState<{ name: string; identifier: string } | null>(null);
   const [quick, setQuick] = useState("");
+  const [creating, setCreating] = useState(false);
   const [openIssueId, setOpenIssueId] = useState<string | null>(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
 
@@ -27,12 +29,25 @@ export default function IssuesList() {
     setProject((pRes as any).data);
   }
   useEffect(() => { load(); }, [workspaceSlug, projectId]);
+  const [sp, setSp] = useSearchParams();
+  const peekId = sp.get("peekIssue");
+  function openPeek(id: string) { setSp((prev) => { const n = new URLSearchParams(prev); n.set("peekIssue", id); return n; }, { preventScrollReset: true }); }
+  function closePeek() { setSp((prev) => { const n = new URLSearchParams(prev); n.delete("peekIssue"); return n; }, { preventScrollReset: true }); }
 
   async function quickCreate() {
-    if (!quick.trim()) return;
-    await IssueAPI.create(workspaceSlug!, projectId!, { name: quick });
-    setQuick(""); await load();
-    document.getElementById("tq-input")?.focus();
+    if (!quick.trim() || creating) return;
+    const text = quick;
+    setCreating(true); setQuick("");
+    try {
+      await IssueAPI.create(workspaceSlug!, projectId!, { name: text });
+      await load();
+    } catch (e: any) {
+      setQuick(text); // 失败恢复输入（TASK-001 §3.2.1）
+      toast(e?.message ?? "创建失败", "error");
+    } finally {
+      setCreating(false);
+      document.getElementById("tq-input")?.focus();
+    }
   }
 
   return (
@@ -72,13 +87,17 @@ export default function IssuesList() {
                   {issues.map((it) => {
                     const overdue = it.target_date && it.target_date < today() && it.state_group !== "completed";
                     return (
-                      <tr key={it.id} className="cursor-pointer hover:bg-neutral-50" onClick={() => setOpenIssueId(it.id)}>
+                      <tr key={it.id} className="group cursor-pointer hover:bg-neutral-50" onClick={() => openPeek(it.id)}>
                         <td className="px-3 py-2.5 border-b border-neutral-100">
                           <button className="font-mono text-xs text-neutral-500 hover:text-brand-600"
                             onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(it.issue_key); }}
                             title="点击复制编号">{it.issue_key}</button>
                         </td>
-                        <td className="px-3 py-2.5 border-b border-neutral-100 text-[13px]">{it.name}</td>
+                        <td className="px-3 py-2.5 border-b border-neutral-100 text-[13px]">
+                          <span className="inline-flex items-center gap-1.5">{it.name}
+                            <span className="opacity-0 group-hover:opacity-100 text-neutral-300">⋯</span>
+                          </span>
+                        </td>
                         <td className="px-3 py-2.5 border-b border-neutral-100"><StateBadge group={it.state_group ?? "unstarted"} name={it.state_name ?? "—"} /></td>
                         <td className="px-3 py-2.5 border-b border-neutral-100 text-[13px]">{it.assignee ? it.assignee.name : <span className="text-neutral-400">—</span>}</td>
                         <td className="px-3 py-2.5 border-b border-neutral-100 text-[13px]">
@@ -97,7 +116,7 @@ export default function IssuesList() {
           </div>
         </main>
       </div>
-      {openIssueId && <IssueDrawer issueId={openIssueId} slug={workspaceSlug!} projectId={projectId!} onClose={() => { setOpenIssueId(null); load(); }} />}
+      {peekId && <IssueDrawer issueId={peekId} slug={workspaceSlug!} projectId={projectId!} onClose={() => { closePeek(); load(); }} onChanged={() => load()} />}
       {showTaskModal && <NewTaskModal slug={workspaceSlug!} projectId={projectId!} projectName={project?.name ?? ""} onClose={() => setShowTaskModal(false)} onCreated={() => load()} />}
     </div>
   );

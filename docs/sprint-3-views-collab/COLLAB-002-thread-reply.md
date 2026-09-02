@@ -1,19 +1,19 @@
 # 楼中楼回复 / 表情 / 图片评论
 
-| 元信息项     | 内容                                                                                                                                                                                                                                                                                                                           |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 文档编号     | COLLAB-002                                                                                                                                                                                                                                                                                                                     |
-| 所属迭代     | Sprint 3：高级视图 + 实时协作（第 5 周）                                                                                                                                                                                                                                                                                       |
-| 优先级       | P2（标准版完整级）                                                                                                                                                                                                                                                                                                             |
-| 所属模块     | M8-COLLAB｜实时协作与通知                                                                                                                                                                                                                                                                                                      |
-| 文档状态     | 待评审（Draft）                                                                                                                                                                                                                                                                                                                |
-| 最后更新日期 | 2026-09-01                                                                                                                                                                                                                                                                                                                     |
-| 上游依据     | `docs/需求文档.md` §3.8（评论回复楼中楼、评论@成员提醒、**表情、图片评论**）、§8.2 协作通知 P2 列                                                                                                                                                                                                                              |
-| 前置依赖     | `COLLAB-001`（评论 CRUD / @ 解析 / 净化 / 通知管道 / `IssueComment` 全列基线——**parent 与 accessory 预留列本迭代点亮**）、`FILE-001`（附件预签名直传通道与 `FileAsset` 多态挂载）、`TASK-010`（Activity 管道约定——评论不落 Activity，时间线 UNION 合并渲染，见 §1.6）                                                          |
-| 下游依赖     | `COLLAB-004`（WebSocket 评论实时推送——`comment.created` 事件源）、`INTG-003`（P4 Slack 回写评论）、`AI-001`（P4 评论摘要输入）                                                                                                                                                                                                 |
-| 架构基线     | [`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.1 ER（IssueComment：`parent` 自引用 / `accessory` JSONB）；[`api-conventions.md`](../architecture/api-conventions.md) §2.4 嵌套约定、§4（信封/游标）、§8（错误码）；[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §5.5 行级隔离 |
-| 竞品参考     | Plane（IssueComment.parent 楼中楼 + accessory 承载 reactions；`IssueReaction` 独立表） · Ones（表情回应 / 富媒体评论 / 消息管控 P3）                                                                                                                                                                                           |
-| 工作量估算   | 后端 2.5 人日 / 前端 3 人日 / 联调与测试 1 人日，合计 **6.5 人日**                                                                                                                                                                                                                                                             |
+| 元信息项     | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 文档编号     | COLLAB-002                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 所属迭代     | Sprint 3：高级视图 + 实时协作（第 5 周）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 优先级       | P2（标准版完整级）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 所属模块     | M8-COLLAB｜实时协作与通知                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 文档状态     | 待评审（Draft）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 最后更新日期 | 2026-09-01                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 上游依据     | `docs/需求文档.md` §3.8（评论回复楼中楼、评论@成员提醒、**表情、图片评论**）、§8.2 协作通知 P2 列                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 前置依赖     | `COLLAB-001`（评论 CRUD / @ 解析 / 净化 / 通知管道 / `IssueComment` 全列基线——**parent 与 accessory 预留列本迭代点亮**）、`FILE-001`（附件预签名直传通道与 `FileAsset` 多态挂载）、`TASK-010`（Activity 管道约定——评论不落 Activity，时间线 UNION 合并渲染，见 §1.6）                                                                                                                                                                                                                                                       |
+| 下游依赖     | `COLLAB-004`（WebSocket 评论实时推送——`comment.created` 事件源）、`INTG-003`（P4 Slack 回写评论）、`AI-001`（P4 评论摘要输入）                                                                                                                                                                                                                                                                                                                                                                                              |
+| 架构基线     | [`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.1 ER（IssueComment：`parent` 自引用楼中楼；`accessory` JSONB 为 `COLLAB-001` §4.1.1 建列的 Plane 同构预留——架构 ER 未含该列，**架构文档待回改**补录）；[`api-conventions.md`](../architecture/api-conventions.md) §2.3 路径命名、§2.4 嵌套约定、§4（信封/游标）、§8（错误码）；[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §6（第三层：数据库行级过滤）、§8.2（`comment.create` / `file.upload` / `file.read` 项目级矩阵） |
+| 竞品参考     | Plane（IssueComment.parent 楼中楼 + accessory 承载评论 reactions；任务级另有 `IssueReaction` 独立表——本系统评论级表情命名为 `CommentReaction`，与迭代概览对齐） · Ones（表情回应 / 富媒体评论 / 消息管控 P3）                                                                                                                                                                                                                                                                                                               |
+| 工作量估算   | 后端 2.5 人日 / 前端 3 人日 / 联调与测试 1 人日，合计 **6.5 人日**                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 > **范围声明**：交付两级楼中楼（回复挂顶层评论之下，回复的回复折叠进同一线程）、表情 Reaction（独立表 + 聚合展示）、图片评论（复用 `FILE-001` 预签名直传，评论正文内联图片节点）。语音 / 视频评论、表情回应通知策略化、消息撤回重发、评论富媒体表格（P3 `COLLAB-002` 后续评估）不在范围。
 
@@ -26,10 +26,10 @@
 `COLLAB-001` 的扁平评论解决了「能不能说」；本迭代解决「**说得清、回得快**」：
 
 1. **楼中楼**——针对某条评论的追问不再淹没会话流。回复挂接在顶层评论之下形成线程（thread），「回复的回复」折叠进同一线程并 @ 被回复人，两级封顶——既保留线程语境，又避免无限嵌套在 720px 侧栏里失去排版意义。
-2. **表情 Reaction**——「+1」「看到了」「办完了」这类**零信息增量但高社交价值**的反馈，用一次点击替代一条评论。独立 `IssueReaction` 表承载（可聚合、可审计、可扩展自定义 emoji）。
+2. **表情 Reaction**——「+1」「看到了」「办完了」这类**零信息增量但高社交价值**的反馈，用一次点击替代一条评论。独立 `CommentReaction` 表承载（可聚合、每行含 actor/时间可追溯、可扩展自定义 emoji）。
 3. **图片评论**——截图是研发沟通的第一介质（报错截图 / 设计稿标注 / 复现 GIF）。复用 `FILE-001` 的预签名直传通道，评论正文以图片节点内联引用，不重复建设上传设施。
 
-工程关键词：**全部结构 P1 已预留**（`parent` / `accessory` 列已建、净化白名单已含 `img` 升级位、通知管道已参数化）——本迭代是「点亮」而非「新建」，`issue_comments` 表零 DDL，仅新增 `issue_reactions` 一张表。
+工程关键词：**列结构 P1 已预留**（`parent` / `accessory` 列已建、通知管道已参数化）——本迭代以「点亮」为主，`issue_comments` 表零 DDL，仅新增 `comment_reactions` 一张表；例外是净化白名单**不含** `img`（COLLAB-001 BR-03 仅 p/br/strong/em/code/a/span 七标签），`img` 标签准入 + `src` 受控重写是本迭代的净化器扩展项（§4.3.3），并非既有升级位。
 
 ### 1.2 交付内容
 
@@ -38,7 +38,7 @@
 | 1   | 两级楼中楼    | `parent_id` 启用：回复只能挂**顶层**评论之下（回复的回复归并同线程 + 自动 @）；单评论回复数上限 100                         |
 | 2   | 线程化列表    | 评论列表返回「顶层 + replies 数组（按时间正序）」两层结构；`reply_count` 聚合                                               |
 | 3   | 回复通知      | 新事件 `comment.replied`：被回复人收一条（与 `issue.commented` 互斥去重）；回复自动插入 @ 被回复人锚点（可删）              |
-| 4   | 表情 Reaction | `IssueReaction(comment, actor, emoji)`；toggle 端点；聚合展示「👍 3 · 🎉 1」+ 悬浮列人名；emoji 白名单 24 枚                |
+| 4   | 表情 Reaction | `CommentReaction(comment, actor, emoji)`；toggle 端点；聚合展示「👍 3 · 🎉 1」+ 悬浮列人名；emoji 白名单 24 枚              |
 | 5   | 图片评论      | 正文图片节点（`comment_json` image 节点 + `accessory.images` 引用 asset_id）；缩略图点击灯箱放大；直传走 `FILE-001` presign |
 | 6   | 折叠交互      | 线程超 3 条回复折叠「查看 N 条回复」；表情栏常驻 8 枚 + More 展开全量                                                       |
 
@@ -65,13 +65,13 @@ flowchart LR
 
 `COLLAB-001` 的 `accessory` 帮助文本预留了 `{"reactions":[...]}` 内联形态（Plane 同构），本迭代**升级为独立表**并保留 accessory 承载图片引用：
 
-| 维度         | accessory JSONB 内联                    | **IssueReaction 独立表（采纳）**             |
-| ------------ | --------------------------------------- | -------------------------------------------- |
-| toggle 写入  | 读整 JSON → 改数组 → 写回（读改写竞态） | 单行 INSERT/DELETE，天然并发安全             |
-| 聚合查询     | 每评论解析 JSON（无法索引）             | `GROUP BY emoji` 走索引                      |
-| 审计         | 无操作主体时间线                        | 每条含 actor/created_at（`TASK-010` 可留痕） |
-| 「谁点过赞」 | 需全量数组扫描                          | `(comment, actor)` 点查                      |
-| Plane 现状   | accessory 内联 reactions（读改写）      | ——本系统的工程加固点                         |
+| 维度         | accessory JSONB 内联                    | **CommentReaction 独立表（采纳）**                                                             |
+| ------------ | --------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| toggle 写入  | 读整 JSON → 改数组 → 写回（读改写竞态） | 单行 INSERT/DELETE，天然并发安全                                                               |
+| 聚合查询     | 每评论解析 JSON（无法索引）             | `GROUP BY emoji` 走索引                                                                        |
+| 审计         | 无操作主体时间线                        | 每行含 actor/created_at（行级自审计；不写 `IssueActivity` 逐条留痕——BR-09，P3 管控配套时复议） |
+| 「谁点过赞」 | 需全量数组扫描                          | `(comment, actor)` 点查                                                                        |
+| Plane 现状   | accessory 内联 reactions（读改写）      | ——本系统的工程加固点                                                                           |
 
 > accessory 不废弃：`accessory.images` 继续承载图片引用（图片与评论同生共死，无独立 toggle 语义，内联合适）。**「有独立生命周期的数据进表，纯展示附属进 JSONB」**是本系统的划线原则。
 
@@ -93,12 +93,12 @@ flowchart LR
 
 ### 1.6 前置依赖
 
-| 依赖         | 内容                                                                                                                | 阻塞原因                                                 |
-| ------------ | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `COLLAB-001` | `IssueComment` 全列（parent/accessory 已建）、净化器、`Notification` 管道与 `dedup_key` 幂等、15 分钟窗口、软删占位 | 本迭代全部在其上扩展；BR-14 的「parent 强制 NULL」锁解除 |
-| `FILE-001`   | 预签名直传三步流、`FileAsset`、类型/体积白名单、孤儿清理                                                            | 图片评论零新建上传设施                                   |
-| `TASK-010`   | Activity 管道（replied/reaction 留痕）                                                                              | 审计一致性                                               |
-| `AUTH-005`   | `issue.comment` 权限点                                                                                              | 回复与表情的权限基线（表情降为 COMMENTER+）              |
+| 依赖         | 内容                                                                                                                                                   | 阻塞原因                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `COLLAB-001` | `IssueComment` 全列（parent/accessory 已建）、净化器、`Notification` 管道与 `dedup_key` 幂等、15 分钟窗口、软删占位                                    | 本迭代全部在其上扩展；BR-14 的「parent 强制 NULL」锁解除                                      |
+| `FILE-001`   | 预签名直传三步流、`FileAsset`（`entity_type` 多态挂载注册制）、类型/体积白名单、孤儿清理                                                               | 图片评论零新建上传设施                                                                        |
+| `TASK-010`   | Activity 管道约定：评论（含回复）不落 `IssueActivity`（其 BR-05——评论本体在 `IssueComment`，时间线 UNION 合并渲染）；reaction 同样不留痕（本档 BR-09） | 审计口径一致（避免双写与「reaction 留痕」误导）                                               |
+| `AUTH-005`   | `comment.create` 权限点（rbac §8.2，AUTH-005 归并命名）                                                                                                | 回复与表情的权限基线（表情与评论同级 COMMENTER+；低于图片上传 `file.upload` 的 CONTRIBUTOR+） |
 
 ### 1.7 竞品参考
 
@@ -144,8 +144,8 @@ sequenceDiagram
 stateDiagram-v2
     [*] --> 无: 初始
     无 --> 已反应: POST …/reactions/ {emoji}
-    已反应 --> 无: DELETE …/reactions/{emoji}/（同 emoji 撤销）
-    已反应 --> 已反应: POST 换 emoji = 原子换（旧删新增，同事务）
+    已反应 --> 无: DELETE …/reactions/ {emoji}（同 emoji 撤销，emoji 走请求体）
+    已反应 --> 已反应: 换 emoji = 前端串联 DELETE 旧 + POST 新（两次幂等调用，聚合即时一致）
     note right of 已反应
         一人一评论同 emoji 唯一；
         换表情是删除+新增（非更新），
@@ -153,12 +153,12 @@ stateDiagram-v2
     end note
 ```
 
-| 约束        | 说明                                                                                                                        |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------- |
-| 唯一性      | `(comment, actor, emoji)` 唯一约束——一人可对同一评论持有**多个不同** emoji（👍 + 🎉 合法，语义是「赞且祝贺」）              |
-| toggle 端点 | `POST …/reactions/`（body 带 emoji）幂等添加；`DELETE …/reactions/{emoji}/` 撤销；「换」由前端两调用或原子 `PUT`（见 §4.2） |
-| 权限        | `issue.comment`（COMMENTER+）——点表情是轻量发言                                                                             |
-| 通知        | 不产生任何通知（BR-09 降噪）                                                                                                |
+| 约束        | 说明                                                                                                                                                                                                                                                          |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 唯一性      | `(comment, actor, emoji)` 唯一约束——一人可对同一评论持有**多个不同** emoji（👍 + 🎉 合法，语义是「赞且祝贺」）                                                                                                                                                |
+| toggle 端点 | `POST …/reactions/`（body 带 emoji）幂等添加；`DELETE …/reactions/`（body 带 emoji）撤销——路径参数仅 UUID/slug（api-conventions §2.3），emoji 字面量不进路径；带体 DELETE 先例同其 §2.6 批量删除；「换」由前端串联两次幂等调用（§4.3.2，不设原子 `PUT` 端点） |
+| 权限        | `comment.create`（COMMENTER+）——点表情是轻量发言                                                                                                                                                                                                              |
+| 通知        | 不产生任何通知（BR-09 降噪）                                                                                                                                                                                                                                  |
 
 ### 2.3 图片评论上传时序
 
@@ -166,62 +166,62 @@ stateDiagram-v2
 flowchart TD
     A["Composer 工具条 🖼 / 粘贴截图 / 拖入文件"] --> B{"≤ 5MB 且<br/>png/jpg/jpeg/gif/webp？"}
     B -->|否| B1["行内提示（复用 FILE-001 白名单文案）"]
-    B -->|是| C["POST …/issues/{id}/attachments/presign/<br/>（FILE-001 既有端点，category=comment）"]
+    B -->|是| C["POST …/issues/{id}/attachments/presign/<br/>（FILE-001 既有端点；body 选填<br/>entity_type=comment_image——<br/>FILE-001 §1.4 注册位，缺省 issue 不变）"]
     C --> D["直传 MinIO（进度条嵌入 Composer）"]
     D --> E["上传完成 → 编辑器插入 image 节点<br/>（attrs: asset_id）"]
     E --> F["发表评论：comment_json 含 image 节点<br/>accessory.images 聚合 asset_id 列表"]
     F --> G["服务端：净化（img 白名单）+<br/>asset 归属校验（BR-07）"]
     G --> H["落库；列表渲染缩略图 + 灯箱"]
-    D -->|"上传失败/取消"| I["节点移除；30 分钟未 complete 的<br/>预签名孤儿由 FILE-001 beat 清理"]
+    D -->|"上传失败/取消"| I["节点移除；30 分钟未 complete 的<br/>预签名孤儿由 FILE-001 beat 清理<br/>（mark_abandoned_uploads，窗口与 presign TTL<br/>同为 30 分钟——FILE-001 BR-07 与架构 §13.2<br/>对齐口径，本迭代不另设窗口）"]
 ```
 
 ### 2.4 业务规则表
 
-| 编号  | 规则                                                                                                                                                                  | 判定位置              | 违反后果                  |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | ------------------------- |
-| BR-01 | 回复权限 = 评论权限（`issue.comment`，COMMENTER+）；归档项目只读（403 `PERM_PROJECT_ARCHIVED`）                                                                       | Permission            | 403                       |
-| BR-02 | `parent_id` 必须指向**同一任务**的存活评论；跨任务 / 已软删父 → 400 `DOES_NOT_EXIST`                                                                                  | Serializer            | 400                       |
-| BR-03 | **两级归并**：目标 parent 自身是回复（parent.parent 非空）时，落库 parent 归并为顶层根；「回复回复」的触达靠自动 @                                                    | Service               | —                         |
-| BR-04 | 自动 @ 插入：回复 Composer 预填被回复人锚点（可手动删除）；锚点删除则不触发 mentioned（用户显式选择）                                                                 | 前端 + 解析器         | —                         |
-| BR-05 | 单顶层评论的回复数上限 **100**；超限 409 提示开新评论                                                                                                                 | Service               | `RESOURCE_LIMIT_EXCEEDED` |
-| BR-06 | 回复继承 15 分钟编辑窗口与软删占位（COLLAB-001 语义不变）；**删除父评论：父转占位行、回复保留**（线程语境不塌）                                                       | Service               | —                         |
-| BR-07 | 图片 asset 必须属于当前任务附件域（`FileAsset.issue_id` 匹配或评论专用域）且 `status=available`——防跨任务 asset ID 盗链                                               | Serializer            | 400 `DOES_NOT_EXIST`      |
-| BR-08 | 单条评论图片数 ≤ **9**；每张 ≤ 5MB；格式白名单 png/jpg/jpeg/gif/webp（gif 单图 ≤ 5MB 不做帧数限制）                                                                   | Composer + Serializer | 400 / 409                 |
-| BR-09 | Reaction：emoji ∈ 24 白名单；不产生通知、不产生 IssueActivity 逐条留痕（聚合变化不审计——降噪与表体积双重考量，P3 复议）                                               | Serializer            | 400 `NOT_A_CHOICE`        |
-| BR-10 | Reaction 幂等：重复 POST 同 emoji 200 无变化；`bulk` 语义靠唯一约束 + `ignore_conflicts`                                                                              | DB + Service          | —                         |
-| BR-11 | 通知互斥（扩展 COLLAB-001 BR-06）：同一线程动作对同一人至多一条——优先级 `mentioned` > `comment.replied` > `issue.commented`                                           | Worker 分派           | —                         |
-| BR-12 | `comment.replied` 仅发**顶层评论作者**（回复的回复场景被回复人走 mentioned）；操作者本人 / 域外成员剔除                                                               | Worker                | —                         |
-| BR-13 | 评论列表两层结构：顶层正序 + `replies[]` 正序；`replies` 默认全量返回（≤100），前端折叠纯展示行为                                                                     | ViewSet               | —                         |
-| BR-14 | 解除 COLLAB-001 的「parent 强制 NULL」锁：本迭代起带 `parent_id` 的请求合法（契约测试同步翻转）                                                                       | Serializer            | —                         |
-| BR-15 | 图片节点净化：`img` 标签进入白名单但**仅允许 `src="/api/v1/files/{asset_id}/…"` 服务端代理形态与 `alt`**——外链图片（`http://` src）剥离为链接文本（防盗链与隐私引用） | 净化器                | 静默降级                  |
+| 编号  | 规则                                                                                                                                                                                                                                                 | 判定位置                        | 违反后果                                                                                                |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| BR-01 | 回复权限 = 评论权限（`comment.create`，COMMENTER+）；归档项目只读（403 `PERM_PROJECT_ARCHIVED`）                                                                                                                                                     | Permission                      | 403                                                                                                     |
+| BR-02 | `parent_id` 必须指向**同一任务**的存活评论；跨任务 / 已软删父 → 400 `DOES_NOT_EXIST`                                                                                                                                                                 | Serializer                      | 400                                                                                                     |
+| BR-03 | **两级归并**：目标 parent 自身是回复（parent.parent 非空）时，落库 parent 归并为顶层根；「回复回复」的触达靠自动 @                                                                                                                                   | Service                         | —                                                                                                       |
+| BR-04 | 自动 @ 插入：回复 Composer 预填被回复人锚点（可手动删除）；锚点删除则不触发 mentioned（用户显式选择）                                                                                                                                                | 前端 + 解析器                   | —                                                                                                       |
+| BR-05 | 单顶层评论的回复数上限 **100**；超限 409 提示开新评论                                                                                                                                                                                                | Service                         | `RESOURCE_LIMIT_EXCEEDED`                                                                               |
+| BR-06 | 回复继承 15 分钟编辑窗口与软删占位（COLLAB-001 语义不变）；**删除父评论：父转占位行、回复保留**（线程语境不塌）                                                                                                                                      | Service                         | —                                                                                                       |
+| BR-07 | 图片 asset 必须属于当前任务**评论图域**——`FileAsset` 多态挂载无 `issue_id` 列，判定为 `entity_type='comment_image'` ∧ `entity_id=当前 issue_id` ∧ `status='uploaded'`（FILE-001 五态之一）∧ `uploaded_by=当前用户`——防跨任务 asset ID 盗链与旧值冒用 | Serializer                      | 400 `DOES_NOT_EXIST`                                                                                    |
+| BR-08 | 单条评论图片数 ≤ **9**（发表期计数超限 409 `RESOURCE_LIMIT_EXCEEDED` + `LIMIT`）；每张 ≤ 5MB、格式 png/jpg/jpeg/gif/webp（gif 不做帧数限制）——体积与格式在 presign 期对 `entity_type=comment_image` 收紧校验（FILE-001 25MB / 全量白名单的子集）     | Composer + presign + Serializer | 400 `VALIDATION_FILE_SIZE_EXCEEDED` / `VALIDATION_FILE_TYPE_NOT_ALLOWED`；409 `RESOURCE_LIMIT_EXCEEDED` |
+| BR-09 | Reaction：emoji ∈ 24 白名单；不产生通知、不产生 IssueActivity 逐条留痕（聚合变化不审计——降噪与表体积双重考量，P3 复议）                                                                                                                              | Serializer                      | 400 `NOT_A_CHOICE`                                                                                      |
+| BR-10 | Reaction 幂等：重复 POST 同 emoji 200 无变化；`bulk` 语义靠唯一约束 + `ignore_conflicts`                                                                                                                                                             | DB + Service                    | —                                                                                                       |
+| BR-11 | 通知互斥（扩展 COLLAB-001 BR-06）：同一线程动作对同一人至多一条——优先级 `mentioned` > `comment.replied` > `issue.commented`                                                                                                                          | Worker 分派                     | —                                                                                                       |
+| BR-12 | `comment.replied` 仅发**顶层评论作者**（回复的回复场景被回复人走 mentioned）；操作者本人 / 域外成员剔除                                                                                                                                              | Worker                          | —                                                                                                       |
+| BR-13 | 评论列表两层结构：顶层正序 + `replies[]` 正序；`replies` 默认全量返回（≤100），前端折叠纯展示行为                                                                                                                                                    | ViewSet                         | —                                                                                                       |
+| BR-14 | 解除 COLLAB-001 的「parent 强制 NULL」锁：本迭代起带 `parent_id` 的请求合法（契约翻转测试 UT-19 落 §5.1 清单——COLLAB-001 UT-13 同场景由 400 翻转为 201）                                                                                             | Serializer                      | —                                                                                                       |
+| BR-15 | 图片节点净化：`img` 标签进入白名单但**仅允许 `src="/api/v1/files/{asset_id}/…"` 服务端代理形态与 `alt`**——外链图片（`http://` src）剥离为链接文本（防盗链与隐私引用）                                                                                | 净化器                          | 静默降级                                                                                                |
 
 ### 2.5 异常处理表
 
-| 异常场景         | 触发条件                   | HTTP / 错误码                                                                  | 前端表现                                 | 后端处理              |
-| ---------------- | -------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------- | --------------------- |
-| 回复跨任务父     | parent 属他任务            | 400 `VALIDATION_ERROR` + `DOES_NOT_EXIST`                                      | 「回复目标无效」                         | Serializer 域校验     |
-| 回复已删父       | parent 软删                | 400 同上                                                                       | 占位行无回复按钮                         | —                     |
-| 回复数超限       | 第 101 条                  | 409 `RESOURCE_LIMIT_EXCEEDED`                                                  | 「该评论回复已达上限，请直接发表新评论」 | —                     |
-| 非法 emoji       | 自定义串 / 超白名单        | 400 `VALIDATION_ERROR` + `NOT_A_CHOICE`                                        | 表情栏只出白名单；直连触发               | —                     |
-| 撤销未点过的表情 | DELETE 不存在行            | 200（幂等，`removed=false`）                                                   | 无感                                     | —                     |
-| 图片超规格       | >5MB / 非白名单 / 第 10 张 | 400 `VALIDATION_FILE_SIZE_EXCEEDED` / `VALIDATION_FILE_TYPE_NOT_ALLOWED` / 409 | Composer 行内提示 + 节点不插入           | —                     |
-| 外链图片注入     | `<img src="http://evil">`  | 200（净化为文本链接）                                                          | 显示为链接                               | BR-15 白名单          |
-| asset 盗链       | 引用他任务 asset_id        | 400 `DOES_NOT_EXIST`                                                           | 图片位显示「图片不可用」占位             | BR-07 归属校验        |
-| 上传中断         | 直传半途取消               | —                                                                              | 进度条消失 + 节点移除                    | FILE-001 孤儿清理兜底 |
-| 归档项目         | 项目已归档                 | 403 `PERM_PROJECT_ARCHIVED`                                                    | 只读态                                   | —                     |
+| 异常场景         | 触发条件                       | HTTP / 错误码                                                                                                                                                            | 前端表现                                             | 后端处理              |
+| ---------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- | --------------------- |
+| 回复跨任务父     | parent 属他任务                | 400 `VALIDATION_ERROR` + `DOES_NOT_EXIST`                                                                                                                                | 「回复目标无效」                                     | Serializer 域校验     |
+| 回复已删父       | parent 软删                    | 400 同上                                                                                                                                                                 | 占位行无回复按钮                                     | —                     |
+| 回复数超限       | 第 101 条                      | 409 `RESOURCE_LIMIT_EXCEEDED`                                                                                                                                            | 「该评论回复已达上限，请直接发表新评论」             | —                     |
+| 非法 emoji       | 自定义串 / 超白名单            | 400 `VALIDATION_ERROR` + `NOT_A_CHOICE`                                                                                                                                  | 表情栏只出白名单；直连触发                           | —                     |
+| 撤销未点过的表情 | DELETE 不存在行                | 200（幂等，`changed=false`）                                                                                                                                             | 无感                                                 | —                     |
+| 图片超规格       | >5MB / 非图片白名单 / 第 10 张 | 400 `VALIDATION_FILE_SIZE_EXCEEDED` / 400 `VALIDATION_FILE_TYPE_NOT_ALLOWED`（presign 期对 `comment_image` 收紧）/ 409 `RESOURCE_LIMIT_EXCEEDED` + `LIMIT`（发表期计数） | Composer 行内提示 + 节点不插入；第 10 张不入上传队列 | —                     |
+| 外链图片注入     | `<img src="http://evil">`      | 200（净化为文本链接）                                                                                                                                                    | 显示为链接                                           | BR-15 白名单          |
+| asset 盗链       | 引用他任务 asset_id            | 400 `DOES_NOT_EXIST`                                                                                                                                                     | 图片位显示「图片不可用」占位                         | BR-07 归属校验        |
+| 上传中断         | 直传半途取消                   | —                                                                                                                                                                        | 进度条消失 + 节点移除                                | FILE-001 孤儿清理兜底 |
+| 归档项目         | 项目已归档                     | 403 `PERM_PROJECT_ARCHIVED`                                                                                                                                              | 只读态                                               | —                     |
 
 ### 2.6 边界条件表
 
-| 边界场景            | 限制值                      | 超出处理方式                        |
-| ------------------- | --------------------------- | ----------------------------------- |
-| 单评论回复数        | 100                         | 409 + 引导新评论                    |
-| 单条评论图片数      | 9                           | 拒绝第 10 张                        |
-| 单图体积            | 5MB                         | 拒绝（FILE-001 通道上限内取更严值） |
-| emoji 白名单        | 24 枚（常驻 8 + 展开 16）   | 400                                 |
-| 一人一评论 emoji 数 | 无上限（不同 emoji 各一行） | 聚合栏横向滚动                      |
-| 折叠阈值            | 线程 > 3 条回复折叠         | 「查看 N 条回复」                   |
-| 灯箱加载            | 原图懒加载（列表用缩略图）  | 失败占位                            |
-| 回复深度            | 2（归并保证）               | —                                   |
+| 边界场景            | 限制值                      | 超出处理方式                                                                |
+| ------------------- | --------------------------- | --------------------------------------------------------------------------- |
+| 单评论回复数        | 100                         | 409 + 引导新评论                                                            |
+| 单条评论图片数      | 9                           | 拒绝第 10 张（409 `RESOURCE_LIMIT_EXCEEDED`）                               |
+| 单图体积            | 5MB                         | 拒绝（presign 期对 `comment_image` 收紧——FILE-001 25MB 通道上限内取更严值） |
+| emoji 白名单        | 24 枚（常驻 8 + 展开 16）   | 400                                                                         |
+| 一人一评论 emoji 数 | 无上限（不同 emoji 各一行） | 聚合栏横向滚动                                                              |
+| 折叠阈值            | 线程 > 3 条回复折叠         | 「查看 N 条回复」                                                           |
+| 灯箱加载            | 原图懒加载（列表用缩略图）  | 失败占位                                                                    |
+| 回复深度            | 2（归并保证）               | —                                                                           |
 
 ---
 
@@ -347,7 +347,7 @@ flowchart TD
 
 ### 4.1 数据模型
 
-#### 4.1.1 `IssueReaction`（新表）
+#### 4.1.1 `CommentReaction`（新表——命名与迭代概览对齐：评论级表情，区别于 Plane 任务级 `IssueReaction`）
 
 ```python
 # apps/api/plane/db/models/comment.py —— 新增
@@ -356,7 +356,7 @@ from django.db import models
 from plane.db.models.base import BaseModel
 
 
-class IssueReaction(BaseModel):
+class CommentReaction(BaseModel):
     """评论表情反应 —— 独立表（§1.4 论证：有独立生命周期的数据进表）
 
     一人对同一评论可持有多个不同 emoji（多行并存）；
@@ -369,13 +369,13 @@ class IssueReaction(BaseModel):
     )
     actor = models.ForeignKey(
         "db.User", on_delete=models.CASCADE,
-        related_name="issue_reactions", verbose_name="反应人",
+        related_name="comment_reactions", verbose_name="反应人",
     )
     emoji = models.CharField(max_length=16, verbose_name="emoji 字面量",
                              help_text="白名单 24 枚（§4.3.1），存字面量不存编码")
 
     class Meta(BaseModel.Meta):
-        db_table = "issue_reactions"
+        db_table = "comment_reactions"
         verbose_name = "评论表情"
         verbose_name_plural = "评论表情"
         ordering = ("created_at",)
@@ -408,7 +408,7 @@ accessory = models.JSONField(...)            # 启用 images 键：{"images": [a
 class Migration(migrations.Migration):
     dependencies = [("db", "00XX_p2_tail")]
     operations = [
-        migrations.CreateModel(...),   # IssueReaction（新表 + 唯一约束 + 索引）
+        migrations.CreateModel(...),   # CommentReaction（新表 + 唯一约束 + 索引）
         # issue_comments 零 DDL —— parent / accessory P1 已建（COLLAB-001 §4.1.1）
     ]
 ```
@@ -419,11 +419,11 @@ class Migration(migrations.Migration):
 erDiagram
     Issue ||--o{ IssueComment : "comments"
     IssueComment ||--o{ IssueComment : "parent / replies（两级：回复恒挂顶层）"
-    IssueComment ||--o{ IssueReaction : "reactions（独立表）"
-    User ||--o{ IssueReaction : "actor"
-    FileAsset ||--o{ IssueComment : "accessory.images 内联引用（软关联）"
+    IssueComment ||--o{ CommentReaction : "reactions（独立表）"
+    User ||--o{ CommentReaction : "actor"
+    FileAsset ||--o{ IssueComment : "accessory.images 内联引用（软关联，entity_type=comment_image）"
 
-    IssueReaction {
+    CommentReaction {
         uuid comment_id FK
         uuid actor_id FK
         string emoji "16, 白名单字面量"
@@ -444,15 +444,15 @@ erDiagram
 
 ### 4.2 API 定义
 
-| #   | 方法     | 路径                                                           | 描述                                                                  | 权限            | 成功码 |
-| --- | -------- | -------------------------------------------------------------- | --------------------------------------------------------------------- | --------------- | ------ |
-| 1   | `POST`   | `…/issues/{issue_id}/comments/`                                | 发表评论 / **回复**（body 含 `parent_id`，归并生效）                  | `issue.comment` | `201`  |
-| 2   | `GET`    | `…/issues/{issue_id}/comments/`                                | 两层结构列表（顶层 + `replies[]` + `reply_count` + `reactions` 聚合） | `project.read`  | `200`  |
-| 3   | `POST`   | `…/issues/{issue_id}/comments/{comment_id}/reactions/`         | 添加表情（幂等）                                                      | `issue.comment` | `200`  |
-| 4   | `DELETE` | `…/issues/{issue_id}/comments/{comment_id}/reactions/{emoji}/` | 撤销表情（幂等）                                                      | `issue.comment` | `200`  |
-| 5   | `GET`    | `…/issues/{issue_id}/comments/?expand=reactions`               | 聚合含 `user_ids`（名单浮层数据）                                     | `project.read`  | `200`  |
+| #   | 方法     | 路径                                                   | 描述                                                                          | 权限             | 成功码 |
+| --- | -------- | ------------------------------------------------------ | ----------------------------------------------------------------------------- | ---------------- | ------ |
+| 1   | `POST`   | `…/issues/{issue_id}/comments/`                        | 发表评论 / **回复**（body 含 `parent_id`，归并生效）                          | `comment.create` | `201`  |
+| 2   | `GET`    | `…/issues/{issue_id}/comments/`                        | 两层结构列表（顶层 + `replies[]` + `reply_count` + `reactions` 聚合）         | `project.read`   | `200`  |
+| 3   | `POST`   | `…/issues/{issue_id}/comments/{comment_id}/reactions/` | 添加表情（幂等）                                                              | `comment.create` | `200`  |
+| 4   | `DELETE` | `…/issues/{issue_id}/comments/{comment_id}/reactions/` | 撤销表情（幂等；body 带 `emoji`——路径参数仅 UUID/slug，api-conventions §2.3） | `comment.create` | `200`  |
+| 5   | `GET`    | `…/issues/{issue_id}/comments/?expand=reactions`       | 聚合含 `user_ids`（名单浮层数据）                                             | `project.read`   | `200`  |
 
-> 编辑 / 删除端点复用 `COLLAB-001`（窗口与软删语义不变，回复同权适用）；图片上传复用 `FILE-001` presign 三步流（`category=comment`）。
+> 编辑 / 删除端点复用 `COLLAB-001`（窗口与软删语义不变，回复同权适用）；图片上传复用 `FILE-001` presign 三步流——请求体选填 `entity_type=comment_image`（FILE-001 §1.4 已注册的 P2 挂载点，`entity_id` 落当前 issue，缺省 `issue` 语义不变；不占单任务 20 附件配额、不入附件区列表）。
 
 #### 4.2.1 `POST …/comments/` — 发表回复（含图片）
 
@@ -609,6 +609,12 @@ erDiagram
 { "emoji": "🎉" }
 ```
 
+**请求（撤销：DELETE 同路径，emoji 走请求体而非路径——api-conventions §2.3 路径参数仅 UUID/slug；带体 DELETE 先例见其 §2.6 批量删除）**
+
+```json
+{ "emoji": "🎉" }
+```
+
 **成功响应 `200`（幂等：重复添加同值）**
 
 ```json
@@ -680,7 +686,11 @@ def create(self, *, issue, actor, payload: dict) -> tuple[IssueComment, dict]:
                 {"field": "parent_id", "code": "LIMIT",
                  "message": "该评论回复已达上限，请直接发表新评论"}])
 
-    html, images = sanitize_comment(payload["comment_html"]), []       # §4.3.3 扩展净化
+    # 评论图域 asset 集（BR-07）：entity_type=comment_image ∧ entity_id=issue_id
+    # ∧ status=uploaded ∧ uploaded_by=actor —— 多态挂载无 issue_id 列
+    allowed = _comment_image_asset_ids(issue, actor)
+    html, images = sanitize_comment(payload["comment_html"],
+                                    allowed_asset_ids=allowed)          # §4.3.3 扩展净化
     ...  # 复用 COLLAB-001 长度 / @ 校验
     comment = IssueComment.objects.create(
         issue=issue, actor=actor, parent=parent,
@@ -704,18 +714,18 @@ class ReactionService:
             raise AppException("VALIDATION_ERROR", details=[
                 {"field": "emoji", "code": "NOT_A_CHOICE",
                  "message": "不支持的表情，请从选择器中选择"}])
-        row = (IssueReaction.objects
+        row = (CommentReaction.objects
                .filter(comment=comment, actor=actor, emoji=emoji,
                        deleted_at__isnull=True).first())
         changed = row is None
         if row is None:                                                 # 复活或新建（BR-10）
-            IssueReaction.objects.get_or_create(                        # 唯一约束兜底并发
+            CommentReaction.objects.get_or_create(                        # 唯一约束兜底并发
                 comment=comment, actor=actor, emoji=emoji,
                 defaults={"deleted_at": None})
         return self._aggregate(comment, actor, emoji, changed=changed)
 
     def toggle_off(self, *, comment: IssueComment, actor, emoji: str) -> dict:
-        updated = (IssueReaction.objects
+        updated = (CommentReaction.objects
                    .filter(comment=comment, actor=actor, emoji=emoji,
                            deleted_at__isnull=True)
                    .update(deleted_at=timezone.now()))
@@ -748,8 +758,10 @@ def sanitize_comment(html: str, *, allowed_asset_ids: set[str]) -> tuple[str, li
     """返回 (净化 HTML, 存活 asset_id 列表)。
 
     - 外链图片（http/https src）剥离为链接文本（BR-15：防盗链与隐私引用）
-    - 内联代理路径 img 仅当 asset_id ∈ allowed_asset_ids（本任务附件域，BR-07）
-      且对应当前用户可读时保留；否则替换为「图片不可用」占位 span
+    - 内联代理路径 img 仅当 asset_id ∈ allowed_asset_ids（本任务评论图域，BR-07：
+      entity_type='comment_image' ∧ entity_id=issue_id ∧ status='uploaded'
+      ∧ uploaded_by=当前用户——FileAsset 多态挂载无 issue_id 列）
+      时保留；否则替换为「图片不可用」占位 span
     - comment_json 的 image 节点同理校验（attrs.asset_id 域检查），
       accessory.images 由存活列表聚合（客户端不直传）
     """
@@ -784,7 +796,7 @@ def notify_comment(self, comment_id: str) -> int:
 - `CommentStore` 升级：`byIssue` 值结构变为 `TopLevelComment[]`（含 `replies[]`）；回复乐观插入 `target.replies.push(temp)`；`reply_count` 联动。
 - `ReplyContext`（Composer 状态机）：`null | {rootId, replyToUserId, replyToName}`；点行尾 ↩ 进入、`Esc`/清除退出；预填 @ 锚点随 `replyToUserId` 生成（可删，BR-04）。
 - `ReactionBar` 组件（`packages/ui` 无业务版 + web 组装）：chips 由聚合数据渲染；本地乐观 `count ± 1` + `reacted_by_me` 翻转，失败回滚重试一次。
-- `CommentImageNode`（Tiptap Image 扩展定制）：粘贴/拖入走 `usePresignUpload`（FILE-001 hook，category=comment）；进度环内嵌节点；上传完成 `updateAttributes({asset_id, src: thumbUrl})`。
+- `CommentImageNode`（Tiptap Image 扩展定制）：粘贴/拖入走 `usePresignUpload`（FILE-001 hook，presign 请求体带 `entity_type=comment_image`）；进度环内嵌节点；上传完成 `updateAttributes({asset_id, src: thumbUrl})`。
 - `Lightbox`：`packages/ui` 通用灯箱（图片数组 + 索引受控；键盘 ←→/Esc；懒加载原图）。
 - 折叠逻辑纯展示组件态（`ThreadCollapser`，阈值 3），不落库不入 URL。
 
@@ -794,39 +806,40 @@ def notify_comment(self, comment_id: str) -> int:
 
 ### 5.1 单元测试
 
-| 用例 ID | 测试目标       | 输入                            | 预期输出                                             | 覆盖类型 |
-| ------- | -------------- | ------------------------------- | ---------------------------------------------------- | -------- |
-| UT-01   | 归并挂载       | 回复目标自身是回复              | parent_id = 顶层根                                   | 正常     |
-| UT-02   | 跨任务父       | parent 属他任务                 | 400 DOES_NOT_EXIST                                   | 安全     |
-| UT-03   | 已删父         | parent 软删                     | 400                                                  | 异常     |
-| UT-04   | 回复上限       | 第 101 条                       | 409 LIMIT                                            | 边界     |
-| UT-05   | 上界合法       | 第 100 条                       | 201                                                  | 边界     |
-| UT-06   | 两层结构装配   | 3 顶层 + 各若干回复             | 顶层 3、replies 挂对、reply_count 正确               | 正常     |
-| UT-07   | 父删子留       | 删除带 2 回复的父               | 父占位、replies 保留渲染                             | 正常     |
-| UT-08   | 白名单 emoji   | 自定义串                        | 400 NOT_A_CHOICE                                     | 异常     |
-| UT-09   | toggle 幂等    | 重复 POST 同 emoji              | 第二次 changed=false，count 不变                     | 并发     |
-| UT-10   | 并发同点       | 两人同时点 👍                   | count=2（唯一约束兜底）                              | 并发     |
-| UT-11   | 撤销不存在     | DELETE 未点过的                 | 200 changed=false                                    | 边界     |
-| UT-12   | 一人多 emoji   | 👍 + 🎉                         | 两行并存，聚合两组                                   | 正常     |
-| UT-13   | 图片域校验     | 引用他任务 asset_id             | 该 img 替换占位；不 500                              | 安全     |
-| UT-14   | 外链图片剥离   | `<img src="http://evil/x.png">` | 净化为链接文本                                       | 安全     |
-| UT-15   | 图片数量上限   | 第 10 张                        | 409/400 LIMIT                                        | 边界     |
-| UT-16   | 通知互斥       | 回复且 @ 了顶层作者             | 该作者仅收 mentioned 一条                            | 正常     |
-| UT-17   | replied 目标   | 回复（未 @ 顶层作者）           | 顶层作者收 comment.replied                           | 正常     |
-| UT-18   | accessory 聚合 | 评论含 2 image 节点             | accessory.images=[2 id]；客户端直传 accessory 被忽略 | 契约     |
+| 用例 ID | 测试目标        | 输入                                               | 预期输出                                              | 覆盖类型 |
+| ------- | --------------- | -------------------------------------------------- | ----------------------------------------------------- | -------- |
+| UT-01   | 归并挂载        | 回复目标自身是回复                                 | parent_id = 顶层根                                    | 正常     |
+| UT-02   | 跨任务父        | parent 属他任务                                    | 400 DOES_NOT_EXIST                                    | 安全     |
+| UT-03   | 已删父          | parent 软删                                        | 400                                                   | 异常     |
+| UT-04   | 回复上限        | 第 101 条                                          | 409 `RESOURCE_LIMIT_EXCEEDED` + `LIMIT`               | 边界     |
+| UT-05   | 上界合法        | 第 100 条                                          | 201                                                   | 边界     |
+| UT-06   | 两层结构装配    | 3 顶层 + 各若干回复                                | 顶层 3、replies 挂对、reply_count 正确                | 正常     |
+| UT-07   | 父删子留        | 删除带 2 回复的父                                  | 父占位、replies 保留渲染                              | 正常     |
+| UT-08   | 白名单 emoji    | 自定义串                                           | 400 NOT_A_CHOICE                                      | 异常     |
+| UT-09   | toggle 幂等     | 重复 POST 同 emoji                                 | 第二次 changed=false，count 不变                      | 并发     |
+| UT-10   | 并发同点        | 两人同时点 👍                                      | count=2（唯一约束兜底）                               | 并发     |
+| UT-11   | 撤销不存在      | DELETE 未点过的                                    | 200 changed=false                                     | 边界     |
+| UT-12   | 一人多 emoji    | 👍 + 🎉                                            | 两行并存，聚合两组                                    | 正常     |
+| UT-13   | 图片域校验      | 引用他任务 asset_id                                | 该 img 替换占位；不 500                               | 安全     |
+| UT-14   | 外链图片剥离    | `<img src="http://evil/x.png">`                    | 净化为链接文本                                        | 安全     |
+| UT-15   | 图片数量上限    | 第 10 张                                           | 409 `RESOURCE_LIMIT_EXCEEDED` + `LIMIT`（发表期计数） | 边界     |
+| UT-16   | 通知互斥        | 回复且 @ 了顶层作者                                | 该作者仅收 mentioned 一条                             | 正常     |
+| UT-17   | replied 目标    | 回复（未 @ 顶层作者）                              | 顶层作者收 comment.replied                            | 正常     |
+| UT-18   | accessory 聚合  | 评论含 2 image 节点                                | accessory.images=[2 id]；客户端直传 accessory 被忽略  | 契约     |
+| UT-19   | parent 契约翻转 | 带非空 `parent_id` 提交（COLLAB-001 UT-13 同场景） | 201 且 parent 生效——P1 的 400 拒绝翻转为合法（BR-14） | 契约     |
 
 ### 5.2 集成测试
 
-| 用例 ID | 场景          | 前置条件                           | 操作步骤            | 预期结果                                      |
-| ------- | ------------- | ---------------------------------- | ------------------- | --------------------------------------------- |
-| IT-01   | 线程全链路    | 顶层评论存在                       | 回复 → 再回复该回复 | 三条两层级；第三条 parent=顶层且含 @          |
-| IT-02   | 列表一次取齐  | 30 顶层 × 各 5 回复                | GET comments        | 单页 30 顶层全内联；`assertNumQueries` 常数级 |
-| IT-03   | reaction 聚合 | 4 人各点表情                       | GET 列表            | chips 计数与 reacted_by_me 正确               |
-| IT-04   | expand 名单   | ?expand=reactions                  | GET                 | user_ids 下发；权限外成员不在列表             |
-| IT-05   | 图片直传闭环  | Composer 贴图                      | presign→直传→发表   | 缩略图渲染；灯箱可开；asset 归属该任务        |
-| IT-06   | 通知三互斥    | 回复 + @ 顶层作者 + 第三人是指派人 | 查通知              | 作者=mentioned、第三人=commented、无重复      |
-| IT-07   | 幂等重投      | notify_comment 重投                | 查通知              | 零重复（dedup_key）                           |
-| IT-08   | 归档只读      | 项目归档                           | 回复/点表情         | 403 PERM_PROJECT_ARCHIVED                     |
+| 用例 ID | 场景          | 前置条件                           | 操作步骤                                       | 预期结果                                       |
+| ------- | ------------- | ---------------------------------- | ---------------------------------------------- | ---------------------------------------------- |
+| IT-01   | 线程全链路    | 顶层评论存在                       | 回复 → 再回复该回复                            | 三条两层级；第三条 parent=顶层且含 @           |
+| IT-02   | 列表一次取齐  | 30 顶层 × 各 5 回复                | GET comments                                   | 单页 30 顶层全内联；`assertNumQueries` 常数级  |
+| IT-03   | reaction 聚合 | 4 人各点表情                       | GET 列表                                       | chips 计数与 reacted_by_me 正确                |
+| IT-04   | expand 名单   | ?expand=reactions                  | GET                                            | user_ids 下发；权限外成员不在列表              |
+| IT-05   | 图片直传闭环  | Composer 贴图                      | presign（entity_type=comment_image）→直传→发表 | 缩略图渲染；灯箱可开；asset 落当前任务评论图域 |
+| IT-06   | 通知三互斥    | 回复 + @ 顶层作者 + 第三人是指派人 | 查通知                                         | 作者=mentioned、第三人=commented、无重复       |
+| IT-07   | 幂等重投      | notify_comment 重投                | 查通知                                         | 零重复（dedup_key）                            |
+| IT-08   | 归档只读      | 项目归档                           | 回复/点表情                                    | 403 PERM_PROJECT_ARCHIVED                      |
 
 ### 5.3 E2E 测试
 
@@ -851,7 +864,7 @@ def notify_comment(self, comment_id: str) -> int:
 
 ### 6.2 Ones 实现分析
 
-- 表情回应与富媒体评论在其消息体系内，且深度绑定消息管控（静默时段、通知粒度、操作留痕到人）。本系统 P2 只取「轻反馈」内核，管控策略后置 P3——届时 `IssueReaction` 已含 actor/时间，审计扩展零迁移。
+- 表情回应与富媒体评论在其消息体系内，且深度绑定消息管控（静默时段、通知粒度、操作留痕到人）。本系统 P2 只取「轻反馈」内核，管控策略后置 P3——届时 `CommentReaction` 已含 actor/时间，审计扩展零迁移。
 - Ones 的楼中楼在需求评论区做得更深（评审意见分类：通过/疑问/反对）——这属于评审工作流（P3 `WF-002` 审批评论联动），不属协作评论。
 
 ### 6.3 本系统设计决策
@@ -870,11 +883,11 @@ def notify_comment(self, comment_id: str) -> int:
 
 | 类型              | 交付物                                                                                                                                                            |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Model / Migration | `issue_reactions` 新表（唯一约束 + 聚合索引）；`issue_comments` 零 DDL（parent/accessory 点亮）                                                                   |
+| Model / Migration | `comment_reactions` 新表（唯一约束 + 聚合索引）；`issue_comments` 零 DDL（parent/accessory 点亮）                                                                 |
 | 后端              | `CommentService.create` 归并与上限扩展、`ReactionService`（toggle/聚合）、净化器 img 扩展（src 重写/域校验）、`notify_comment` 分派扩展（comment.replied + 互斥） |
 | API               | `POST …/comments/`（parent_id）、两层结构列表（含 replies/reply_count/reactions 聚合/expand）、`reactions/` toggle 两端点                                         |
 | 前端              | 线程化评论 Tab（缩进/引导线/折叠/回复态 Composer）、`ReactionBar` + 选择器 + 名单浮层、`CommentImageNode` 直传 + `Lightbox`、`CommentStore` 两层结构              |
-| 测试              | UT-01~~18、IT-01~~08、E2E-01~06                                                                                                                                   |
+| 测试              | UT-01~~19、IT-01~~08、E2E-01~06（UT-19 为 parent 契约翻转——COLLAB-001 UT-13 同步翻转）                                                                            |
 
 ### 7.2 可操作演示的验收标准
 

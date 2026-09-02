@@ -1,9 +1,32 @@
+"""统一响应信封（api-conventions.md §4）。"""
+from django.db import connection
 from django.urls import path
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from plane.app.views.auth import MeView, SignInView, SignOutView, SignUpView, csrf_token
 from plane.app.views.issues import IssueDetailView, IssueListCreateView
 from plane.app.views.projects import ProjectDetailView, ProjectListCreateView, ProjectStateListView
 from plane.app.views.workspaces import WorkspaceDetailView, WorkspaceListCreateView
+
+
+class HealthView(APIView):
+    """INFRA-002 §4.10 健康检查端点（db 连接探针）。
+
+    注意：celery/redis 连接故意不在此检查——服务组件健康由 compose depends_on 链表达，
+    health 端点仅作为容器级可用性的真实探针（避免假就绪）。
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        try:
+            with connection.cursor() as cur:
+                cur.execute("SELECT 1")
+            return Response({"status": "ok", "checks": {"db": "ok"}})
+        except Exception as e:
+            return Response({"status": "fail", "error": str(e)}, status=503)
+
 
 urlpatterns = [
     path("health/", HealthView.as_view(), name="health"),

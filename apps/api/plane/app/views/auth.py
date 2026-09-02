@@ -1,4 +1,3 @@
-
 from django.contrib.auth import authenticate, login, logout
 from django.db import transaction
 from django.utils.text import slugify

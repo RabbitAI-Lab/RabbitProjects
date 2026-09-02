@@ -11,6 +11,8 @@ def project_lock_key(project_id: uuid.UUID) -> int:
 
 
 def acquire_project_lock(project_id: uuid.UUID) -> None:
+    if connection.vendor != "postgresql":
+        return  # SQLite/test environments: skip locking (acceptable for local dev only)
     with connection.cursor() as cursor:
         cursor.execute("SELECT pg_advisory_xact_lock(%s)", [project_lock_key(project_id)])
 
@@ -32,6 +34,6 @@ def create_issue(*, project_id: uuid.UUID, actor_id: uuid.UUID, payload: dict):
         project_id=project_id,
         created_by_id=actor_id,
         sequence_id=next_sequence_id(project_id),
-        sort_order=calculate_sort_order(prev_order=None, next_order=payload.get("next_sort_order")),
+        sort_order=calculate_sort_order(prev_order=None, next_order=payload.pop("next_sort_order", None)),
         **payload,
     )

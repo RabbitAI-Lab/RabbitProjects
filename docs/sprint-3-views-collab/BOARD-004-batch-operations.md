@@ -9,7 +9,7 @@
 | 文档状态 | 待评审（Draft） |
 | 最后更新日期 | 2026-09-02 |
 | 上游依赖 | `TASK-001`（PATCH 写路径与 Serializer 校验）、`TASK-005`（流转拦截——批量改状态的逐条守卫）、`TASK-007`（`PUT assignees/` 语义——批量指派收敛点）、`TASK-009`（**归档服务 `archive_subtree`**——批量归档复用）、`TASK-004`（**`delete_subtree` 唯一归属**——批量删除逐条引用，本文仅引用不认领）、`TASK-010`（**BR-12 批量 Activity 共享 epoch 约定**）、`BOARD-003`（视图结果集 = 批量的作用域来源）、`TASK-008`（自定义字段值校验器——**P3 预留**：批量改自定义字段不在本迭代范围（§1.3/§1.5），该依赖供 P3 扩展使用，非 Sprint 3 交付阻塞项） |
-| 下游消费 | `WF-003`（P3 自动化规则的批量触发底座）、`COLLAB-003`（「批量更新了 N 个任务」动态聚合展示）、`COLLAB-004`（批量变更逐实体 WS 广播 + `batch_id` 聚合提示——`batch_id` 载荷扩展待其登记，§2.4 BR-15）、`PROJ-003`（项目级批量归档语义对齐） |
+| 下游消费 | `WF-003`（P3 自动化规则的批量触发底座）、`COLLAB-003`（「批量更新了 N 个任务」动态聚合展示）、`COLLAB-004`（批量变更逐实体 WS 广播 + `batch_id` 聚合提示——`batch_id` 载荷扩展已由其 §2.3 注 2 登记，§2.4 BR-15（本文））、`PROJ-003`（项目级批量归档语义对齐） |
 | 上游依据 | `docs/需求文档.md` §3.5（任务批量操作——看板 P2 列）、§8.2 看板 P2 列；P3 列「批量操作权限管控」为边界依据 |
 | 关联架构文档 | [`api-conventions.md`](../architecture/api-conventions.md)（**§2.5 bulk 端点族；§10.5 批量事务纪律：全成败、上限 100、部分失败 400 + 失败项索引；§7.2 批量端点 throttle 10/min；§8.4 `VALIDATION_BULK_LIMIT_EXCEEDED`；§8.8 字段级子码（`BLOCKED_BY`/`PERM_DENIED`/`LIMIT` 登记状态见 §2.5 注）；§13.1 202 异步约定（`bulk/archive/` 同步 200 的豁免声明见 §4.2.2）**；§3.4 幂等键）、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md)（`issue.update`/`issue.delete`/`issue.assign`/`issue.state.transition`/`issue.archive`）、[`unified-issue-model.md`](../architecture/unified-issue-model.md) §2.10（epoch 分组） |
 | 对标基线 | Plane bulk 端点族（`issues/bulk/` PATCH/DELETE + bulk-sort） · Ones 批量权限管控（P3） |
@@ -41,7 +41,7 @@
 
 采纳理由：交互场景下「一半成功」是最难收拾的状态——用户不知道哪些改了哪些没改，重试范围模糊；全成败让重试 = 原样重发（配合失败项定位修正后重试），心智最简。代价（一条阻塞全批）用**失败项精准定位**补偿（`details` 直接指出第几条为什么不满足）。
 
-> **与 `TEAM-002` 批量邀请的范式差异（显式声明）**：与 `TEAM-002` 批量邀请的「整体 200、`data[]` 逐条分态」豁免范式**不同**——本文为 `api-conventions.md` §10.5 全成败：结构性错误（载荷缺失 / 超上限 / 枚举非法）400 整请求拒绝，业务失败（守卫 / 权限 / 不可见）**整批回滚 + 失败项索引**。两者面向不同对象（任务写的一致性 vs 邀请的友好性），范式差异显式声明（`TEAM-002` 侧已按其 R1 修复声明豁免，其豁免范围不涵盖本文）；本文不复用「整体 200 分态」。
+> **与 `TEAM-002` 批量邀请的范式差异（显式声明）**：与 `TEAM-002` 批量邀请的「整体 200、`data[]` 逐条分态」豁免范式**不同**——本文为 `api-conventions.md` §10.5 全成败：结构性错误（载荷缺失 / 超上限 / 枚举非法）400 整请求拒绝，业务失败（守卫 / 权限 / 不可见）**整批回滚 + 失败项索引**。两者面向不同对象（任务写的一致性 vs 邀请的友好性），范式差异显式声明——`TEAM-002` §1.1/§总结 两处仍宣称本文复用其「整体 200 分态」范式（其 §1.1「该豁免与 `PROJ-002` 项目成员批量添加、`BOARD-004` 任务批量操作复用同一范式」；其总结「P2 `BOARD-004` 批量任务操作同源」），与本文采纳的 `api-conventions.md` §10.5 全成败相反，`TEAM-002` 待回改同步（**上游待回改登记**）；本文不复用「整体 200 分态」。
 
 ### 1.3 批量动作清单（P2 六类）
 
@@ -197,7 +197,7 @@ stateDiagram-v2
 | BR-12 | `comment` 可选 ≤ 500 字，随批量 Activity 落库并展示于动态摘要 | Serializer | 400 TOO_LONG |
 | BR-13 | 批量操作进行中（请求未返回）：工具条锁定 + 选中冻结（防中途改选造成响应错配） | 前端 | — |
 | BR-14 | `Idempotency-Key` 可选支持（`api-conventions.md` §3.4）：批量删除等危险动作前端默认携带（UUID/批），重放返回首次响应 | 中间件 | `Idempotency-Replayed: true` |
-| BR-15 | WS 广播：批量操作产生的 N 次实体变更**逐条复用 `COLLAB-004` 既有事件类型**（`issue.updated` / `issue.state.changed`，每实体一条），由其 **BR-13 阈值聚合保护（单房间 >200 msg/s 触发）**收敛为一次网络批；载荷附加 `batch_id`（= epoch 同值）供对端聚合提示而非弹 40 个 Toast——`batch_id` 载荷扩展与聚合提示语义 **`COLLAB-004` 待登记**（其现表未定义 `batch` 事件类型与 `batch_id` 字段）；对端「单条聚合 Toast」沿用 `COLLAB-001` `notify_issue_event_batch` 同款归并范式（epoch 归并、每 issue 各一行、`merged_count` 携带归并上下文） | COLLAB-004 契约（待登记） | — |
+| BR-15 | WS 广播：批量操作产生的 N 次实体变更**逐条复用 `COLLAB-004` 既有事件类型**（`issue.updated` / `issue.state.changed`，每实体一条），由其 **BR-13 阈值聚合保护（单房间 >200 msg/s 触发）**收敛为一次网络批；载荷附加 `batch_id`（= epoch 同值）供对端聚合提示而非弹 40 个 Toast——`batch_id` 载荷扩展与聚合提示语义 **已由 `COLLAB-004` §2.3 注 2 登记**（`batch_id` = epoch 同值、不新增 `batch` 事件类型、经其 BR-13 100ms 合批通道收敛）；对端「单条聚合 Toast」沿用 `COLLAB-001` `notify_issue_event_batch` 同款归并范式（epoch 归并、每 issue 各一行、`merged_count` 携带归并上下文） | COLLAB-004 契约（已登记） | — |
 
 ### 2.5 异常处理
 
@@ -213,7 +213,7 @@ stateDiagram-v2
 | 事务中途 5xx | 500 | `SERVER_ERROR` | request_id | 整批未生效；保留选中重试 |
 | 视图全选超 100 | —（前端预拦截） | — | 黄条 | 「已选前 100 / 共 1,240」 |
 
-> **字段级子码登记**：本表使用的 `BLOCKED_BY` / `PERM_DENIED` / `LIMIT` 为 `details[].code` 字段级子码（不占用全局错误码注册表，由 [`api-conventions.md`](../architecture/api-conventions.md) §8.8「字段级子码」承载，先例为 `COLLAB-001` `EDIT_WINDOW_EXPIRED` 的补登模式）。§8.8 现表已注册 `DOES_NOT_EXIST` / `NOT_A_CHOICE`（本文直接复用）；`BLOCKED_BY`（前置阻塞）与 `LIMIT`（数量超上限）已由 `TASK-005` §2.5 登记「交付时补登」——本文同语义复用、不重复登记；`PERM_DENIED` 系 §8.3 全局 403 码名在批量项级场景的复用，交付时需在 §8.8 补登子码条目——**架构文档待回改登记**。另：`sprint-overview.md` §6 验收清单现文「超限 409」与本表 `400 VALIDATION_BULK_LIMIT_EXCEEDED`（api-conventions §8.4 已注册）口径不一致——**overview 待同步**（以本文与 §8.4 为准）。
+> **字段级子码登记**：本表使用的 `BLOCKED_BY` / `PERM_DENIED` / `LIMIT` 为 `details[].code` 字段级子码（不占用全局错误码注册表，由 [`api-conventions.md`](../architecture/api-conventions.md) §8.8「字段级子码」承载，先例为 `COLLAB-001` `EDIT_WINDOW_EXPIRED` 的补登模式）。§8.8 现表已注册 `DOES_NOT_EXIST` / `NOT_A_CHOICE`（本文直接复用）；`BLOCKED_BY`（前置阻塞）与 `LIMIT`（数量超上限）已由 `TASK-005` §2.5 登记「交付时补登」——本文同语义复用、不重复登记；`PERM_DENIED` 系 §8.3 全局 403 码名在批量项级场景的复用，交付时需在 §8.8 补登子码条目——**架构文档待回改登记**。另：`sprint-overview.md` **已同步**——其 §5 / §6 / §10 口径均为超限 `400`（`VALIDATION_BULK_LIMIT_EXCEEDED`），与本表及 `api-conventions.md` §8.4 一致（并发行锁冲突的 `409 RESOURCE_CONFLICT` 系另一场景，BR-04，两文同样一致）。
 
 ### 2.6 边界条件
 
@@ -397,10 +397,10 @@ erDiagram
 
 | # | 方法 | 路径 | 描述 | 权限 | 成功码 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `PATCH` | `…/projects/{project_id}/issues/bulk/` | 批量更新（状态 / 优先级 / 指派 / 标签） | 动作对应权限码（`issue.state.transition` / `issue.update` / `issue.assign`），逐条再判角色；批级键 `issue.bulk.update`（rbac §8.2 已注册；P2 以动作码逐条判定等效，本键登记为 AUTH-005 矩阵增量——四项 CI 清单见 AUTH-005 §4） | `200` |
+| 1 | `PATCH` | `…/projects/{project_id}/issues/bulk/` | 批量更新（状态 / 优先级 / 指派 / 标签） | 动作对应权限码（`issue.state.transition` / `issue.update` / `issue.assign`），逐条再判角色；批级键 `issue.bulk.update`（rbac §8.2 已注册；P2 以动作码逐条判定等效，本键登记为 AUTH-005 矩阵增量——矩阵扩展规则见其 §2.4 blockquote，四项 CI 清单见 AUTH-005 §4.6） | `200` |
 | 2 | `POST` | `…/projects/{project_id}/issues/bulk/archive/` | 批量归档（整树级联） | `issue.archive`（`TASK-009` BR-14，CONTRIBUTOR+） | `200` |
 | 3 | `DELETE` | `…/projects/{project_id}/issues/bulk/` | 批量删除（软删 + 级联） | `issue.delete(.own)` 逐条；批级键 `issue.bulk.update` 登记同 #1（AUTH-005 矩阵增量） | `200` |
-| 4 | `POST` | `…/projects/{project_id}/issues/bulk/preview/` | 危险动作预检（级联统计，供确认弹层） | 读权限 | `200` |
+| 4 | `POST` | `…/projects/{project_id}/issues/bulk/preview/` | 危险动作预检（级联统计，供确认弹层） | `issue.read`（rbac §8.2） | `200` |
 
 > 挂载与 `api-conventions.md` §2.5 工作项层级端点清单的 `PATCH/DELETE …/issues/bulk/` 两行一致；§2.5 另登记的 `POST …/issues/bulk/`（**批量创建**）本文**显式排除**、P2 不交付（理由与归属见 §1.5——该前瞻登记行的交付归属需**架构文档待回改登记**）；`bulk/archive/` 为其 §2.6 动作子资源（`archive/`）的批量变体；`bulk/preview/` 为**本迭代新增动作子资源**——§2.5 端点清单未登记该路径，**架构文档待回改登记**。**PATCH/DELETE 复用路径**与 §10.5「批量端点：全成功或全失败；部分失败返回 400 并指出失败项索引」逐字对齐。
 
@@ -667,6 +667,10 @@ def bulk_delete(*, project_id: uuid.UUID, actor, issue_ids: list[uuid.UUID],
                 confirm_count: int) -> dict:
     """批量删除：逐条走 delete_subtree（级联软删）；同批父子幂等（BR-09）。
 
+    失败清单口径同 bulk_update（§4.3.1/BR-02）：收集全部坏项（不可见/
+    权限）后统一抛出，失败项索引清单完备——不首个坏项即抛（否则只报
+    1 条，与 §1.2/§2.5 承诺的「失败项索引清单」在删除路径弱化）。
+
     epoch 兑现路径（BR-05）：批量入口生成共享 epoch → 逐条调用时以 epoch
     参数传入 delete_subtree 并抑制其内建投递 → 批量出口统一 on_commit
     单次投递 batch 载荷。"""
@@ -675,14 +679,17 @@ def bulk_delete(*, project_id: uuid.UUID, actor, issue_ids: list[uuid.UUID],
     if confirm_count != len(ids):                              # BR：确认数错配
         raise ValidationError({"confirm_count": "与提交数量不一致"})
     epoch = time.time() * 1000                                 # BR-05：批量入口生成共享 epoch（全批唯一）
-    affected, deleted = set(), 0
+    failures, affected, deleted = [], set(), 0
     issues = {i.id: i for i in Issue.objects.select_for_update(nowait=True)  # BR-04 同口径：一次锁全批（先锁后判）
               .filter(id__in=ids, project_id=project_id, deleted_at__isnull=True)}
     for index, iid in enumerate(ids):
         issue = issues.get(iid)
-        if issue is None or not actor.can_delete(issue):
-            raise BulkActionError([_fail(index, iid,
-                "DOES_NOT_EXIST" if issue is None else "PERM_DENIED", "…")])
+        if issue is None:                                      # BR-07：项级不可见 → 收集全部失败项
+            failures.append(_fail(index, iid, "DOES_NOT_EXIST", "任务不存在或不可见"))
+            continue
+        if not actor.can_delete(issue):                        # BR-10：CONTRIBUTOR 仅自己的 → 同款收集
+            failures.append(_fail(index, iid, "PERM_DENIED", f"{issue.issue_key} 仅创建者可删除"))
+            continue
         # TASK-004 唯一归属，本文仅引用——服务签名需补 epoch 参数（上游待回改登记）：
         # 现签名入口自生成 epoch 且内建 on_commit(record_delete)，照原样逐条调用会使
         # 每条任务落两份 Activity 且 epoch 分裂（TASK-010 BR-07 幂等键含 epoch、跨份
@@ -694,6 +701,8 @@ def bulk_delete(*, project_id: uuid.UUID, actor, issue_ids: list[uuid.UUID],
                                 epoch=epoch, suppress_activity=True)
         affected.update(result["descendant_ids"] or [])
         deleted += 1
+    if failures:                                               # BR-02：收集全部失败项后统一抛出（与 §4.3.1 口径一致）
+        raise BulkActionError(failures)
     transaction.on_commit(lambda: issue_activity.delay(        # BR-05：批量出口单次投递 batch 载荷
         {"batch_delete": [str(i) for i in ids], "actor_id": str(actor.id),
          "epoch": epoch, "comment": f"batch: 批量删除 {deleted} 个任务"}))
@@ -710,7 +719,7 @@ def bulk_delete(*, project_id: uuid.UUID, actor, issue_ids: list[uuid.UUID],
 - 框选：列表/表格容器上 `pointerdown` 起点记录 + `getBoundingClientRect` 相交判定（看板卡片同理）；与 pdnd 拖拽互斥（按下即拖拽的元素不进入框选）。
 - `⌘A`：取当前视图 SWR 缓存结果集前 100（BR-08 前端显式展开，不做「服务端隐式全选」）。
 - 乐观策略：批量动作**不做逐条乐观**（12 条局部动画复杂度不值）；统一 loading → 成功后按动作类型批量更新 Store（改状态：逐条 `state_id` 写入；删除：逐条移除）+ SWR revalidate。
-- WS 联动（`COLLAB-004` 上线后）：批量变更逐实体复用其 `issue.updated` / `issue.state.changed` 事件（由其 BR-13 阈值聚合保护收敛为一次网络批：单房间 >200 msg/s 触发），他端按 `batch_id`（= epoch）聚合为一条 Toast（BR-15；`batch_id` 载荷扩展与聚合提示语义待 `COLLAB-004` 登记）。
+- WS 联动（`COLLAB-004` 上线后）：批量变更逐实体复用其 `issue.updated` / `issue.state.changed` 事件（由其 BR-13 阈值聚合保护收敛为一次网络批：单房间 >200 msg/s 触发），他端按 `batch_id`（= epoch）聚合为一条 Toast（BR-15；`batch_id` 载荷扩展与聚合提示语义已由 `COLLAB-004` §2.3 注 2 登记）。
 
 ```typescript
 // packages/shared-state/src/selection.store.ts
@@ -816,7 +825,7 @@ export class SelectionStore {
 | BE-11 | 幂等键重放 | 同 Key 二发 DELETE | 首次响应体回放 + `Idempotency-Replayed: true`；库中零二次删除 |
 | BE-12 | throttle | 60s 内 11 次 | 第 11 次 429 + `Retry-After` 头 |
 | BE-13 | 并发交叠 | 两用户同批 3 条 | 后者 `nowait` 即刻 409 `RESOURCE_CONFLICT`（不排队等待）；无部分写 |
-| BE-14 | 权限矩阵 | VIEWER 发任何 bulk | 403 `PERM_ROLE_INSUFFICIENT` |
+| BE-14 | 权限矩阵 | VIEWER 发任何 bulk **写端点**（§4.2 #1–#3；#4 `preview/` 为 `issue.read` 只读预检，不在其列） | 403 `PERM_ROLE_INSUFFICIENT` |
 | BE-15 | 跨项目 id | 混入他项目任务 | 项级 `DOES_NOT_EXIST`；不 404 整批 |
 
 ### 5.3 集成测试
@@ -892,7 +901,7 @@ export class SelectionStore {
 | --- | --- |
 | Model / Migration | 零 DDL |
 | 后端 | `issue_bulk.py`（BulkService：事务/行锁批/逐条同源/集合三模式/单次投递）、`bulk/` + `bulk/archive/` + `bulk/preview/` 端点、`BulkRateThrottle`、幂等键接入 |
-| 权限矩阵 | `PERMISSION_MATRIX` 增量：`issue.bulk.update`（rbac §8.2 已注册）——按 AUTH-005 §4 矩阵扩展规则随本功能交付四项 CI：① 后端矩阵常量增量、② 前端常量再生成、③ 守护代码（Permission 类继承或 `@require_permission` 引用）、④ 参数化 403 测试 |
+| 权限矩阵 | `PERMISSION_MATRIX` 增量：`issue.bulk.update`（rbac §8.2 已注册）——按 AUTH-005 §2.4 blockquote（矩阵扩展规则）随本功能交付四项 CI（清单见 AUTH-005 §4.6）：① 后端矩阵常量增量、② 前端常量再生成、③ 守护代码（Permission 类继承或 `@require_permission` 引用）、④ 参数化 403 测试 |
 | 前端 | `SelectionStore`（跨页选中池）、`BulkToolbar`、框选与 ⌘/Shift 多选、指派/标签浮层（三模式）、危险确认（数量输入 + 级联统计）、失败定位弹层 |
 | 测试 | UT-01~16、IT-01~08、E2E-01~06 |
 
@@ -914,7 +923,7 @@ export class SelectionStore {
 | 批量 Activity 投递 | 1 次 delay（非 N 次） | 代码断言 + Worker 日志 |
 | 工具条浮现 / 滑出 | 160ms / 120ms 动画，选中 ≥1 即现 | 手工 |
 | 框选命中率 | 与视觉相交判定一致（边界容差 2px） | E2E 坐标断言 |
-| WS 聚合提示 | 他端单条 Toast（batch_id 聚合，BR-15——batch_id 载荷扩展待 COLLAB-004 登记） | 双浏览器验证（COLLAB-004 上线后） |
+| WS 聚合提示 | 他端单条 Toast（batch_id 聚合，BR-15——batch_id 载荷扩展已由 COLLAB-004 §2.3 注 2 登记） | 双浏览器验证（COLLAB-004 上线后） |
 | 无 console error | 0 条 | E2E `page.on("console")` |
 
 ### 7.4 Definition of Done
@@ -924,5 +933,5 @@ export class SelectionStore {
 - [ ] **上游确认（`TASK-005`）**：`assert_completable` 可在批量事务内逐条调用且异常携带阻塞源信息
 - [ ] **上游确认（`TASK-007` / `TASK-009` / `TASK-004`）**：`sync_assignees`（TASK-007）/ `archive_subtree`（TASK-009）/ `delete_subtree`（**TASK-004 唯一归属，本文仅引用**）可被服务层复用（无 View 层耦合；**复用需 epoch 参数化（已登记上游回改）**——`archive_subtree` / `delete_subtree` 服务签名补 epoch 参数并支持抑制内建投递，批量入口传共享 epoch、出口单次投递，BR-05 / §4.3.4）
 - [ ] **上游确认（`TASK-010`）**：`issue_activity` Worker 接受 batch payload；epoch 幂等键在批量场景无冲突
-- [ ] **口径确认**：批量端点与 `BOARD-001` `bulk-sort/` 的语义分工（§4.2 端点表注）已写入 API 文档
+- [ ] **口径确认**：批量端点与 `BOARD-001` `bulk-sort/` 的语义分工（§1.7/§6.1，`BOARD-001` §4.4.2）已写入 API 文档
 - [ ] CI 全绿（`pnpm test` / `pytest` / `pnpm test:e2e`）

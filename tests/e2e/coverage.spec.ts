@@ -5,6 +5,7 @@
  *  TC-PROJ1-007a 项目删除：confirm != name → 删除按钮 disabled（DOM 断言）
  *  运行前 API(8000) + Web(3001) 就绪：E2E_NO_SERVER=1 pnpm exec playwright test tests/e2e/coverage.spec.ts */
 import { test, expect, type Page } from "@playwright/test";
+import { attachConsoleGuard, API_TRUTH } from "./no-console-errors";
 
 const TEST_PASSWORD = "Rabbit123";
 
@@ -23,6 +24,17 @@ async function registerAndLandProjects(page: Page, email = freshEmail()) {
 }
 
 test.describe("覆盖补全（原 Nightly / 占位用例）", () => {
+  let errors: string[] = [];
+  test.beforeEach(async ({ page }, testInfo) => {
+    testInfo.attachments.push({ name: "console-errors", body: Buffer.from("") });
+    errors = attachConsoleGuard(page);
+  });
+  test.afterEach(async ({ page }, testInfo) => {
+    const got = errors;
+    errors = [];
+    expect.soft(got, ).toEqual([]);
+  });
+  // console guard disabled during debug
   test("TC-AUTH2-007：401/403 拦截 → 自动跳登录页", async ({ page, context }) => {
     await registerAndLandProjects(page);
     const url = page.url(); // 受保护页

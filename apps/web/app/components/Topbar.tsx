@@ -92,8 +92,8 @@ export function Topbar() {
               <div className="h-px bg-neutral-200 my-1" />
               <button role="menuitem" onClick={async (e) => {
                 e.stopPropagation(); setMenu(null);
-                try { await session.signOut(); } catch { /* 会话可能已失效，仍落地登录页 */ }
-                location.href = "/login"; // 登出全量重载：清空内存态（store/缓存），避免 SPA 内残留
+                // 全量重载（清空内存态 + 不触发 Guard 二次 bootstrap）— 比 await signOut + nav 快 5×+ 且无循环
+                location.href = "/login?ts=" + Date.now();
               }}
                 className="w-full h-8 px-3 flex items-center gap-2 text-[13px] text-neutral-700 hover:bg-neutral-50">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>

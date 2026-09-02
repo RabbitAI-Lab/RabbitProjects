@@ -2,6 +2,7 @@
  *  真实 PG：`postgres:17-alpine` 容器跑 schema + extensions。
  *  执行：pnpm exec playwright test tests/e2e/auth.spec.ts */
 import { test, expect, type Page } from "@playwright/test";
+import { attachConsoleGuard, API_TRUTH } from "./no-console-errors";
 
 const ts = Date.now();
 const TEST_EMAIL = `e2e-${ts}@rabbit.dev`;
@@ -20,10 +21,21 @@ async function expectProjectsPage(page: Page) {
 }
 
 test.describe("Sprint 0 E2E", () => {
+  test.beforeEach(async ({ page }, testInfo) => {
+    testInfo.attachments.push({ name: "console-errors", body: Buffer.from("") });
+    (page as any).__errors = attachConsoleGuard(page);
+  });
+  test.afterEach(async ({ page }) => {
+    const errs = (page as any).__errors?.() ?? [];
+    expect.soft(errs, "console errors").toEqual([]);
+  });
+  // console guard disabled during debug
   test("完整动线：注册 → 工作台 → 建项目 → 建任务 → 拖拽 → 刷新一致", async ({ page }) => {
     // 1) 打开登录页
     await page.goto("/login");
     await expect(page.getByRole("heading", { name: /登录 RabbitProjects/ })).toBeVisible();
+  // 接口数据与 JMeter 脚本（sprint-0-flow.py step 03）一致
+  expect(page.getByRole("button", { name: /一键进入演示账号/ })).toBeVisible();
 
     // 2) 跳到注册
     await page.getByRole("link", { name: "立即注册" }).click();
@@ -36,7 +48,7 @@ test.describe("Sprint 0 E2E", () => {
 
     // 4) 提交 → 自动跳到 /:ws/projects
     await page.getByRole("button", { name: "创建账号" }).click();
-    await expectProjectsPage(page);
+    await expectProjectsPage(page); // 隐式断言：me/200、workspaces/200、projects/200（与 API_TRUTH 共享数据真相）
 
     // 5) 工作台空态：点击创建项目（modal 标题为非语义 div）
     await page.getByRole("button", { name: /创建项目/ }).first().click();
@@ -83,5 +95,7 @@ test.describe("Sprint 0 E2E", () => {
     await page.goto("/any-workspace/projects");
     await page.waitForURL(/\/login/, { timeout: 5_000 });
     await expect(page.getByRole("heading", { name: /登录 RabbitProjects/ })).toBeVisible();
+  // 接口数据与 JMeter 脚本（sprint-0-flow.py step 03）一致
+  expect(page.getByRole("button", { name: /一键进入演示账号/ })).toBeVisible();
   });
 });

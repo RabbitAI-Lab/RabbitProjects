@@ -29,7 +29,7 @@
   "devDependencies": {
     "@commitlint/cli": "19.x",
     "@commitlint/config-conventional": "19.x",
-    "@playwright/test": "1.54.x",
+    "@playwright/test": "1.62.1",
     "husky": "9.1.x",
     "lint-staged": "15.x",
     "oxfmt": "0.x",

@@ -5,6 +5,7 @@
  *  - 断言对象是"冻结稿规定的字段必须存在/可见/可用"，不由实现反推（防自我印证）
  *  运行：E2E_NO_SERVER=1 pnpm exec playwright test tests/e2e/parity.spec.ts */
 import { test, expect } from "@playwright/test";
+import { attachConsoleGuard, API_TRUTH } from "./no-console-errors";
 
 const ts = Date.now();
 const EMAIL = `parity-${ts}@rabbit.dev`;

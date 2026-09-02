@@ -19,8 +19,17 @@ function Guard({ children }: { children?: ReactNode }) {
   const allowedPublic = loc.pathname === "/login" || loc.pathname === "/register";
   useEffect(() => {
     if (allowedPublic) { setReady(true); return; }
-    if (root.session.isBootstrapped) {
-      if (!root.session.isLoggedIn) nav(`/login?next=${encodeURIComponent(loc.pathname + loc.search)}`, { replace: true });
+    // 注意：context.clearCookies() 之后 isBootstrapped 仍为 true（不同 test 间复用 store 状态）。
+    // 这里用 user 的存在性做隐式判断：clearCookies 后 isLoggedIn 应为 false。
+    if (root.session.isBootstrapped && root.session.isLoggedIn) return;
+    // isBootstrapped=true 但用户不存在（之前 bootstrap 后 signOut / clearCookies）→ 重置
+    if (root.session.isBootstrapped && !root.session.user) {
+      root.session.isBootstrapped = false;
+      root.session.workspaces = [];
+      root.session.currentWsSlug = null;
+    }
+    if (root.session.isBootstrapped && !root.session.isLoggedIn) {
+      nav(`/login?next=${encodeURIComponent(loc.pathname + loc.search)}`, { replace: true });
       return;
     }
     setFailed(false);

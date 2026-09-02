@@ -81,7 +81,7 @@ function NewProjectModal({ slug, onClose }: { slug: string; onClose: () => void 
             location.href = `/${slug}/projects/${(r as any).data.id}/board`;
           } catch (e: any) { setErr(e?.message ?? "创建失败"); }
         }}>
-          <div className="mb-4"><label className="block text-[13px] font-medium text-neutral-700 mb-1.5">项目名称 *</label><input className="w-full h-9 border border-neutral-300 rounded-md px-2.5" value={name} onChange={(e) => {
+          <div className="mb-4"><label htmlFor="pj-name" className="block text-[13px] font-medium text-neutral-700 mb-1.5">项目名称 *</label><input id="pj-name" className="w-full h-9 border border-neutral-300 rounded-md px-2.5" value={name} onChange={(e) => {
             setName(e.target.value);
             if (!identifierDirty) {
               const sug = e.target.value.trim().split(/[\s一-龥]+/).filter((w: string) => /^[a-zA-Z]/.test(w)).map((w: string) => w[0]).join("").toUpperCase().slice(0, 5);
@@ -89,14 +89,14 @@ function NewProjectModal({ slug, onClose }: { slug: string; onClose: () => void 
             }
           }} /></div>
           <div className="mb-4">
-            <label className="block text-[13px] font-medium text-neutral-700 mb-1.5">项目标识符 *</label>
+            <label htmlFor="pj-id" className="block text-[13px] font-medium text-neutral-700 mb-1.5">项目标识符 *</label>
             <div className="flex gap-2.5 items-center">
-              <input className="w-[150px] h-9 border border-neutral-300 rounded-md px-2.5 font-mono uppercase" maxLength={5} value={identifier} onChange={(e) => { setIdentifierDirty(true); setIdentifier(e.target.value.replace(/[^a-zA-Z]/g, "").toUpperCase()); }} />
+              <input id="pj-id" className="w-[150px] h-9 border border-neutral-300 rounded-md px-2.5 font-mono uppercase" maxLength={5} value={identifier} onChange={(e) => { setIdentifierDirty(true); setIdentifier(e.target.value.replace(/[^a-zA-Z]/g, "").toUpperCase()); }} />
               <span className="font-mono px-2.5 py-1 rounded bg-neutral-100 text-neutral-600 text-[13px]">{identifier || "…"} -1</span>
             </div>
             <div className="text-xs text-neutral-500 mt-1.5">2-5 个大写字母，用于生成任务编号，<b>创建后不可修改</b></div>
           </div>
-          <div className="mb-4"><label className="block text-[13px] font-medium text-neutral-700 mb-1.5">项目描述</label><textarea className="w-full border border-neutral-300 rounded-md p-2 text-sm" rows={3} maxLength={2000} value={description} onChange={(e) => setDescription(e.target.value)} /><div className="text-right text-xs text-neutral-400">{description.length} / 2000</div></div>
+          <div className="mb-4"><label htmlFor="pj-desc" className="block text-[13px] font-medium text-neutral-700 mb-1.5">项目描述</label><textarea id="pj-desc" className="w-full border border-neutral-300 rounded-md p-2 text-sm" rows={3} maxLength={2000} value={description} onChange={(e) => setDescription(e.target.value)} /><div className="text-right text-xs text-neutral-400">{description.length} / 2000</div></div>
           <div className="flex justify-end gap-2.5 mt-5">
             <button type="button" onClick={onClose} className="h-[34px] px-3.5 bg-white text-neutral-700 border border-neutral-300 rounded-md hover:bg-neutral-50">取消</button>
             <button type="submit" className="h-[34px] px-3.5 bg-brand-500 text-white rounded-md hover:bg-brand-600">创建项目</button>

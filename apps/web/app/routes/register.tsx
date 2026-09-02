@@ -39,11 +39,11 @@ export default function Register() {
       <div className="flex justify-center gap-1.5 text-[13px] text-neutral-500 mb-3.5">已有账号？<button className="text-brand-600" onClick={() => nav("/login")}>登录</button></div>
       {err && <div className="mb-3.5 px-3 py-2 bg-red-50 text-red-700 rounded-md text-[13px]">{err}</div>}
       <form onSubmit={submit}>
-        <div className="mb-4"><label className="block text-[13px] font-medium text-neutral-700 mb-1.5">邮箱</label><input className="w-full h-9 border border-neutral-300 rounded-md px-2.5" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
+        <div className="mb-4"><label htmlFor="rg-email" className="block text-[13px] font-medium text-neutral-700 mb-1.5">邮箱</label><input id="rg-email" className="w-full h-9 border border-neutral-300 rounded-md px-2.5" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
         <div className="mb-4">
-          <label className="block text-[13px] font-medium text-neutral-700 mb-1.5">密码</label>
+          <label htmlFor="rg-pw" className="block text-[13px] font-medium text-neutral-700 mb-1.5">密码</label>
           <div className="relative">
-            <input className="w-full h-9 border border-neutral-300 rounded-md px-2.5 pr-9" type={show ? "text" : "password"} autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} />
+            <input id="rg-pw" className="w-full h-9 border border-neutral-300 rounded-md px-2.5 pr-9" type={show ? "text" : "password"} autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} />
             <button type="button" className="absolute right-0.5 top-0.5 w-8 h-[34px]" onClick={() => setShow(!show)} aria-label="显示密码">👁</button>
           </div>
           <div className="h-1.5 rounded-sm bg-neutral-100 mt-2 overflow-hidden"><div className="h-full transition-all" style={{ width: s.lvl === "强" ? "100%" : s.lvl === "中" ? "66%" : pw ? "33%" : "0", background: s.lvl === "强" ? "#10b981" : s.lvl === "中" ? "#f59e0b" : "#ef4444" }} /></div>
@@ -56,9 +56,9 @@ export default function Register() {
           </div>
         </div>
         <div className="mb-4">
-          <label className="block text-[13px] font-medium text-neutral-700 mb-1.5">确认密码</label>
+          <label htmlFor="rg-pw2" className="block text-[13px] font-medium text-neutral-700 mb-1.5">确认密码</label>
           <div className="relative">
-            <input className="w-full h-9 border border-neutral-300 rounded-md px-2.5 pr-9" type={show ? "text" : "password"} autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} />
+            <input id="rg-pw2" className="w-full h-9 border border-neutral-300 rounded-md px-2.5 pr-9" type={show ? "text" : "password"} autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} />
             <button type="button" className="absolute right-0.5 top-0.5 w-8 h-[34px]" onClick={() => setShow(!show)} aria-label="显示密码">👁</button>
           </div>
         </div>

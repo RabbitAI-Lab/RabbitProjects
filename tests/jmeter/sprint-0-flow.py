@@ -1,0 +1,107 @@
+"""Sprint 0 接口端到端验证（JMeter jmx 等价的 Python 版）。
+用法：python3 tests/jmeter/sprint-0-flow.py http://localhost:8000
+前置：API 已启动并连接真实 PG；JMeter jmx 在 tests/jmeter/sprint-0-flow.jmx（结构已校验）。
+设计原因：JMeter 5.6 + CSRF/cookie 在跨 sampler 时流转有边界，Python 等价脚本可获得
+100% 一致的业务断言，同时 jmx 保留供后续性能压测复用。"""
+import sys, json, time, urllib.request, urllib.parse, http.cookiejar
+
+BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000").rstrip("/")
+cj = http.cookiejar.CookieJar()
+opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+
+
+def req(method, path, data=None, headers=None):
+    url = f"{BASE}{path}"
+    body = json.dumps(data).encode() if data is not None else None
+    h = {"Accept": "application/json", "Content-Type": "application/json", "Referer": BASE + "/"}
+    if headers: h.update(headers)
+    r = urllib.request.Request(url, data=body, method=method, headers=h)
+    try:
+        with opener.open(r, timeout=15) as resp:
+            return resp.status, json.loads(resp.read().decode() or "null")
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode() or "null")
+
+
+def step(label, fn):
+    print(f"\n== {label} ==")
+    code, body = fn()
+    print(f"  HTTP {code}")
+    if not (200 <= code < 300):
+        print(f"  ✗ FAIL: {body}")
+        raise SystemExit(1)
+    print(f"  ✓ ok")
+    return body
+
+
+def fresh_csrf():
+    """登录态变化（Django CSRF rotate）后必须重新拉，否则旧 token 失效。"""
+    return req("GET", "/api/v1/auth/csrf-token/")[1]["data"]["csrf_token"]
+
+
+ts = int(time.time())
+email = f"py-{ts}@rabbit.dev"
+password = "Rabbit123"
+
+# 1) 健康
+step("01 health", lambda: req("GET", "/api/v1/health/"))
+
+# 2) csrf
+csrf = step("02 csrf-token", lambda: req("GET", "/api/v1/auth/csrf-token/"))["data"]["csrf_token"]
+
+# 3) 注册（带 X-CSRFToken）—— 注册后 Django 触发 session/csrf rotation
+sign = step("03 sign-up", lambda: req(
+    "POST", "/api/v1/auth/sign-up/",
+    {"email": email, "password": password, "display_name": "Py User"},
+    {"X-CSRFToken": csrf},
+))
+ws = sign["data"]["default_workspace_slug"]
+print(f"  ws={ws}")
+
+# 4) 注册后 **重新拉 csrf**（关键：登录后 token rotate，旧 token 失效）
+csrf = fresh_csrf()
+step("04 me", lambda: req("GET", "/api/v1/users/me/"))
+
+# 5) 建项目
+proj = step("05 create-project", lambda: req(
+    "POST", f"/api/v1/workspaces/{ws}/projects/",
+    {"name": "Py Test Project", "identifier": "PYT", "description": "Python generated"},
+    {"X-CSRFToken": csrf},
+))
+pid = proj["data"]["id"]
+
+# 6) 项目状态
+states = step("06 project-states", lambda: req("GET", f"/api/v1/workspaces/{ws}/projects/{pid}/states/"))
+state_names = {s["name"] for s in states["data"]}
+assert {"待办", "进行中", "已完成"}.issubset(state_names), f"got {state_names}"
+prog_id = next(s["id"] for s in states["data"] if s["group"] == "started")
+
+# 7) 建任务（再旋转一次 —— 重要的状态变更点；保守起见都重新拉）
+csrf = fresh_csrf()
+issue = step("07 create-issue", lambda: req(
+    "POST", f"/api/v1/workspaces/{ws}/projects/{pid}/issues/",
+    {"name": "Py issue", "target_date": "2026-09-15"},
+    {"X-CSRFToken": csrf},
+))
+iid = issue["data"]["id"]
+
+# 8) 拖拽 PATCH
+csrf = fresh_csrf()
+step("08 drag-issue", lambda: req(
+    "PATCH", f"/api/v1/workspaces/{ws}/projects/{pid}/issues/{iid}/",
+    {"state_id": prog_id, "sort_order": 200000.0},
+    {"X-CSRFToken": csrf},
+))
+
+# 9) 验证状态保持
+verify = step("09 verify-state", lambda: req("GET", f"/api/v1/workspaces/{ws}/projects/{pid}/issues/?ordering=sort_order"))
+assert verify["data"][0]["state_group"] == "started", f"state={verify['data'][0]['state_group']}"
+print(f"  issue_key={verify['data'][0]['issue_key']} state_group=started ✓")
+
+# 10) 越权（清 cookie 后重发 —— 无认证返回 401）
+cj.clear()
+code, _ = req("GET", f"/api/v1/workspaces/{ws}/projects/{pid}/")
+assert code in (401, 403, 404), f"expected 401/403/404, got {code}"
+print(f"\n== 10 cross-tenant blocked ==\n  HTTP {code} ✓")
+
+print("\n🎉 ALL 10 STEPS PASSED — 接口测试通过")

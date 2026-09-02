@@ -8,7 +8,20 @@ export default defineConfig({
   envDir: "../..",
   server: {
     port: 3001,
-    // 端口被占用时直接报错退出（E2E-06 可诊断性要求）
     strictPort: true,
+    // 代理：把 /api/v1 → django:8000，/live → express:3000（dev 反代，避免 CORS）
+    proxy: {
+      "/api": {
+        target: "http://localhost:8000",
+        changeOrigin: false,
+        secure: false,
+      },
+      "/live": {
+        target: "http://localhost:3000",
+        ws: true,
+        changeOrigin: false,
+        secure: false,
+      },
+    },
   },
 });

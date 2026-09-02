@@ -20,6 +20,7 @@ export default function Board() {
   const [loading, setLoading] = useState(true);
   const [dragId, setDragId] = useState<string | null>(null);
   const [openIssueId, setOpenIssueId] = useState<string | null>(null);
+  const [showTaskModal, setShowTaskModal] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -68,7 +69,7 @@ export default function Board() {
         <main className="flex-1 min-w-0 flex flex-col">
           <div className="h-[56px] border-b border-neutral-200 flex items-center gap-2 px-5 bg-white">
             <span className="text-[15px] font-semibold">看板</span>
-            <button onClick={() => location.href = `/${workspaceSlug}/projects/${projectId}/issues/new`} className="ml-auto inline-flex h-[34px] items-center gap-1.5 px-3.5 bg-brand-500 text-white rounded-md font-medium">+ 创建任务</button>
+            <button onClick={() => setShowTaskModal(true)} className="ml-auto inline-flex h-[34px] items-center gap-1.5 px-3.5 bg-brand-500 text-white rounded-md font-medium">+ 创建任务</button>
           </div>
           <div className="flex-1 flex gap-4 overflow-x-auto p-4 min-h-0">
             {COL_NAMES.map((n) => {
@@ -105,6 +106,7 @@ export default function Board() {
             })}
           </div>
           {openIssueId && <IssueDrawer issueId={openIssueId} slug={workspaceSlug!} projectId={projectId!} onClose={() => { setOpenIssueId(null); load(); }} />}
+          {showTaskModal && <NewTaskModal slug={workspaceSlug!} projectId={projectId!} onClose={() => { setShowTaskModal(false); load(); }} />}
         </main>
       </div>
     </div>
@@ -136,6 +138,27 @@ function IssueDrawer({ issueId, slug, projectId, onClose }: { issueId: string; s
           </div>
         </div>
       </aside>
+    </div>
+  );
+}
+
+function NewTaskModal({ slug, projectId, onClose }: { slug: string; projectId: string; onClose: () => void }) {
+  const [name, setName] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-xl shadow-lg w-[640px] p-6">
+        <div className="flex items-center justify-between mb-[18px]"><div className="text-base font-semibold">创建任务</div><button onClick={onClose}>✕</button></div>
+        {err && <div className="mb-3.5 px-3 py-2 bg-red-50 text-red-700 rounded-md text-[13px]">{err}</div>}
+        <form onSubmit={async (e) => {
+          e.preventDefault(); setErr(null);
+          if (!name.trim()) { setErr("请填写任务标题"); return; }
+          try { await IssueAPI.create(slug, projectId, { name }); onClose(); } catch (er: any) { setErr(er?.message ?? "创建失败"); }
+        }}>
+          <input className="w-full h-10 text-[17px] font-medium border-0 border-b-2 border-transparent focus:border-brand-500 focus:outline-none bg-transparent px-0 mb-3" placeholder="任务标题" autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+          <div className="flex justify-end gap-2.5 mt-5"><button type="button" onClick={onClose} className="h-[34px] px-3.5 bg-white border border-neutral-300 rounded-md">取消</button><button type="submit" className="h-[34px] px-3.5 bg-brand-500 text-white rounded-md hover:bg-brand-600">创建任务</button></div>
+        </form>
+      </div>
     </div>
   );
 }

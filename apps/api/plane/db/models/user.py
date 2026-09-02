@@ -42,6 +42,7 @@ class User(AbstractUser):
     class Meta:
         db_table = "users"
         verbose_name = "用户"
+        swappable = "AUTH_USER_MODEL"
         indexes = [models.Index(fields=["email", "is_active"])]
 
     def __str__(self) -> str:

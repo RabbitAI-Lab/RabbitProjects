@@ -1,0 +1,15 @@
+name: api-ci
+on:
+  pull_request:
+    paths: ["apps/api/**"]
+  push: { branches: [main], paths: ["apps/api/**"] }
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --project apps/api
+      - run: uv run --project apps/api ruff check .
+      - run: uv run --project apps/api mypy plane
+      - run: uv run --project apps/api pytest

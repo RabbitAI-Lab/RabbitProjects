@@ -1,0 +1,12 @@
+/* 基础层规范：焦点可见、滚动条、选中文本 */
+:focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 1px;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d4d4d4 transparent;
+}
+::selection {
+  background: var(--color-brand-100);
+}

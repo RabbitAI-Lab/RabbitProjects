@@ -1,0 +1,55 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "tui",
+  "globalDependencies": ["pnpm-lock.yaml", "tsconfig.base.json", ".oxlintrc.json"],
+  "globalEnv": ["NODE_ENV", "CI"],
+  "globalPassThroughEnv": [
+    "VITE_API_BASE_URL",
+    "VITE_LIVE_BASE_URL",
+    "LIVE_PORT",
+    "API_INTERNAL_URL"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", "build/**", ".react-router/**"],
+      "env": ["VITE_*"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": ["*.tsbuildinfo"]
+    },
+    "lint": {
+      "dependsOn": [],
+      "outputs": []
+    },
+    "format:check": {
+      "dependsOn": [],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": ["src/**", "tests/**", "vitest.config.*"]
+    },
+    "dev": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "persistent": true
+    },
+    "dev:watch": {
+      "cache": false,
+      "persistent": true
+    },
+    "storybook": { "cache": false, "persistent": true },
+    "build-storybook": {
+      "dependsOn": ["^build"],
+      "outputs": ["storybook-static/**"]
+    },
+    "clean": { "cache": false },
+    "//#api:lint": { "cache": false },
+    "//#api:typecheck": { "cache": false },
+    "//#api:test": { "cache": false },
+    "//#api:migrate": { "cache": false }
+  }
+}

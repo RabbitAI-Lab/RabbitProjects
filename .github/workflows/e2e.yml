@@ -1,0 +1,17 @@
+name: e2e
+on:
+  pull_request:
+  push: { branches: [main] }
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    needs: []
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: ".nvmrc" }
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # Playwright 用例由 E2E-xx 交付后接入（P0 骨架占位）
+      - run: echo "e2e placeholder — Playwright suites land with sprint-0 feature docs"

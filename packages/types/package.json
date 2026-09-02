@@ -1,0 +1,27 @@
+{
+  "name": "@rp/types",
+  "version": "0.1.0",
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --dts --format esm",
+    "dev:watch": "tsup src/index.ts --watch --dts --format esm",
+    "lint": "oxlint src",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo *.tsbuildinfo"
+  },
+  "devDependencies": {
+    "oxlint": "1.x",
+    "tsup": "8.x",
+    "typescript": "5.8.x"
+  }
+}

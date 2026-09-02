@@ -1,19 +1,19 @@
 # 多个独立看板与视图配置
 
-| 元信息项 | 内容 |
-| --- | --- |
-| 文档编号 | BOARD-003 |
-| 所属迭代 | Sprint 3 — 高级视图 + 实时协作（第 5 周） |
-| 优先级 | P2（标准版完整级 · **视图体系的地基文档**） |
-| 所属模块 | M5-BOARD｜看板视图 |
-| 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
-| 上游依赖 | `BOARD-001/002`（分组端点契约：State **裸 UUID 键** / 空列恒在 / 组内 25 条 + `total_results` + `unfiltered_total_results` / `KanbanGroupView` / `BoardFilterState` URL 态）、`TASK-003`（`IssueFilterSet` 单点复用与 `meta.applied`）、`TASK-008`（**Schema API：`filterable/sortable/groupable` 推导与 `options` 元数据——分组维度的唯一合法来源**）、`PROJ-002`（成员列表——按负责人分组的列来源） |
-| 下游消费 | **`TASK-011`（同迭代：Saved View 的 filters 字段由其 DSL 编译器全量点亮——本文档先交付扁平条件；`IssueView` 表结构与 `views/` CRUD 端点族以本文档为唯一事实，`TASK-011` 仅消费不另定义，分工见 §1.4 注）**、`GANTT-001`（甘特布局复用 `IssueView.layout` 与 `display_props`）、`BOARD-004`（批量操作作用于当前视图结果集）、`BOARD-005`（P3 视图共享 / 管理员锁定，`access`/`is_locked` 列本迭代建好不开放）、`RPT-002`（视图即统计切片） |
-| 上游依据 | `docs/需求文档.md` §3.5（项目专属看板、多看板支持、看板筛选）、§8.2 看板 P2 列（多个独立看板、视图配置保存）；§8.2 看板 P3 列（视图团队共享、管理员视图锁定——边界依据） |
+| 元信息项     | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 文档编号     | BOARD-003                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 所属迭代     | Sprint 3 — 高级视图 + 实时协作（第 5 周）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 优先级       | P2（标准版完整级 · **视图体系的地基文档**）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 所属模块     | M5-BOARD｜看板视图                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 文档状态     | 待评审（Draft）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 最后更新日期 | 2026-09-02                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 上游依赖     | `BOARD-001/002`（分组端点契约：State **裸 UUID 键** / 空列恒在 / 组内 25 条 + `total_results` + `unfiltered_total_results` / `KanbanGroupView` / `BoardFilterState` URL 态）、`TASK-003`（`IssueFilterSet` 单点复用与 `meta.applied`）、`TASK-008`（**Schema API：`filterable/sortable/groupable` 推导与 `options` 元数据——分组维度的唯一合法来源**）、`PROJ-002`（成员列表——按负责人分组的列来源）                                                                                                                                                                             |
+| 下游消费     | **`TASK-011`（同迭代：Saved View 的 filters 字段由其 DSL 编译器全量点亮——本文档先交付扁平条件；`IssueView` 表结构与 `views/` CRUD 端点族以本文档为唯一事实，`TASK-011` 仅消费不另定义，分工见 §1.4 注）**、`GANTT-001`（甘特布局复用 `IssueView.layout` 与 `display_props`）、`BOARD-004`（批量操作作用于当前视图结果集）、`BOARD-005`（P3 视图共享 / 管理员锁定，`access`/`is_locked` 列本迭代建好不开放）、`RPT-002`（视图即统计切片）                                                                                                                                        |
+| 上游依据     | `docs/需求文档.md` §3.5（项目专属看板、多看板支持、看板筛选）、§8.2 看板 P2 列（多个独立看板、视图配置保存）；§8.2 看板 P3 列（视图团队共享、管理员视图锁定——边界依据）                                                                                                                                                                                                                                                                                                                                                                                                         |
 | 关联架构文档 | [`dynamic-fields-design.md`](../architecture/dynamic-fields-design.md)（**§5.6 IssueView 完整模型——本文档逐字段落地**；§6.4 `kanban_groups` 分组列生成原则；§5.2 DSL 结构）、[`unified-issue-model.md`](../architecture/unified-issue-model.md)（§5.4 内置视图种子 `BUILTIN_VIEWS`）、[`api-conventions.md`](../architecture/api-conventions.md)（§2.5 `views/` 端点、§5.3 Saved View 承载复杂条件、§8 错误码）、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md)（§8 矩阵 `view.create.own` / `board.read` / `board.manage` 行——视图 CRUD 权限拆行依据） |
-| 对标基线 | Plane `IssueView`（`apps/api/plane/db/models/view.py` + `views/` 端点族） · Ones 视图模板 / 按角色共享 / 管理员锁定（Business+） |
-| 工作量估算 | 后端 3 人日 / 前端 3.5 人日 / 联调与测试 1.5 人日，合计 **8 人日** |
+| 对标基线     | Plane `IssueView`（`apps/api/plane/db/models/view.py` + `views/` 端点族） · Ones 视图模板 / 按角色共享 / 管理员锁定（Business+）                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 工作量估算   | 后端 3 人日 / 前端 3.5 人日 / 联调与测试 1.5 人日，合计 **8 人日**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ---
 
@@ -26,7 +26,7 @@ P1 的看板只有一块：筛选态活在 URL query 里（`BOARD-002` BR-07）�
 1. **`IssueView` 表落地**：筛选 + 排序 + 分组 + 显示列的组合存库，一个项目可建多块独立看板（「按状态推进」「按优先级救火」「按负责人站会」三块并存）；
 2. **分组维度放开**：从「仅状态」放开到 **优先级 / 负责人 / 标签 / 自定义字段（select 类）**——分组列从字段元数据（`options` / 枚举表 / 成员表）生成，**永不 `SELECT DISTINCT` 扫数据表**（架构文档 §6.4 原则）；
 3. **显示配置**：卡片字段开关（标签 / 子任务 / 附件 / 工时）、空组显隐、列显示——`display_props` 一个 JSONB 承载，四布局共用；
-4. **内置视图种子**：需求池 / 缺陷列表 / 我的待办 / 本周到期 / 测试执行（`min_phase` P2 项，本迭代点亮）随迁移种入（`is_system=True` 不可删）——统一工作项模型 §5.4 五视图清单的兑现。
+4. **内置视图种子**：需求池 / 缺陷列表 / 我的待办 / 本周到期 / 测试执行五视图全部随本迭代迁移种入（`is_system=True` 不可删）——统一工作项模型 §5.4 五视图清单的兑现（清单中仅「测试执行」标 `min_phase=P2`，其余四视图架构侧标 P1、实际同样随 Sprint 3 首次种入——架构文档待回改，见 §4.1.2 注）。
 
 一句话：**P1 的「URL 是视图雏形」升级为「视图是一等公民」**——`TASK-011` 的组合筛选器、`GANTT-001` 的甘特布局、P3 的共享与锁定，全部生长在这张表上。
 
@@ -36,67 +36,67 @@ P1 的看板只有一块：筛选态活在 URL query 里（`BOARD-002` BR-07）�
 
 `IssueView` 的 `filters`（筛什么）与 `display_props`（怎么摆）**独立于 `layout`（摆成什么）**。用户在列表视图调好「缺陷 + 高优 + 本周」的筛选，切到看板布局——条件原样带过去，只是呈现形态变了：
 
-| 字段 | 职责 | 布局相关？ |
-| --- | --- | --- |
-| `filters` | 条件树（DSL JSON，本迭代扁平、`TASK-011` 放开嵌套） | ❌ 布局无关 |
-| `display_props.order_by` / `group_by` / `columns` | 排序键 / 分组维度 / 列显示 | 部分（`columns` 仅列表/表格消费；`group_by` 看板/甘特消费） |
-| `display_props.card_fields` / `show_empty_groups` | 卡片字段开关 / 空组显隐 | 看板消费 |
-| `layout` | `list` / `kanban` / `gantt` / `table` 四选一 | ✅ 本体 |
+| 字段                                              | 职责                                                | 布局相关？                                                  |
+| ------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------- |
+| `filters`                                         | 条件树（DSL JSON，本迭代扁平、`TASK-011` 放开嵌套） | ❌ 布局无关                                                 |
+| `display_props.order_by` / `group_by` / `columns` | 排序键 / 分组维度 / 列显示                          | 部分（`columns` 仅列表/表格消费；`group_by` 看板/甘特消费） |
+| `display_props.card_fields` / `show_empty_groups` | 卡片字段开关 / 空组显隐                             | 看板消费                                                    |
+| `layout`                                          | `list` / `kanban` / `gantt` / `table` 四选一        | ✅ 本体                                                     |
 
 切布局 = 只改 `layout` 一个值（PATCH 单字段），`filters` 与 `display_props` 原样保留。**Plane 的 `display_filters` 与 `display_properties` 在部分布局间存在互斥重置**（切布局丢条件是其社区反馈的高频吐槽），本系统以「条件与呈现正交」规避。
 
 ### 1.3 能力 × 迭代矩阵
 
-| 能力 | P1（BOARD-002） | **P2（本文档）** | P3（BOARD-005） |
-| --- | --- | --- | --- |
-| 筛选态载体 | URL query（会话级） | **`IssueView.filters` 持久化** | 同左 + 跨项目全局视图 |
-| 视图数量 | 1（隐式） | **多块（上限 20/项目，含内置）** | 同左 |
-| 分组维度 | 仅 `state_id` | **state / priority / assignee / label / cf_select** | 泳道式二维分组（`sub_group_by`） |
-| 分组列来源 | State 表 | **枚举表 / 字段 options / 成员表（配置生成）** | 同左 |
-| 显示配置 | 固定字段集 | **卡片字段开关 / 空组显隐 / 列显示** | 布局模板 |
-| 布局 | 看板 | **list / kanban / gantt（占位）/ table 切换** | 同左 |
-| 视图共享 | ❌ | ❌ 个人视图（`access` 列建好不开放） | ✅ shared + 角色可见性 |
-| 视图锁定 | ❌ | ❌（`is_locked` 列建好不开放） | ✅ 管理员锁定 |
-| 内置视图 | ❌ | ✅ 需求池 / 缺陷列表 / 我的待办 / 本周到期 / 测试执行 | 组织级模板下发 |
+| 能力       | P1（BOARD-002）     | **P2（本文档）**                                      | P3（BOARD-005）                  |
+| ---------- | ------------------- | ----------------------------------------------------- | -------------------------------- |
+| 筛选态载体 | URL query（会话级） | **`IssueView.filters` 持久化**                        | 同左 + 跨项目全局视图            |
+| 视图数量   | 1（隐式）           | **多块（上限 20/项目，含内置）**                      | 同左                             |
+| 分组维度   | 仅 `state_id`       | **state / priority / assignee / label / cf_select**   | 泳道式二维分组（`sub_group_by`） |
+| 分组列来源 | State 表            | **枚举表 / 字段 options / 成员表（配置生成）**        | 同左                             |
+| 显示配置   | 固定字段集          | **卡片字段开关 / 空组显隐 / 列显示**                  | 布局模板                         |
+| 布局       | 看板                | **list / kanban / gantt（占位）/ table 切换**         | 同左                             |
+| 视图共享   | ❌                  | ❌ 个人视图（`access` 列建好不开放）                  | ✅ shared + 角色可见性           |
+| 视图锁定   | ❌                  | ❌（`is_locked` 列建好不开放）                        | ✅ 管理员锁定                    |
+| 内置视图   | ❌                  | ✅ 需求池 / 缺陷列表 / 我的待办 / 本周到期 / 测试执行 | 组织级模板下发                   |
 
 > **与需求文档 §8.2 P3 项「多维度分组看板」的口径对齐**：需求文档 §8.2 看板 P3 列与 `BOARD-002` §1.3 的「多维度分组 / P3 多维分组」均指**泳道二维分组**（`sub_group_by`，见下 §1.4 边界行）；本文 P2 交付的五维**单层**分组属 §8.2 P2 列「视图配置保存」的范畴——单维分组是视图配置的保存项，与该 P3 项不冲突。
 
 ### 1.4 范围边界
 
-| 能力 | 本文档（P2） | 归属 |
-| --- | --- | --- |
-| `IssueView` 表 + CRUD + 迁移 + 内置种子 | ✅ | — |
-| 多看板并存 + 视图切换器 + 另存为/重命名/删除 | ✅ | — |
-| 五维分组（state/priority/assignee/label/cf_select）+ 空组恒在 | ✅ | — |
-| 显示配置（卡片字段 / 空组显隐 / 列显示 / 排序键） | ✅ | — |
-| 四布局切换（条件保持） | ✅（gantt 渲染归 `GANTT-001`，本迭代占位路由） | `GANTT-001` |
-| 视图 filters 存扁平条件树（单层 AND） | ✅ | `TASK-011` 放开嵌套 OR/分组 + 占位符 |
-| 视图团队共享 / 管理员锁定 / 组织模板 | ❌ 列已建 | P3 `BOARD-005` / `TEAM-003` |
-| 泳道二维分组（`sub_group_by`） | ❌ 字段建好恒 null | P3 |
-| 按任意自定义字段分组（非 select 类） | ❌ 仅 select（`groupable` 推导） | P3 视类型扩展 |
-| 按迭代（Cycle）/ 模块分组 | ❌（模型 P2 后引入） | `GANTT-001` 之后评估 |
-| 视图导出 / 分享链接权限 | ❌ URL 直达（个人权限内） | P3 |
+| 能力                                                          | 本文档（P2）                                   | 归属                                                                                                                 |
+| ------------------------------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `IssueView` 表 + CRUD + 迁移 + 内置种子                       | ✅                                             | —                                                                                                                    |
+| 多看板并存 + 视图切换器 + 另存为/重命名/删除                  | ✅                                             | —                                                                                                                    |
+| 五维分组（state/priority/assignee/label/cf_select）+ 空组恒在 | ✅                                             | —                                                                                                                    |
+| 显示配置（卡片字段 / 空组显隐 / 列显示 / 排序键）             | ✅                                             | —                                                                                                                    |
+| 四布局切换（条件保持）                                        | ✅（gantt 渲染归 `GANTT-001`，本迭代占位路由） | `GANTT-001`                                                                                                          |
+| 视图 filters 存扁平条件树（单层 AND）                         | ✅                                             | `TASK-011` 放开嵌套 OR/分组 + 占位符（占位符：本文 §4.1.2 先行解析扁平子集 `@me`；`TASK-011` 全量接管——见其 §4.3.2） |
+| 视图团队共享 / 管理员锁定 / 组织模板                          | ❌ 列已建                                      | P3 `BOARD-005` / `TEAM-003`                                                                                          |
+| 泳道二维分组（`sub_group_by`）                                | ❌ 字段建好恒 null                             | P3                                                                                                                   |
+| 按任意自定义字段分组（非 select 类）                          | ❌ 仅 select（`groupable` 推导）               | P3 视类型扩展                                                                                                        |
+| 按迭代（Cycle）/ 模块分组                                     | ❌（模型 P2 后引入）                           | `GANTT-001` 之后评估                                                                                                 |
+| 视图导出 / 分享链接权限                                       | ❌ URL 直达（个人权限内）                      | P3                                                                                                                   |
 
-> **与 `TASK-011` 的分工（以 README §4 目录为准）**：`IssueView` 表结构与 `views/` CRUD 端点族由本文档统一定义（sprint 概览 Day 1 主线 A 建表，`TASK-011` 依赖其字段口径）；`TASK-011` 负责把 `filters` 从本文档的扁平子集放开为嵌套 AND/OR + 占位符（终态上限 **≤ 3 层 / ≤ 20 节点**，`api-conventions.md` §5.3；其草案中的「深度 5 / 节点 50」与 `dynamic-fields-design.md` §5.2「≤ 5」均以 §5.3 为准回改——架构文档待回改），并消费本文档端点保存复杂条件、不另定义 CRUD。`access=shared` 按需求文档 §8.2 P3 列归 `BOARD-005` 放开（`dynamic-fields-design.md` §5.5 表将「个人/共享」标于 P2 行，同为架构文档待回改项）；视图列表可见性本迭代 = **内置 + 本人**，`TASK-011` 文档中「个人 + 共享 + 内置」的列表口径随 P3 共享生效；其现行版 §4.1 与本文的字段级冲突逐项登记——`name`：其侧 `max_length=64` + 作用域唯一约束（`uniq_view_name_per_scope`）+ 重名 409 vs 本文 128 + 项目内重名允许（§2.7 / §3.4，表无唯一约束）；内置种子：其侧 4 视图 / 项目创建时 vs 本文 5 视图 / 迁移 + Project 创建钩子双触发（§4.1.2）——`TASK-011` 待同步本文口径（其 R1 修复正在同步其侧）；权限码统一按 `rbac-permission-model.md` §8 矩阵拆行（§4.2）。
+> **与 `TASK-011` 的分工（以 README §4 目录为准）**：`IssueView` 表结构与 `views/` CRUD 端点族由本文档统一定义（sprint 概览 Day 1 主线 A 建表，`TASK-011` 依赖其字段口径）；`TASK-011` 负责把 `filters` 从本文档的扁平子集放开为嵌套 AND/OR + 占位符（终态上限 **≤ 3 层 / ≤ 20 节点**，`api-conventions.md` §5.3；`dynamic-fields-design.md` §5.2「≤ 5」、§5.3 编译器常量 `MAX_FILTER_DEPTH = 5` 与 §6.4 风险表「DSL 深度上限 5 / 条件总数上限 50」行均以 §5.3 为准回改——架构文档待回改，其 R1 版已按 ≤ 3 / ≤ 20 锚定），并消费本文档端点保存复杂条件、不另定义 CRUD。`access=shared` 按需求文档 §8.2 P3 列归 `BOARD-005` 放开（`dynamic-fields-design.md` §5.5 表将「个人/共享」标于 P2 行，同为架构文档待回改项）；视图列表可见性本迭代 = **内置 + 本人**（`TASK-011` 文档现行版已全文统一同口径「内置 + 本人」，与本文一致；「个人 + 共享 + 内置」三段式列表口径随 P3 共享生效）；其 R1 前旧版 §4.1 与本文的字段级冲突已消解，收敛为历史注（R1 时点冲突：64 / 唯一约束 / 409 / 4 视图——`TASK-011` 已于其 R1 修复同步本文口径：128 / 无唯一约束 / 重名允许 / 五视图引用本文 §4.1.2）；权限码统一按 `rbac-permission-model.md` §8 矩阵拆行（§4.2）。
 
 ### 1.5 前置依赖
 
-| 依赖 | 内容 | 阻塞原因 |
-| --- | --- | --- |
+| 依赖        | 内容                                                                                                                                                                                                      | 阻塞原因                                                                                     |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `BOARD-002` | `KanbanGroupView` 分组契约（State **裸 UUID 键** / 每 State 有键含空列 / 组内 25 条 + `total_results` + `unfiltered_total_results` / `meta.applied` / 组内游标筛选指纹）；`BoardFilterState` URL 同源机制 | 本迭代把分组端点**泛化**为多维度，键结构与契约逐条沿用（URL 参数域随维度重定义，见 §4.2 注） |
-| `TASK-003` | `IssueFilterSet` 单点（看板参数域 = 全集减 `state_id`） | 视图 filters 展开后注入同一 FilterSet |
-| `TASK-008` | `field-schema/`（`groupable` 推导、`options` 元数据、ETag 协商） | 分组维度白名单与分组列生成的唯一来源 |
-| `PROJ-002` | 项目 active 成员列表 | 按负责人分组的列来源（配置生成，不查 Issue 表） |
-| `INFRA-004` | 信封 / 错误码 / `VALIDATION_INVALID_PARAM` | 端点契约 |
+| `TASK-003`  | `IssueFilterSet` 单点（看板参数域 = 全集减 `state_id`）                                                                                                                                                   | 视图 filters 展开后注入同一 FilterSet                                                        |
+| `TASK-008`  | `field-schema/`（`groupable` 推导、`options` 元数据、ETag 协商）                                                                                                                                          | 分组维度白名单与分组列生成的唯一来源                                                         |
+| `PROJ-002`  | 项目 active 成员列表                                                                                                                                                                                      | 按负责人分组的列来源（配置生成，不查 Issue 表）                                              |
+| `INFRA-004` | 信封 / 错误码 / `VALIDATION_INVALID_PARAM`                                                                                                                                                                | 端点契约                                                                                     |
 
 ### 1.6 竞品参考
 
-| 竞品 | 参考点 | 处置 |
-| --- | --- | --- |
-| Plane | `IssueView`（`view.py`：`display_properties` / `filters` JSONB + `is_locked`；views 端点族 + 每用户视图偏好） | **表结构对齐**（字段命名族一致，便于社区方案平移）；补齐其「切布局丢条件」缺陷（§1.2） |
-| Plane | 内置无「需求池」类系统视图（靠手动建） | 内置种子五视图（`unified-issue-model.md` §5.4——含 `min_phase` P2 的测试执行） |
-| Ones | 视图模板按角色共享、管理员锁定、组织统一下发 | 理念采纳、执行分阶段：P2 个人视图 → P3 共享/锁定（`BOARD-005`）——需求文档 §8.2 P3 列的明确边界 |
-| Jira | Board 与 Filter 分离建模（filter 先建、board 引用） | 不采纳：两套对象两套权限，配置心智翻倍；`IssueView` 单对象承载 |
+| 竞品  | 参考点                                                                                                        | 处置                                                                                           |
+| ----- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Plane | `IssueView`（`view.py`：`display_properties` / `filters` JSONB + `is_locked`；views 端点族 + 每用户视图偏好） | **表结构对齐**（字段命名族一致，便于社区方案平移）；补齐其「切布局丢条件」缺陷（§1.2）         |
+| Plane | 内置无「需求池」类系统视图（靠手动建）                                                                        | 内置种子五视图（`unified-issue-model.md` §5.4——含 `min_phase` P2 的测试执行）                  |
+| Ones  | 视图模板按角色共享、管理员锁定、组织统一下发                                                                  | 理念采纳、执行分阶段：P2 个人视图 → P3 共享/锁定（`BOARD-005`）——需求文档 §8.2 P3 列的明确边界 |
+| Jira  | Board 与 Filter 分离建模（filter 先建、board 引用）                                                           | 不采纳：两套对象两套权限，配置心智翻倍；`IssueView` 单对象承载                                 |
 
 ---
 
@@ -140,7 +140,7 @@ sequenceDiagram
     API->>PG: 视图 filters 展开 → FilterSet → 基线 QS
     API->>PG: 分组列从配置生成（枚举/options/成员，零 DISTINCT）
     API->>PG: 每组 count 合并 + 每组前 25 条
-    API-->>FE: 200 分组信封（priority 裸值键 + __none__ 未设置组 + meta.applied）
+    API-->>FE: 200 分组信封（priority 裸值键，none 为合法值列；meta.applied）
     FE->>FE: 渲染分组看板；列头计数徽章就位
 ```
 
@@ -148,13 +148,15 @@ sequenceDiagram
 
 分组维度是本迭代放开的最大语义面。五类的**分组列来源、空组语义、组内排序**逐类冻结如下（组键为**裸列值**、不带维度前缀——维度由 `meta.grouped_by` 标识，`state_id` 维度与 `BOARD-002` 键结构逐字节兼容；`__none__` 为「未设置」组的统一哨兵值）：
 
-| group_by | 分组列来源（配置生成） | 组键形态 | 「未设置」组 | 组内默认排序 | 拖拽语义 |
-| --- | --- | --- | --- | --- | --- |
-| `state_id` | 项目 `State` 表（`BOARD-002` 既有） | State UUID（裸键） | 无（状态必填，默认态兜底） | `sort_order`（拖拽序） | 跨列拖拽 = 改状态（P0 语义不变） |
-| `priority` | `Priority` 枚举（五档色值固定表） | `urgent` / `high` / `medium` / `low` / `none` 枚举值键 | 未设置即 `none` 值列（合法优先级，非 `__none__` 哨兵） | `-priority`（语义权重） | 跨列拖拽 = 改优先级（**P2 新增**） |
-| `assignee_id` | 项目 active 成员表（`PROJ-002`） | 成员 user UUID | `__none__`（未指派池） | `sort_order` | 跨列拖拽 = 改执行人集合（单人语义替换；多人成员卡片恒留） |
-| `label_id` | 项目 `Label` 表（`TASK-002`） | Label UUID | `__none__`（无标签） | `sort_order` | 跨列拖拽 = 替换标签集合为该标签（多标签卡片恒留原列并提示） |
-| `cf_<key>` | 字段 `options`（`kanban_groups()`，仅 `groupable=true` 的 select 类） | `<option_value>`（选项值键） | `__none__`（未填值） | `sort_order` | 跨列拖拽 = 写该字段值（经 `validate_field_value`） |
+| group_by      | 分组列来源（配置生成）                                                | 组键形态                                               | 「未设置」组                                           | 组内默认排序            | 拖拽语义                                                                                |
+| ------------- | --------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------ | ----------------------- | --------------------------------------------------------------------------------------- |
+| `state_id`    | 项目 `State` 表（`BOARD-002` 既有）                                   | State UUID（裸键）                                     | 无（状态必填，默认态兜底）                             | `sort_order`（拖拽序）  | 跨列拖拽 = 改状态（P0 语义不变）                                                        |
+| `priority`    | `Priority` 枚举（五档色值固定表）                                     | `urgent` / `high` / `medium` / `low` / `none` 枚举值键 | 未设置即 `none` 值列（合法优先级，非 `__none__` 哨兵） | `-priority`（语义权重） | 跨列拖拽 = 改优先级（**P2 新增**）                                                      |
+| `assignee_id` | 项目 active 成员表（`PROJ-002`）                                      | 成员 user UUID                                         | `__none__`（未指派池）                                 | `sort_order`            | 跨列拖拽 = 改执行人集合（单人语义替换；多人成员卡片恒留）                               |
+| `label_id`    | 项目 `Label` 表（`TASK-002`）                                         | Label UUID                                             | `__none__`（无标签）                                   | `sort_order`            | 跨列拖拽 = 替换标签集合为该标签（多标签卡片恒留原列并提示）                             |
+| `cf_<key>`    | 字段 `options`（`kanban_groups()`，仅 `groupable=true` 的 select 类） | `<option_value>`（选项值键）                           | `__none__`（未填值）                                   | `sort_order`            | 跨列拖拽 = 写该字段值（经 `validate_field_value`；拖入 `__none__` = 删键传 null，§2.4） |
+
+多值卡片（多标签 / 多执行人）在对应维度分组下的归属列渲染规则显式冻结：拖拽预览时在所有匹配列渲染 ghost；确认替换（BR-15）后按目标列过滤值写回（其余值保留），卡片实际归属目标列——上表「恒留原列」即该预览态语义，确认替换后即离开原列。
 
 三条全局分组铁律（自 `BOARD-002` 契约推广）：
 
@@ -166,64 +168,64 @@ sequenceDiagram
 
 分组维度放开后，「拖拽」不再只等于改状态——按维度分派写语义：
 
-| 分组维度 | 拖入目标列 | 服务端动作 | 校验 |
-| --- | --- | --- | --- |
-| `state_id` | 状态 X | `PATCH {state_id, sort_order}`（P0 语义原样） | 流转拦截（`TASK-005` 前置依赖检查） |
-| `priority` | 优先级 P | `PATCH {priority, sort_order}` | 枚举合法（列即合法值，天然通过） |
-| `assignee_id` | 成员 M 列 | `PUT …/assignees/`（`TASK-007` 全量替换为 `[M]`）；拖入 `__none__` = 清空 | M 为 active 成员；`__none__` 拖拽被 BR-14 拦（不允许拖成「无人」，清空走详情/批量） |
-| `label_id` | 标签 L 列 | `PUT …/labels/`（替换为 `[L]`）；拖入 `__none__` = 清空标签 | 同上，多标签卡片拖拽弹确认（见 BR-15） |
-| `cf_<key>` | 选项 V 列 | `PATCH {custom_fields: {cf_x: V}}`；拖入 `__none__` = 删该键（传 null） | `validate_field_value`；字段停用则 409 |
+| 分组维度      | 拖入目标列 | 服务端动作                                                                          | 校验                                                                                 |
+| ------------- | ---------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `state_id`    | 状态 X     | `PATCH {state_id, sort_order}`（P0 语义原样）                                       | 流转拦截（`TASK-005` 前置依赖检查）                                                  |
+| `priority`    | 优先级 P   | `PATCH {priority, sort_order}`                                                      | 枚举合法（列即合法值，天然通过）                                                     |
+| `assignee_id` | 成员 M 列  | `PUT …/assignees/`（`TASK-007` 全量替换为 `[M]`）                                   | M 为 active 成员；拖入 `__none__` 被 BR-14 拦（不允许拖成「无人」，清空走详情/批量） |
+| `label_id`    | 标签 L 列  | `PUT …/labels/`（替换为 `[L]`）                                                     | 拖入 `__none__` 被 BR-14 拦（清空标签走详情/批量）；多标签卡片拖拽弹确认（见 BR-15） |
+| `cf_<key>`    | 选项 V 列  | `PATCH {custom_fields: {cf_x: V}}`；拖入 `__none__` = 删该键（传 null，BR-14 允许） | `validate_field_value`；字段停用则 409                                               |
 
 > **设计原则：拖拽始终映射到「该维度的正规写端点」**——不新建旁路写路径，权限/校验/Activity 与表单编辑完全同源。这是「视图只读地换呈现、写语义永不旁路」的落地。
 
 ### 2.5 业务规则汇总
 
-| 编号 | 规则 | 判定位置 | 违反后果 |
-| --- | --- | --- | --- |
-| BR-01 | 视图归属：`project` 非空（项目级个人视图，P2 唯一形态）；`owner` = 创建者；`access` 列仅允许 `personal`（`shared` 值 P2 拒绝——P3 `BOARD-005` 放开） | Serializer | `400 VALIDATION_ERROR` + `NOT_A_CHOICE` |
-| BR-02 | 单项目视图数上限 **20**（含 5 内置）；超出拒绝 | Service | `409 RESOURCE_LIMIT_EXCEEDED` |
-| BR-03 | 内置视图（`is_system`）：不可删除、`filters` 不可改（口径锁定：需求池=类型需求）、`display_props` 与 `sort_order` 可改 | Service | `400/403` |
-| BR-04 | `layout` ∈ {`list`,`kanban`,`gantt`,`table`}；切布局仅改 `layout`，`filters`/`display_props` 服务端拒绝联动重置 | Serializer | `400` |
-| BR-05 | `display_props.group_by` 必须在 Schema API `groupable` 白名单内（内置：`state_id`/`priority`/`assignee_id`/`label_id`；自定义：`groupable=true` 的 select 类 `cf_*`）。白名单两套命名的别名映射：Schema 键 `state`/`assignees`/`labels` 与本文 `group_by` 取值 `state_id`/`assignee_id`/`label_id` 为同一维度，判定前先过固定别名表（`state→state_id`、`assignees→assignee_id`、`labels→label_id`；`priority` 与 `cf_*` 两套同名直通）；字段停用/删除后视图加载**回退 `state_id`** 并 `meta.degraded.group_by` 提示，不报错 | ViewService | 保存时 `400`；读取时降级 |
-| BR-06 | 分组列从配置生成（枚举/State/Label/成员/`options`），**任何代码路径禁止 `SELECT DISTINCT` 扫 `issues` 生成分组**；`__none__` 组恒在最末 | 评审约束 + CI 检查 | 评审拒绝 |
-| BR-07 | `filters` 本迭代为**扁平条件树**：`{"op":"AND","conditions":[{field,operator,value}…]}`，深度 1、节点 ≤ 20；嵌套 OR 与占位符归 `TASK-011`（同字段向后兼容升级，终态上限 **≤ 3 层 / ≤ 20 节点**——`api-conventions.md` §5.3 为准；`dynamic-fields-design.md` §5.2「≤ 5」与 `TASK-011` 草案「5 层 / 50 节点」为待回改口径） | Serializer + DSL 校验 | `400`（超限 / 嵌套 / 非法字段操作符） |
-| BR-08 | `filters` 中引用的字段被停用/删除：读取时该条件剔除 + `meta.degraded.filters` 提示（降级不报错，与 `TASK-008` 视图引用剔除任务联动） | ViewService | — |
-| BR-09 | `display_props.card_fields` 仅允许 Schema 中存在的字段开关集（labels/sub_issues/attachments/estimate/priority/timer 七项固定 + `cf_*` 布尔）；未知键剔除 | Serializer | 静默剔除 |
-| BR-10 | 默认视图：项目内每用户至多一个（`is_default` 用户偏好维度存 profile，不在表上建约束）；进项目无 `?view=` 时取默认，无默认则退「全部」裸态（前端固定首项、非种子视图，§3.6） | Service | — |
-| BR-11 | 视图权限按 `rbac-permission-model.md` §8 矩阵**拆行**：读（列表 / 详情）= `board.read`（全员），**可见范围 = 内置 + 本人个人视图**（他人视图对无 `board.manage` 者不可见：列表不含、详情 404）；创建个人视图 = `view.create.own`（全员——含 VIEWER，个人视图是每人的读配置偏好）；改 / 删本人视图 = `owner == self` 判定；改 / 删他人个人视图（审计场景）= `board.manage`（PROJ_CONTRIBUTOR+，P3 受 `is_locked` 收紧为 PROJ_ADMIN——rbac R10）；`view.manage`（rbac §8.2「View update / delete（他人共享视图）」行，仅 ADMIN）保留给 P3 共享视图（`BOARD-005`）——他人**个人**视图的审计改删走 `board.manage`，P2 无共享视图故不与 rbac §8.2 冲突。注意 `board.update` 是「拖拽卡片」权限码，不用于视图 CRUD | Permission | `403 PERM_ROLE_INSUFFICIENT` / `404 RESOURCE_NOT_FOUND` |
-| BR-12 | 视图删除 = 软删；他人 URL `?view=<已删>` 回退默认视图 + 黄条「视图已删除」；`is_system` 删除请求 403 | Service | — |
-| BR-13 | `sort_order` 视图排序浮点插值（复用 `BOARD-001` 算法）；「设为默认」不改排序 | Service | — |
-| BR-14 | `__none__` 哨兵列（assignee / label / cf_* 维度）**可拖出不可拖入**（拖入 = 制造「未设置」应走清空操作，入口在详情/批量）；`priority` 的 `none` 值列可自由拖入（none 是合法优先级，非哨兵列） | 前端 canDrop + Service | `400` |
-| BR-15 | 多标签 / 多执行人卡片在 `label_id` / `assignee_id` 分组下跨列拖拽：弹确认「将把标签集合替换为 [X]」——替换语义必须显式知情 | 前端确认层 | 取消则不动 |
-| BR-16 | 分组端点响应契约逐字段沿用 `BOARD-002`（其 BR-02/BR-05）：`data` 键 = **裸列值键**（State UUID / 枚举值 / 成员与标签 UUID / 选项值；`__none__` 哨兵），每组 `results ≤ 25` + `total_results`（筛选后）+ `unfiltered_total_results`（筛选前），`meta.applied` + 每组独立游标（含筛选指纹 + 维度指纹）；**响应不新增组元数据段**——列头名称 / 颜色由前端配置源渲染（State API / 优先级固定表 / 成员表 / 标签表 / `options`，与分组列同源，BR-06），维度由 `meta.grouped_by` 标识 | `DimensionGroupView` | — |
+| 编号  | 规则                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | 判定位置               | 违反后果                                                |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------- |
+| BR-01 | 视图归属：`project` 非空（项目级个人视图，P2 唯一形态）；`owner` = 创建者；`access` 列仅允许 `personal`（`shared` 值 P2 拒绝——P3 `BOARD-005` 放开）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Serializer             | `400 VALIDATION_ERROR` + `NOT_A_CHOICE`                 |
+| BR-02 | 单项目视图数上限 **20**（含 5 内置）；超出拒绝                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Service                | `409 RESOURCE_LIMIT_EXCEEDED`                           |
+| BR-03 | 内置视图（`is_system`）：不可删除、`filters` 不可改（口径锁定：需求池=类型需求）、`display_props` 与 `sort_order` 可改                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Service                | `400/403`                                               |
+| BR-04 | `layout` ∈ {`list`,`kanban`,`gantt`,`table`}；切布局仅改 `layout`，`filters`/`display_props` 服务端拒绝联动重置                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Serializer             | `400`                                                   |
+| BR-05 | `display_props.group_by` 必须在 Schema API `groupable` 白名单内（内置：`state_id`/`priority`/`assignee_id`/`label_id`；自定义：`groupable=true` 的 select 类 `cf_*`）。白名单两套命名的别名映射：Schema 键 `state`/`assignees`/`labels` 与本文 `group_by` 取值 `state_id`/`assignee_id`/`label_id` 为同一维度，判定前先过固定别名表（`state→state_id`、`assignees→assignee_id`、`labels→label_id`；`priority` 与 `cf_*` 两套同名直通）；字段停用/删除后视图加载**回退 `state_id`** 并 `meta.degraded.group_by` 提示，不报错                                                                                                                                                                               | ViewService            | 保存时 `400`；读取时降级                                |
+| BR-06 | 分组列从配置生成（枚举/State/Label/成员/`options`），**任何代码路径禁止 `SELECT DISTINCT` 扫 `issues` 生成分组**；`__none__` 组恒在最末                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | 评审约束 + CI 检查     | 评审拒绝                                                |
+| BR-07 | `filters` 本迭代为**扁平条件树**：`{"op":"AND","conditions":[{field,operator,value}…]}`，深度 1、节点 ≤ 20；嵌套 OR 与占位符归 `TASK-011`（同字段向后兼容升级，终态上限 **≤ 3 层 / ≤ 20 节点**，以 `api-conventions.md` §5.3 为准；`dynamic-fields-design.md` §5.2「≤ 5」、§5.3 编译器常量 `MAX_FILTER_DEPTH = 5` 与 §6.4 风险表「DSL 深度上限 5、条件总数上限 50」行均为架构文档待回改口径——`TASK-011` 现行版同此锚点）                                                                                                                                                                                                                                                                                  | Serializer + DSL 校验  | `400`（超限 / 嵌套 / 非法字段操作符）                   |
+| BR-08 | `filters` 中引用的字段被停用/删除：读取时该条件剔除 + `meta.degraded.filters` 提示（降级不报错，与 `TASK-008` 视图引用剔除任务联动）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | ViewService            | —                                                       |
+| BR-09 | `display_props.card_fields` 仅允许 Schema 中存在的字段开关集（labels / sub_issues / attachments / estimate / priority / timer / target_date（截止时间）七项固定 + `cf_*` 布尔）；未知键剔除                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Serializer             | 静默剔除                                                |
+| BR-10 | 默认视图：项目内每用户至多一个（用户偏好维度存 profile，经 `PATCH /users/me/settings/` 持久化——偏好键 `board.default_view_id`，接线见 §4.2 注；不在 `IssueView` 表上建 `is_default` 约束）；进项目无 `?view=` 时取默认，无默认则退「全部」裸态（前端固定首项、非种子视图，§3.6）                                                                                                                                                                                                                                                                                                                                                                                                                          | Service                | —                                                       |
+| BR-11 | 视图权限按 `rbac-permission-model.md` §8 矩阵**拆行**：读（列表 / 详情）= `board.read`（全员），**可见范围 = 内置 + 本人个人视图**（他人视图对无 `board.manage` 者不可见：列表不含、详情 404）；创建个人视图 = `view.create.own`（全员——含 VIEWER，个人视图是每人的读配置偏好）；改 / 删本人视图 = `owner == self` 判定；改 / 删他人个人视图（审计场景）= `board.manage`（PROJ_CONTRIBUTOR+，P3 受 `is_locked` 收紧为 PROJ_ADMIN——rbac R10）；`view.manage`（rbac §8.2「View update / delete（他人共享视图）」行，仅 ADMIN）保留给 P3 共享视图（`BOARD-005`）——他人**个人**视图的审计改删走 `board.manage`，P2 无共享视图故不与 rbac §8.2 冲突。注意 `board.update` 是「拖拽卡片」权限码，不用于视图 CRUD | Permission             | `403 PERM_ROLE_INSUFFICIENT` / `404 RESOURCE_NOT_FOUND` |
+| BR-12 | 视图删除 = 软删；他人 URL `?view=<已删>` 回退默认视图 + 黄条「视图已删除」；`is_system` 删除请求 403                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Service                | —                                                       |
+| BR-13 | `sort_order` 视图排序浮点插值（复用 `BOARD-001` 算法）；「设为默认」不改排序                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Service                | —                                                       |
+| BR-14 | `__none__` 哨兵列（assignee / label 维度）**可拖出不可拖入**（拖入 = 制造「未设置」应走清空操作，入口在详情/批量）；cf_* 维度的 `__none__` 列**允许拖入** = 删该键传 null（§2.4 / §4.3.3——cf 键删空属清除字段取值的正常写路径，非「制造未设置」的哨兵行语义）；`priority` 的 `none` 值列可自由拖入（none 是合法优先级，非哨兵列）                                                                                                                                                                                                                                                                                                                                                                         | 前端 canDrop + Service | `400`（assignee / label 拖入；cf_* 删键走正常写不拦截） |
+| BR-15 | 多标签 / 多执行人卡片在 `label_id` / `assignee_id` 分组下跨列拖拽：弹确认「将把标签集合替换为 [X]」——替换语义必须显式知情                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | 前端确认层             | 取消则不动                                              |
+| BR-16 | 分组端点响应契约逐字段沿用 `BOARD-002`（其 BR-02/BR-05）：`data` 键 = **裸列值键**（State UUID / 枚举值 / 成员与标签 UUID / 选项值；`__none__` 哨兵），每组 `results ≤ 25` + `total_results`（筛选后）+ `unfiltered_total_results`（筛选前），`meta.applied` + 每组独立游标（含筛选指纹 + 维度指纹）；**响应不新增组元数据段**——列头名称 / 颜色由前端配置源渲染（State API / 优先级固定表 / 成员表 / 标签表 / `options`，与分组列同源，BR-06），维度由 `meta.grouped_by` 标识                                                                                                                                                                                                                             | `DimensionGroupView`   | —                                                       |
 
 ### 2.6 异常处理
 
-| 场景 | HTTP | 错误码 | details 子码 | 前端表现 |
-| --- | --- | --- | --- | --- |
-| `group_by` 非法（未知字段 / 非 groupable） | 400 | `VALIDATION_INVALID_PARAM` | `INVALID` | 「该字段不支持分组」；视图配置面板标红 |
-| `layout` 非法值 | 400 | `VALIDATION_INVALID_PARAM` | `INVALID` | 切换器抖动 |
-| filters 嵌套（本迭代扁平） | 400 | `VALIDATION_ERROR` | `INVALID` | 「组合条件将在后续版本开放」（TASK-011 前的兜底文案） |
-| filters 节点 > 20 | 400 | `VALIDATION_ERROR` | `TOO_MANY` | 计数提示 |
-| 视图数超 20 | 409 | `RESOURCE_LIMIT_EXCEEDED` | `LIMIT` | 「请先删除不需要的视图」 |
-| 改内置视图 filters | 403 | `PERM_DENIED` | — | 「内置视图口径锁定」 |
-| 删除内置视图 | 403 | `PERM_DENIED` | — | 删除按钮不渲染；直连 403 |
-| 访问他人个人视图（无 `board.manage`） | 404 | `RESOURCE_NOT_FOUND` | — | 通用 404（存在性隐藏，P2 无共享） |
-| 分组字段停用后加载 | 200 | —（降级） | — | 回退状态分组 + 黄条「分组字段已停用」 |
-| 拖入 `__none__` 列 | 400 | `VALIDATION_ERROR` | `INVALID` | 拖拽弹回 + toast 解释 |
-| 拖 cf 列但字段值非法（理论不可达） | 400 | `VALIDATION_CUSTOM_FIELD_INVALID` | `NOT_A_CHOICE` | 弹回 + toast |
+| 场景                                            | HTTP | 错误码                            | details 子码   | 前端表现                                                                     |
+| ----------------------------------------------- | ---- | --------------------------------- | -------------- | ---------------------------------------------------------------------------- |
+| `group_by` 非法（未知字段 / 非 groupable）      | 400  | `VALIDATION_INVALID_PARAM`        | `INVALID`      | 「该字段不支持分组」；视图配置面板标红                                       |
+| `layout` 非法值                                 | 400  | `VALIDATION_ERROR`                | `INVALID`      | 切换器抖动                                                                   |
+| filters 嵌套（本迭代扁平）                      | 400  | `VALIDATION_ERROR`                | `INVALID`      | 「组合条件将在后续版本开放」（TASK-011 前的兜底文案）                        |
+| filters 节点 > 20                               | 400  | `VALIDATION_ERROR`                | `TOO_MANY`     | 计数提示                                                                     |
+| 视图数超 20                                     | 409  | `RESOURCE_LIMIT_EXCEEDED`         | `LIMIT`        | 「请先删除不需要的视图」                                                     |
+| 改内置视图 filters                              | 403  | `PERM_DENIED`                     | —              | 「内置视图口径锁定」                                                         |
+| 删除内置视图                                    | 403  | `PERM_DENIED`                     | —              | 删除按钮不渲染；直连 403                                                     |
+| 访问他人个人视图（无 `board.manage`）           | 404  | `RESOURCE_NOT_FOUND`              | —              | 通用 404（存在性隐藏，P2 无共享）                                            |
+| 分组字段停用后加载                              | 200  | —（降级）                         | —              | 回退状态分组 + 黄条「分组字段已停用」                                        |
+| 拖入 `__none__` 哨兵列（assignee / label 维度） | 400  | `VALIDATION_ERROR`                | `INVALID`      | 拖拽弹回 + toast 解释（cf_* 维度拖入 `__none__` 为正常删键写路径，不入此表） |
+| 拖 cf 列但字段值非法（理论不可达）              | 400  | `VALIDATION_CUSTOM_FIELD_INVALID` | `NOT_A_CHOICE` | 弹回 + toast                                                                 |
 
 ### 2.7 边界条件
 
-| 边界场景 | 限制值 | 超出处理 |
-| --- | --- | --- |
-| 项目视图数（含内置） | 20 | 409 |
-| filters 条件节点 | 20 | 400（`TASK-011` 放开嵌套后终态 ≤ 3 层 / ≤ 20 节点——`api-conventions.md` §5.3） |
-| 视图名长度 | 128 | 400 TOO_LONG（架构 §5.6 `max_length=128`） |
-| 分组列数上限 | 维度天然上限（枚举 5 / 标签 100 / 成员 50 / 选项 100） | 列区横向滚动 |
-| 卡片字段开关数 | 固定 7 + `cf_*` | — |
-| `__none__` 组卡片量 | 无上限（未指派池可能巨大） | 组内分页 25 + 「批量指派」引导入口（接 `BOARD-004`） |
-| 视图列表加载 | 一次全量（≤20） | 无分页 |
+| 边界场景             | 限制值                                                 | 超出处理                                                                       |
+| -------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| 项目视图数（含内置） | 20                                                     | 409                                                                            |
+| filters 条件节点     | 20                                                     | 400（`TASK-011` 放开嵌套后终态 ≤ 3 层 / ≤ 20 节点——`api-conventions.md` §5.3） |
+| 视图名长度           | 128                                                    | 400 TOO_LONG（架构 §5.6 `max_length=128`）                                     |
+| 分组列数上限         | 维度天然上限（枚举 5 / 标签 100 / 成员 50 / 选项 100） | 列区横向滚动                                                                   |
+| 卡片字段开关数       | 固定 7 + `cf_*`                                        | —                                                                              |
+| `__none__` 组卡片量  | 无上限（未指派池可能巨大）                             | 组内分页 25 + 「批量指派」引导入口（接 `BOARD-004`）                           |
+| 视图列表加载         | 一次全量（≤20）                                        | 无分页                                                                         |
 
 ---
 
@@ -241,14 +243,14 @@ sequenceDiagram
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-| 元素 | 规格 |
-| --- | --- |
+| 元素         | 规格                                                                                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 布局分段控件 | 工具条最左四段（list/kanban/table/gantt）；点击 = PATCH 视图 `layout` 单字段（BR-04）；gantt 在 `GANTT-001` 交付前禁用态 + tooltip「甘特视图即将上线」 |
-| 视图 Tabs | 视图名横排（内置带 🔒 角标 = 口径锁定）；当前视图高亮下划线；超出 6 个折叠进「＋ ▾」下拉 |
-| 默认星标 | 视图名右 `★` 切换默认（BR-10）；内置视图也可设默认 |
-| 视图已修改条 | 筛选/分组/显示与视图存档不一致时出现（黄底）；[保存] 就地更新 / [另存为] 弹名称输入 / [放弃] 还原存档——**未保存离开弹确认** |
-| ⚙ 显示 | 显示配置面板入口（§3.3） |
-| 视图右键菜单 | 重命名 / 复制视图 / 设为默认 / 删除（内置无删除项） |
+| 视图 Tabs    | 视图名横排（内置带 🔒 角标 = 口径锁定）；当前视图高亮下划线；超出 6 个折叠进「＋ ▾」下拉                                                               |
+| 默认星标     | 视图名右 `★` 切换默认（BR-10——`PATCH /users/me/settings/` 偏好键 `board.default_view_id`，§4.2 注）；内置视图也可设默认                                |
+| 视图已修改条 | 筛选/分组/显示与视图存档不一致时出现（黄底）；[保存] 就地更新 / [另存为] 弹名称输入 / [放弃] 还原存档——**未保存离开弹确认**                            |
+| ⚙ 显示       | 显示配置面板入口（§3.3）                                                                                                                               |
+| 视图右键菜单 | 重命名 / 复制视图 / 设为默认 / 删除（内置无删除项）                                                                                                    |
 
 ### 3.2 分组看板（按优先级示例）
 
@@ -269,13 +271,13 @@ sequenceDiagram
   拖「支付回调」到「高」列 = PATCH priority=high（写路径 §2.4）；组内仍按拖拽序
 ```
 
-| 元素 | 规格 |
-| --- | --- |
-| 列头 | 维度色点（priority 五档固定色 / label 用 `Label.color` / cf 用 `options[].color` / assignee 用成员头像 24px）+ 列名 + 计数徽章 |
-| `__none__` 列 | 名「未指派 / 无标签 / 未填值」+ 虚线列头样式；可拖出不可拖入（BR-14） |
-| 空列 | 恒渲染（0 计数 + 空提示），`show_empty_groups=false` 时折叠为一枚列头胶囊 |
-| 分组切换器 | 工具条右侧下拉：状态 / 优先级 / 负责人 / 标签 / 自定义 select 字段（groupable 候选）+「按状态」置顶 |
-| 列宽 | 280px 固定；> 6 列横向滚动（`scroll-snap` 沿 `BOARD-001`） |
+| 元素          | 规格                                                                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 列头          | 维度色点（priority 五档固定色 / label 用 `Label.color` / cf 用 `options[].color` / assignee 用成员头像 24px）+ 列名 + 计数徽章  |
+| `__none__` 列 | 名「未指派 / 无标签 / 未填值」+ 虚线列头样式；未指派 / 无标签列可拖出不可拖入（BR-14），未填值列（cf_*）可拖入 = 删该键（§2.4） |
+| 空列          | 恒渲染（0 计数 + 空提示），`show_empty_groups=false` 时折叠为一枚列头胶囊                                                       |
+| 分组切换器    | 工具条右侧下拉：状态 / 优先级 / 负责人 / 标签 / 自定义 select 字段（groupable 候选）+「按状态」置顶                             |
+| 列宽          | 280px 固定；> 6 列横向滚动（`scroll-snap` 沿 `BOARD-001`）                                                                      |
 
 ### 3.3 显示配置面板（Display Properties）
 
@@ -289,7 +291,8 @@ sequenceDiagram
 │ 卡片显示                     │
 │  ☑ 标签          ☑ 子任务   │
 │  ☑ 附件数        ☐ 工时     │
-│  ☑ 优先级        ☑ 截止时间 │
+│  ☑ 优先级        ☑ 计时器   │
+│  ☑ 截止时间                  │
 │  ☑ 自定义：严重等级          │
 │ ──────────────────────────── │
 │ ☑ 显示空分组                 │
@@ -301,14 +304,14 @@ sequenceDiagram
 └──────────────────────────────┘
 ```
 
-| 元素 | 规格 |
-| --- | --- |
-| 面板形态 | 右侧 Drawer 320px / 弹层（触发锚定 ⚙ 按钮）；改动即预览（乐观应用） |
-| 分组候选 | Schema `groupable` 字段（BR-05 白名单同源）；当前值停用则红字提示 |
-| 卡片开关 | 固定 7 项 + `cf_*`（`card_fields` JSONB，BR-09） |
-| 空组显隐 | 开关联动看板空列折叠（默认显示——债务可见原则） |
-| 列配置 | 仅 list/table 布局显示该区（`columns` 数组，拖拽排序） |
-| 保存到视图 | 写回当前视图 `display_props`（若当前为内置视图：允许——BR-03）；未保存关闭 = 仅本会话生效 + 已修改条提示 |
+| 元素       | 规格                                                                                                                   |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 面板形态   | 右侧 Drawer 320px / 弹层（触发锚定 ⚙ 按钮）；改动即预览（乐观应用）                                                    |
+| 分组候选   | Schema `groupable` 字段（BR-05 白名单同源）；当前值停用则红字提示                                                      |
+| 卡片开关   | 固定 7 项（标签 / 子任务 / 附件数 / 工时 / 优先级 / 计时器 / 截止时间——BR-09 同一集合）+ `cf_*`（`card_fields` JSONB） |
+| 空组显隐   | 开关联动看板空列折叠（默认显示——债务可见原则）                                                                         |
+| 列配置     | 仅 list/table 布局显示该区（`columns` 数组，拖拽排序）                                                                 |
+| 保存到视图 | 写回当前视图 `display_props`（若当前为内置视图：允许——BR-03）；未保存关闭 = 仅本会话生效 + 已修改条提示                |
 
 ### 3.4 保存 / 另存为弹层
 
@@ -318,7 +321,7 @@ sequenceDiagram
 │ 名称   ┌──────────────────────┐        │
 │        │ 救火看板 (副本)        │        │
 │        └──────────────────────┘        │
-│ 图标   ○📈 ○🔥 ●🚒 ○🧊 ○📦（8 选 1）   │
+│ 图标   ○✨ ○🔥 ●🚒 ○🧪 ○📦（8 选 1）   │
 │ 布局   ○列表 ●看板 ○表格 ○甘特          │
 │                                          │
 │ ⓘ 将保存当前筛选、分组与显示配置。        │
@@ -326,44 +329,44 @@ sequenceDiagram
 └────────────────────────────────────────┘
 ```
 
-| 元素 | 规格 |
-| --- | --- |
-| 名称 | 默认「当前视图名 (副本)」；128 字上限；项目内重名允许（靠 id 区分）但同名时警告样式 |
-| 图标 | 8 枚 emoji 预设（存 `display_props.icon`，Tabs 渲染用） |
-| 布局 | 当前布局预选；创建后可切（BR-04） |
-| 另存为 | 不改动原视图；新建后立即切换为该视图 |
+| 元素   | 规格                                                                                                                                        |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 名称   | 默认「当前视图名 (副本)」；128 字上限；项目内重名允许（靠 id 区分）但同名时警告样式                                                         |
+| 图标   | 8 枚 emoji 预设：✨ 📦 🐛 👤 📅 🧪 🔥 🚒（存 `display_props.icon`，Tabs 渲染用；内置五视图预置 ✨ / 🐛 / 👤 / 📅 / 🧪，与 §4.1.2 种子同源） |
+| 布局   | 当前布局预选；创建后可切（BR-04）                                                                                                           |
+| 另存为 | 不改动原视图；新建后立即切换为该视图                                                                                                        |
 
 ### 3.5 交互细节表
 
-| 交互动作 | 触发方式 | 反馈效果 | 加载态 / 空态 |
-| --- | --- | --- | --- |
-| 切换视图 | 点 Tabs / 下拉项 | URL 更新 `?view=<id>`；分组数据按视图 filters 重拉（SWR key 变化）；120ms 卡片渐隐重排 | 目标视图分组骨架 |
-| 切换布局 | 分段控件 | 仅路由段变化 + PATCH layout；筛选/分组保持；列表↔看板动画切换 | 布局骨架 |
-| 修改后未保存 | 任一筛选/显示改动 | 「视图已修改」黄条浮现 | — |
-| 保存 | 黄条 [保存] | 黄条收起 + Toast「视图已更新」 | — |
-| 设为默认 | 视图菜单 ★ | 星标点亮；进项目直达 | — |
-| 分组切换 | 显示面板 / 分组下拉 | 列重建（配置生成，无请求）；数据重拉 | 骨架 |
-| 跨维度拖拽 | 拖卡到优先级/标签列 | 乐观变色/移动 + 正规写端点；多值替换先弹确认（BR-15） | 失败回滚弹回 |
-| 拖入 `__none__` | 拖向哨兵列 | 落点显示 🚫 光标 + toast 解释（BR-14） | — |
-| 停用字段降级 | 加载视图 | 黄条「分组字段已停用，已回退状态分组」 | — |
+| 交互动作                            | 触发方式                  | 反馈效果                                                                               | 加载态 / 空态    |
+| ----------------------------------- | ------------------------- | -------------------------------------------------------------------------------------- | ---------------- |
+| 切换视图                            | 点 Tabs / 下拉项          | URL 更新 `?view=<id>`；分组数据按视图 filters 重拉（SWR key 变化）；120ms 卡片渐隐重排 | 目标视图分组骨架 |
+| 切换布局                            | 分段控件                  | 仅路由段变化 + PATCH layout；筛选/分组保持；列表↔看板动画切换                          | 布局骨架         |
+| 修改后未保存                        | 任一筛选/显示改动         | 「视图已修改」黄条浮现                                                                 | —                |
+| 保存                                | 黄条 [保存]               | 黄条收起 + Toast「视图已更新」                                                         | —                |
+| 设为默认                            | 视图菜单 ★                | 星标点亮；进项目直达                                                                   | —                |
+| 分组切换                            | 显示面板 / 分组下拉       | 列重建（配置生成，无请求）；数据重拉                                                   | 骨架             |
+| 跨维度拖拽                          | 拖卡到优先级/标签列       | 乐观变色/移动 + 正规写端点；多值替换先弹确认（BR-15）                                  | 失败回滚弹回     |
+| 拖入 `__none__`（assignee / label） | 拖向未指派 / 无标签哨兵列 | 落点显示 🚫 光标 + toast 解释（BR-14）；cf_* 维度 `__none__` 列正常落入 = 删键         | —                |
+| 停用字段降级                        | 加载视图                  | 黄条「分组字段已停用，已回退状态分组」                                                 | —                |
 
 ### 3.6 空状态 / 加载 / 失败
 
-| 场景 | 处置 |
-| --- | --- |
+| 场景                         | 处置                                                                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | 项目首次进入（无自定义视图） | 默认落地「全部」裸态（Tabs 首项为前端固定入口、`filters={}`，**非种子视图**——种子清单见 §4.1.2）；视图 Tabs 引导气泡「保存你的第一块看板」 |
-| 视图结果为空 | 分组结构保留 + 中央空态（`BOARD-002` §3.6 同款「无匹配卡片 + 清空筛选」） |
-| 视图列表加载 | Tabs 骨架条 |
-| 视图已被删除（旧 URL） | 黄条「视图已删除，已切换默认视图」+ 自动跳默认 |
-| gantt 布局点击 | 禁用态 + tooltip（`GANTT-001` 前置） |
+| 视图结果为空                 | 分组结构保留 + 中央空态（`BOARD-002` §3.6 同款「无匹配卡片 + 清空筛选」）                                                                  |
+| 视图列表加载                 | Tabs 骨架条                                                                                                                                |
+| 视图已被删除（旧 URL）       | 黄条「视图已删除，已切换默认视图」+ 自动跳默认                                                                                             |
+| gantt 布局点击               | 禁用态 + tooltip（`GANTT-001` 前置）                                                                                                       |
 
 ### 3.7 响应式与无障碍
 
-| 断点 | 布局 |
-| --- | --- |
-| ≥ 1280px | Tabs 全量 + 显示面板 Drawer 320px |
-| 768~1279px | Tabs 折叠为下拉选择器；面板改底部抽屉 |
-| < 768px | 布局分段控件收纳进「⋯」菜单；视图切换器单行下拉 |
+| 断点       | 布局                                            |
+| ---------- | ----------------------------------------------- |
+| ≥ 1280px   | Tabs 全量 + 显示面板 Drawer 320px               |
+| 768~1279px | Tabs 折叠为下拉选择器；面板改底部抽屉           |
+| < 768px    | 布局分段控件收纳进「⋯」菜单；视图切换器单行下拉 |
 
 无障碍：视图 Tabs 为 `role="tablist"/tab`（`aria-selected` 绑定当前）；分组列头 `aria-label` 含维度名与计数（「优先级 紧急，2 个任务」）；`__none__` 列 `aria-label` 用中文哨兵名（不用 `__none__` 字面量）；显示面板为 `role="dialog"` + 焦点陷阱；跨维度拖拽的键盘替代 = 卡片菜单「设置优先级 / 指派给 / 设置标签 / 设为…」（按当前分组维度动态生成）。
 
@@ -422,7 +425,8 @@ class IssueView(BaseModel):
         help_text='{"icon":"🚒","group_by":"priority","order_by":"sort_order",'
                   '"columns":["issue_key","name","state_id","assignee_ids","target_date"],'
                   '"card_fields":{"labels":true,"sub_issues":true,"attachments":true,'
-                  '"estimate":false,"priority":true,"timer":true,"cf_severity":true},'
+                  '"estimate":false,"priority":true,"timer":true,"target_date":true,'
+                  '"cf_severity":true},'
                   '"show_empty_groups":true,"sub_group_by":null}')
 
     is_system = models.BooleanField(default=False, verbose_name="内置视图",
@@ -464,7 +468,7 @@ erDiagram
 #### 4.1.2 迁移与内置种子
 
 ```python
-# apps/api/plane/db/migrations/00XX_p3_issue_views.py
+# apps/api/plane/db/migrations/00XX_p2_issue_views.py
 class Migration(migrations.Migration):
     dependencies = [("db", "00XX_p2_custom_fields")]
     operations = [
@@ -476,67 +480,79 @@ class Migration(migrations.Migration):
 
 # apps/api/plane/db/seed/views.py —— unified-issue-model.md §5.4 五视图清单（「全部」为前端固定入口，不入库，见下注）
 BUILTIN_VIEWS = [
-    {"name": "需求池", "icon": "sparkles", "layout": "kanban",
+    {"name": "需求池", "layout": "kanban",
      "filters": {"op": "AND", "conditions": [
          {"field": "issue_type", "operator": "in", "value": ["__requirement__"]}]},
-     "display_props": {"group_by": "state_id", "order_by": "sort_order"}, "sort_order": 1000},
-    {"name": "缺陷列表", "icon": "bug", "layout": "list",
+     "display_props": {"icon": "✨", "group_by": "state_id", "order_by": "sort_order"},
+     "sort_order": 1000},
+    {"name": "缺陷列表", "layout": "list",
      "filters": {"op": "AND", "conditions": [
          {"field": "issue_type", "operator": "in", "value": ["__bug__"]}]},
-     "display_props": {"group_by": "priority", "order_by": "-priority"}, "sort_order": 2000},
-    {"name": "我的待办", "icon": "user", "layout": "list",
+     "display_props": {"icon": "🐛", "group_by": "priority", "order_by": "-priority"},
+     "sort_order": 2000},
+    {"name": "我的待办", "layout": "list",
      "filters": {"op": "AND", "conditions": [
          {"field": "assignees", "operator": "in", "value": ["@me"]},
          {"field": "state.group", "operator": "in", "value": ["unstarted", "started"]}]},
-     "display_props": {"group_by": None, "order_by": "target_date"}, "sort_order": 3000},
-    {"name": "本周到期", "icon": "calendar", "layout": "list",
+     "display_props": {"icon": "👤", "group_by": None, "order_by": "target_date"},
+     "sort_order": 3000},
+    {"name": "本周到期", "layout": "list",
      "filters": {"op": "AND", "conditions": [
          {"field": "target_date", "operator": "between", "value": ["this_week"]}]},
-     "display_props": {"group_by": None, "order_by": "target_date"}, "sort_order": 4000},
-    {"name": "测试执行", "icon": "flask-conical", "layout": "list",
+     "display_props": {"icon": "📅", "group_by": None, "order_by": "target_date"},
+     "sort_order": 4000},
+    {"name": "测试执行", "layout": "list",
      "filters": {"op": "AND", "conditions": [
          {"field": "issue_type", "operator": "in", "value": ["__test__"]}]},
-     "display_props": {"group_by": None, "order_by": "-created_at"}, "sort_order": 5000},
+     "display_props": {"icon": "🧪", "group_by": None, "order_by": "-created_at"},
+     "sort_order": 5000},
 ]
 # 占位符（@me / this_week / __requirement__ 等类型名）由扁平编译子集在本迭代先行解析
 # （编译期：类型名 → 项目内该类型 UUID），TASK-011 全量编译器同族接管。
+# icon 只存 display_props.icon（IssueView 无 icon 模型字段，架构 §5.6），
+# 取值为 §3.4 八枚 emoji 预设之一——种子 defaults 仅传模型字段，杜绝迁移 FieldError。
 
 
 def seed_builtin_views(apps, schema_editor):
-    """对既有项目补种内置视图（幂等 get_or_create；is_system=True）"""
-    IssueView = apps.get_model("db", "IssueView")
+    """对存量项目补种内置视图（迁移入口；单项目核心在 seed_project_views）"""
     Project = apps.get_model("db", "Project")
     for project in Project.objects.filter(deleted_at__isnull=True):
-        owner_id = project.created_by_id
-        for spec in BUILTIN_VIEWS:
-            IssueView.objects.get_or_create(
-                project=project, name=spec["name"], is_system=True,
-                defaults={**spec, "workspace_id": project.workspace_id,
-                          "owner_id": owner_id, "access": "personal"})
+        seed_project_views(project)
+
+
+def seed_project_views(project):
+    """单项目种子核心：迁移 RunPython 与 Project 创建服务共用（幂等 get_or_create；is_system=True）"""
+    IssueView = apps.get_model("db", "IssueView")
+    owner_id = project.created_by_id
+    for spec in BUILTIN_VIEWS:
+        IssueView.objects.get_or_create(
+            project=project, name=spec["name"], is_system=True,
+            defaults={**spec, "workspace_id": project.workspace_id,
+                      "owner_id": owner_id, "access": "personal"})
 ```
 
-> 内置视图的 `owner` 取项目创建者——内置视图对项目全员可见可应用（BR-11 读语义），归属只是审计记录。「全部」为前端工具条固定首项（无视图裸态，`filters={}`），**不种子入库**；`本周到期` 与 `min_phase` P2 的「测试执行」均按架构 §5.4 五视图清单随迁移种入——三处清单口径（§1.1 / §1.3 / 本节）以此为准。
+> 内置视图的 `owner` 取项目创建者——内置视图对项目全员可见可应用（BR-11 读语义），归属只是审计记录。「全部」为前端工具条固定首项（无视图裸态，`filters={}`），**不种子入库**；`本周到期` 与 `min_phase` P2 的「测试执行」均按架构 §5.4 五视图清单随迁移种入——三处清单口径（§1.1 / §1.3 / 本节）以此为准。**架构文档待回改**：`unified-issue-model.md` §5.4 的需求池 / 缺陷列表 / 我的待办 / 本周到期四个视图标 `min_phase=P1`，实际均随 Sprint 3（P2）本文迁移首次种入（P1 未交付视图种子），其 §6 P1 行「需求池/缺陷列表内置视图」同步待回改；§5.4 种子的顶层 lucide 图标名（sparkles 等）与本文口径不一致——`IssueView` 无 `icon` 模型字段（架构 §5.6），图标统一存 `display_props.icon` 且取值限于 §3.4 八枚 emoji 预设，该项亦待回改。
 >
 > **种子的两个触发点**：迁移 `RunPython` 仅覆盖**存量项目**补种；**部署后新建的项目**由 Project 创建服务在创建事务内调用同一 seeder（单项目核心抽为 `seed_project_views(project)`，与迁移循环共用同一幂等 `get_or_create` 实现），与 `seed_project_states` 挂同一事务钩子——`unified-issue-model.md` §9「Project 创建后自动 `seed_project_states`」惯例的平行落地。§7.2.5 的内置视图验收由此对部署后新建的项目同样成立。
 
 #### 4.1.3 索引与消费说明
 
-| 对象 | 服务的查询 | 说明 |
-| --- | --- | --- |
-| `idx_view_proj_access` | 视图 Tabs 列表 `WHERE project=? ORDER BY sort_order`（每次进项目） | 核心 |
-| `idx_view_owner_access` | 「我的视图」跨项目聚合（P3 全局视图预热） | P3 起高频 |
-| `issue_views` 行量 | 项目 ≤ 20 行 | 全量加载无分页，读成本恒定 |
+| 对象                    | 服务的查询                                                         | 说明                       |
+| ----------------------- | ------------------------------------------------------------------ | -------------------------- |
+| `idx_view_proj_access`  | 视图 Tabs 列表 `WHERE project=? ORDER BY sort_order`（每次进项目） | 核心                       |
+| `idx_view_owner_access` | 「我的视图」跨项目聚合（P3 全局视图预热）                          | P3 起高频                  |
+| `issue_views` 行量      | 项目 ≤ 20 行                                                       | 全量加载无分页，读成本恒定 |
 
 ### 4.2 API 定义
 
-| # | 方法 | 路径 | 描述 | 权限 | 成功码 |
-| --- | --- | --- | --- | --- | --- |
-| 1 | `GET` | `…/projects/{project_id}/views/` | 视图列表（内置 + 本人个人视图，按 sort_order） | `board.read`（全员，rbac §8） | `200` |
-| 2 | `POST` | `…/projects/{project_id}/views/` | 创建视图（含另存为——前端传完整配置；个人视图） | `view.create.own`（全员，rbac §8 View 行；`view.create.shared` P3） | `201` |
-| 3 | `GET` | `…/projects/{project_id}/views/{view_id}/` | 视图详情（内置 / 本人；他人视图需 `board.manage`——审计） | `board.read`（全员） | `200` |
-| 4 | `PATCH` | `…/views/{view_id}/` | 更新（filters / display_props / layout / 名称 / sort_order） | 本人（owner）或 `board.manage`（审计，PROJ_CONTRIBUTOR+） | `200` |
-| 5 | `DELETE` | `…/views/{view_id}/` | 删除（软删；is_system 拒绝） | 本人（owner）或 `board.manage`（审计） | `204` |
-| 6 | `GET` | `…/issues/?group_by={dimension}&view_id={view_id}&group_per_page=25` | **分组端点泛化**（BOARD-002 契约的多维扩展，参数域见下注） | `issue.read`（全员，rbac §8） | `200` |
+| #   | 方法     | 路径                                                                 | 描述                                                         | 权限                                                                | 成功码 |
+| --- | -------- | -------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------- | ------ |
+| 1   | `GET`    | `…/projects/{project_id}/views/`                                     | 视图列表（内置 + 本人个人视图，按 sort_order）               | `board.read`（全员，rbac §8）                                       | `200`  |
+| 2   | `POST`   | `…/projects/{project_id}/views/`                                     | 创建视图（含另存为——前端传完整配置；个人视图）               | `view.create.own`（全员，rbac §8 View 行；`view.create.shared` P3） | `201`  |
+| 3   | `GET`    | `…/projects/{project_id}/views/{view_id}/`                           | 视图详情（内置 / 本人；他人视图需 `board.manage`——审计）     | `board.read`（全员）                                                | `200`  |
+| 4   | `PATCH`  | `…/views/{view_id}/`                                                 | 更新（filters / display_props / layout / 名称 / sort_order） | 本人（owner）或 `board.manage`（审计，PROJ_CONTRIBUTOR+）           | `200`  |
+| 5   | `DELETE` | `…/views/{view_id}/`                                                 | 删除（软删；is_system 拒绝）                                 | 本人（owner）或 `board.manage`（审计）                              | `204`  |
+| 6   | `GET`    | `…/issues/?group_by={dimension}&view_id={view_id}&group_per_page=25` | **分组端点泛化**（BOARD-002 契约的多维扩展，参数域见下注）   | `issue.read`（全员，rbac §8）                                       | `200`  |
 
 > 权限码按 `rbac-permission-model.md` §8 矩阵拆行：`board.update` 语义是「拖拽卡片」（CONTRIBUTOR+），**不用于视图 CRUD**；创建个人视图走 `view.create.own`（全员，含 VIEWER）——视图是读配置偏好，不涉写语义；`board.manage` 语义是「列增删改、多看板」（CONTRIBUTOR+，P3 受 `is_locked` 收紧）。
 
@@ -545,9 +561,11 @@ def seed_builtin_views(apps, schema_editor):
 > - `group_by`：维度 ∈ Schema `groupable` 白名单（内置 `state_id` / `priority` / `assignee_id` / `label_id` + `groupable=true` 的 select 类 `cf_*`），默认 `state_id`；
 > - `view_id`：UUID v4，服务端展开视图 filters 与 URL 筛选参数**合并取 AND**（视图是底座、URL 是临时叠加——三层筛选层级中「视图层」的实现，架构文档 §5.5）；
 > - `group_per_page`：组内页大小，默认 25（沿用 `BOARD-002`）；
-> - 筛选参数域 = `TASK-003` 白名单全集（`search` / `type_id` / `priority` / `label_id` / `assignee_id` / `target_date` / `created_by`）+ `TASK-008` 的 `?property.<id>=<value>`，**减去当前 `group_by` 维度对应的筛选参数**——`BOARD-002` 的「减 `state_id`」固定规则随维度泛化为动态互斥（按优先级分组时 `priority` 出域，避免「筛选了却不可见的列」）；
+> - 筛选参数域 = `TASK-003` 白名单全集（`search` / `state_id` / `type_id` / `priority` / `label_id` / `assignee_ids` / `target_date` / `created_by`）+ `TASK-008` 的 `?property.<id>=<value>`，**减去当前 `group_by` 维度对应的筛选参数**——`BOARD-002` 的「减 `state_id`」固定规则随维度泛化为动态互斥（按优先级分组时 `priority` 出域，避免「筛选了却不可见的列」）；
 > - URL 排序参数为 `ordering`（`api-conventions.md` §5.4，字段白名单沿 `TASK-003`）——**上游待回改项**：`TASK-003` ADR-001 已将 `ordering` 更名冻结为 `order_by`（Plane 参数名对齐，改名记录在案，`TASK-011` 现行版沿用），本文按架构 §5.4 唯一事实用 `ordering`，两口径并存、待架构侧统一回改登记（`display_props.order_by` 为 JSONB 存储键名而非 URL 参数，不受本项影响）；
 > - 分组端点组内序固定（§2.3 逐维冻结），不接受客户端排序覆盖（`BOARD-002` 既有规则沿维度推广，`display_props.order_by` 仅对非分组布局生效）。
+
+> **「设为默认」的接线（§2.1 / §3.1 ★，BR-10）**：零新端点——`PATCH /api/v1/users/me/settings/` 写偏好键 `board.default_view_id`（值按项目记：`{"<project_id>": "<view_uuid>"}`，项目内至多一条；取消默认 = 删该条目），UI 进入项目时读取该偏好直达默认视图、无则退「全部」裸态（§3.6）；内置视图同样可设默认（§3.1）。`api-conventions.md` §2.5 已列该资源的 `GET`，`PATCH` 动作与 `board.default_view_id` 偏好键为本文补写。
 
 #### 4.2.1 `POST …/views/` — 创建视图
 
@@ -568,8 +586,15 @@ def seed_builtin_views(apps, schema_editor):
     "icon": "🚒",
     "group_by": "priority",
     "order_by": "sort_order",
-    "card_fields": { "labels": true, "sub_issues": true, "attachments": true,
-                     "priority": true, "timer": true, "estimate": false },
+    "card_fields": {
+      "labels": true,
+      "sub_issues": true,
+      "attachments": true,
+      "priority": true,
+      "timer": true,
+      "target_date": true,
+      "estimate": false
+    },
     "show_empty_groups": true
   }
 }
@@ -588,8 +613,8 @@ def seed_builtin_views(apps, schema_editor):
     "access": "personal",
     "owner_id": "6c7d1a2b-3e4f-4a5b-9c8d-7e6f5a4b3c2d",
     "is_system": false,
-    "filters": { "op": "AND", "conditions": [ "…同请求体…" ] },
-    "display_props": { "…同请求体…" : "…" },
+    "filters": { "op": "AND", "conditions": ["…同请求体…"] },
+    "display_props": { "…同请求体…": "…" },
     "sort_order": 327680.0,
     "created_at": "2026-09-02T02:11:45.330Z"
   }
@@ -604,8 +629,13 @@ def seed_builtin_views(apps, schema_editor):
   "error": {
     "code": "VALIDATION_ERROR",
     "message": "请求参数校验失败",
-    "details": [{ "field": "filters", "code": "INVALID",
-                  "message": "嵌套条件组将在组合筛选器版本开放，当前仅支持单层 AND" }],
+    "details": [
+      {
+        "field": "filters",
+        "code": "INVALID",
+        "message": "嵌套条件组将在组合筛选器版本开放，当前仅支持单层 AND"
+      }
+    ],
     "request_id": "01JCBCC5B9EF4G7H3J5K6M7N8P"
   }
 }
@@ -641,17 +671,24 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/issues/?group_by=priority&view
   "data": {
     "urgent": {
       "results": [
-        { "id": "8a1f…", "issue_key": "RBT-4", "name": "修复登录页 500 错误",
-          "priority": "urgent", "state_id": "a1b2…-0001", "assignee_ids": ["6c7d…"],
-          "target_date": "2026-08-30", "sort_order": 65535.0 }
+        {
+          "id": "8a1f…",
+          "issue_key": "RBT-4",
+          "name": "修复登录页 500 错误",
+          "priority": "urgent",
+          "state_id": "a1b2…-0001",
+          "assignee_ids": ["6c7d…"],
+          "target_date": "2026-08-30",
+          "sort_order": 65535.0
+        }
       ],
       "total_results": 1,
       "unfiltered_total_results": 2
     },
-    "high":   { "results": [], "total_results": 0, "unfiltered_total_results": 3 },
+    "high": { "results": [], "total_results": 0, "unfiltered_total_results": 3 },
     "medium": { "results": [], "total_results": 0, "unfiltered_total_results": 5 },
-    "low":    { "results": [], "total_results": 0, "unfiltered_total_results": 1 },
-    "none":   { "results": [], "total_results": 0, "unfiltered_total_results": 4 }
+    "low": { "results": [], "total_results": 0, "unfiltered_total_results": 1 },
+    "none": { "results": [], "total_results": 0, "unfiltered_total_results": 4 }
   },
   "meta": {
     "grouped_by": "priority",
@@ -680,8 +717,9 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/issues/?group_by=priority&view
   "error": {
     "code": "VALIDATION_INVALID_PARAM",
     "message": "查询参数非法",
-    "details": [{ "field": "group_by", "code": "INVALID",
-                  "message": "cf_root_cause 为多行文本，不支持分组" }],
+    "details": [
+      { "field": "group_by", "code": "INVALID", "message": "cf_root_cause 为多行文本，不支持分组" }
+    ],
     "request_id": "01JCBCC5B9EF4G7H3J5K6M7N8R"
   }
 }
@@ -798,26 +836,31 @@ class DimensionGroupView(KanbanGroupView):
 // apps/web/core/components/board/dimension-drop.ts（节选）
 /** 拖拽落列 → 该维度的正规写端点（§2.4 表的前端半边；写语义永不旁路） */
 export const dropToWrite = async (
-  issue: IIssue, dimension: string, columnKey: string, position: { prev: number | null; next: number | null },
+  issue: IIssue,
+  dimension: string,
+  columnKey: string,
+  position: { prev: number | null; next: number | null },
 ): Promise<void> => {
   const sort_order = calculateSortOrder(position.prev, position.next);
   switch (dimension) {
     case "state_id":
-      return issueStore.patch(issue.id, { state_id: columnKey, sort_order });        // P0 语义
+      return issueStore.patch(issue.id, { state_id: columnKey, sort_order }); // P0 语义
     case "priority":
-      return issueStore.patch(issue.id, { priority: columnKey, sort_order });         // 枚举即列
+      return issueStore.patch(issue.id, { priority: columnKey, sort_order }); // 枚举即列
     case "assignee_id":
       if (columnKey === "__none__") throw new DropRejected("未指派列不可拖入（BR-14）");
-      await confirmIfMulti(issue.assignee_ids.length > 1,
-        `将执行人替换为 ${memberName(columnKey)}？`);                                  // BR-15
-      return issueStore.putAssignees(issue.id, [columnKey]);                          // TASK-007 端点
+      await confirmIfMulti(
+        issue.assignee_ids.length > 1,
+        `将执行人替换为 ${memberName(columnKey)}？`,
+      ); // BR-15
+      return issueStore.putAssignees(issue.id, [columnKey]); // TASK-007 端点
     case "label_id":
       if (columnKey === "__none__") throw new DropRejected("无标签列不可拖入（BR-14）");
       await confirmIfMulti(issue.label_ids.length > 1, `将标签替换为 ${labelName(columnKey)}？`);
-      return issueStore.putLabels(issue.id, [columnKey]);                             // TASK-002 端点
+      return issueStore.putLabels(issue.id, [columnKey]); // TASK-002 端点
     default: /* cf_* */
-      if (columnKey === "__none__") return issueStore.patch(issue.id,
-        { custom_fields: { [dimension]: null } });                                    // 删键
+      if (columnKey === "__none__")
+        return issueStore.patch(issue.id, { custom_fields: { [dimension]: null } }); // 删键（BR-14 允许）
       return issueStore.patch(issue.id, { custom_fields: { [dimension]: columnKey } }); // 经校验器
   }
 };
@@ -826,7 +869,7 @@ export const dropToWrite = async (
 ### 4.4 前端实现
 
 - `ViewStore`（`packages/shared-state`）：`viewsByProject: Map<pid, IssueView[]>`（SWR key `project:{id}:views`）；`currentViewId` 与 URL `?view=` 双向绑定；`dirty` 派生（当前筛选/显示 vs 存档 diff——黄条依据）。
-- `BoardStore.columns` 泛化：`groupDimension` 参数化（`getIssuesByDimension(dimension, key)` 派生替代 `getIssuesByState`）；`__none__` 组的 `canDrop=false`（BR-14）。
+- `BoardStore.columns` 泛化：`groupDimension` 参数化（`getIssuesByDimension(dimension, key)` 派生替代 `getIssuesByState`）；assignee / label 维度的 `__none__` 组 `canDrop=false`（BR-14），cf_* 维度的 `__none__` 组可落 = 删键传 null（§2.4）。
 - 布局切换：路由段 `/board` ↔ `/issues` ↔ `/table`（`gantt` 占位禁用）；`?view=` 跨布局保留——切布局 PATCH 单字段 + 前端路由跳转合并为一次交互。
 - 显示面板组件 `DisplayPropertiesPanel`：分组候选 = Schema `groupable` 字段（`FieldSchemaStore` 派生）；改动乐观应用到看板，[保存到视图] 才落库。
 
@@ -836,52 +879,53 @@ export const dropToWrite = async (
 
 ### 5.1 单元测试
 
-| 用例 ID | 测试目标 | 输入 | 预期输出 | 覆盖类型 |
-| --- | --- | --- | --- | --- |
-| UT-01 | 视图数上限 | 第 21 个 | 409 LIMIT（BR-02） | 边界 |
-| UT-02 | access=shared 拒绝 | P2 传 shared | 400（BR-01） | 边界 |
-| UT-03 | filters 嵌套拒绝 | conditions 内含 op 节点 | 400（BR-07） | 异常 |
-| UT-04 | filters 节点 21 个 | 超限 | 400 TOO_MANY | 边界 |
-| UT-05 | group_by 非白名单 | cf_root_cause（textarea） | 400 INVALID | 异常 |
-| UT-06 | group_by 未 groupable 的 cf | number 类型字段 | 400 | 异常 |
-| UT-07 | 内置 filters 锁定 | PATCH 需求池 filters | 403（BR-03） | 安全 |
-| UT-08 | 内置 display_props 可改 | PATCH 需求池 group_by | 200 | 正常 |
-| UT-09 | 切布局条件保持 | kanban→list | filters/display_props 逐字节不变（BR-04） | 正常 |
-| UT-10 | 读取降级-分组 | group_by 字段停用 | 回退 state_id + degraded（BR-05） | 异常 |
-| UT-11 | 读取降级-条件 | filters 引用停用字段 | 条件剔除 + degraded（BR-08） | 异常 |
-| UT-12 | card_fields 未知键 | {"hack": true} | 静默剔除（BR-09） | 边界 |
-| UT-13 | 他人视图访问 | 非 owner 且无 `board.manage` | 404（BR-11/12） | 安全 |
-| UT-14 | 分组列配置生成 | cf 3 选项 | 4 列（含 __none__），零 SQL 扫 issues（BR-06 断言查询数） | 正常 |
-| UT-15 | 删除软删 + 回退 | 删视图后旧 URL | 进项目回默认 + 黄条（BR-12） | 正常 |
-| UT-16 | 视图 + URL 筛选合并 | view 高优 + URL 标签 | AND 合并且 applied 双源回显 | 正常 |
-| UT-17 | 视图名超长 | 129 字符 | 400 TOO_LONG（§2.7 上限 128，对齐架构 §5.6 `max_length`） | 边界 |
-| UT-18 | `sort_order` 插值与默认解耦 | 两视图间「另存为」；随后「设为默认」 | 新视图 sort_order 取相邻中值（`BOARD-001` 算法）；设默认不改 sort_order（BR-13） | 正常 |
+| 用例 ID | 测试目标                    | 输入                                                     | 预期输出                                                                                                            | 覆盖类型 |
+| ------- | --------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------- |
+| UT-01   | 视图数上限                  | 第 21 个                                                 | 409 LIMIT（BR-02）                                                                                                  | 边界     |
+| UT-02   | access=shared 拒绝          | P2 传 shared                                             | 400（BR-01）                                                                                                        | 边界     |
+| UT-03   | filters 嵌套拒绝            | conditions 内含 op 节点                                  | 400（BR-07）                                                                                                        | 异常     |
+| UT-04   | filters 节点 21 个          | 超限                                                     | 400 TOO_MANY                                                                                                        | 边界     |
+| UT-05   | group_by 非白名单           | cf_root_cause（textarea）                                | 400 INVALID                                                                                                         | 异常     |
+| UT-06   | group_by 未 groupable 的 cf | number 类型字段                                          | 400                                                                                                                 | 异常     |
+| UT-07   | 内置 filters 锁定           | PATCH 需求池 filters                                     | 403（BR-03）                                                                                                        | 安全     |
+| UT-08   | 内置 display_props 可改     | PATCH 需求池 group_by                                    | 200                                                                                                                 | 正常     |
+| UT-09   | 切布局条件保持              | kanban→list                                              | filters/display_props 逐字节不变（BR-04）                                                                           | 正常     |
+| UT-10   | 读取降级-分组               | group_by 字段停用                                        | 回退 state_id + degraded（BR-05）                                                                                   | 异常     |
+| UT-11   | 读取降级-条件               | filters 引用停用字段                                     | 条件剔除 + degraded（BR-08）                                                                                        | 异常     |
+| UT-12   | card_fields 未知键          | {"hack": true}                                           | 静默剔除（BR-09）                                                                                                   | 边界     |
+| UT-13   | 他人视图访问                | 非 owner 且无 `board.manage`                             | 404（BR-11/12）                                                                                                     | 安全     |
+| UT-14   | 分组列配置生成              | cf 3 选项                                                | 4 列（含 **none**），零 SQL 扫 issues（BR-06 断言查询数）                                                           | 正常     |
+| UT-15   | 删除软删 + 回退             | 删视图后旧 URL                                           | 进项目回默认 + 黄条（BR-12）                                                                                        | 正常     |
+| UT-16   | 视图 + URL 筛选合并         | view 高优 + URL 标签                                     | AND 合并且 applied 双源回显                                                                                         | 正常     |
+| UT-17   | 视图名超长                  | 129 字符                                                 | 400 TOO_LONG（§2.7 上限 128，对齐架构 §5.6 `max_length`）                                                           | 边界     |
+| UT-18   | `sort_order` 插值与默认解耦 | 两视图间「另存为」；随后「设为默认」                     | 新视图 sort_order 取相邻中值（`BOARD-001` 算法）；设默认不改 sort_order（BR-13）                                    | 正常     |
+| UT-19   | BR-05 别名映射归一          | `group_by` 传 Schema 键 `state` / `assignees` / `labels` | 判定前过固定别名表归一为 `state_id` / `assignee_id` / `label_id` 后校验通过；不在别名表的非直通键（如 `states`）400 | 边界     |
 
 ### 5.2 集成测试
 
-| 用例 ID | 场景 | 前置条件 | 操作步骤 | 预期结果 |
-| --- | --- | --- | --- | --- |
-| IT-01 | 五维分组逐维对拍 | 造 12 任务覆盖各维度取值 | 依次 group_by 五类 | 各维分组键/计数与手工对拍一致；空组（含 __none__）恒在 |
-| IT-02 | 分组 SQL 预算 | 1 万任务 | group_by=priority 全组请求 | `assertNumQueries` ≤ 10；count 走合并聚合 |
-| IT-03 | 组内游标跨维度 | assignee 分组某列 42 卡 | 翻页 | 游标含维度指纹；切维度后旧游标 400 自动回首页 |
-| IT-04 | 跨维度拖拽-优先级 | priority 分组 | 拖卡到「紧急」 | PATCH priority=urgent + Activity；组内序不变 |
-| IT-05 | 跨维度拖拽-标签确认 | 双标签卡片 | label 分组拖到 L2 | 确认后 labels=[L2]；取消则零变更 |
-| IT-06 | 拖入 __none__ 拦截 | assignee 分组 | 拖卡到未指派列 | 前端 🚫 + 直连 400 |
-| IT-07 | 视图全生命周期 | — | 建→改→切布局→另存为→设默认→删 | 状态机全路径；删除后 URL 回退 |
-| IT-08 | 内置种子幂等 + 新建项目触发 | 迁移重放；迁移后新建项目 | RunPython 二次执行；走 Project 创建服务 | get_or_create 零重复；新建项目在创建事务内即获五视图种子（§4.1.2 双触发） |
-| IT-09 | 权限矩阵（rbac §8 拆行） | VIEWER 建个人视图 / 无 `board.manage` 者访问他人视图 / 有 `board.manage` 者改他人视图 | POST / GET / PATCH | 201（`view.create.own` 全员）/ 404 / 200（BR-11） |
-| IT-10 | 性能门禁 | 1 万任务 × 20 视图 | 分组请求 50 次 | P95 < 200ms |
+| 用例 ID | 场景                        | 前置条件                                                                              | 操作步骤                                | 预期结果                                                                                                      |
+| ------- | --------------------------- | ------------------------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| IT-01   | 五维分组逐维对拍            | 造 12 任务覆盖各维度取值                                                              | 依次 group_by 五类                      | 各维分组键/计数与手工对拍一致；空组（含 **none**）恒在                                                        |
+| IT-02   | 分组 SQL 预算               | 1 万任务                                                                              | group_by=priority 全组请求              | `assertNumQueries` ≤ 10；count 走合并聚合                                                                     |
+| IT-03   | 组内游标跨维度              | assignee 分组某列 42 卡                                                               | 翻页                                    | 游标含维度指纹；切维度后旧游标 400 自动回首页                                                                 |
+| IT-04   | 跨维度拖拽-优先级           | priority 分组                                                                         | 拖卡到「紧急」                          | PATCH priority=urgent + Activity；组内序不变                                                                  |
+| IT-05   | 跨维度拖拽-标签确认         | 双标签卡片                                                                            | label 分组拖到 L2                       | 确认后 labels=[L2]；取消则零变更                                                                              |
+| IT-06   | 拖入 **none** 拦截          | assignee 分组                                                                         | 拖卡到未指派列（label 维度同款）        | 前端 🚫 + 直连 400；cf_* 维度拖入 `__none__` 列为正常删键写（200）                                            |
+| IT-07   | 视图全生命周期              | —                                                                                     | 建→改→切布局→另存为→设默认→删           | 状态机全路径；设默认写入 settings 偏好（`board.default_view_id`，§4.2 注）且重进项目直达；删除后 URL 回退默认 |
+| IT-08   | 内置种子幂等 + 新建项目触发 | 迁移重放；迁移后新建项目                                                              | RunPython 二次执行；走 Project 创建服务 | get_or_create 零重复；新建项目在创建事务内即获五视图种子（§4.1.2 双触发）                                     |
+| IT-09   | 权限矩阵（rbac §8 拆行）    | VIEWER 建个人视图 / 无 `board.manage` 者访问他人视图 / 有 `board.manage` 者改他人视图 | POST / GET / PATCH                      | 201（`view.create.own` 全员）/ 404 / 200（BR-11）                                                             |
+| IT-10   | 性能门禁                    | 1 万任务 × 20 视图                                                                    | 分组请求 50 次                          | P95 < 200ms                                                                                                   |
 
 ### 5.3 E2E 测试
 
-| 用例 ID | 用户场景 | 操作路径 | 验收标准 |
-| --- | --- | --- | --- |
-| E2E-01 | 保存救火视图 | 调筛选（高/紧急+未完成）+ 分组（优先级）→ 保存 | 刷新/换浏览器登录同账号，视图与数据完全还原 |
-| E2E-02 | 多看板并存 | 再建「按负责人站会」看板 | Tabs 两块自由切换，互不污染；URL ?view= 直达 |
-| E2E-03 | 布局切换条件保持 | 救火看板 列表→看板→表格 | 筛选/分组原样带过去（仅形态变化） |
-| E2E-04 | 优先级拖拽 | 按优先级分组，拖卡到「紧急」 | 卡片迁移 + 详情优先级=紧急 + Activity 留痕；刷新保持 |
-| E2E-05 | 停用字段降级 | 停用分组所用 cf 字段后刷新视图 | 黄条提示 + 回退状态分组；数据仍按视图 filters 过滤 |
-| E2E-06 | 内置视图 | 打开需求池 | 只见需求类型；改分组为优先级成功；无删除入口 |
+| 用例 ID | 用户场景         | 操作路径                                       | 验收标准                                             |
+| ------- | ---------------- | ---------------------------------------------- | ---------------------------------------------------- |
+| E2E-01  | 保存救火视图     | 调筛选（高/紧急+未完成）+ 分组（优先级）→ 保存 | 刷新/换浏览器登录同账号，视图与数据完全还原          |
+| E2E-02  | 多看板并存       | 再建「按负责人站会」看板                       | Tabs 两块自由切换，互不污染；URL ?view= 直达         |
+| E2E-03  | 布局切换条件保持 | 救火看板 列表→看板→表格                        | 筛选/分组原样带过去（仅形态变化）                    |
+| E2E-04  | 优先级拖拽       | 按优先级分组，拖卡到「紧急」                   | 卡片迁移 + 详情优先级=紧急 + Activity 留痕；刷新保持 |
+| E2E-05  | 停用字段降级     | 停用分组所用 cf 字段后刷新视图                 | 黄条提示 + 回退状态分组；数据仍按视图 filters 过滤   |
+| E2E-06  | 内置视图         | 打开需求池                                     | 只见需求类型；改分组为优先级成功；无删除入口         |
 
 ---
 
@@ -913,12 +957,12 @@ export const dropToWrite = async (
 
 ### 7.1 交付物清单
 
-| 类型 | 交付物 |
-| --- | --- |
-| Model / Migration | `issue_views` 表（双索引 + P3 预建列）+ 内置五视图种子迁移与 Project 创建钩子（双触发，§4.1.2） |
-| 后端 | `view_service.py`（保存防线/读取降级）、`DimensionGroupView`（五维分组泛化 + 合并 count + 维度游标指纹）、`views/` CRUD 五端点、`view_id` 参数并入 issues 参数域 |
-| 前端 | 视图切换器（Tabs/星标/右键菜单）、布局分段控件（gantt 占位）、显示配置面板、保存/另存为弹层、`ViewStore`、`dropToWrite` 跨维度拖拽映射、`__none__` 列渲染与拦截 |
-| 测试 | UT-01~18、IT-01~10、E2E-01~06 |
+| 类型              | 交付物                                                                                                                                                           |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Model / Migration | `issue_views` 表（双索引 + P3 预建列）+ 内置五视图种子迁移与 Project 创建钩子（双触发，§4.1.2）                                                                  |
+| 后端              | `view_service.py`（保存防线/读取降级）、`DimensionGroupView`（五维分组泛化 + 合并 count + 维度游标指纹）、`views/` CRUD 五端点、`view_id` 参数并入 issues 参数域 |
+| 前端              | 视图切换器（Tabs/星标/右键菜单）、布局分段控件（gantt 占位）、显示配置面板、保存/另存为弹层、`ViewStore`、`dropToWrite` 跨维度拖拽映射、`__none__` 列渲染与拦截  |
+| 测试              | UT-01~~19、IT-01~~10、E2E-01~06                                                                                                                                  |
 
 ### 7.2 可操作演示的验收标准
 

@@ -1,0 +1,6 @@
+/* 暗色主题变量覆盖（AUTH-001 §3.6：跟随系统 prefers-color-scheme；P0 最小占位） */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
+}

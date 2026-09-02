@@ -1,0 +1,44 @@
+{
+  "name": "@rp/ui",
+  "version": "0.1.0",
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --dts --format esm",
+    "dev:watch": "tsup src/index.ts --watch --dts --format esm",
+    "lint": "oxlint src",
+    "typecheck": "tsc --noEmit",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "clean": "rm -rf dist .turbo *.tsbuildinfo storybook-static"
+  },
+  "dependencies": {
+    "@headlessui/react": "2.2.x",
+    "@rp/tailwind-config": "workspace:*",
+    "clsx": "2.1.x",
+    "lucide-react": "0.511.x",
+    "tailwind-merge": "3.x"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.x",
+    "@types/react-dom": "19.1.x",
+    "oxlint": "1.x",
+    "react": "19.1.x",
+    "react-dom": "19.1.x",
+    "tsup": "8.x",
+    "typescript": "5.8.x"
+  },
+  "peerDependencies": {
+    "react": "19.1.x",
+    "react-dom": "19.1.x"
+  }
+}

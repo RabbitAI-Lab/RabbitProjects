@@ -1,0 +1,47 @@
+{
+  "name": "@rp/editor",
+  "version": "0.1.0",
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --dts --format esm",
+    "dev:watch": "tsup src/index.ts --watch --dts --format esm",
+    "lint": "oxlint src",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@rp/tailwind-config": "workspace:*",
+    "@rp/types": "workspace:*",
+    "@rp/ui": "workspace:*",
+    "@tiptap/core": "2.14.x",
+    "@tiptap/extension-link": "2.14.x",
+    "@tiptap/extension-placeholder": "2.14.x",
+    "@tiptap/react": "2.14.x",
+    "@tiptap/starter-kit": "2.14.x",
+    "y-prosemirror": "1.3.x",
+    "y-protocols": "1.0.x",
+    "yjs": "13.6.x"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.x",
+    "oxlint": "1.x",
+    "react": "19.1.x",
+    "react-dom": "19.1.x",
+    "tsup": "8.x",
+    "typescript": "5.8.x"
+  },
+  "peerDependencies": {
+    "react": "19.1.x",
+    "react-dom": "19.1.x"
+  }
+}

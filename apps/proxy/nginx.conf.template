@@ -1,0 +1,10 @@
+# Nginx 主配置模板（envsubst 渲染）—— 五路由与 upstream 细则由 INFRA-002 §4 交付
+worker_processes auto;
+events { worker_connections 1024; }
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    sendfile on;
+    keepalive_timeout 65;
+    include /etc/nginx/conf.d/*.conf;
+}

@@ -1,0 +1,43 @@
+{
+  "name": "@rp/space",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "react-router dev --port 3003",
+    "build": "react-router build",
+    "start": "react-router-serve ./build/server/index.js",
+    "lint": "oxlint app",
+    "typecheck": "react-router typegen && tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@react-router/node": "7.x",
+    "@rp/editor": "workspace:*",
+    "@rp/tailwind-config": "workspace:*",
+    "@rp/types": "workspace:*",
+    "@rp/ui": "workspace:*",
+    "axios": "1.8.x",
+    "isbot": "^5",
+    "lucide-react": "0.511.x",
+    "mobx": "6.13.x",
+    "mobx-react-lite": "4.1.x",
+    "react": "19.1.x",
+    "react-dom": "19.1.x",
+    "react-router": "7.x",
+    "swr": "2.3.x",
+    "zod": "3.25.x"
+  },
+  "devDependencies": {
+    "@react-router/dev": "7.x",
+    "@react-router/serve": "7.x",
+    "@tailwindcss/vite": "4.1.x",
+    "@types/react": "19.1.x",
+    "@types/react-dom": "19.1.x",
+    "oxlint": "1.x",
+    "tailwindcss": "4.1.x",
+    "typescript": "5.8.x",
+    "vite": "6.3.x",
+    "vitest": "3.x"
+  }
+}

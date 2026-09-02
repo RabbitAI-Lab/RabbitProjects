@@ -1,0 +1,44 @@
+[project]
+name = "rabbit-projects-api"
+version = "0.1.0"
+description = "RabbitProjects Django API (apps/api · 非 pnpm workspace，uv 管理)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "django>=5.1,<5.2",
+    "djangorestframework>=3.15",
+    "psycopg[binary]>=3.2",
+    "celery[rabbitmq]>=5.4",
+    "argon2-cffi>=23.1",
+    "django-environ>=0.11",
+    "django-filter>=24.3",
+    "drf-spectacular>=0.28",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-django>=4.9",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["**/migrations/*"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["mypy_django_plugin.main"]
+ignore_missing_imports = true
+exclude = ["**/migrations/*"]
+
+[tool.django-stubs]
+django_settings_module = "plane.settings.local"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "plane.settings.test"
+python_files = ["test_*.py"]

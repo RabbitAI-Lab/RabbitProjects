@@ -1,0 +1,13 @@
+{
+  "name": "@rp/tailwind-config",
+  "version": "0.1.0",
+  "private": true,
+  "exports": {
+    "./theme.css": "./theme.css",
+    "./preset.css": "./preset.css",
+    "./dark.css": "./dark.css"
+  },
+  "peerDependencies": {
+    "tailwindcss": "4.1.x"
+  }
+}

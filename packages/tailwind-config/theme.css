@@ -1,0 +1,24 @@
+@theme {
+  /* 语义色板 —— 业务代码只允许引用语义名，不得写任意色值 */
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe7fe;
+  --color-brand-500: #3f76ff;
+  --color-brand-600: #2f5fe0;
+
+  /* 工作项状态色（unified-issue-model.md §5.2，unstarted 为 P0 三列看板第一列）*/
+  --color-state-backlog: #9ca3af;
+  --color-state-unstarted: #9ca3af;
+  --color-state-started: #3b82f6;
+  --color-state-completed: #10b981;
+  --color-state-cancelled: #6b7280;
+
+  /* 优先级色（unified-issue-model.md §2.8） */
+  --color-priority-none: #6b7280;
+  --color-priority-low: #94a3b8;
+  --color-priority-medium: #f59e0b;
+  --color-priority-high: #fb923c;
+  --color-priority-urgent: #ef4444;
+
+  --radius-card: 0.5rem;
+  --duration-fast: 120ms;
+}

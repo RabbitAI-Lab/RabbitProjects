@@ -1,0 +1,31 @@
+packages:
+  # ── 白名单：显式列举 JS/TS 应用（不用 apps/*，理由见 INFRA-001 §2.2 规则 3）──
+  - "apps/web"
+  - "apps/admin"
+  - "apps/space"
+  - "apps/live"
+  # ── 共享包统一纳入 ──
+  - "packages/*"
+  # ── 黑名单二次排除：非 JS 项目 ──
+  - "!apps/api"
+  - "!apps/api/**"
+  - "!apps/proxy"
+  - "!apps/proxy/**"
+  # ── 黑名单：构建产物目录 ──
+  - "!**/dist/**"
+  - "!**/build/**"
+  - "!**/storybook-static/**"
+  - "!**/node_modules/**"
+
+# ── 强制统一版本：Yjs 家族跨包同版本红线（tech-stack.md §4.1）──
+overrides:
+  yjs: "13.6.x"
+  y-prosemirror: "1.3.x"
+  y-protocols: "1.0.x"
+
+# ── 允许执行构建脚本的包（pnpm 11 用 allowBuilds 对象形式；
+#    文档 §4.2 的 onlyBuiltDependencies 为 pnpm 10 字段，登记为文档待回改项）──
+allowBuilds:
+  esbuild: true
+  "@tailwindcss/oxide": true
+  sharp: true

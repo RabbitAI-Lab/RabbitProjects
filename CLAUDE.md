@@ -33,10 +33,13 @@ API 启动需要环境变量：`DATABASE_URL=postgresql://rp:rp@localhost:5432/r
 # 1) 接口端到端（10a 删除 + 10b 越权，覆盖 TC-PROJ1-007/AUTH3-001）
 python3 tests/jmeter/sprint-0-flow.py [http://localhost:8000]
 
-# 2) Playwright e2e（web dev server 需已在 3001；API 在 8000）
-E2E_NO_SERVER=1 pnpm exec playwright test
+# 2) L1/L2 静态检查（36 条命令断言：INFRA/AUTH3/TASK/BOARD）
+bash tests/run-ci-checks.sh
 
-# 3) JMeter 性能压测
+# 3) Playwright e2e（web dev server 需已在 3001；API 在 8000）
+E2E_NO_SERVER=1 pnpm exec playwright test   # auth.spec.ts(3) + coverage.spec.ts(4)
+
+# 4) JMeter 性能压测
 export JAVA_HOME=~/.sdkman/candidates/java/17.0.20-kona
 jmeter -n -t tests/jmeter/sprint-0-flow.jmx -l result.jtl -e -o report
 ```

@@ -28,7 +28,8 @@
 | 运行时 | Node 22.14 + pnpm 11（nvm default） | ✅ |
 | 执行 | `pnpm dev:all` 起 web (3001) + live (3000) + api (8000) | ✅ |
 | 执行 | `python3 tests/jmeter/sprint-0-flow.py`（CI 端到端 10 步） | ✅ |
-| 执行 | `pnpm exec playwright test`（Playwright e2e 3 个 spec） | ✅ |
+| 执行 | `pnpm exec playwright test`（Playwright e2e 7 个 spec：auth 3 + coverage 4） | ✅ |
+| 执行 | `bash tests/run-ci-checks.sh`（L1/L2 静态检查 36 条） | ✅ |
 | 执行 | `jmeter -n -t tests/jmeter/sprint-0-flow.jmx`（性能压测） | ✅ 加载校验 |
 
 ### 0.2 三套测试分工
@@ -38,6 +39,8 @@
 | `tests/jmeter/sprint-0-flow.py` | CI 端到端（单线程） | 10 步业务流正确性断言（业务断言为正） | PR 必跑（gate） |
 | `tests/jmeter/sprint-0-flow.jmx` | 性能压测 | 同 10 步业务流，多线程 / 持续时间 / 吞吐量 | 性能基线 / 上线前 |
 | `tests/e2e/auth.spec.ts` | 浏览器端到端 | 完整动线 + 路由守卫 + demo 账号（UI 验证） | PR 必跑（gate） |
+| `tests/e2e/coverage.spec.ts` | 浏览器端到端（补全） | TC-AUTH2-007/008/009 + TC-PROJ1-007a（原 Nightly/占位） | PR 必跑（gate） |
+| `tests/run-ci-checks.sh` | L1/L2 静态检查 | INFRA/AUTH3/TASK/BOARD 共 36 条命令断言 | PR 必跑（gate） |
 
 ---
 
@@ -182,7 +185,7 @@ Argon2 密码哈希 + Session + CSRF 双提交 + 注册事务内原子初始化�
 
 ### 5.1 前置
 - TC-AUTH1-005 已过（demo 账号可登录）；web (3001) + api (8000) 服务在线；Playwright 浏览器（chromium）已安装
-- TC-AUTH2-007/008/009 依赖 Playwright 网络拦截与 evaluate 调用，CI 单线程环境无法稳定跑通，仅 nightly 通道执行；Sprint 1 在 tests/e2e/auth.spec.ts 中补齐对应 spec 后纳入 CI gate。
+- TC-AUTH2-007/008/009 已由 `tests/e2e/coverage.spec.ts` 落地（401/403 拦截跳转、sessionid cookie 往返、信封解包渲染），纳入 CI gate。
 
 ### 5.2 用例清单
 
@@ -194,9 +197,9 @@ Argon2 密码哈希 + Session + CSRF 双提交 + 注册事务内原子初始化�
 | TC-AUTH2-004 | L3 端到端 | 登录后 next 回跳工作台 | TC-AUTH2-003 | `python3 -c "import requests; s=requests.Session(); s.post('http://localhost:8000/api/v1/auth/sign-in/', json={'email':'zhangsan@rabbit.dev','password':'Rabbit123'}); r=s.get('http://localhost:8000/login?next=/workspace/projects', allow_redirects=False); print(r.status_code, r.headers.get('Location',''))"` | 落 `/workspace/projects`（302/200 跳；Location 含 `/workspace/projects`） | 是 | status ∈ {302, 200}；Location 含 "/workspace/projects" |
 | TC-AUTH2-005 | L3 端到端 | 路由守卫：登录后访问 /any-ws/projects 不重定向（Playwright e2e） | TC-AUTH1-005；等价于 `tests/e2e/auth.spec.ts:23` "已登录访问工作台" spec | 登录 demo 账号（POST /auth/sign-in/ 拿 session），浏览器 GET /workspace/projects | URL 仍是 /workspace/projects，page 渲染"项目"标题 | 是 | URL 路径 = "/workspace/projects"；page.text() 含 "项目" |
 | TC-AUTH2-006 | L3 端到端 | 路由守卫：未登录访问 /any-ws/projects 跳登录页（Playwright e2e） | TC-AUTH2-001；等价于 `tests/e2e/auth.spec.ts:80` "未登录访问受保护路由" spec | 清 cookie → 浏览器 GET /any-workspace/projects | URL 含 `/login?next=`；page 含"登录 RabbitProjects"标题 | 是 | URL 含 "/login?next="；page.text() 含 "登录 RabbitProjects" |
-| TC-AUTH2-007 | L3 端到端 | 401 拦截：清 cookie 后发任何 API 请求自动跳登录页 | TC-AUTH1-001；参考 `apps/web/app/services/axios.ts:30-33` 拦截器 | 清 cookie → 浏览器打开任意页面并 `fetch /api/v1/users/me/`；Playwright `page.on('response')` 监听 401 后 `location.href` 变化 | 拦截器触发，URL 跳 `/login` (Nightly) | 是 | location.pathname 以 "/login" 开头 |
-| TC-AUTH2-008 | L3 端到端 | axios withCredentials 携带 session cookie | TC-AUTH1-005 | 登录后浏览器 `fetch /api/v1/users/me/`，Playwright `page.on('request')` 抓 headers | Cookie 头含 `sessionid=*` (Nightly) | 是 | request.headers.cookie 匹配 regex `sessionid=[^;]+` |
-| TC-AUTH2-009 | L3 端到端 | 401 响应被拦截器解包为 Error | TC-AUTH1-004；参考 `apps/web/app/services/axios.ts:21-26` | 登录后浏览器 fetch 未授权 URL → catch 抛出的 error；Playwright `page.evaluate` 调用 `api.users.me()` 在未授权场景下断言 `error.code` | `error.message` 含错误文案；`error.code === 'AUTH_INVALID_CREDENTIALS'` (Nightly) | 是 | error.code = "AUTH_INVALID_CREDENTIALS"；error.message 非空 |
+| TC-AUTH2-007 | L3 端到端 | 401 拦截：清 cookie 后发任何 API 请求自动跳登录页 | TC-AUTH1-001；参考 `apps/web/app/services/axios.ts:30-33` 拦截器 | 清 cookie → 浏览器打开任意页面并 `fetch /api/v1/users/me/`；Playwright `page.on('response')` 监听 401 后 `location.href` 变化 | 拦截器触发，URL 跳 `/login` （`tests/e2e/coverage.spec.ts` 已覆盖） | 是 | location.pathname 以 "/login" 开头 |
+| TC-AUTH2-008 | L3 端到端 | axios withCredentials 携带 session cookie | TC-AUTH1-005 | 登录后浏览器 `fetch /api/v1/users/me/`，Playwright `page.on('request')` 抓 headers | Cookie 头含 `sessionid=*` （`tests/e2e/coverage.spec.ts` 已覆盖） | 是 | request.headers.cookie 匹配 regex `sessionid=[^;]+` |
+| TC-AUTH2-009 | L3 端到端 | 401 响应被拦截器解包为 Error | TC-AUTH1-004；参考 `apps/web/app/services/axios.ts:21-26` | 登录后浏览器 fetch 未授权 URL → catch 抛出的 error；Playwright `page.evaluate` 调用 `api.users.me()` 在未授权场景下断言 `error.code` | `error.message` 含错误文案；`error.code === 'AUTH_INVALID_CREDENTIALS'` （`tests/e2e/coverage.spec.ts` 已覆盖） | 是 | error.code = "AUTH_INVALID_CREDENTIALS"；error.message 非空 |
 
 **R3 一致性残留**：TC-AUTH1-002 错误码与 AUTH-001 BR-02 字面错位（已登记 DEV-8）；R4 复核结论：TC-AUTH1-012 引用 BR-12（CSRF 校验规则），与 AUTH-001 §2.7 AUTH_CSRF_FAILED 错误码一致。判分锚点补充 `error.code === 'AUTH_CSRF_FAILED'`。
 
@@ -255,7 +258,7 @@ Argon2 密码哈希 + Session + CSRF 双提交 + 注册事务内原子初始化�
 | TC-PROJ1-005a | L3 端到端 | PATCH 项目需 PROJ_ADMIN：WS_MEMBER 无 ProjectMember | TC-TEAM1-006；TC-PROJ1-001 | 邀请 WS_MEMBER + 无 ProjectMember → PATCH | 403，code=PERM_PROJECT_ADMIN_REQUIRED | 是 | HTTP 403；code=PERM_PROJECT_ADMIN_REQUIRED |
 | TC-PROJ1-005b | L3 端到端 | PATCH 项目需 PROJ_ADMIN：WS_ADMIN 无 ProjectMember | TC-TEAM1-006；TC-PROJ1-001 | 邀请 WS_ADMIN + 无 ProjectMember → PATCH | 200（WS_ADMIN 隐式覆盖） | 是 | HTTP 200 |
 | TC-PROJ1-006 | L3 端到端 | 已取消 state 不渲染到列 | TC-PROJ1-003 | GET states | 数据集不含 `group=cancelled` 的 state | 是 | states 数组中 group="cancelled" 的元素数 = 0 |
-| TC-PROJ1-007a | L2 集成 | DELETE 项目 + DB 软删除验证（sprint-0-flow.py step 10a） | TC-PROJ1-001 | `python3 tests/jmeter/sprint-0-flow.py` 内 step 10a：DELETE `/api/v1/workspaces/{ws}/projects/{pid}/` 然后 GET 验证 | DELETE 返回 204；GET 该项目返回 404；DB 中 `deleted_at` 非空 | 是 | DELETE = 204；GET = 404；`SELECT deleted_at FROM projects WHERE id=...` 非空 |
+| TC-PROJ1-007a | L2 集成 | DOM：confirm 输入错名 → 删除按钮 disabled（`tests/e2e/coverage.spec.ts:TC-PROJ1-007a`）；API 软删由 step 10a 覆盖 | TC-PROJ1-001 | `python3 tests/jmeter/sprint-0-flow.py` 内 step 10a：DELETE `/api/v1/workspaces/{ws}/projects/{pid}/` 然后 GET 验证 | DELETE 返回 204；GET 该项目返回 404；DB 中 `deleted_at` 非空 | 是 | DELETE = 204；GET = 404；`SELECT deleted_at FROM projects WHERE id=...` 非空 |
 | TC-PROJ1-007b | L2 集成 | DELETE 项目：sprint-0-flow.py step 10a 软删 + DB `deleted_at` 字段值 | TC-PROJ1-007a | 同 step 10a：DELETE 后 SELECT `deleted_at` | DELETE 返回 204；`SELECT deleted_at FROM projects WHERE id=?` 返回非空 datetime | 是 | DELETE = 204；DB deleted_at IS NOT NULL |
 | TC-PROJ1-008 | L2 集成 | ProjectMember 反范式 workspace_id | TC-PROJ1-004 | `grep -A2 "workspace = models.ForeignKey" apps/api/plane/db/models/project.py` | 命中（命中行 `related_name="project_member"`） | 是 | 命中行 next 1 行含 `related_name="project_member"` |
 

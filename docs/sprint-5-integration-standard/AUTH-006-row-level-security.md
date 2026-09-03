@@ -13,7 +13,7 @@
 | 上游依据 | `docs/需求文档.md` §3.1（成员权限分配 / 行级隔离 / 账号禁用启用）、§8.2 账号权限 P2 列 |
 | 关联架构文档 | [`api-conventions.md`](../architecture/api-conventions.md)（403/404 存在性隐藏、错误码） |
 | 对标基线 | Plane（`WorkspaceMember`/`ProjectMember` 双层 + `Issue.objects.visible_to`） · Ones（行级数据权限矩阵） |
-| 工作量估算 | 后端 3 人日 / 前端 1 人日 / 安全测试 1.5 人日，合计 **5.5 人日** |
+| 工作量估算 | 后端 4.5 人日 / 前端 1.5 人日 / 安全测试 2 人日，合计 **8 人日**（原 5.5 人日系初版估算偏低——纳入 ① 矩阵单源 + CI AST 五规则收口、② `AccessibleModelViewSet` 与 `api-conventions.md` §10.1 既有三级类名体系对齐文案 + ADR、④ 批量角色豁免声明 + 7 类 `skipped.reason` / `failed.reason` 枚举回归、⑤ 启停工作空间作用域端点 + admin 端边界澄清、⑥ `GUEST` 降级联动事务链 + 末位保护优先级校验、⑦ 越权矩阵参数化套件补 `WS_GUEST` / `SYSTEM_ADMIN` / 匿名三态 + `Project.visibility` 字段上线后架构回改对接，7 项实际工作量后修正） |
 
 ---
 
@@ -87,22 +87,25 @@
 
 ### 2.1 行级过滤矩阵（权威表 · 代码单源 `access/matrix.py`）
 
-主体四态：**OWNER**（资源属主/创建者）、**MEMBER**（同项目成员）、**WS_ONLY**（同工作空间但非项目成员）、**OUTSIDER**（跨工作空间用户）。
+主体七态：**SYSTEM_ADMIN**（全站超管）、**OWNER**（工作空间属主/创建者 / 资源属主）、**ADMIN**（工作空间管理员 `WS_ADMIN` 隐式 `PROJ_ADMIN`，见 `rbac-permission-model.md` §7.4）、**MEMBER**（同项目显式成员）、**WS_ONLY**（同工作空间但非项目成员）、**GUEST**（工作空间访客 `WS_GUEST`）、**OUTSIDER**（跨工作空间用户）、**匿名**（未登录）。下表按列展开：
 
-| 资源族 | OWNER | MEMBER | WS_ONLY | OUTSIDER |
-| --- | --- | --- | --- | --- |
-| 工作空间 | ✅ 自身所在 | — | ✅ 所在 | ❌ |
-| 项目（公开） | ✅ | ✅ | ✅ 只读可见 | ❌ |
-| 项目（私有） | ✅ | ✅ | ❌ | ❌ |
-| 项目（draft） | ✅ 创建者 + WS_ADMIN | ❌ | ❌ | ❌ |
-| 任务 / 子任务 | ✅ | ✅ | 随项目可见性 | ❌ |
-| 评论 / 动态 | ✅ | ✅ | 随项目 | ❌ |
-| 文件 / 目录 | ✅ | ✅ | 随项目（分享链接除外，`FILE-004`） | ❌ |
-| 报表统计 | ✅ | ✅ | 降权（`RPT-002` BR-02） | ❌ |
-| Webhook / 集成配置 | ✅ 管理员 | 见不见随角色权限码 | ❌ | ❌ |
-| 成员列表 | ✅ | ✅ | ✅（同空间互相可见基本资料） | ❌ |
+| 资源族 | SYSTEM_ADMIN | OWNER / ADMIN | MEMBER | WS_ONLY | GUEST | OUTSIDER | 匿名 |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| 工作空间 | ✅ 全部 | ✅ 自身所在 | ✅ 所在 | ✅ 所在 | ⚠️ 仅基础信息 | ❌ | ❌ |
+| 项目（私有） | ✅ 全部 | ✅ | ✅ | ❌ | ⚠️ 仅已显式加入 | ❌ | ❌ |
+| 项目（公开） | ✅ 全部 | ✅ | ✅ | ⏳ **架构待回改**（rbac §6.2 `_scoped_for` 当前未实现公开项目可见通道，详见 §2.1 注 ①） | ⚠️ 仅已显式加入 | ❌ | ❌ |
+| 项目（draft） | ✅ 全部 | ✅ 创建者 + WS_ADMIN | ❌ | ❌ | ❌ | ❌ | ❌ |
+| 任务 / 子任务 | ✅ 全部 | ✅ | ✅ | 随项目可见性 | 随项目（仅已加入项目） | ❌ | ❌ |
+| 评论 / 动态 | ✅ 全部 | ✅ | ✅ | 随项目 | 随项目 | ❌ | ❌ |
+| 文件 / 目录 | ✅ 全部 | ✅ | ✅ | 随项目（分享链接除外，`FILE-004`） | 随项目 | ❌ | ❌ |
+| 报表统计 | ✅ 全部 | ✅ | ✅ | 降权（`RPT-002` BR-02） | 降权 | ❌ | ❌ |
+| Webhook / 集成配置 | ✅ 全部 | ✅ 管理员 | 见不见随角色权限码 | ❌ | ❌ | ❌ | ❌ |
+| 成员列表 | ✅ 全部 | ✅ | ✅ | ✅（同空间互相可见基本资料） | ❌（`rbac-permission-model.md` §8.1 `workspace.member.read` 对 `WS_GUEST` 为 ❌） | ❌ | ❌ |
+| 公开链接分享内容 | ✅ 全部 | ✅ | ✅ | ✅（匿名通道 `FILE-004`） | ✅（匿名通道） | ✅（匿名通道） | ✅（匿名通道） |
 
-> 矩阵是**可见性**口径；可操作面由权限码层二次判定（§1.2 约定一）。单元测试按矩阵逐格参数化（§5.2）。
+**注 ①（架构待回改登记）**：「WS_ONLY 可见公开项目只读」当前未实现。`rbac-permission-model.md` §6.2 `ProjectQuerySet._scoped_for` 仅覆盖「`WS_ADMIN` 隐式全权 ∪ 显式 `ProjectMember`」两条分支，未引入「公开项目对同空间非成员可见」通道。`RPT-002` §BR-02 描述了「非成员访问公开项目仅见公开口径」的产品语义，但其本身依赖 `Project.visibility` 字段（见 §4.1 注 B）。本矩阵表保留该语义行作为产品目标态，**本文档不强制落地**：待架构文档回改 `_scoped_for` 与 `Project.visibility` 后（**架构文档待回改**），本文矩阵行重新生效。在落地前，公开项目对 WS_ONLY 实际表现 = 私有项目（❌ 不可见）。IT-02 矩阵测试在本迭代对公开项目行采用 `@skip(架构待回改)` 标记，由 §4.1 注 B 的回改任务统一解锁。
+
+> 矩阵是**可见性**口径；可操作面由权限码层二次判定（§1.2 约定一）。**OWNER / WS_ADMIN 隐式获得 `PROJ_ADMIN` 等价权限**（`rbac-permission-model.md` §7.4，第二层与第三层同步生效，本系统对该绕过的实现完整对齐架构基线），但「WS_ONLY 仅可见公开项目」行（公开项目行）按注 ① 待回改。单元测试按矩阵逐格参数化（§5.2）。
 
 ### 2.2 `accessible_by` 单入口架构
 
@@ -130,23 +133,29 @@ sequenceDiagram
     participant API as members/bulk-role/
     participant S as MemberService
     A->>API: POST {user_ids:[…], role:"WS_MEMBER"}
-    API->>S: 逐成员校验（存在/同空间/非 OWNER）
-    S->>S: 单事务批量 UPDATE + 逐条 Activity
-    S-->>API: {updated: 8, skipped: [{id, reason}]}
+    API->>S: 逐成员校验（存在/同空间/排除 WS_OWNER 隐式全权目标）
+    S->>S: 单事务批量 UPDATE + 逐条 Activity（OWNER 目标自动跳过 reason=owner_implicit_full，不计入逐条结果）
+    S-->>API: {updated: 8, skipped: [{id, reason}], failed: [{id, reason}]}
     API-->>A: 200 部分成功语义
 ```
 
+**对 `api-conventions.md` §10.5「批量端点全成全败」约定的豁免声明**（与 `TEAM-002` §1.1 邀请端点同句式）：本端点不采用「全成或全败、单事务」语义。原因：成员角色变更属于治理操作，一次性调整可能涉及数十人；任一条目标为 OWNER（隐式全权、见下方统一语义）或目标用户不存在时，不应让其余合法调整被整体回退——强制全成全败会显著放大误操作成本。改为「整体 200、`data[]` 逐条分态返回」：成功落库（`updated`）、业务跳过（`skipped`：附 `reason`，枚举见下表）、单条异常（`failed`：附 `reason` 与 `message`）。但**结构性校验**（`user_ids` 字段缺失、超过 100 人、目标角色非法）仍走 400 整请求拒绝（`VALIDATION_ERROR`），不豁免；只有「目标不存在 / 已是目标角色 / 目标为 WS_OWNER 隐式全权 / 末位 OWNER 降级」等业务级失败允许逐条 `failed`/`skipped`。该豁免与 `TEAM-002` 邀请端点、`PROJ-002` 项目成员批量添加复用同一范式，但与 `BOARD-004` 任务批量操作（all-or-nothing，`api-conventions.md` §10.5 默认语义）刻意区分——任务批量是用户操作，回滚成本低；成员治理是组织操作，回滚成本高。
+
+> **OWNER 语义统一声明**（修正 R1 三处自相矛盾）：本文凡涉及「OWNER」一律指 **`WS_OWNER`**（工作空间所有者），遵循 `rbac-permission-model.md` §2.2。**`WS_OWNER` 隐式全权（`rbac-permission-model.md` §7.4），不参与批量角色降级目标**——批量端点对 `WS_OWNER` 行的处理 = 自动跳过并附 `reason="owner_implicit_full"`，**不计入** `skipped` 总数与 Toast 明细的「跳过」列（按「不参与」语义展示，详见 §5.2 IT-08 断言）。若需变更 OWNER 角色，仅能通过权限点 `workspace.transfer`（`rbac-permission-model.md` §8.1）对应的所有权转让端点 **`POST /api/v1/workspaces/{slug}/ownership/transfer/`**（`api-conventions.md` §2.5 既有路径，仅 `WS_OWNER` 可见），不允许经本批量端点。
+
 | 规则 | 内容 |
 | --- | --- |
-| 原子性 | **非全有全无**：可改的成功、不可改的逐条 skip 附原因（OWNER 不可降权 / 目标用户不存在 / 已是目标角色）——与 `BOARD-004` 批量任务的 all-or-nothing 刻意不同：成员管理是治理操作，部分成功 + 明示跳过更安全 |
-| 降级保护 | 最后一个 WS_OWNER 不可被降权/禁用（`400 VALIDATION_ERROR`） |
-| 通知 | 被改角色者收通知（`COLLAB-001`）+ 写 Activity |
+| 原子性 | **非全有全无**（豁免 `api-conventions.md` §10.5，理由见上段豁免声明）：可改的成功（`updated`）、不可改的逐条 `skipped` 附 `reason`（`already_has_role` / `owner_implicit_full` / `not_workspace_member` / `self_target`）、单条异常 `failed` 附 `message`（`last_owner_demotion` / `member_limit`） |
+| 降级保护 | 最后一个 `WS_OWNER` 不可被批量降级（整请求前置校验，或在该条目上返回 `failed: reason="last_owner_demotion"`），与其他路径的 §2.5 BR-03 一致 |
+| 通知 | 被改角色者收通知（`COLLAB-001`）+ 写 Activity（`workspace.member.role_changed`） |
+| `skipped.reason` 枚举 | `already_has_role`（已是目标角色）/ `owner_implicit_full`（目标为 `WS_OWNER`，不参与批量）/ `not_workspace_member`（非本空间成员）/ `self_target`（包含操作者本人，自助修改禁止） |
+| `failed.reason` 枚举 | `last_owner_demotion`（将导致末位 OWNER）/ `member_limit`（将触达 §2.5 BR-09 P1 标准版 100 人软限，`TEAM-002` §1.2 同款） |
 
 ### 2.4 账号禁用/启用联动
 
 ```mermaid
 flowchart LR
-    D["POST …/users/{id}/disable/"] --> T["单事务：<br/>is_active=false<br/>+ disabled_at/by"]
+    D["POST /api/v1/workspaces/{slug}/members/{member_id}/disable/<br/>（WS_ADMIN+，权限 workspace.member.manage）"] --> T["单事务：<br/>is_active=false<br/>+ disabled_at/by"]
     T --> R1["Session 全吊销"]
     T --> R2["APIKey 全吊销"]
     T --> R3["JWT 黑名单（jti 集合）"]
@@ -170,7 +179,7 @@ flowchart LR
 | --- | --- | --- |
 | BR-01 | 一切集合/详情查询以 `accessible_by` 起步 | CI AST + 越权矩阵双守护 |
 | BR-02 | 不可见行 → 404；可见但越权操作 → 403 | 存在性隐藏（api-conventions §8） |
-| BR-03 | 最后 WS_OWNER 不可降权/禁用/移出 | 400 `VALIDATION_ERROR` |
+| BR-03 | 最后 WS_OWNER 不可降权/禁用/移出 | 409 `RESOURCE_STATE_INVALID`（`rbac-permission-model.md` §7.2 末位保护 + `api-conventions.md` §8.5 + `TEAM-002` §2.7 一致口径） |
 | BR-04 | 批量角色部分成功语义 + 逐条 skip 原因 | §2.3 |
 | BR-05 | 禁用即时生效 ≤5s：Session/APIKey/JWT/WS 四面吊销 | IT 计时断言 |
 | BR-06 | 禁用不删数据；署名保留 + 灰标 | UI 验收 |
@@ -181,7 +190,8 @@ flowchart LR
 | BR-11 | draft 项目对 MEMBER 也不可见（`PROJ-003` BR-04 收编进矩阵） | 矩阵行 |
 | BR-12 | 分享链接匿名访问是矩阵外通道（`FILE-004` 独立鉴权），不得经 `accessible_by` | 防误收口 |
 | BR-13 | 启停事件写 Activity（workspace 域）+ 邮件告知本人 | 审计面 |
-| BR-14 | 批量角色一次 ≤ 200 人 | 超限 400 `VALIDATION_BULK_LIMIT_EXCEEDED` |
+| BR-14 | 批量角色一次 ≤ 100 人（与 `api-conventions.md` §10.5「批量端点单次 ≤ 100 条」、§7.2「批量端点 10/min 单次 ≤ 100 条」一致；以架构为准，§2.3 历史版本 200 系误标） | 超限 400 `VALIDATION_BULK_LIMIT_EXCEEDED`（`api-conventions.md` §8.4 已注册），同时触发批量端点 throttle 10/min |
+| BR-15 | **`WS_MEMBER → WS_GUEST` 降级联动**（`TEAM-002` §1.3 指派给本文）：将某成员从 `WS_MEMBER`(10) 降级为 `WS_GUEST`(5) 时，若其在任何项目中持有 `PROJ_CONTRIBUTOR`(15) 及以上角色，须**同一事务**内一并降级为 `PROJ_COMMENTER`(10)；若降级目标角色已是 `WS_GUEST`，跳过联动分支。联动降级后通过 `COLLAB-001` 通知通道告知本人 | Service（事务，`rbac-permission-model.md` §7.3 降级保护规则） | 联动降级过程中任意一步失败 → 整事务回滚；末位 `PROJ_ADMIN` 保护（`rbac` §7.2）优先于本规则（即不允许为降级联动而违反末位保护），校验顺序：①末位保护 ②联动降级 ③写 Activity |
 
 ### 2.6 异常处理与边界条件
 
@@ -189,12 +199,12 @@ flowchart LR
 | --- | --- | --- |
 | 1 | 禁用不存在的用户 | 404 |
 | 2 | 重复禁用/启用 | 幂等 200 + 当前态 |
-| 3 | 禁用自己 / 最后 OWNER | 400 `VALIDATION_ERROR`（BR-03） |
+| 3 | 禁用自己 / 最后 OWNER | 自我禁用 400 `VALIDATION_ERROR`（`details.user=["cannot disable yourself"]`）；最后 OWNER 禁停 409 `RESOURCE_STATE_INVALID`（BR-03，`rbac-permission-model.md` §7.2 末位保护） |
 | 4 | 批量含 OWNER / 不存在 id | 逐条 skip 附原因（BR-04） |
 | 5 | 禁用瞬间有在途请求 | 在途请求完成；下一请求 401（吊销即生效） |
 | 6 | 吊销广播部分实例失败 | Redis pub/sub 重试 3 次 + 实例启动时全量对账 |
 | 7 | 越权直访详情 URL | 404（BR-02），响应与「真不存在」逐字节一致（含错误体 request_id 结构） |
-| 8 | WS_ONLY 访问私有项目任务 | 404；访问公开项目任务 200 只读 |
+| 8 | WS_ONLY 访问私有项目任务 | 404；访问公开项目任务本迭代同样 404（§2.1 注 ① 架构待回改，落地前与私有项目行为一致；回改后 = 200 只读） |
 
 ---
 
@@ -258,13 +268,18 @@ flowchart LR
 | 模型 | 既有结构 | 本迭代增量 |
 | --- | --- | --- |
 | `User` | `is_active`（Django 原生） | 加 `disabled_at` / `disabled_by` 两列（审计面） |
-| `Session`（AUTH-004） | `revoked_at` | 吊销面复用，无改动 |
-| `APIKey`（AUTH-004） | `revoked_at` | 同上 |
+| `Session`（AUTH-004） | Valkey DB 1 + `user_sessions:{uid}` 索引（**无 DB 列**） | 吊销走 `revoke_other_sessions` / `delete_all_sessions`（AUTH-004 §4.3.5），本迭代复用，无 DB 改动 |
+| `APIKey`（AUTH-004） | DB 仅存 `token_hash`（SHA-256）+ 前 8 位明文前缀（`api-conventions.md` §9.3）；**无 `revoked_at` 列**，吊销位图走 Valkey | AUTH-004 §2.5「创建者被降权或禁用时 Key 即时失效」已覆盖吊销语义；本迭代复用 |
 | `WorkspaceMember` / `ProjectMember` | `role` | 批量 UPDATE 路径，无结构改动 |
+| `Project` | `status`（`draft/active/archived/closed`，`unified-issue-model.md` §2.4） | 本迭代新增 `visibility` 字段：`TextChoices` 枚举 `private`(默认) / `public`；**注 B：`unified-issue-model.md` §2.4 与 `rbac-permission-model.md` §6.2 当前均无 `visibility` 列**——本文先行定义并以本文为准（**架构文档待回改登记**），统一回改后 §2.1 矩阵的「WS_ONLY 公开项目行」按注 ① 同步解锁 |
 
-迁移：`ALTER TABLE users ADD disabled_at timestamptz NULL, ADD disabled_by uuid NULL`（在线可执行，零锁表风险）。
+迁移：`ALTER TABLE users ADD disabled_at timestamptz NULL, ADD disabled_by uuid NULL`（在线可执行，零锁表风险）；`ALTER TABLE projects ADD visibility varchar(8) NOT NULL DEFAULT 'private' CHECK (visibility IN ('private','public'))`（与 `status` 同 enum 宽度，O(1) 元数据操作）。
+
+> **注 B（架构待回改登记）**：`Project.visibility` 枚举为本文定义（与 `RPT-002` §BR-02「公开项目降权视图」产品语义对齐），`unified-issue-model.md` §2.4 / `rbac-permission-model.md` §6.2 当前未涉及该字段。本字段上线需同步触发两项回改：① `unified-issue-model.md` §2.4 在 `Project` 模型代码段加 `visibility = models.CharField(...)`；② `rbac-permission-model.md` §6.2 `ProjectQuerySet._scoped_for` 增加「`_is_public`」分支（`Exists(Project.objects.filter(id=OuterRef('pk'), visibility='public', workspace_id=OuterRef('workspace_id')))`），并对 `WS_ONLY` 主体应用 `_is_public=True | _is_member=True | _ws_admin=True` 的合取语义。在两项回改完成前，公开项目对外不可见（与本文 §2.1 注 ① 一致）。
 
 ### 4.2 `access/matrix.py` 核心实现
+
+> **目标态 / 当前态说明**：本节为待架构回改后的目标态参考实现，与 §2.1 注 ①、§4.1 注 B 配套生效。**当前态**（`rbac-permission-model.md` §6.2 `_scoped_for` 未实现公开项目可见通道、`Project.visibility` 字段未上线）下，`visible_project_ids` 等价于仅覆盖「`WS_ADMIN` 隐式全权 ∪ 显式 `ProjectMember`」两条分支——本节 `public` / `drafts` 两个 QuerySet 在当前态不参与 `member | public | drafts` 的合取；落地由 §4.1 注 B 的回改任务（`unified-issue-model.md` §2.4 加 `visibility` 字段、`rbac-permission-model.md` §6.2 `_scoped_for` 增加 `_is_public` 分支）统一解锁。架构文档回改完成后，本节代码按合取形态直接落地；当前态不得按合集语义实现并上线。
 
 ```python
 # apps/access/matrix.py —— 行级可见性唯一实现地（BR-01/BR-09）
@@ -294,9 +309,15 @@ class AccessibleQuerySet(models.QuerySet):
 
 ### 4.3 ViewSet 基类与 CI 守护
 
+> **基类命名统一声明**：本文档以 `AccessibleModelViewSet` 作为面向工程师的功能名（强调「行级过滤 + CI 守护」语义）；其类签名与 `get_queryset()` 模板行为与 [`api-conventions.md` §10.1](../architecture/api-conventions.md) 的 `BaseAPIView` **完全一致**——`api-conventions.md` §10.1 派生表里的 `WorkspaceScopedAPIView`（工作空间作用域）与 `ProjectScopedAPIView`（项目作用域）作为 `AccessibleModelViewSet` 的派生基类，复用同一套 `accessible_queryset` 模板方法与 `resource_family` 资源族映射机制；本类不引入新基类层级，仅在 `BaseAPIView` 默认 `get_queryset` 上叠加 `accessible_by(self.request.user, workspace_id=...)` 调用，使第三层行级过滤与 `?fields=` / `?expand=` / 游标分页等第一/二/四层能力共存。`rbac-permission-model.md` §6.3 的旧命名 `BaseViewSet` 已被 `api-conventions.md` §10.1 取代——以 `api-conventions.md` 为准（架构文档待回改登记，与 `AUTH-003` §4.3 同款 ADR）。实际代码落地时，工程师在 `plane/app/views/base.py` 仅继承既有 `BaseAPIView`（或其 `WorkspaceScopedAPIView` / `ProjectScopedAPIView` 派生），由 `AUTH-003` 已在的强制注入路径自动获得第三层过滤；本文 `AccessibleModelViewSet` 是**功能命名**而非**新基类**。
+
 ```python
 class AccessibleModelViewSet(ModelViewSet):
-    """模板方法：get_queryset 必须经 accessible_queryset()。"""
+    """模板方法：get_queryset 必须经 accessible_queryset()。
+
+    签名与 api-conventions.md §10.1 的 BaseAPIView 等价；本类仅展示
+    accessible_queryset() 在 BaseAPIView 默认实现上的叠加形态。
+    """
     resource_family: str = ""                  # 子类声明，映射 matrix
 
     def get_queryset(self):
@@ -306,6 +327,14 @@ class AccessibleModelViewSet(ModelViewSet):
         return self.queryset.accessible_by(self.request.user,
                                            workspace_id=self.workspace_id)
 ```
+
+派生基类的资源族映射示例（与 `api-conventions.md` §10.1 一致）：
+
+| 派生基类（`api-conventions.md` §10.1） | `permission_classes` 默认 | `resource_family` 映射 |
+| --- | --- | --- |
+| `WorkspaceScopedAPIView` | `WorkspaceBasePermission`（`rbac-permission-model.md` §5.2 L1） | `workspace`、`workspace_member`、`invitation`、`workspace_label`、`activity` |
+| `ProjectScopedAPIView` | `ProjectBasePermission`（`rbac-permission-model.md` §5.2 L2） | `project`、`project_member`、`state`、`label`、`cycle`、`module`、`board`、`view` |
+| `BaseAPIView`（无作用域，子类自管） | 由子类显式声明（典型为 `IssuePermission` 等 L3） | `issue`、`issue_comment`、`attachment`、`worklog` 等叶资源 |
 
 CI AST 规则（`scripts/lint_access.py`，ruff 插件形态）：
 
@@ -342,9 +371,20 @@ CI AST 规则（`scripts/lint_access.py`，ruff 插件形态）：
 }
 ```
 
-错误：>200 人 `400 VALIDATION_BULK_LIMIT_EXCEEDED`；含最后 OWNER 降权 `400 VALIDATION_ERROR`（`details.user_ids=["cannot demote the last workspace owner"]`）；非 WS_ADMIN `403 PERM_WORKSPACE_ADMIN_REQUIRED`。
+错误：>100 人 `400 VALIDATION_BULK_LIMIT_EXCEEDED`（BR-14）；含最后 OWNER 降权 `409 RESOURCE_STATE_INVALID`（`details.user_ids=["cannot demote the last workspace owner"]`，BR-03）；非 WS_ADMIN `403 PERM_WORKSPACE_ADMIN_REQUIRED`。
 
-#### 4.4.2 账号启停 `POST …/users/{id}/disable/` `POST …/users/{id}/enable/`
+#### 4.4.2 账号启停
+
+工作空间管理员对本空间成员的启停走**工作空间作用域端点**（与 §4.4.1 批量角色作用域一致）：
+
+```
+POST /api/v1/workspaces/{slug}/members/{member_id}/disable/
+POST /api/v1/workspaces/{slug}/members/{member_id}/enable/
+```
+
+权限 `workspace.member.manage`（`rbac-permission-model.md` §8.1：WS_ADMIN+；⚠️ 不可管 Owner——OWNER 禁启停）；操作者本人 `400 VALIDATION_ERROR`（`details.field=member_id / INVALID`，BR-03）；最后 `WS_OWNER` 禁停 `409 RESOURCE_STATE_INVALID`（BR-03，`rbac` §7.2 末位保护）。
+
+**系统管理员对全站账号的启停**走 admin 端的独立端点（`api-conventions.md` §2.5 已登记）：`PATCH /api/v1/instances/users/{user_id}/` 请求体 `{ "is_active": false }`；权限 `system.user.manage`（`rbac` §8.3：SYSTEM_ADMIN）。本端点不在本文档契约范围（admin 应用消费，错误码与请求体按 `api-conventions.md` §2.5 既有规范），本文档 §4.4.2 仅负责工作空间侧契约。
 
 成功 `200`：
 
@@ -377,11 +417,11 @@ class AccountService:
         target.is_active = False
         target.disabled_at = timezone.now(); target.disabled_by = actor
         target.save(update_fields=["is_active", "disabled_at", "disabled_by"])
+        # Session / APIKey 均无 DB 吊销列（见 §4.1 与 AUTH-004 §4.3.5/§2.5）：吊销走 Valkey
         revoked = {
-            "sessions": Session.objects.filter(user=target, revoked_at__isnull=True)
-                                       .update(revoked_at=timezone.now()),
-            "api_keys": APIKey.objects.filter(user=target, revoked_at__isnull=True)
-                                      .update(revoked_at=timezone.now()),
+            "sessions":    delete_all_sessions(user_id=target.id),         # AUTH-004 §4.3.5
+            "api_keys":    revoke_all_api_keys(user_id=target.id),         # AUTH-004 §2.5：bitmap 写入 Valkey
+            "ws_connections": 0,  # 由 on_commit 的 broadcast_revoke 触达所有 live 实例即时清本地缓存
         }
         jwt_blacklist.add_user(target.id)                     # Redis 集合，auth 中间件必查
         transaction.on_commit(lambda: broadcast_revoke.delay(  # ≤5s 生效（BR-05）
@@ -432,14 +472,14 @@ export class MemberAdminStore {
 | UT-06 | CI AC-01~05 | 五段违规代码样本全部触发构建失败；合规样本不误报 |
 | UT-07 | `unsafe_all` 登记 | 无 reason 抛错；有 reason 进登记表 + 计数 |
 | UT-08 | 批量角色部分成功 | 混合输入 updated/skipped 计数与原因正确 |
-| UT-09 | 最后 OWNER 保护 | 降权/禁用/移出最后 OWNER 均 400 `VALIDATION_ERROR` |
+| UT-09 | 最后 OWNER 保护 | 降权/禁用/移出最后 OWNER 均 409 `RESOURCE_STATE_INVALID`（BR-03，`rbac-permission-model.md` §7.2 末位保护） |
 | UT-10 | 自我禁用 | 400 `VALIDATION_ERROR` |
-| UT-11 | 吊销链 | disable 后 Session/APIKey 全 `revoked_at` 置位；JWT 黑名单含其 jti |
+| UT-11 | 吊销链 | disable 后 `delete_all_sessions(user_id=target.id)` 计数 = 既有活 session 数（AUTH-004 §4.3.5）；`revoke_all_api_keys(user_id=target.id)` Valkey bitmap 含其全部 api_key hash 前缀；JWT 黑名单含其 jti |
 | UT-12 | 幂等启停 | 重复 disable `revoked` 全 0；enable 恢复原 Key 不存在（BR-07） |
 | UT-13 | 禁用灰标序列化 | `is_active=false` 用户在所有输出含 `disabled: true` 标记 |
 | UT-14 | 分享链接通道豁免 | `FILE-004` 匿名访问不经 `accessible_by`（BR-12），CI 白名单生效 |
 | UT-15 | 服务账号通道 | 系统账号查询走登记路径，不触发 matrix 过滤 |
-| UT-16 | 批量 ≤200 | 201 人 400 `VALIDATION_BULK_LIMIT_EXCEEDED` |
+| UT-16 | 批量 ≤100 | 101 人 400 `VALIDATION_BULK_LIMIT_EXCEEDED`（BR-14 对齐 `api-conventions.md` §10.5 / §7.2） |
 
 ### 5.2 集成测试（越权矩阵 · 参数化）
 

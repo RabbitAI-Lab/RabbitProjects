@@ -67,8 +67,8 @@ RPT-001 回答「**我**还有多少事」，RPT-002 回答「**这个项目**�
 | 依赖 | 内容 | 阻塞原因 |
 | --- | --- | --- |
 | `RPT-001` | 聚合框架 + `stats/querysets.py` 公共基座落地位 | 口径单源 |
-| `TASK-002` | `completed_at` 服务端置位、`estimate_minutes` 列 | 完成与工时口径 |
-| `TASK-006` | `WorkLog` 表与 `minutes` 校验 | 登记工时聚合 |
+| `TASK-002` | `completed_at` 服务端置位（流转守卫首次进入 completed 组时写入，`cancelled` 不写） | 完成判定 |
+| `TASK-006` | `estimate_minutes` 列（任务字段）+ `WorkLog` 表与 `minutes` 校验 | 估算与登记工时口径 |
 | `TASK-003` | 列表筛选参数语法（`state_group`、`<field>=<v>;after`） | 下钻跳转参数一致性 |
 
 ### 1.6 竞品参考
@@ -111,7 +111,7 @@ sequenceDiagram
     participant FE as 统计页
     participant API as stats/members/
     participant DB as PostgreSQL
-    FE->>API: GET …/stats/members/?role=member&order_by=-open_count
+    FE->>API: GET …/stats/members/?role=PROJ_ADMIN,PROJ_CONTRIBUTOR&order_by=-open_count
     API->>DB: 项目成员集（含角色）
     API->>DB: 单条 GROUP BY assignee 聚合<br/>（open/done/overdue/estimate/logged）
     API->>API: 成员表 LEFT JOIN 聚合结果<br/>（0 任务成员显 0，不消失）
@@ -139,22 +139,30 @@ sequenceDiagram
 | 成员行 done | `?assignee_id=<uid>&state_group=completed&completed_at=<30d_ago>;after` |
 | 趋势图某日创建柱 | `?created_at=<day>;on` |
 
+> **白名单对齐声明**：上述参数均落在 `TASK-003` 列表白名单或本迭代联合 `RPT-001` 提交白名单扩展项内：
+> - `state_id` / `state_group` / `assignee_id` / `target_date` / `order_by` / `created_by` / `priority` / `label_id` 全部在 `TASK-003` §1.2 白名单；
+> - `state_group`、`assignee_id`（单数，`RPT-001` §4.2.4 沿用）由 `RPT-001` 落点，BR-09 明确值域与 OR/AND 语义；
+> - `assignee_ids` 复数形态作为多值/别名沿用本迭代扩展位登记规则（与 `parent_id` 沿 `TASK-004` §4.2、`archived` 沿 `TASK-009` §1.5 同款先例），由 `TASK-003` 决策 6 兼容，本表跳转参数仍以单数 `assignee_id` 为权威形式；
+> - **`completed_at` / `created_at` 作为过滤参数**（带 `;on` / `;before` / `;after` 日期操作符）需在 `TASK-003` 白名单扩展登记——本迭代提交扩展 RFC（落点同 `parent_id` 沿 `TASK-004` §4.2、`archived` 沿 `TASK-009` §1.5 两条先例），落地前下钻产生的 404 风险由 `IssueFilterSet` 宽容忽略策略（`TASK-003` 决策 2）兜底，列表显示空集但不报错；
+> - `?archived=true` 复用 `TASK-009` §1.3 列表归档参数同语义（见 BR-03），不另立 `include_archived`。
+
 ### 2.4 业务规则汇总
 
 | 编号 | 规则 | 说明 / 验收点 |
 | --- | --- | --- |
 | BR-01 | 公共口径唯一来源 `stats/querysets.py::issue_stats_base()`；两 Service 共用，禁止内联复制 | CI 静态检查（同 RPT-001） |
 | BR-02 | 权限：项目成员见全量；非成员访问公开项目仅见「公开口径」（不含成员矩阵——成员名单本身即敏感） | 成员端点对非成员一律 403 |
-| BR-03 | 归档任务默认剔除（`archived_at IS NULL`）；URL 加 `include_archived=true` 时计入 | 与 TASK-009 列表语义一致 |
+| BR-03 | 归档任务默认剔除（`archived_at IS NULL`）；URL 加 `?archived=true` 时计入（与 `TASK-009` §1.3 列表归档参数同名同语义，复用其白名单入口；不另立 `include_archived`） | 与 TASK-009 列表语义一致 |
 | BR-04 | 完成率分母剔除 cancelled；分母为 0 返回 `null` 而非 0 | 防「0%」误导读数 |
-| BR-05 | 时区：趋势「日」界取项目时区（项目设置，默认工作空间时区）；请求可带 `?tz=` 覆盖 | 跨时区团队口径稳定 |
+| BR-05 | 时区：趋势「日」界取**请求级时区**（优先级 `?tz=` query > `X-Client-TZ` 头 > 默认 `Asia/Shanghai`）；与 `RPT-001` BR-04 同范式（AUTH-004 Profile 无 timezone 字段，前端持时区、后端折算）；非法 IANA 名 400 `VALIDATION_INVALID_PARAM`（`details: [{field:"tz", code:"INVALID", ...}]`） | 跨时区团队口径稳定 |
 | BR-06 | 性能门禁：10 万任务项目 P95 < 200ms（进度）/ < 300ms（成员 200 行） | IT 压测守护 |
 | BR-07 | 成员矩阵默认按 `-open_count` 排序；可切 `name/done/overdue/logged` 升降序 | `order_by` 参数白名单 |
-| BR-08 | 角色筛选 `?role=admin,member`（多值逗号）；guest 默认不含（guest 不承担交付责任，可显式 `role=guest` 查看） | 与 TEAM-002 角色枚举一致 |
+| BR-08 | 角色筛选 `?role=PROJ_ADMIN,PROJ_CONTRIBUTOR`（多值逗号，值域 `PROJ_ADMIN/PROJ_CONTRIBUTOR/PROJ_COMMENTER/PROJ_VIEWER`，`rbac-permission-model.md` §3.2）；`PROJ_VIEWER` 与 `PROJ_COMMENTER` 默认不含（不交付任务） | 权限码字面量与前端枚举同源 |
 | BR-09 | 被禁用账号成员仍计入历史聚合（done/logged），但 `open_count` 实时口径不变；行首置「已禁用」灰标 | 与 AUTH-006 启停联动 |
 | BR-10 | 数据新鲜度：SWR staleTime 60s + 手动刷新按钮；页脚显示「统计截至 HH:mm」 | 不做实时推送（§1.4） |
 | BR-11 | 工时「剩余」下限 0：`max(0, estimate - logged)`；超额部分单独 `overrun_minutes` 字段输出 | 负数不外泄为误导性读数 |
 | BR-12 | 趋势窗口固定 30 天（P2 不做自定义窗口）；`?days=7|14|30` 白名单可调 | P3 报表再放开 |
+| BR-13 | 两统计端点限流 10 请求/分钟（按 `user_id` 计数，Valkey，`api-conventions.md` §7.2「报表聚合端点」配额）；超限 `429 RATE_LIMIT_EXCEEDED` + `Retry-After`；响应头 `Cache-Control: no-store`（与 `RPT-001` BR-07 同范式，`ReportAggregationThrottle` 复用） | Throttle | 429 |
 
 ### 2.5 异常处理
 
@@ -163,8 +171,8 @@ sequenceDiagram
 | 项目不存在 / 无权 | `404 RESOURCE_NOT_FOUND`（存在性隐藏，`api-conventions.md` §8） |
 | 非成员访问公开项目进度端点 | 200 降权响应（无 members 字段）；访问 members 端点 403 |
 | 项目 0 任务 | 全 0 + `completion_rate=null` + 空态结构完整（前端插画） |
-| `order_by` 非白名单 | `400 VALIDATION_ERROR`（fields.order_by） |
-| `tz` 非法 IANA 名 | `400 VALIDATION_ERROR`（fields.tz） |
+| `order_by` 非白名单 | `400 VALIDATION_INVALID_PARAM`（`details: [{field:"order_by", code:"INVALID", message:"must be in whitelist"}]`，`api-conventions.md` §8.4） |
+| `tz` 非法 IANA 名 | `400 VALIDATION_INVALID_PARAM`（`details: [{field:"tz", code:"INVALID", message:"须为合法 IANA 时区名"}]`） |
 | 聚合超时（>5s statement_timeout） | `500 SERVER_ERROR` + Sentry 采样；前端 Toast「统计暂时不可用」 |
 
 ### 2.6 边界条件
@@ -174,7 +182,7 @@ sequenceDiagram
 | 1 | 全部任务 cancelled | 完成率 `null`；分布环图全灰「已取消」 |
 | 2 | 成员被移出项目但有历史工时 | 成员矩阵以「当前成员 ∪ 近 30 天有工时的前成员」为行集；前成员标「已离开」 |
 | 3 | 任务无 assignee | 计入项目合计，不入任何成员行；矩阵末行「未分配」聚合行 |
-| 4 | 趋势跨夏令时切换日 | 按项目时区日界分组，25h/23h 日天然正确处理（DB `TruncDate(tz)`) |
+| 4 | 趋势跨夏令时切换日 | 按请求级 tz 日界分组，25h/23h 日天然正确处理（DB `TruncDate(tz)`) |
 | 5 | WorkLog 落在已完成任务 | `logged_minutes` 照计（登记是事实）；不影响 open 口径 |
 | 6 | `estimate_minutes` 为 null | 求和时按 0；列头脚注「N 个任务未填估算」 |
 | 7 | 项目归档态 | 统计只读可看（历史事实），页头加「项目已归档」横幅 |
@@ -192,7 +200,7 @@ sequenceDiagram
 ├────────────────────────────────────────────────────────────────────┤
 │ 完成率            开放任务          逾期             工时(估/登)      │
 │ ┌────────┐       ┌────────┐       ┌────────┐      ┌────────────┐   │
-│ │  62%   │       │  143   │       │ 🔴 17  │      │ 1,240h/986h│   │
+│ │  53%   │       │  143   │       │ 🔴 17  │      │ 1,240h/986h│   │
 │ │ ▓▓▓▓▓░░│       │ ↗ +12  │       │ ↘ -3   │      │ 剩余 254h  │   │
 │ └────────┘       └────────┘       └────────┘      └────────────┘   │
 ├────────────────────────────────────────────────────────────────────┤
@@ -258,18 +266,18 @@ sequenceDiagram
 
 | 既有结构 | 用途 | 索引 |
 | --- | --- | --- |
-| `Issue.state.group` | 五组分布 | `idx_issue_state_group`（Sprint 1 建，project+group 复合） |
-| `Issue.target_date / completed_at / created_at` | 逾期与趋势 | `idx_issue_target_date`、`idx_issue_completed_at` |
-| `Issue.assignees`（M2M through） | 成员矩阵 | `idx_assignee_issue`（RPT-001 验收） |
+| `Issue.state.group` | 五组分布 | `idx_issue_proj_state_sort`（`unified-issue-model.md` §2.9，`project + state + sort_order` 复合） |
+| `Issue.target_date / completed_at / created_at` | 逾期与趋势 | `target_date` 单列索引 + `idx_issue_active_by_project`（`unified-issue-model.md` §2.9；`completed_at`/`created_at` 由主聚合扫描覆盖） |
+| `Issue.assignees`（M2M through） | 成员矩阵 | `idx_assignee_issue`（`unified-issue-model.md` §2.9，RPT-001 验收） |
 | `Issue.estimate_minutes` | 估算合计 | 无需索引（随主聚合扫描） |
-| `WorkLog.minutes / worked_on` | 登记合计 | `idx_worklog_issue_time`（TASK-006） |
-| `ProjectMember.role / User.is_active` | 角色筛选与禁用标 | `idx_projectmember_proj_role` |
+| `WorkLog.minutes / worked_on` | 登记合计 | `idx_worklog_issue` + `worked_on` 单列 + `idx_worklog_actor_day`（`TASK-006` §3.4） |
+| `ProjectMember.role / User.is_active` | 角色筛选与禁用标 | `ProjectMember` 复合索引 `(member, project, role)`（`rbac-permission-model.md` §3.2）+ `User.is_active` 单列 |
 
 > 结论：10 万任务量级下全部查询走既有索引；不新增列、不建汇总表（§1.1 纪律）。IT-06 压测验证，超标才允许提出预聚合 RFC。
 
 ### 4.2 API 定义
 
-#### 4.2.1 项目进度 `GET /api/v1/workspaces/{slug}/projects/{project_id}/stats/?days=30&tz=Asia/Shanghai`
+#### 4.2.1 项目进度 `GET /api/v1/workspaces/{slug}/projects/{project_id}/stats/?days=30&tz=Asia/Shanghai&archived=false`
 
 成功 `200`：
 
@@ -303,17 +311,22 @@ sequenceDiagram
 }
 ```
 
+> 响应头必带：`Cache-Control: no-store`（实时性优先，禁中间缓存，BR-13）+ `X-RateLimit-Limit: 10` / `X-RateLimit-Remaining` / `X-RateLimit-Reset`（BR-13，`api-conventions.md` §7.3）。
+
 非成员访问公开项目：同结构但 `meta.limited=true` 且无 `worklog_summary`（工时属内部口径）；私有项目非成员 `404 RESOURCE_NOT_FOUND`：
 
 ```json
 {
   "status": "error",
-  "error": {"code": "RESOURCE_NOT_FOUND", "message": "Project not found"},
-  "meta": {"request_id": "01J9XX2MN3P4Q5R6S7T8V9W0X1"}
+  "error": {
+    "code": "RESOURCE_NOT_FOUND",
+    "message": "Project not found",
+    "request_id": "01J9XX2MN3P4Q5R6S7T8V9W0X1"
+  }
 }
 ```
 
-#### 4.2.2 成员任务量 `GET …/stats/members/?role=member&order_by=-open_count&cursor=`
+#### 4.2.2 成员任务量 `GET …/stats/members/?role=PROJ_ADMIN,PROJ_CONTRIBUTOR&order_by=-open_count&cursor=`
 
 成功 `200`：
 
@@ -323,7 +336,7 @@ sequenceDiagram
   "data": {
     "rows": [
       {
-        "user_id": "01J8KR4UV5W6X7Y8Z9A0B1C2D3",
+        "member_id": "01J8KR4UV5W6X7Y8Z9A0B1C2D3",
         "display_name": "张三",
         "avatar_url": "https://cdn.example.com/avatars/u1.png",
         "role": "PROJ_CONTRIBUTOR",
@@ -343,21 +356,24 @@ sequenceDiagram
 }
 ```
 
-错误：`role` 非法值 `400 VALIDATION_ERROR`（`details.role=["must be one of: admin, member, guest"]`）；`order_by` 非白名单 `400 VALIDATION_ERROR`；非项目成员（含公开项目）`403 PERM_NOT_PROJECT_MEMBER`。
+> 响应头必带：`Cache-Control: no-store` + `X-RateLimit-*`（BR-13，限流与进度端点共用 `ReportAggregationThrottle`，10 req/min·user）。
+
+错误：`role` 非法值 `400 VALIDATION_INVALID_PARAM`（`details: [{field:"role", code:"INVALID", message:"must be one of: PROJ_ADMIN, PROJ_CONTRIBUTOR, PROJ_COMMENTER, PROJ_VIEWER"}]`，`api-conventions.md` §8.4）；`order_by` 非白名单 `400 VALIDATION_INVALID_PARAM`；非项目成员（含公开项目）`403 PERM_DENIED`（`rbac-permission-model.md` §4）。
 
 ### 4.3 核心逻辑
 
 #### 4.3.1 公共口径基座（BR-01 红线落点）
 
 ```python
-# apps/stats/querysets.py —— RPT-001 与 RPT-002 共用，CI 守护唯一性
-def issue_stats_base(*, project_id=None, workspace_id=None, include_archived=False) -> QuerySet:
+# apps/api/plane/analytics/services/project.py —— RPT-001 与 RPT-002 共用，CI 守护唯一性
+def issue_stats_base(*, project_id=None, workspace_id=None, archived=False) -> QuerySet:
+    """公共基座：RPT-001 与 RPT-002 共用（CI 守护唯一性）；`archived` 与 TASK-009 列表归档参数同语义"""
     qs = Issue.objects.all()
     if project_id:
         qs = qs.filter(project_id=project_id)
     if workspace_id:
         qs = qs.filter(workspace_id=workspace_id)
-    if not include_archived:
+    if not archived:
         qs = qs.filter(archived_at__isnull=True)
     return qs.select_related("state")
 
@@ -404,15 +420,34 @@ class ProjectStatsService:
         }
 ```
 
-#### 4.3.3 `MemberStatsService`
+#### 4.3.3 ViewSet（throttle + no-store 落地，BR-13）
+
+```python
+# apps/api/plane/analytics/views/project.py
+class ProjectStatsAPIView(BaseAPIView):
+    """GET …/projects/{id}/stats/ 与 …/stats/members/ —— 报表聚合端点"""
+    permission_classes = [IsAuthenticatedAndActive]
+    throttle_classes = [ReportAggregationThrottle]   # 10 req/min·user（BR-13，复用 RPT-001）
+
+    def get(self, request, slug, project_id):
+        # ... 解析 + 权限 + 调 ProjectStatsService
+        return success_response(data, headers={
+            "Cache-Control": "no-store",             # BR-13
+            "X-RateLimit-Limit": "10",
+            "X-RateLimit-Remaining": str(remaining),
+            "X-RateLimit-Reset": str(reset_ts),
+        })
+```
+
+#### 4.3.4 `MemberStatsService`
 
 ```python
     def members(self, project, *, roles: list[str] | None, order_by: str, today: date) -> dict:
-        members = ProjectMember.objects.filter(project=project).select_related("user")
+        members = ProjectMember.objects.filter(project=project).select_related("member")
         if roles:
             members = members.filter(role__in=roles)
         agg = (issue_stats_base(project_id=project.id)                       # SQL：单条 GROUP BY
-               .filter(assignees__in=[m.user_id for m in members])
+               .filter(assignees__in=[m.member_id for m in members])
                .values("assignees")
                .annotate(open_count=Count("id", filter=open_q(), distinct=True),
                          done=Count("id", filter=Q(state__group="completed",
@@ -420,7 +455,7 @@ class ProjectStatsService:
                          overdue=Count("id", filter=overdue_q(today), distinct=True),
                          est=Sum("estimate_minutes", filter=open_q())))
         by_user = {str(r["assignees"]): r for r in agg}
-        rows = [self._row(m, by_user.get(str(m.user_id)), today) for m in members]
+        rows = [self._row(m, by_user.get(str(m.member_id)), today) for m in members]
         rows.sort(key=ORDER_KEY[order_by.lstrip("-")], reverse=order_by.startswith("-"))
         return {"rows": rows, "unassigned": self._unassigned(project, today),
                 "totals": self._totals(project, today)}      # 去重口径，BR-07 脚注
@@ -475,10 +510,10 @@ export class ProjectStatsStore {
 | 编号 | 用例 | 断言 |
 | --- | --- | --- |
 | UT-01 | 五组分布计数 | 构造各组任务，分布与逐条 filter 计数一致 |
-| UT-02 | 完成率分母剔除 cancelled | 10 任务（6 完成 4 取消）→ `null`；6 完成 3 取消 1 开放 → 0.6 |
+| UT-02 | 完成率分母剔除 cancelled | 10 任务全部 cancelled（无 completed）→ `null`（分母 = 0）；6 完成 0 取消 4 开放 → `6 / (10 - 0) = 0.6`（公式 §2.1 `completed / (total - cancelled)`） |
 | UT-03 | 分母 0 → null | 全取消项目 `completion_rate is None` |
 | UT-04 | 逾期口径 | `target_date=昨天` + started → 计；completed → 不计；cancelled → 不计 |
-| UT-05 | 归档任务剔除 | archived 任务不进任何计数；`include_archived=true` 进 |
+| UT-05 | 归档任务剔除 | archived 任务不进任何计数；`?archived=true` 时进（与 TASK-009 §4.x 列表归档参数同语义） |
 | UT-06 | 趋势补零 | 30 天序列恒 30 项，无任务日 count=0 |
 | UT-07 | 时区日界 | 项目时区 UTC+8，23:30 UTC 创建计入次日 |
 | UT-08 | 工时三值 | est=100h logged=60h → remaining=40h overrun=0；logged=120h → remaining=0 overrun=20h |
@@ -488,7 +523,7 @@ export class ProjectStatsStore {
 | UT-12 | 未分配行 | 无 assignee 任务入 `unassigned`，不入任何成员行 |
 | UT-13 | 前成员行 | 移出成员但 30d 内有工时 → 行在且标 `已离开` |
 | UT-14 | 排序白名单 | `order_by=-done_count_30d` 生效；`order_by=password` 400 `VALIDATION_INVALID_PARAM` |
-| UT-15 | 角色筛选 | `role=admin` 仅管理员行；默认不含 guest |
+| UT-15 | 角色筛选 | `role=PROJ_ADMIN` 仅管理员行；默认不含 `PROJ_VIEWER`/`PROJ_COMMENTER` |
 | UT-16 | 禁用成员 | `is_active=false` 行置灰标，计数照出（BR-09） |
 | UT-17 | 下钻参数生成 | `drillParams.overdue` 输出与 TASK-003 语法逐字符一致 |
 | UT-18 | SQL 预算 | `assertNumQueries(≤5)`（进度）/ `≤4`（成员） |

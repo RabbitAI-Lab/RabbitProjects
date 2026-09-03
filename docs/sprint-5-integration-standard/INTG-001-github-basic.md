@@ -9,9 +9,9 @@
 | 文档状态 | 待评审（Draft） |
 | 最后更新日期 | 2026-09-01 |
 | 上游依赖 | `TASK-001/002`（Issue 创建与属性管道）、**`TASK-005`（流转路径——合并自动改状态的唯一通道）**、`TASK-010`（Activity 留痕）、`INFRA-002`（出网策略 / Celery / Redis）、`INFRA-004`（信封与错误码） |
-| 下游消费 | `INTG-002`（Webhook——集成事件同为其事件源之一）、`INTG-003/004`（P4 Slack/Zoom 复用安装与凭据体系）、`TASK-015`（P4 基线对比外部引用） |
+| 下游消费 | `INTG-002`（Webhook——集成事件同为其事件源之一）、`INTG-003`（P4 Slack/Zoom——复用安装与凭据体系）、`TASK-015`（P4 基线对比外部引用） |
 | 上游依据 | `docs/需求文档.md` §3.9.1（绑定仓库、自动同步 PR/Issue/Commit、Issue 自动转任务、任务关联 PR、PR 合并自动更新任务状态）、§8.2 第三方集成 P2 列 |
-| 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md)（**§7.1 `external_id` / `external_source` 幂等键预留说明**）、[`api-conventions.md`](../architecture/api-conventions.md)（§8.6 `SERVER_EXTERNAL_SERVICE_ERROR`、§13.3 出站事件复用、§10.5 事务纪律）、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md)（`integration.manage` 权限码） |
+| 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md)（**§7.1 `external_id` / `external_source` 幂等键预留说明**）、[`api-conventions.md`](../architecture/api-conventions.md)（§8.6 `SERVER_EXTERNAL_SERVICE_ERROR`、§13.3 出站事件复用、§10.5 事务纪律）、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md)（§8.1 `integration.manage` WS 级安装 / §8.2 `integration.config` 项目级绑定配置） |
 | 对标基线 | Plane GitHub 同步（`apps/api/plane/app/views/integrations/github_sync/` 系列端点 + `GITHUB_CONFIGURATION` + installation token） · Ones 应用集成市场 |
 | 工作量估算 | 后端 4 人日 / 前端 2 人日 / 联调与测试 2 人日，合计 **8 人日** |
 
@@ -28,7 +28,7 @@
 | GitHub → 系统 | Issue 开启/编辑/关闭 → 系统任务创建/更新/流转；PR 关联任务、PR merge → 任务自动完成；Commit（消息含 `RBT-123`）→ 挂载任务详情 | GitHub Webhook（入站，验签） |
 | 系统 → GitHub | 任务标题/描述/状态变更 → 同步回 Issue 标题/正文/状态（开/关）；任务评论 → Issue 评论 | Celery 出站任务（事务后投递） |
 
-**P2 的克制边界**：同步的是「标题、描述、状态、评论」四类核心字段与关联关系；标签/指派人/里程碑的映射（字段语义不对齐，需映射表）后置 P4；Slack/Zoom 归 `INTG-003/004`。
+**P2 的克制边界**：同步的是「标题、描述、状态、评论」四类核心字段与关联关系；标签/指派人/里程碑的映射（字段语义不对齐，需映射表）后置 P4；Slack/Zoom 归 `INTG-003`，Open API 平台归 `INTG-004`（README §4.12）。
 
 ### 1.2 关键约定一：幂等键 `external_id` / `external_source`
 
@@ -39,7 +39,7 @@
 | `external_source` | `"github"`（P2 唯一值；P4 扩 `"slack"` 等） | 外部系统标识 |
 | `external_id` | GitHub **node_id**（GraphQL 全局 ID，非数字 id——防跨仓库碰撞） | 同一外部对象在本系统的**唯一锚点** |
 
-- 入站事件按 `(external_source, external_id)` 定位本地任务：命中则更新、未命中且事件为创建则建任务、未命中且事件为更新则**丢弃并记 WARN**（可能是绑定窗口前的历史事件）；
+- 入站事件按 `(external_source, external_id)` 定位本地任务：命中则更新、未命中且事件为创建则建任务（默认；绑定可配 `auto_create=False` 关闭自动建，改为仅按 `RBT-` 编号关联既有任务，见 BR-05）、未命中且事件为更新则**丢弃并记 WARN**（可能是绑定窗口前的历史事件）；
 - **幂等三层**：定位幂等（上面的键）+ 事件幂等（GitHub `X-GitHub-Delivery` 头去重，Redis SETNX 24h）+ 写入幂等（内容 hash 比对，无变化跳过出站）；
 - 同步风暴防线：系统→GitHub 的每次变更携带 `edited_by=rp` 的编辑标记，GitHub 侧忽略自己发起的回声事件（见 BR-09 回声抑制）。
 
@@ -54,7 +54,7 @@
 | --- | --- | --- |
 | 1 | 安装与绑定 | GitHub App 安装流（回调换取 installation token）；项目 × 仓库绑定（多对多上限 5 仓库/项目） |
 | 2 | Issue 双向同步 | 开启/标题/描述/状态/评论五类事件双向；冲突策略 = **GitHub 优先**（后写胜出，时间戳裁决） |
-| 3 | Issue → 任务映射 | 绑定仓库新 Issue 自动建任务（类型=缺陷/任务可配）；`RBT-` 编号回写 Issue 标题前缀 |
+| 3 | Issue → 任务映射 | 绑定仓库新 Issue 自动建任务（类型=缺陷/任务可配；绑定级开关可关自动建，关闭后仅按 `RBT-` 编号关联既有任务）；`RBT-` 编号回写 Issue 标题前缀 |
 | 4 | PR 关联 | PR 描述/标题含 `RBT-123` 或 `Fixes #45`（间接经 Issue 映射）→ 建立 PR↔任务关联；任务详情展示 PR 列表与状态 |
 | 5 | 合并自动流转 | PR merged → 关联任务经 `TASK-005` 守卫自动迁入项目「已完成」组状态；被阻塞时降级为系统评论提醒 |
 | 6 | Commit 挂载 | Commit 消息含 `RBT-123` → 任务详情「提交」区追加（sha 短链、消息、作者、仓库） |
@@ -65,7 +65,7 @@
 | 能力 | 本文档（P2） | 归属 |
 | --- | --- | --- |
 | 安装流 / 仓库绑定 / Issue 双向 / PR 关联 / 合并流转 / Commit 挂载 | ✅ | — |
-| 标签 / 指派人 / 里程碑映射同步 | ❌（语义不对齐，需映射配置） | P4 `INTG-004` |
+| 标签 / 指派人 / 里程碑映射同步 | ❌（语义不对齐，需映射配置） | P4（GitHub 深度同步增强，编号未分配——README §4.12 无对应文档） |
 | PR 评审评论同步 | ❌（仅 Issue 评论） | P4 |
 | GitHub Release / Actions / Checks | ❌ | P4 |
 | 多 GitHub 组织 / 企业版 GitHub | ❌（单 GitHub App，多组织天然支持） | — |
@@ -125,22 +125,30 @@ sequenceDiagram
     participant PG as PostgreSQL
 
     GH->>API: POST /api/v1/integrations/github/webhook/（issues.opened）
-    API->>API: 验签 X-Hub-Signature-256（hmac.compare_digest）<br/>+ 时间戳漂移 ≤5min
-    API->>R: SETNX delivery:{X-GitHub-Delivery}（24h）
-    alt 重复投递
-        API-->>GH: 200（幂等丢弃）
-    else 首次
-        API->>PG: 按 (installation_id, repo) 定位绑定项目
-        API->>CW: dispatch_github_event.delay(规范化事件)
-        API-->>GH: 202（快回包，GitHub 要求 10s 内）
-        CW->>PG: (github, node_id) 定位任务
-        alt 任务不存在 ∧ opened
-            CW->>PG: create_issue（系统账号，类型按绑定配置）
-            CW->>GH: 回写 Issue 标题前缀 [RBT-128]
-        else 存在
-            CW->>PG: 字段 diff → 更新（后写胜出）
+    API->>PG: 按 payload (installation_id, repo) 定位绑定（取 secret）
+    alt 未找到绑定（已解绑/未绑定）
+        API-->>GH: 202 静默丢弃（不泄漏已知 installation 集合）
+    else 找到绑定
+        API->>API: 验签 X-Hub-Signature-256（hmac.compare_digest）<br/>+ 时间戳漂移 ≤5min
+        alt 验签失败
+            API-->>GH: 403 PERM_DENIED（无任何副作用）
+        else 验签通过
+            API->>R: SETNX delivery:{X-GitHub-Delivery}（24h）
+            alt 重复投递
+                API-->>GH: 200（幂等丢弃）
+            else 首次
+                API->>CW: dispatch_github_event.delay(规范化事件)
+                API-->>GH: 202（快回包，GitHub 要求 10s 内）
+                CW->>PG: (github, node_id) 定位任务
+                alt 任务不存在 ∧ opened
+                    CW->>PG: create_issue（系统账号，类型按绑定配置）
+                    CW->>GH: 回写 Issue 标题前缀 [RBT-128]
+                else 存在
+                    CW->>PG: 字段 diff → 更新（后写胜出）
+                end
+                CW->>PG: Activity(⚙ GitHub) + INTG-002 事件扇出
+            end
         end
-        CW->>PG: Activity(⚙ GitHub) + INTG-002 事件扇出
     end
 ```
 
@@ -162,18 +170,18 @@ flowchart TD
 
 | 编号 | 规则 | 判定位置 | 违反后果 |
 | --- | --- | --- | --- |
-| BR-01 | 一切入站事件先验签（`X-Hub-Signature-256` 常量时间比对）再查重（Delivery 头 SETNX 24h）再入队；验签失败 403 且**不产生任何副作用** | 入站端点 | `403 PERM_DENIED` |
+| BR-01 | 入站处理顺序：**先按 payload `(installation_id, repository.full_name)` 定位绑定（取得该绑定的 `webhook_secret`）→ 验签（`X-Hub-Signature-256` 常量时间比对 + 时间戳漂移 ≤5min）→ 查重（Delivery 头 SETNX 24h）→ 入队（`dispatch_github_event.delay`）**；定位未命中（解绑窗口事件）静默 202 丢弃；验签失败 403 且**不产生任何副作用**；与 §2.2 时序图逐行对应 | 入站端点 | `403 PERM_DENIED` |
 | BR-02 | 时间戳防御：payload 无时间戳时以 Delivery 首见时刻为准，同事件 5 分钟后重放被 Delivery 去重拦截 | 入站端点 | — |
-| BR-03 | 仓库绑定：项目 × 仓库双向唯一；单项目 ≤5 仓库；单仓库可绑多项目（每项目各自映射，互不串扰） | Service + DB 约束 | `409 RESOURCE_ALREADY_EXISTS` / `RESOURCE_LIMIT_EXCEEDED` |
-| BR-04 | 幂等定位键 `(external_source='github', external_id=node_id)`；未命中 ∧ 非创建事件 → 丢弃 + WARN 日志（不回溯建任务） | Worker | — |
+| BR-03 | 仓库绑定：项目 × 仓库**条件唯一**（`deleted_at IS NULL` 时生效，见 §4.1.1 偏条件唯一修复 #2）；单项目 ≤5 仓库；单仓库可绑多项目（每项目各自映射，互不串扰） | Service + DB 约束 | `409 RESOURCE_ALREADY_EXISTS` / `RESOURCE_LIMIT_EXCEEDED` |
+| BR-04 | 幂等定位键 `(external_source='github', external_id=node_id)`；唯一约束同样条件化（`deleted_at IS NULL`）；未命中 ∧ 非创建事件 → 丢弃 + WARN 日志（不回溯建任务） | Worker | — |
 | BR-05 | 入站建任务：类型按绑定配置（默认「缺陷」）；状态落项目默认；`external_*` 同事务写入 | Worker | — |
 | BR-06 | 双向同步字段白名单：标题 / 描述（HTML 化）/ 状态（开↔非 completed 组，关↔completed）/ 评论；**其余字段忽略** | Worker | — |
-| BR-07 | 冲突策略 = **时间戳后写胜出**：双方近同时编辑时，`updated_at` 新者覆盖旧者，败方写入 `sync_conflict_log`（管理页可见，不做自动合并） | Worker | — |
+| BR-07 | 冲突策略 = **时间戳后写胜出**：双方近同时编辑时，`updated_at` 新者覆盖旧者，败方快照入 `SyncConflictLog` 表（§4.1.2 数据模型，败方 payload + 胜方 payload + delivery_id 溯源），管理页冲突日志 Tab 可见，**不做自动合并** | Worker | — |
 | BR-08 | 系统侧变更同步出站前做内容 hash 比对（无差异跳过请求，节省速率预算） | Worker | — |
 | BR-09 | 回声抑制：出站编辑在 GitHub 侧由本系统标记（issue 编辑追加不可见 metadata 或按 Delivery 去重），入站收到自己触发的更新不回环 | Worker | — |
 | BR-10 | **合并流转无旁路**：走 `TASK-005` 守卫；被阻塞时降级为系统评论 + 通知，不强制完成 | Worker | — |
 | BR-11 | Commit 挂载：push 事件的 commit message 匹配 `(?<![A-Za-z])([A-Z]{2,12}-\d+)` 提取编号 → 校验属当前绑定项目 → 追加「提交」记录（去重键 commit sha × 任务） | Worker | — |
-| BR-12 | 管理权限：安装/绑定/解绑 = `integration.manage`（默认 PROJ_ADMIN）；同步配置随项目设置 | Permission | `403` |
+| BR-12 | 管理权限分层：WS 级安装/回调 = `integration.manage`（WS_OWNER/WS_ADMIN，§8.1）；**项目级**安装仓库列表/绑定/解绑/暂停恢复/同步日志 = `integration.config`（PROJ_ADMIN，§8.2）；同一用户可在不同项目持有不同等级 | Permission | `403` |
 | BR-13 | 解绑语义：删除绑定即停 Webhook 订阅与同步；任务的 `external_*` 保留（历史可溯），恢复绑定时旧映射继续生效 | Service | — |
 | BR-14 | GitHub API 速率：installation token（5000/h/安装）预算受控；429/403-rate-limit 时按 `X-RateLimit-Reset` 暂停出站队列（不丢任务） | Worker | — |
 | BR-15 | 全部集成写以系统账号 `rp-integration` 为 actor；Activity 与通知区分 `⚙` 来源 | Service | — |
@@ -200,7 +208,8 @@ flowchart TD
 | 初始同步回填 | 绑定时 open Issue 全量 + closed 最近 7 天 | Celery 分页（100/页） |
 | PR 关联解析深度 | PR 正文 + 标题 | 分支/commit 引用不解析 |
 | Commit 挂载/push | 每 push ≤100 commit | GitHub 事件天然上限 |
-| 出站批次 | 30 请求/分钟/安装（自限低于 GitHub 上限） | 队列缓冲 |
+| 出站批次（稳态） | 30 请求/分钟/安装（自限低于 GitHub 上限，用于绑定后日常同步） | 队列缓冲 |
+| 出站批次（回填突发） | 100 请求/分钟/安装，仅 `backfill_repository` 任务使用，运行至回填结束自动切回稳态 | 不抢占日常同步队列；用单独的 `backfill` 队列（INFRA-002） |
 | 事件积压 | RabbitMQ 容量 | 入站 202 快回包天然削峰 |
 
 ---
@@ -318,7 +327,7 @@ class IntegrationInstallation(BaseModel):
     class SyncStatus(models.TextChoices):
         SYNCING = "syncing", "同步中"
         PAUSED = "paused", "已暂停"        # 速率耗尽 / 人工暂停
-        STALE = "stale", " "  "仓库失效"    # GitHub 404
+        STALE = "stale", "仓库失效"        # GitHub 404 / installation 删除
         UNBOUND = "unbound", "已解绑"
 
     provider = models.CharField(max_length=16, choices=Provider.choices,
@@ -332,7 +341,10 @@ class IntegrationInstallation(BaseModel):
     repository_node_id = models.CharField(max_length=64,
         verbose_name="仓库 node_id", help_text="事件定位用 GraphQL ID")
     webhook_secret = models.CharField(max_length=64,
-        verbose_name="Webhook 验签密钥（随机生成，仅存哈希原文比对用）")
+        verbose_name="Webhook 验签密钥（随机生成 + 应用层 Fernet 对称加密存储；"
+                     "HMAC 计算必须用原文，故不可仅存哈希——DB 落地是密文，"
+                     "Service 层 `decrypt()` 后用于 `hmac.compare_digest`）",
+        help_text="明文仅在创建绑定时展示一次给管理员；密钥轮换 = 生成新值 + 重注册 Webhook")
     default_issue_type = models.ForeignKey("db.IssueType", null=True, blank=True,
         on_delete=models.SET_NULL,
         verbose_name="入站建任务的默认类型（空=项目默认类型）")
@@ -346,9 +358,12 @@ class IntegrationInstallation(BaseModel):
     class Meta(BaseModel.Meta):
         db_table = "integration_installations"
         constraints = [
+            # 软删除兼容：deleted_at 可空，PG UNIQUE 默认将 NULL 视为互异，
+            # 必须用条件唯一才能保证「同一 (project, repo) 仅一条存活」。
             models.UniqueConstraint(
-                fields=["project", "repository_full_name", "deleted_at"],
-                name="uniq_binding_project_repo"),
+                fields=["project", "repository_full_name"],
+                condition=models.Q(deleted_at__isnull=True),
+                name="uniq_binding_project_repo_active"),
             models.CheckConstraint(
                 check=~models.Q(repository_full_name=""), name="chk_repo_name"),
         ]
@@ -367,24 +382,78 @@ external_id = models.CharField(max_length=64, null=True, blank=True,
                                verbose_name="外部对象 node_id")
 class Meta:
     constraints = [
+        # 软删除兼容：deleted_at 可空必须加进 condition，否则同 (project, source, id)
+        # 可被多条复用，撞「唯一键失守」。详见 BR-04。
         models.UniqueConstraint(
             fields=["project", "external_source", "external_id"],
-            condition=models.Q(external_source__isnull=False),
+            condition=models.Q(external_source__isnull=False,
+                               deleted_at__isnull=True),
             name="uniq_external_anchor_per_project"),
     ]
 ```
 
+#### 4.1.2 `SyncConflictLog`（新表，BR-07 落地）
+
+> BR-07 说「败方写入 `sync_conflict_log`，管理页可见」必须可持久化；本节补齐数据模型与可见性。
+
+```python
+# apps/api/plane/db/models/integration.py（续）
+class SyncConflictLog(BaseModel):
+    """双向同步冲突日志：保存「败方快照」与「胜方」参照，供管理页排查；
+    后台不自动合并，留给人决策（§1.5 P4 边界）。"""
+
+    class Scope(models.TextChoices):
+        TITLE = "title", "标题"
+        DESCRIPTION = "description", "描述"
+        STATE = "state", "状态"
+        COMMENT = "comment", "评论"
+
+    class Direction(models.TextChoices):
+        INBOUND = "inbound", "入站"
+        OUTBOUND = "outbound", "出站"
+
+    binding = models.ForeignKey("db.IntegrationInstallation",
+                                on_delete=models.CASCADE,
+                                related_name="conflict_logs")
+    issue = models.ForeignKey("db.Issue", on_delete=models.CASCADE,
+                              related_name="github_conflict_logs")
+    scope = models.CharField(max_length=16, choices=Scope.choices,
+                             db_index=True)
+    direction = models.CharField(max_length=16, choices=Direction.choices,
+                                 db_index=True)
+    winner_side = models.CharField(max_length=8,
+        choices=[("github", "GitHub"), ("system", "系统")],
+        verbose_name="时间戳裁决胜出方")
+    winner_payload = models.JSONField(verbose_name="胜方字段值")
+    loser_payload = models.JSONField(verbose_name="败方字段值（被覆盖前的快照）")
+    delivery_id = models.CharField(max_length=64, blank=True,
+                                   verbose_name="GitHub X-GitHub-Delivery，溯源用")
+    occurred_at = models.DateTimeField(db_index=True,
+        verbose_name="冲突时刻——按双方 updated_at 较大者记")
+
+    class Meta(BaseModel.Meta):
+        db_table = "integration_sync_conflict_logs"
+        indexes = [
+            # 管理页冲突日志 Tab：按项目 + 时间倒序
+            models.Index(fields=["binding", "-occurred_at"],
+                         name="idx_conflict_binding_time"),
+            models.Index(fields=["issue", "-occurred_at"],
+                         name="idx_conflict_issue_time"),
+        ]
+        ordering = ("-occurred_at",)
+```
+
 ```mermaid
 erDiagram
-    Project ||--o{ IntegrationInstallation : "integrations（≤5 仓库）"
-    Issue }o--o|| GitHubObject : "external_source='github' + external_id（幂等锚）"
-    Issue ||--o{ IssueCommitRecord : "commit_records（P2 以 JSONB 内联于详情聚合，不建表）"
+    Project ||--o{ IntegrationInstallation : "integrations（≤5 仓库，条件唯一）"
+    Issue }o--o| IntegrationInstallation : "external_source='github' + external_id（幂等锚，§7.1）"
+    IntegrationInstallation ||--o{ SyncConflictLog : "conflict_logs（管理页可见）"
     IntegrationInstallation {
         bigint installation_id "GitHub 安装 id"
         uuid project_id FK
         string repository_full_name "uk(project,repo)"
         string repository_node_id
-        string webhook_secret
+        string webhook_secret "Fernet 密文"
         uuid default_issue_type_id FK "nullable"
         string sync_status "syncing|paused|stale|unbound"
         datetime last_synced_at
@@ -392,37 +461,77 @@ erDiagram
     }
     Issue {
         string external_source "github"
-        string external_id "node_id uk(project,source,ext)"
+        string external_id "node_id conditional-unique"
+        jsonb github_context "prs + commits（P2 内联聚合）"
+    }
+    SyncConflictLog {
+        uuid binding_id FK
+        uuid issue_id FK
+        string scope "title|description|state|comment"
+        string direction "inbound|outbound"
+        string winner_side "github|system"
+        jsonb winner_payload
+        jsonb loser_payload "败方快照，供管理页比对"
+        string delivery_id
+        datetime occurred_at
     }
 ```
 
 > PR 关联与 Commit 记录**不建新表**：PR 列表经 `IntegrationInstallation` + GitHub API 按需拉取（带 60s 缓存）或由入站事件维护在 `Issue` 的聚合 JSONB（`github_context: {prs: [], commits: []}`，事件驱动增量更新，展示层直读）。P2 选择后者（事件驱动内联），避免出网依赖进请求路径。
 
-#### 4.1.2 迁移
+#### 4.1.3 迁移
 
 ```python
-# 00XX_p2_integrations.py
+# apps/api/plane/db/migrations/00XX_p2_integrations.py
 operations = [
-    migrations.CreateModel(...),                                  # IntegrationInstallation
-    migrations.AddField(model_name="issue", name="external_source", ...),
-    migrations.AddField(model_name="issue", name="external_id", ...),
+    # 1. IntegrationInstallation 新表（含 webhook_secret / token_cache / sync_status）
+    migrations.CreateModel(
+        name="IntegrationInstallation", fields=[...],
+        options={"db_table": "integration_installations"}),
+
+    # 2. SyncConflictLog 新表（BR-07 冲突日志；Issue 删除级联）
+    migrations.CreateModel(
+        name="SyncConflictLog", fields=[...],
+        options={"db_table": "integration_sync_conflict_logs"}),
+
+    # 3. Issue 加列：external_source / external_id / github_context
+    migrations.AddField(model_name="issue", name="external_source",
+        field=models.CharField(max_length=16, null=True, blank=True,
+                               db_index=True)),
+    migrations.AddField(model_name="issue", name="external_id",
+        field=models.CharField(max_length=64, null=True, blank=True)),
+    migrations.AddField(model_name="issue", name="github_context",
+        field=models.JSONField(default=dict, blank=True,
+            verbose_name="PR/Commit 聚合（事件驱动内联，不建表）",
+            help_text='{"prs":[{"number":450,"state":"merged",...}],'
+                     '"commits":[{"sha":"a1b2c3d",...}]}')),
+
+    # 4. 条件唯一约束：依赖关系见 §4.1.1（issue 2 修复）
     migrations.AddConstraint(model_name="issue",
-        constraint=UniqueConstraint(..., name="uniq_external_anchor_per_project")),
+        constraint=models.UniqueConstraint(
+            fields=["project", "external_source", "external_id"],
+            condition=models.Q(external_source__isnull=False,
+                               deleted_at__isnull=True),
+            name="uniq_external_anchor_per_project")),
 ]
 ```
+
+> 迁移顺序要点（详见 `tests/e2e/PG_README.md`）：若数据库已存软删除任务，必须先 `manage.py migrate --fake 0001_extensions`，再应用本迁移；`github_context` 默认 `{}`，避免 `null != {}` 的 ORM 行为分裂。
 
 ### 4.2 API 定义
 
 | # | 方法 | 路径 | 描述 | 权限 | 成功码 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `GET` | `/api/v1/integrations/github/app/` | 安装入口（返回 GitHub 安装 URL + state） | `integration.manage` | `200` |
-| 2 | `GET` | `/api/v1/integrations/github/callback/` | 安装回调（GitHub 跳转，换 token + 落库 + 重定向前端） | state 校验 | `302` |
-| 3 | `GET` | `…/projects/{project_id}/integrations/github/repositories/` | 可绑定仓库列表（代理 GitHub API） | `integration.manage` | `200` |
-| 4 | `POST` | `…/integrations/github/bindings/` | 绑定仓库（含 Webhook 注册 + 初始回填投递） | `integration.manage` | `201` |
-| 5 | `PATCH` | `…/integrations/github/bindings/{binding_id}/` | 改默认类型 / 暂停恢复 | `integration.manage` | `200` |
-| 6 | `DELETE` | `…/integrations/github/bindings/{binding_id}/` | 解绑（停 Webhook；`external_*` 保留） | `integration.manage` | `204` |
-| 7 | `GET` | `…/integrations/github/sync-logs/?type=conflict` | 同步/冲突日志（游标） | `integration.manage` | `200` |
-| 8 | `POST` | `/api/v1/integrations/github/webhook/` | **入站事件端点（GitHub 调用）** | 验签 | `202` |
+| 1 | `GET` | `/api/v1/workspaces/{slug}/integrations/github/app/` | 安装入口（返回 GitHub 安装 URL + state） | `integration.manage`（WS 级，§8.1） | `200` |
+| 2 | `GET` | `/api/v1/workspaces/{slug}/integrations/github/callback/` | 安装回调（GitHub 跳转，换 token + 落库 + 重定向前端） | state 校验 + `integration.manage`（WS 级，§8.1） | `302` |
+| 3 | `GET` | `/api/v1/workspaces/{slug}/projects/{project_id}/integrations/github/repositories/` | 可绑定仓库列表（代理 GitHub API） | `integration.config`（§8.2） | `200` |
+| 4 | `POST` | `/api/v1/workspaces/{slug}/projects/{project_id}/integrations/github/bindings/` | 绑定仓库（含 Webhook 注册 + 初始回填投递） | `integration.config`（§8.2） | `201` |
+| 5 | `PATCH` | `/api/v1/workspaces/{slug}/projects/{project_id}/integrations/github/bindings/{binding_id}/` | 改默认类型 / 暂停恢复 | `integration.config`（§8.2） | `200` |
+| 6 | `DELETE` | `/api/v1/workspaces/{slug}/projects/{project_id}/integrations/github/bindings/{binding_id}/` | 解绑（停 Webhook；`external_*` 保留） | `integration.config`（§8.2） | `204` |
+| 7 | `GET` | `/api/v1/workspaces/{slug}/projects/{project_id}/integrations/github/sync-logs/?type=conflict` | 同步/冲突日志（游标） | `integration.config`（§8.2） | `200` |
+| 8 | `POST` | `/api/v1/integrations/github/webhook/` | **入站事件端点（GitHub 调用，无登录态）** | HMAC 验签（无项目权限码） | `202` |
+
+> 权限码细分依据 `rbac-permission-model.md` §8.1 / §8.2：WS 级 OAuth 安装用 `integration.manage`（WS_OWNER/WS_ADMIN），项目级绑定 / 配置 / 同步日志用 `integration.config`（PROJ_ADMIN）；入站 Webhook 端点由 GitHub 服务调用，无项目权限码可校验，靠 HMAC 验签保证安全。
 
 #### 4.2.1 `POST /api/v1/integrations/github/webhook/` — 入站
 
@@ -508,6 +617,12 @@ def verify_signature(secret: str, payload_body: bytes, header: str) -> bool:
     return hmac.compare_digest(expected, header)
 
 
+def _decrypt_secret(ciphertext: str) -> str:
+    """Fernet 对称解密（webhook_secret 不可仅存哈希——HMAC 必须原文）。"""
+    from plane.utils.crypto import fernet
+    return fernet.decrypt(ciphertext.encode()).decode()
+
+
 @csrf_exempt  # GitHub 无会话；防护靠验签 + state
 @require_POST
 def github_webhook(request):
@@ -521,7 +636,9 @@ def github_webhook(request):
                        deleted_at__isnull=True).first())
     if binding is None:
         return accepted(and_log="unbound installation")     # 202 静默
-    if not verify_signature(binding.webhook_secret, body,
+    # 验签前先解密（密文落地 —— 见 §4.1.1 字段注释）
+    plaintext_secret = _decrypt_secret(binding.webhook_secret)
+    if not verify_signature(plaintext_secret, body,
                             request.headers.get("X-Hub-Signature-256", "")):
         return Response(error("PERM_DENIED", 403))          # 无副作用
     if cache.add(f"gh-delivery:{delivery}", 1, timeout=86400) is False:
@@ -707,7 +824,7 @@ def backfill_repository(self, binding_id: str) -> dict:
 | IT-01 | 安装闭环 | 测试 GitHub App | 安装→回调→绑仓 | token 落库；Webhook 注册；回填启动 |
 | IT-02 | 双向同步三向 | 绑定就绪 | GH 改标题→查任务；任务改状态→查 GH | 双侧一致；Activity ⚙ |
 | IT-03 | 合并自动流转 | PR 关联任务 | merge PR | 任务完成（守卫路径）；GH issue closed |
-| IT-04 | 回填正确性 | 仓库 512 open | 绑定回填 | 全量任务建立；编号回写 |
+| IT-04 | 回填正确性 | 仓库 512 open | 绑定回填 | 30s 内出现「N/512」进度；全量任务建立；编号回写；突发预算 100 req/min 跑完 ≤12 分钟；与稳态 30 req/min 不互相抢占 |
 | IT-05 | 死信告警 | mock 5xx | 出站同步 | 3 重试→死信 + `SERVER_EXTERNAL_SERVICE_ERROR` |
 | IT-06 | 越权管理 | 非管理员绑仓 | POST bindings | 403 |
 | IT-07 | 事件风暴 | 100 事件突发 | 并发投递 | 入站全部 202 <2s；Worker 按序消费 |
@@ -760,7 +877,7 @@ def backfill_repository(self, binding_id: str) -> dict:
 
 ### 7.2 可操作演示的验收标准
 
-1. 安装→绑仓：绑定卡 60 秒内出现回填进度并完成 512 个 open Issue 建任务，GitHub 侧标题带 `[RBT-n]` 前缀。
+1. 安装→绑仓：绑定卡 **30 秒内出现「回填中 N/512」进度**（仓库卡 WebSocket 推送首条进度即计）；512 个 open Issue 全量建任务时间由 `backfill_repository` 突发预算（100 req/min/安装，独立队列）决定——含 512 次任务创建 + 512 次 Issue 标题 `[RBT-n]` 回写，按突发预算估算 **8-12 分钟**（实测基线见 Day 5 压测报告）；验收时以「进度条出现 <30s」「全量完成有 `SERVER_OK`」「回填期间不影响绑仓项目已有任务编辑」三档并列，不强制 60s 全量完成（与 §2.6 稳态限速 30 req/min 不冲突）。GitHub 侧标题回写带 `[RBT-n]` 前缀。
 2. GitHub 改 Issue 标题/正文：任务 5 秒内同步且动态显示 `⚙ GitHub 更新了标题`；任务侧改状态：GitHub Issue 3 秒内 closed/reopened。
 3. PR 描述含 `RBT-121` 且 merge：任务经守卫自动完成、Activity 记录「由 PR #450 合并自动完成」；对被阻塞任务重复：不完成 + 系统评论 + 执行人收到提醒通知。
 4. push 含 `RBT-121` 的 commit：详情「提交」区出现该记录，同 sha 重复 push 不产生重复行。

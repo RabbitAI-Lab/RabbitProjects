@@ -5,7 +5,7 @@
 | 文档编号 | QA-001 |
 | 所属迭代 | Sprint 6 — 稳定性缓冲（第 8 周） |
 | 优先级 | P2 收尾（标准版 V1.0 发布门禁） |
-| 覆盖模块 | M14-QA 质量保障（横向收拢 Sprint 0-5 全部质量资产） |
+| 覆盖模块 | M13-QA 质量保障（横向收拢 Sprint 0-5 全部质量资产） |
 | 工作量估算 | 5 人日（QA 2 + 后端 1.5 + 前端 1 + DevOps 0.5），与 INFRA-005 并行 |
 | 文档状态 | 待评审（Draft） |
 | 最后更新日期 | 2026-09-01 |
@@ -18,7 +18,7 @@
 
 ### 1.1 功能定位
 
-QA-001 是**不交付新功能**的质量门禁文档：把散落在 40+ 份功能规格中的 P95 性能门禁、权限矩阵、UT/IT/E2E 测试套件，收拢为一套**可执行、可留痕、可签署**的 V1.0 发布验收体系。四件事：
+QA-001 是**不交付新功能**的质量门禁文档：把散落在 45 份（s0-s5）功能规格中的 P95 性能门禁、权限矩阵、UT/IT/E2E 测试套件，收拢为一套**可执行、可留痕、可签署**的 V1.0 发布验收体系。四件事：
 
 1. **缺陷修复流程**——缺陷分级（P0~P3）、清扫节奏、发布放行标准（P0 清零 / P1 ≤ 2 且有规避方案）。
 2. **性能加固**——压测回归基准矩阵（各文档门禁汇总）、N+1 清查、慢查询预算、前端 bundle 预算。
@@ -32,7 +32,7 @@ QA-001 是**不交付新功能**的质量门禁文档：把散落在 40+ 份功�
 ```mermaid
 flowchart LR
     subgraph IN["输入（Sprint 0-5 资产）"]
-        T1["40+ 份文档<br/>UT/IT/E2E 套件"]
+        T1["45 份（s0-s5）文档<br/>UT/IT/E2E 套件"]
         T2["各文档 P95<br/>性能门禁"]
         T3["api-conventions<br/>错误码/权限码注册表"]
     end
@@ -132,22 +132,26 @@ stateDiagram-v2
 
 ### 2.3 压测回归基准矩阵
 
-基准 = 各功能文档 P95 门禁汇总（抽样关键 12 端点，全量矩阵见 §4.2）：
+基准 = 各功能文档**显式登记的 P95 门禁**逐行汇总（抽样关键 12 项，覆盖 Sprint 0-5 各层；执行编排与「门禁表即代码」见 §4.2）：
 
-| 端点 | 门禁 P95 | 并发模型 | 数据来源文档 |
+| 端点 | 门禁 P95 | 数据集 / 条件 | 出处（文档 §节） |
 | --- | --- | --- | --- |
-| `GET …/issues/`（列表 50/页） | < 300ms | 50 VU | TASK-003 |
-| `PATCH …/issues/{id}/`（状态变更） | < 250ms | 30 VU | TASK-002 |
-| `POST …/issues/`（创建） | < 300ms | 20 VU | TASK-002 |
-| `GET …/issues/{id}/activities/` | < 200ms | 30 VU | TASK-010 |
-| `GET …/views/{id}/results/`（分组看板） | < 400ms | 20 VU | BOARD-003 |
-| `POST …/issues/bulk/`（批量 50 项） | < 2s | 5 VU | BOARD-004 |
-| `GET …/gantt/`（视窗 500 条） | < 500ms | 10 VU | GANTT-001 |
-| `POST …/comments/` | < 200ms | 30 VU | COLLAB-001 |
-| `GET …/files/{id}/download/`（预签） | < 150ms | 40 VU | FILE-001 |
-| WebSocket 广播延迟（房间 200 连接） | P95 < 500ms | 200 conn | COLLAB-004 |
-| `POST …/auth/login/` | < 400ms | 20 VU | AUTH-001 |
-| `GET …/reports/personal/` | < 400ms | 20 VU | RPT-001 |
+| `POST /api/v1/auth/sign-in/` | ≤ 400ms | 含 Argon2id 哈希 | AUTH-001 §7.4（AC-26） |
+| `POST …/projects/{id}/issues/`（创建） | ≤ 350ms | 含取锁 + `MAX()` + INSERT + M2M | TASK-001 §7.2 |
+| `PATCH …/issues/{id}/`（状态变更） | ≤ 200ms | 不含 Celery 日志写入 | TASK-001 §7.2 |
+| `GET …/projects/{id}/issues/`（单维筛选） | < 120ms | perf-heavy：单项目 1 万任务，描述均值 2KB | TASK-003 §7.2（PERF-01）/§5.5 |
+| `GET …/issues/?q=…`（搜索） | < 300ms | ≥3 字符，trigram 命中 | TASK-003 §7.2（PERF-03） |
+| `GET …/issues/{id}/activities/` | < 100ms | perf-heavy：热点任务 5000 条动态（2 个） | TASK-010 §5.2（IT-07） |
+| `GET …/projects/{id}/issues/?group_by=…`（分组看板） | < 200ms | perf-heavy：1 万任务 × 20 视图 | BOARD-003 §5.2（IT-10） |
+| `PATCH …/issues/bulk/`（批量改状态） | < 1s | 100 条单事务行锁批 | BOARD-004 §5.3（IT-05） |
+| `GET …/projects/{id}/gantt/`（首屏 rows+edges） | < 1.5s | perf-heavy：1 万任务 / 5 年跨度 | GANTT-001 §2.3（BR-13） |
+| `GET …/gantt/`（平移预取） | < 300ms | 连续平移 10 视窗 | GANTT-001 §5.2（IT-02） |
+| `GET /api/v1/users/me/issues/stats/` | < 100ms | perf-heavy：全库 10 万任务 | RPT-001 §2.4（BR-06） |
+| `GET …/projects/{id}/stats/`（项目进度） | < 200ms | perf-heavy：全库 10 万任务 | RPT-002 §2.4（BR-06） |
+
+> **收录口径**：仅收录上游文档显式登记的 P95 门禁，逐行标注出处（§节 + 用例号），禁止凭印象汇总——并发模型（VU 数）为本档压测编排自有参数（§4.2），不冒充上游口径。`COLLAB-001` / `FILE-001` / `COLLAB-004` 未定义 P95 门禁（实时通道的验收口径为「双端同步 < 1s」，见 COLLAB-004 §5.2 IT-01），不入本矩阵；后续文档补登 P95 门禁时经 UT-07 一致性守卫同步收录。
+>
+> **基准环境**（两轮压测须同环境执行；规格变更即作废基线重跑）：预发布环境 = [`INFRA-002`](../sprint-0-poc/INFRA-002-docker-compose.md) §4.7 生产 compose profile 同拓扑、单副本资源规格减半（生产 1/2）；数据形状由本档 §4.8 `perf/seed.py` 生成（常规 seed 轻量、供日常回归；压测数据集 = `perf-heavy` profile，下表「数据集 / 条件」列标注 perf-heavy 的行即指该数据集，两轮压测全部套件均在 perf-heavy 数据集上执行）；环境连通性底噪对照 `INFRA-002` §5.5 性能基线（`GET /api/v1/health/` P95 < 50ms）。
 
 **回归判定**：连续两轮压测（间隔 ≥ 2h），任一端点 P95 超门禁 20% 即**阻塞发布**，超 10% 黄牌登记需模块负责人签字。
 
@@ -155,13 +159,13 @@ stateDiagram-v2
 
 | 项 | 内容 | 通过标准 | 工具 |
 | --- | --- | --- | --- |
-| 越权矩阵 | 角色 × 资源 × 动作三维：WS_GUEST/WS_MEMBER/WS_ADMIN/WS_OWNER × 项目四角色 × 读/写/删/管理，重点验证 404 存在性隐藏与 403 边界 | 矩阵用例全绿（§5.2 IT-SEC 组） | pytest 参数化矩阵 |
+| 越权矩阵 | 主体 × 资源 × 动作三维参数化（与 `AUTH-006` §5.2 IT 矩阵同构）：四主体（资源属主 / 同项目成员 / 同空间非项目成员 / 跨空间用户，AUTH-006 §1.1 口径）× 四资源层（工作空间 / 项目 / 任务 / 文件）× 四动作（读 / 写 / 删 / 管理）= 64 格；动作维映射 `rbac-permission-model.md` §8 权限码，重点验证 404 存在性隐藏与 403 边界（`api-conventions.md` §4.3 判定策略） | 64 格全绿（§5.2 IT-SEC-01~64） | pytest 参数化矩阵 |
 | 依赖扫描 | Python `pip-audit`、前端 `pnpm audit`、镜像 `trivy` | 无 Critical；High 有豁免评审单 | CI 门禁 |
-| 响应头核查 | `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy`、`Content-Security-Policy`（自托管兼容白名单）、HSTS（TLS 部署） | 全端点带齐（proxy 层统一注入） | curl 脚本核查 |
+| 响应头核查 | 对照 [`api-conventions.md`](../architecture/api-conventions.md) §13.4 全集：`Strict-Transport-Security`（HSTS，TLS 部署）、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`（**例外登记**：space 嵌入页为 §13.4 既定例外，核查脚本按路径白名单放行并留痕）、`Referrer-Policy: strict-origin-when-cross-origin`、`Content-Security-Policy`（自托管兼容白名单）、`Permissions-Policy` | 全端点带齐（proxy 层统一注入；space 嵌入页例外按白名单） | curl 脚本核查 |
 | 敏感配置审计 | 仓库无密钥（`gitleaks`）；`.env` 模板无真实值；MinIO/DB 默认口令已改；DEBUG=false | 扫描零命中 + 人工抽查 | CI + checklist |
-| 认证与会话 | 密码 Argon2id；会话/JWT 过期与刷新符合 `AUTH-001`；限流对登录端点生效（`INFRA-005` 已落地） | 专项用例通过 | pytest |
-| 注入与 XSS | ORM 无原生拼接（`extra/raw` 白名单审查）；富文本渲染 DOMPurify 白名单（`COLLAB-001` 既定）；Markdown 导出消毒 | 静态审查 + E2E XSS 探针用例 | semgrep + E2E |
-| 文件安全 | 上传类型白名单与魔数校验（`FILE-001`）；预签 URL 短时效；分享链接速率限制（`FILE-004`） | 专项用例通过 | pytest |
+| 认证与会话 | 密码 Argon2id；会话/JWT 过期与刷新符合 `AUTH-001`；限流对登录端点生效（`INFRA-005` 已落地，断言见 IT-SEC-65） | 专项用例通过 | pytest |
+| 注入与 XSS | ORM 无原生拼接（`extra/raw` 白名单审查）；富文本服务端 Bleach 白名单剔除（`COLLAB-001` BR-03——前端收到的是已净化 HTML，前端无二次过滤职责，断言见 IT-SEC-66）；Markdown 导出消毒 | 静态审查 + E2E XSS 探针用例 | semgrep + E2E |
+| 文件安全 | 扩展名白名单（`FILE-001` BR-01 双层：应用校验 + DB CheckConstraint）+ 已知限制登记：改名绕过不识别文件头，由 P4 `FILE-006` 病毒扫描承接（断言见 IT-SEC-67）；预签 URL 短时效；分享链接速率限制（`FILE-004`） | 专项用例通过 | pytest |
 
 ### 2.5 浏览器兼容矩阵
 
@@ -204,7 +208,7 @@ sequenceDiagram
 
 | 步骤 | 动作 | 时限 |
 | --- | --- | --- |
-| 1 | 停止 beat + worker（止写），保留 web 只读 | 2 min |
+| 1 | 停止 beat + worker（止写），保留 proxy 只读（web 静态仍可服务） | 2 min |
 | 2 | 回滚镜像至前一 tag（compose `down/up`，K8s `rollout undo`） | 5 min |
 | 3 | 数据库回滚：迁移可逆则 `migrate <prev>`；不可逆（列删除）则从当日备份定点恢复（`INFRA-005` 恢复脚本） | ≤ 30 min |
 | 4 | 冒烟 18 项 + 数据抽检 | 10 min |
@@ -242,21 +246,25 @@ QA-001 以流程与脚本为主，UI 仅两处：admin「发布门禁」页（ch
 ├──────────────────────────────────────────────────────────────────────┤
 │ 门禁一 缺陷放行        ● 通过   P0: 0 · P1: 1（已签规避）· P2: 14      │
 │ 门禁二 压测回归        ● 通过   两轮均值达标 · 报告 perf-r2.pdf ↓      │
-│ 门禁三 安全加固        ● 通过   越权 216/216 · 扫描 0C/2H(豁免单#7,#9) │
+│ 门禁三 安全加固        ● 通过   越权 64/64 · 扫描 0C/2H(豁免单#7,#9)   │
 │ 门禁四 兼容与 E2E      ◐ 进行   Chrome ✓ Firefox ✓ Safari 运行中…     │
 ├──────────────────────────────────────────────────────────────────────┤
-│ 发布 checklist（8 项，逐项签署留痕）                                    │
-│  ☑ 备份→预发布恢复→迁移→回滚 彩排通过        ops@… 09-04 14:22       │
-│  ☑ CHANGELOG 条目全部可溯源                  qa@…  09-04 15:01       │
-│  ☑ 镜像 tag 与版本号一致                      ci     09-04 15:03       │
-│  ☐ 发布窗口与通知公告确认                     —                       │
-│  ☐ 24h 观察值班表确认                         —                       │
-│  …                                                                      │
-│                                          [提交发布评审]（三项未签不可点）│
+│ 发布 checklist（8 项 = INFRA-005 §4.5.4，逐项签署留痕）                 │
+│  ☑ preflight 环境体检全绿                    ops@… 09-04 14:22       │
+│  ☑ 镜像扫描无高危（Trivy）                   ci     09-04 15:01       │
+│  ☑ 迁移演练通过（预发布库）                  ops@… 09-04 15:03       │
+│  ☑ 恢复演练 ≤30min 且冒烟通过                ops@… 09-04 15:40       │
+│  ☐ 限流配置无漂移（运行 == api-conventions §7.2 声明）       —                       │
+│  ☐ 备份连续 3 日成功                         —                       │
+│  ☐ 压测回归基准达标（本档 §2.3）             —                       │
+│  ☐ E2E 全量绿（浏览器矩阵）                  —                       │
+│                                     [提交发布评审]（8 项未全签不可点）│
 ├──────────────────────────────────────────────────────────────────────┤
 │ 验收签署：QA ____  研发 ____  产品 ____        （三方齐全 → 宣布发布）   │
 └──────────────────────────────────────────────────────────────────────┘
 ```
+
+> checklist 条目与 key 白名单（恰 8 项）**单一来源 = `INFRA-005` §4.5.4**：`preflight` / `image_scan` / `migration_drill` / `restore_drill` / `rate_limit_config` / `backup_streak` / `perf_baseline` / `e2e_matrix`——即 §4.4 sign 端点 `{key}` 的全部合法取值，本档不自立清单（防双源漂移）。
 
 交互细则：
 
@@ -267,16 +275,17 @@ QA-001 以流程与脚本为主，UI 仅两处：admin「发布门禁」页（ch
 | 门禁详情下钻 | 每门禁可展开查看原始产物链接（CI 报告、压测 PDF、扫描 JSON） |
 | 阻塞态 | 任一 ✕ 时顶部横幅列出阻塞项与负责人；「提交发布评审」禁用 |
 
-### 3.2 缺陷分诊看板（复用 BOARD-002 视图配置）
+### 3.2 缺陷分诊看板（复用 BOARD-003 内置/个人视图配置）
 
-不新建 UI——用既有看板能力配置一张「V1.0 缺陷分诊」共享视图：按 `label=bug` + 自定义字段 `severity`（P0~P3）分组列、按更新时间排序、过滤 release=v1.0 里程碑。此处仅约定**视图配置规范**：
+不新建 UI、不引入 `access=shared`（P3 `BOARD-005` 才放开，本迭代不预开）——直接用 `BOARD-003` §1.4 既有内置视图（项目全员可见）与个人视图（创建者本人）承载；此处仅约定**视图配置规范**：
 
 | 配置项 | 取值 |
 | --- | --- |
-| 过滤器 | `labels ∩ {bug}` 且 `milestone = v1.0` |
+| 视图类型 | 内置视图（项目全员可见）或个人视图（创建者本人），任择其一 |
+| 过滤器 | `labels ∩ {bug}` 且 `?search=v1.0`（或 label `release=v1.0`——用 P2 既有参数，不依赖 milestone/cycle 字段） |
 | 分组 | `severity`（P0 列置顶，列内按创建时间升序） |
 | 卡片字段 | 标题、负责人、reopen 次数徽标（>1 红色）、SLA 倒计时（P0 当日/P1 48h） |
-| 共享 | 全员可见（`BOARD-005` 共享视图机制提前用于内部） |
+| 可见范围 | 视图本身：内置视图全员可见 / 个人视图仅创建者（`BOARD-003` BR-11）；视图承载的「V1.0 缺陷分诊」数据由 `board.manage` 权限的项目管理员 + PROJ_VIEWER 只读成员查看 |
 
 ### 3.3 空状态与异常
 
@@ -304,7 +313,7 @@ class ReleaseGate(models.Model):
         PASSED = "passed", "通过"
         BLOCKED = "blocked", "阻塞"
 
-    id = models.UUIDField(primary_key=True, default=uuid7)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)   # 主键统一 UUID v4（api-conventions §4.5；request_id 另用 ULID，互不混用）
     version = models.CharField(max_length=32)                     # v1.0.0
     commit_sha = models.CharField(max_length=40)
     gate_defects = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
@@ -341,7 +350,7 @@ class ReleaseGateEvent(models.Model):
 **工具选型**：k6（脚本即代码、CI 友好、阈值内建断言）。目录 `perf/suites/`，每端点一脚本，统一 `options.thresholds` 从门禁表生成（防口径漂移）：
 
 ```js
-// perf/suites/issue-list.js
+// perf/suites/issue-list-filter.js
 import http from 'k6/http';
 import { check } from 'k6';
 import { GATE } from './gates.js';   // 由 §2.3 门禁表生成的常量，单一数据源
@@ -349,36 +358,39 @@ import { GATE } from './gates.js';   // 由 §2.3 门禁表生成的常量，单
 export const options = {
   vus: 50, duration: '3m',
   thresholds: {
-    'http_req_duration{endpoint:issue_list}': [`p(95)<${GATE.issue_list.p95}`],
+    'http_req_duration{endpoint:issue_list_filter}': [`p(95)<${GATE.issue_list_filter.p95}`],
     'http_req_failed': ['rate<0.005'],
   },
 };
 export default function () {
-  const res = http.get(`${__ENV.BASE}/api/v1/ws/demo/projects/p1/issues/?page_size=50`,
-    { headers: authHeader(), tags: { endpoint: 'issue_list' } });
-  check(res, { 'envelope ok': (r) => r.json('status') === 0 });
+  const res = http.get(`${__ENV.BASE}/api/v1/workspaces/demo/projects/p1/issues/?per_page=50`,
+    { headers: authHeader(), tags: { endpoint: 'issue_list_filter' } });
+  // 信封断言按 JSON body 的 status 字段字符串比对（api-conventions §4.1 字面量 "success"/"error"）
+  check(res, { 'envelope ok': (r) => r.json('status') === 'success' });
 }
 ```
 
 ```python
 # perf/gates.py —— 门禁表即代码（§2.3 的机器可读源，文档与脚本防漂移）
 GATES = {
-    "issue_list":    {"p95": 300,  "vus": 50},
-    "issue_patch":   {"p95": 250,  "vus": 30},
-    "issue_create":  {"p95": 300,  "vus": 20},
-    "activities":    {"p95": 200,  "vus": 30},
-    "view_results":  {"p95": 400,  "vus": 20},
-    "bulk_ops":      {"p95": 2000, "vus": 5},
-    "gantt_viewport": {"p95": 500, "vus": 10},
-    "comment_create": {"p95": 200, "vus": 30},
-    "file_download_sign": {"p95": 150, "vus": 40},
-    "ws_broadcast":  {"p95": 500,  "conns": 200},
-    "login":         {"p95": 400,  "vus": 20},
-    "personal_report": {"p95": 400, "vus": 20},
+    "sign_in":           {"p95": 400,  "source": "AUTH-001 §7.4 AC-26"},
+    "issue_create":      {"p95": 350,  "source": "TASK-001 §7.2"},
+    "issue_patch":       {"p95": 200,  "source": "TASK-001 §7.2"},
+    "issue_list_filter": {"p95": 120,  "source": "TASK-003 §7.2 PERF-01"},
+    "issue_search":      {"p95": 300,  "source": "TASK-003 §7.2 PERF-03"},
+    "activities":        {"p95": 100,  "source": "TASK-010 §5.2 IT-07"},
+    "board_group":       {"p95": 200,  "source": "BOARD-003 §5.2 IT-10"},
+    "bulk_update":       {"p95": 1000, "source": "BOARD-004 §5.3 IT-05"},
+    "gantt_first":       {"p95": 1500, "source": "GANTT-001 §2.3 BR-13"},
+    "gantt_pan":         {"p95": 300,  "source": "GANTT-001 §5.2 IT-02"},
+    "me_stats":          {"p95": 100,  "source": "RPT-001 §2.4 BR-06"},
+    "proj_stats":        {"p95": 200,  "source": "RPT-002 §2.4 BR-06"},
 }
 ```
 
-**执行编排**（CI job `perf-regression`）：预发布环境（与生产同规格 1/2 配置，§2.3 注明基准环境）→ `pgbench` 暖库 → 逐套件串行执行 → 两轮（间隔 ≥ 2h）→ 汇总报告（`k6 --out json` 聚合脚本生成 PDF/Markdown）→ 回调写 `ReleaseGate.artifacts`。
+**执行编排**（CI job `perf-regression`）：预发布环境（基准环境定义见 §2.3 注：`INFRA-002` §4.7 生产 compose profile 同拓扑、资源规格减半）→ `python perf/seed.py --profile perf-heavy` 灌压测数据集（§4.8）→ `pgbench` 暖库 → 逐套件串行执行 → 两轮（间隔 ≥ 2h）→ 汇总报告（`k6 --out json` 聚合脚本生成 PDF/Markdown）→ 回调写 `ReleaseGate.artifacts`。
+
+**压测与限流的交互**：50VU × 3m 若全程单 authHeader，必撞 L2 已认证用户 60/min 配额（api-conventions §7.2（冻结源）→ `INFRA-005` §2.1（落地总表）），`http_req_failed` 会被 429 污染。压测豁免策略：① perf-heavy profile 的 200 测试用户池（§4.8）轮换 `authHeader`——每 VU 从池内独占取号并周期换号，使单主体请求速率落在配额内；② 预发布环境压测窗口 L2 阈值 ×10（`INFRA-005` BR-01 配额基线的压测窗口专用配置，压测后复位，不触生产配额）。`http_req_failed` 阈值（rate<0.005）不因豁免放宽——豁免窗口内仍出现 429 即判基准环境限流配置失效，压测中止排查。
 
 **N+1 守卫用例**（防回归的 CI 常驻断言）：
 
@@ -387,12 +399,12 @@ GATES = {
 @pytest.mark.django_db
 class TestQueryBudget:
     def test_issue_list_within_budget(self, api_client, project_with_50_issues):
-        with django_assert_num_queries(15):          # §2.2 预算即断言
-            resp = api_client.get(f"/api/v1/ws/w/projects/{project_with_50_issues.id}/issues/")
+        with assertNumQueriesLessThan(16):          # §2.2 预算 ≤15（allow 1 条 slop）
+            resp = api_client.get(f"/api/v1/workspaces/w/projects/{project_with_50_issues.id}/issues/")
         assert resp.status_code == 200
 
     def test_issue_detail_within_budget(self, api_client, rich_issue):
-        with django_assert_num_queries(25):          # 含关联/活动/附件预取
+        with assertNumQueriesLessThan(26):          # 含关联/活动/附件预取，预算 ≤25
             resp = api_client.get(rich_issue.detail_url)
         assert resp.status_code == 200
 ```
@@ -427,21 +439,23 @@ def verdict(pip, npm, trivy, exemptions):
 
 **豁免单**（`security/exemptions.yml`）：`{cve, reason, owner, fix_version, expires_at}`，过期即 CI 失败——防「永久豁免」腐化。
 
-### 4.4 API 定义（发布门禁，admin 专属）
+### 4.4 API 定义（发布门禁，系统管理员面）
+
+端点挂全库系统管理员面统一前缀 `/api/v1/instances/`（`api-conventions.md` §2.5，与 `AUTH-002` / `AUTH-006` / `INFRA-005` 备份面同族；admin 前端控制台经 `apps/admin` 调用）：
 
 | 方法 | 路径 | 说明 | 权限 |
 | --- | --- | --- | --- |
-| GET | `/api/v1/admin/release-gates/` | 发布尝试列表 | `admin.release`（WS_OWNER + 指定发布角色） |
-| GET | `/api/v1/admin/release-gates/{id}/` | 门禁详情（含 events 时间线） | 同上 |
-| POST | `/api/v1/admin/release-gates/` | 创建发布尝试（CI release 流水线首步） | CI Token（机器用户） |
-| POST | `/api/v1/admin/release-gates/{id}/gate-events/` | CI 回调写门禁状态/产物 | CI Token |
-| POST | `/api/v1/admin/release-gates/{id}/checklist/{key}/sign/` | 签署/反签 checklist 项 | 三方负责人 |
-| POST | `/api/v1/admin/release-gates/{id}/verdict/` | 发布评审裁决（放行/打回） | 发布评审主席 |
+| GET | `/api/v1/instances/release-gates/` | 发布尝试列表 | `system.release.manage`（rbac §8.3 系统级命名空间，`SYSTEM_ADMIN`；本迭代登记） |
+| GET | `/api/v1/instances/release-gates/{id}/` | 门禁详情（含 events 时间线） | 同上 |
+| POST | `/api/v1/instances/release-gates/` | 创建发布尝试（CI release 流水线首步；返回 `201 Created` + `Location: /api/v1/instances/release-gates/{id}/`） | CI Token（机器用户） |
+| POST | `/api/v1/instances/release-gates/{id}/gate-events/` | CI 回调写门禁状态/产物 | CI Token |
+| POST | `/api/v1/instances/release-gates/{id}/checklist/{key}/sign/` | 签署/反签 checklist 项（请求体 `{signed: bool, note?: string}`；`signed=false` 即反签，append-only 追加 `revoked` 事件不删原记录） | 三方负责人（授权载体：rbac §8.3 `system.release.manage` 持有者 + `release_signatories` 指定评审成员表；本迭代择一为「复用 checklist sign 记录」——同一 `ReleaseGateEvent` append-only 流承载签署与撤销，actor + key + timestamp 即可定位授权人，不另起新表） |
+| POST | `/api/v1/instances/release-gates/{id}/verdict/` | 发布评审裁决（放行/打回） | 发布评审主席（同上授权载体） |
 
 **CI 回调示例**：
 
 ```http
-POST /api/v1/admin/release-gates/01J8XKQ7…/gate-events/
+POST /api/v1/instances/release-gates/9c3e1f6a-4b2d-4e8a-a5f7-3d1c8b2e6a04/gate-events/
 Authorization: Bearer <ci-token>
 Content-Type: application/json
 Idempotency-Key: ci-perf-r2-20260904
@@ -456,12 +470,26 @@ Idempotency-Key: ci-perf-r2-20260904
 
 ```json
 {
-  "status": 0,
+  "status": "success",
   "data": {
-    "id": "01J8XKQ7V3A2N0M1P4R6T8YHZD",
+    "id": "9c3e1f6a-4b2d-4e8a-a5f7-3d1c8b2e6a04",
     "gate_perf": "passed",
     "event_id": 412
   }
+}
+```
+
+**Checklist 签署/反签示例**（`signed: false` 即反签，append-only 追加 `revoked` 事件；幂等键 = `(gate, key, actor, signed)`）：
+
+```http
+POST /api/v1/instances/release-gates/9c3e1f6a-4b2d-4e8a-a5f7-3d1c8b2e6a04/checklist/perf_baseline/sign/
+Authorization: Bearer <qa-token>
+Content-Type: application/json
+Idempotency-Key: qa-perf-baseline-20260904
+
+{
+  "signed": true,
+  "note": "两轮压测报告已归档 release/v1.0.0/perf-r2.pdf"
 }
 ```
 
@@ -469,23 +497,27 @@ Idempotency-Key: ci-perf-r2-20260904
 
 ```json
 {
-  "status": 1,
+  "status": "error",
   "error": {
     "code": "VALIDATION_ERROR",
     "message": "存在未通过的门禁，不可裁决放行",
-    "details": {"sub_code": "INVALID", "blocking_gates": ["gate_compat"]},
+    "details": [
+      { "field": "verdict", "code": "BLOCKED_BY_GATE", "message": "存在未通过门禁：gate_compat" }
+    ],
     "request_id": "01J8XKR2F5B7N3M9P1Q4T6W8YC"
   }
 }
 ```
 
+> **字段级子码登记**：`BLOCKED_BY_GATE` 为本迭代新增（与 `system.release.manage` 同款登记口径——见 §4.4 端点权限列），归入 `details[].code` 字段级子码枚举；`api-conventions.md` §8.8 字段级子码表待回改补登（V1.0 后归档任务）。
+
 | 场景 | HTTP | 错误码 | 说明 |
 | --- | --- | --- | --- |
-| 非 admin 角色访问 | 403 | `PERM_DENIED` | admin 区域一律 403（存在性无业务敏感性） |
+| 非系统管理员角色访问 | 403 | `PERM_DENIED` | instances 面一律 403（存在性无业务敏感性） |
 | CI Token 过期/伪造 | 401 | `AUTH_INVALID_TOKEN` | 机器用户走独立 token 表 |
 | 重复回调（同 Idempotency-Key） | 200 | — | 幂等返回首个 event_id |
-| 未通过门禁裁决放行 | 400 | `VALIDATION_ERROR` | `blocking_gates` 明细 |
-| checklist 项不存在 | 404 | `RESOURCE_NOT_FOUND` | key 白名单 8 项 |
+| 未通过门禁裁决放行 | 400 | `VALIDATION_ERROR` | 阻塞门禁经 `details[].code=BLOCKED_BY_GATE` 逐项明示 |
+| checklist 项不存在 | 404 | `RESOURCE_NOT_FOUND` | key 白名单恰 8 项（§3.1 / INFRA-005 §4.5.4） |
 
 ### 4.5 发布执行脚本（与 INFRA-005 衔接）
 
@@ -497,10 +529,11 @@ VERSION=$1
 ./deploy/preflight.sh                              # INFRA-005 §4：磁盘/证书/备份新鲜度
 ./deploy/backup-now.sh --tag "pre-${VERSION}"      # 发布前即时备份（回滚锚点）
 docker compose -f docker-compose.prod.yml pull
-docker compose run --rm web python manage.py migrate --plan | tee migrate-plan.log
+docker compose run --rm migrator python manage.py migrate --plan | tee migrate-plan.log
 ./deploy/confirm.sh "迁移计划已评审？"               # 人工闸门（tty 确认）
-docker compose run --rm web python manage.py migrate
-docker compose up -d --no-deps web worker beat
+# 迁移走 migrator 一次性服务（INFRA-002 §4.1/§4.7、INFRA-005 §4.4.4 同款）；api 才是 Django 常驻服务，web 为 React 前端容器
+docker compose run --rm migrator python manage.py migrate
+docker compose up -d --no-deps api worker beat
 ./deploy/smoke.sh --suite release-18               # 18 项冒烟（登录/建任务/评论/上传/分享）
 ./deploy/notify.sh "v${VERSION} 发布完成，进入 24h 观察"
 ```
@@ -534,11 +567,11 @@ docker compose up -d --no-deps web worker beat
 ```tsx
 // apps/admin/features/release/useReleaseGate.ts
 export function useReleaseGate(gateId: string) {
-  const { data, mutate } = useSWR<ReleaseGate>(`/admin/release-gates/${gateId}/`, fetcher, {
+  const { data, mutate } = useSWR<ReleaseGate>(`/instances/release-gates/${gateId}/`, fetcher, {
     refreshInterval: (d) => (d && allGatesSettled(d) ? 0 : 10_000),  // 进行中的门禁 10s 轮询
   });
   const sign = useMutation(
-    (key: string) => api.post(`/admin/release-gates/${gateId}/checklist/${key}/sign/`),
+    (key: string) => api.post(`/instances/release-gates/${gateId}/checklist/${key}/sign/`),
     { onSuccess: () => mutate() },
   );
   return { gate: data, sign };
@@ -549,7 +582,7 @@ export function useReleaseGate(gateId: string) {
 
 ### 4.8 压测数据工厂
 
-压测结论的可信度取决于数据形状。`perf/seed.py` 在预发布库生成与生产形态等价的种子数据（可重复：固定 random seed + 命名空间前缀 `perf_`，清理一键完成）：
+压测结论的可信度取决于数据形状。`perf/seed.py` 在预发布库生成与生产形态等价的种子数据（可重复：固定 random seed + 命名空间前缀 `perf_`，清理一键完成），以 `profile` 参数分两档——`release`（默认，常规轻量，日常回归与冒烟用，规模见下表）与 `perf-heavy`（压测专用数据集，承载 §2.3 门禁表的数据规模列，两轮压测前灌入）：
 
 | 实体 | 规模 | 形状要点 |
 | --- | --- | --- |
@@ -560,16 +593,25 @@ export function useReleaseGate(gateId: string) {
 | 附件 / 分享链接 | 3k / 500 | 文件实体不落 MinIO（stub 指针），下载压测用专用 10MB/100MB 样本 |
 | 自定义字段 | 8 字段 × 大项目 | 含 select/multi/date 三型，60% 任务有值（GIN 索引真实性） |
 
+`perf-heavy` profile 在 release 形状（状态分布 / 自定义字段 / 关系比例不变）上放大规模：
+
+| perf-heavy 实体 | 规模 | 视图数（×20/项目） | 任务日期跨度 | 描述均值 | 承载门禁行（§2.3） |
+| --- | --- | --- | --- | --- | --- |
+| 门禁大项目 | 1 个项目 10,000 任务 | × 20 | 5 年（最早 2021-09 至今） | `description_stripped` ~2KB | TASK-003 单维筛选 / BOARD-003 分组看板 / GANTT-001 首屏与平移 |
+| 全库任务总量 | 100,000（其余常规项目按比例放大补足） | × 20 | 5 年 | ~2KB | RPT-001 me stats / RPT-002 项目进度 |
+| 动态热点任务 | 2 个任务各 5,000 条活动 | — | — | — | TASK-010 activities |
+| 测试用户池 | 200（继承 release 档） | — | — | — | §4.2 压测豁免：VU 轮换 authHeader |
+
 ```python
 # perf/seed.py 关键片段
-def seed(scale: str = "release"):
+def seed(profile: str = "release"):       # release=日常回归轻量；perf-heavy=压测数据集（§2.3 门禁表）
     with transaction.atomic():
-        ws, projects = make_workspace(scale)
-        users = make_users(scale)
-        issues = make_issues(projects, users, scale)        # bulk_create 分批 2000
+        ws, projects = make_workspace(profile)
+        users = make_users(profile)
+        issues = make_issues(projects, users, profile)      # bulk_create 分批 2000；perf-heavy 门禁项目 10000 / 全库 100000
         make_relations(issues)                              # 依赖边过环检测服务，保证合法图
-        make_activities(issues)                             # 直接 INSERT（幂等键合成）
-    rebuild_sequences()                                     # analyze 统计信息，压测不被优化器误判
+        make_activities(issues)                             # 直接 INSERT（幂等键合成）；perf-heavy 2 热点任务 × 5000 动态
+    rebuild_sequences()                                     # 重建序列号连续性，压测不被优化器误判
 ```
 
 **清理**：`python perf/seed.py --purge` 按 `perf_` 前缀级联删除；CI 压测 job 首尾各执行一次（幂等，防上次残留污染基准）。
@@ -598,7 +640,7 @@ QA-001 自身是被测体系的组织者，本节给出**发布门禁机制的�
 | UT-02 | `append_gate_event` 状态迁移合法表（pending→running→passed/blocked） | 非法迁移（如 pending→passed）抛 `InvalidTransition` |
 | UT-03 | 门禁事件 append-only 触发器 | 直接 UPDATE/DELETE `release_gate_events` 报 DB 异常 |
 | UT-04 | checklist 签署/反签 | 签署写 `signed_by/signed_at`；反签追加 `revoked` 事件不删原记录 |
-| UT-05 | 裁决前置校验 | 任一门禁非 passed 时 verdict=approve → 400 + `blocking_gates` |
+| UT-05 | 裁决前置校验 | 任一门禁非 passed 时 verdict=approve → 400 + `details[].code=BLOCKED_BY_GATE`（逐阻塞门禁一条，与 §4.4 错误示例一致） |
 | UT-06 | `security_verdict.py` 判定 | Critical 存在→fail；High 有豁免单→pass；豁免单过期→fail |
 | UT-07 | 门禁表 `gates.py` 与 §2.3 文档表一致性 | CI 解析文档表格比对常量（防漂移守卫） |
 | UT-08 | CHANGELOG 条目溯源校验 | 无文档编号/单号条目被 lint 拒绝 |
@@ -610,12 +652,14 @@ QA-001 自身是被测体系的组织者，本节给出**发布门禁机制的�
 | IT-01 | CI 回调全链路：POST gate-events → GET 详情 | 状态与产物可见，events 时间线有序 |
 | IT-02 | 三方签署→裁决→事件流 | 事件序列完整；签署人角色不符 → 403 `PERM_DENIED` |
 | IT-03 | CI Token 权限边界 | 机器用户不能签署 checklist、不能裁决 |
-| IT-SEC-01~216 | 越权矩阵：8 角色 × 9 资源域 × 3 动作（读/写/管理）参数化 | 非授权一律 403/404（存在性隐藏按 `api-conventions` §9）；授权路径 200 |
-| IT-SEC-04 | 登录端点限流 | 第 11 次/分钟 429 + `Retry-After`（INFRA-005 配额） |
-| IT-SEC-05 | 富文本 XSS 探针 | `<script>`/事件属性被 DOMPurify 剔除，渲染纯文本化 |
-| IT-SEC-06 | 文件上传魔数伪造 | 改后缀的 PE/HTML 文件被 415 拒绝 |
+| IT-SEC-01~64 | 越权矩阵：四主体（资源属主 / 同项目成员 / 同空间非项目成员 / 跨空间用户，AUTH-006 §1.1 口径）× 四资源层（工作空间 / 项目 / 任务 / 文件）× 四动作（读 / 写 / 删 / 管理）参数化，与 `AUTH-006` §5.2 IT 矩阵同构 | 64 格逐格断言：非授权一律 403/404（存在性隐藏策略按 `api-conventions` §4.3）；授权路径 200 |
+| IT-SEC-65 | 登录端点限流 | 第 11 次/分钟 429 + `Retry-After`（INFRA-005 配额） |
+| IT-SEC-66 | 富文本 XSS 探针 | 注入载荷在响应 HTML 中已被 Bleach 剥离 `script`/`onclick` 等标签与属性（服务端净化是唯一可信边界，前端无二次过滤职责——`COLLAB-001` BR-03） |
+| IT-SEC-67 | 文件上传类型白名单 | `.exe` 上传 → 400 `VALIDATION_FILE_TYPE_NOT_ALLOWED`（改后缀 `.png` 的 PE 文件按 `FILE-001` 已知限制通过，登记 P4 `FILE-006` 病毒扫描承接——非本轮断言） |
 | IT-07 | 压测基准冒烟：k6 套件在预发布跑通 | 阈值断言生效（故意调低阈值应失败，验证断言非摆设） |
 | IT-08 | 回滚彩排：备份→恢复→冒烟 | ≤ 30min 完成且数据抽检一致（与 INFRA-005 演练共用脚本） |
+
+> IT-SEC-65~67 为专项安全用例（限流 / XSS / 上传类型白名单），编号接续越权矩阵区间 IT-SEC-01~64——旧编号 04/05/06 与该区间重叠，本轮重编号消除；§2.4 安全清单各行的交叉引用已同步为 65/66/67。
 
 ### 5.3 E2E 回归套件组织
 
@@ -673,10 +717,10 @@ QA-001 自身是被测体系的组织者，本节给出**发布门禁机制的�
 | 类别 | 产物 |
 | --- | --- |
 | 流程 | 缺陷四级定义与分诊流程、发布放行标准、变更评审纪律（BR 全集） |
-| 代码 | `ReleaseGate/ReleaseGateEvent` 模型与迁移、admin 门禁六端点、签署/裁决服务 |
+| 代码 | `ReleaseGate/ReleaseGateEvent` 模型与迁移、系统管理员面门禁六端点（`/api/v1/instances/release-gates/`）、签署/裁决服务 |
 | CI/CD | `security-gate.yml`、`perf-regression` job、`gates.py` 一致性守卫、CHANGELOG lint |
-| 压测 | k6 12 套件 + 两轮执行编排 + 报告聚合脚本 |
-| 安全 | 越权矩阵 216 用例、四源扫描与豁免单机制、响应头核查脚本 |
+| 压测 | k6 12 套件 + perf-heavy 压测数据集（§4.8）+ 两轮执行编排（含限流豁免策略）+ 报告聚合脚本 |
+| 安全 | 越权矩阵 64 格参数化用例、四源扫描与豁免单机制、响应头核查脚本 |
 | 发布 | `release.sh`、回滚 runbook、24h 观察面板查询、验收报告模板 |
 | 前端 | admin 发布门禁页、缺陷分诊看板视图配置规范 |
 
@@ -684,7 +728,7 @@ QA-001 自身是被测体系的组织者，本节给出**发布门禁机制的�
 
 1. 构造 P0 缺陷走全流程：登记→分诊→热修→复验→关闭，时限与留痕符合 §2.1；构造第 3 个 P1 验证发布评审阻塞。
 2. 压测两轮报告产出，任一故意劣化端点（注入 sleep）被门禁二拦截；`gates.py` 与文档表不一致时 UT-07 失败。
-3. 越权矩阵 216 用例 CI 全绿；故意放开一处权限装饰器，IT-SEC 对应用例即红并阻断流水线。
+3. 越权矩阵 64 格 CI 全绿；故意放开一处权限装饰器，IT-SEC 对应用例即红并阻断流水线。
 4. 依赖扫描注入测试：演示环境加入含 Critical 的依赖，CI 失败；High 漏洞无豁免单失败、有豁免单通过、豁免单过期失败。
 5. 发布门禁页完成一次完整发布：CI 回调四门禁→8 项签署→三方裁决→`release.sh` 执行→冒烟通过→事件时间线完整可查。
 6. 回滚彩排：从「发布完成」状态执行回滚四步，≤ 30min 恢复且冒烟 18 项通过。

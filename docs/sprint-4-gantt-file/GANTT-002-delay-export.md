@@ -7,11 +7,11 @@
 | 优先级 | P2（标准版完整级） |
 | 所属模块 | M6-GANTT｜甘特图进度 |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
-| 上游依赖 | **`GANTT-001`（渲染/视窗/连线地基——本文档是其交互层）**、`TASK-005`（依赖关系与流转拦截）、`TASK-010`（改期 Activity）、`COLLAB-004`（改期实时广播） |
-| 下游消费 | `GANTT-003`（P3 关键路径与预警——消费本文档的改期语义）、`RPT-002`（进度报表口径对齐） |
+| 最后更新日期 | 2026-09-03 |
+| 上游依赖 | **`GANTT-001`（渲染/视窗/连线地基——本文档是其交互层）**、`TASK-001`（Issue PATCH 唯一写通道）、`TASK-005`（依赖关系与流转拦截）、`TASK-010`（改期 Activity）、`COLLAB-004`（改期实时广播）——与 §1.5 前置依赖表同一集合 |
+| 下游消费 | `GANTT-003`（P3 关键路径与预警——消费本文档的改期语义）、`RPT-002`（进度报表口径对齐）、`INFRA-005`（落地后配置收编——待回改登记，`FILE-004` 先例） |
 | 上游依据 | `docs/需求文档.md` §3.6（拖拽修改任务开始/结束时间与工期、延期高亮提醒、甘特图导出 PNG、视图缩放平移）、§8.2 甘特图 P2 列 |
-| 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md)（§2.8 `chk_issue_start_before_target` 约束、日期字段）、[`api-conventions.md`](../architecture/api-conventions.md)（§10.5 事务纪律）、[`tech-stack.md`](../architecture/tech-stack.md)（pragmatic-dnd、html-to-image） |
+| 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md)（§2.8 `chk_issue_start_before_target` 约束、日期字段、`sequence_id`/`identifier` 编号拼接）、[`api-conventions.md`](../architecture/api-conventions.md)（§10.5 事务纪律、§7 限流）、[`tech-stack.md`](../architecture/tech-stack.md)（pragmatic-dnd **已登记**；html-to-image **待登记**——登记声明见 §4.3.3 注） |
 | 对标基线 | Plane EE Gantt（拖拽改期/工期调整） · Ones（延期管控企业级） · MS Project 拖拽范式 |
 | 工作量估算 | 后端 1 人日 / 前端 3.5 人日 / 联调与测试 1 人日，合计 **5.5 人日** |
 
@@ -75,6 +75,7 @@
 | `GANTT-001` | 视窗/条几何/连线渲染/Store | 交互挂载点 |
 | `TASK-001` | PATCH 日期字段路径（`chk_issue_start_before_target`） | 唯一写通道 |
 | `TASK-005` | 依赖数据与 violation 派生 | 冲突提示 |
+| `TASK-010` | 改期 Activity 留痕（`field=start_date/target_date` 同 epoch） | 审计与动态流（BR-10） |
 | `COLLAB-004` | `issue.updated` 广播 | 他人视图同步 |
 
 ### 1.6 竞品参考
@@ -93,7 +94,7 @@
 
 ```mermaid
 flowchart TD
-    A["按下条体/边缘热区"] --> B{"任务可拖？<br/>非 completed/cancelled/归档/VIEWER"}
+    A["按下条体/边缘热区"] --> B{"任务可拖？<br/>非 completed/cancelled/归档/VIEWER/COMMENTER"}
     B -->|否| B1["光标 default + tooltip 原因"]
     B -->|是| C["拖起：条半透明 + 原位虚线占位"]
     C --> D["实时换算：像素 Δ → 天数 Δ（吸附 1 天）"]
@@ -131,17 +132,19 @@ sequenceDiagram
     API->>PG: UPDATE …（chk 约束常开校验）
     API-->>FE_A: 200
     API->>CW: on_commit → issue_activity + issue.updated 事件
-    CW-->>FE_B: WebSocket issue.updated {id, start_date, target_date}
-    FE_B->>FE_B: rowsById 单行 upsert → 条即时移动
+    CW-->>FE_B: issue.updated（经 Redis → live 扇出，COLLAB-004 §2.3 信封）<br/>payload {issue_id, version, brief:"dates"}——不带日期正文
+    FE_B->>FE_B: version 比对（COLLAB-004 BR-07）→ store 定向 patch<br/>+ 该 issue 单实体增量拉取补日期 → 条即时移动
 ```
+
+> **广播载荷口径（对齐 `COLLAB-004` 冻结契约）**：`issue.updated` 只携带 `issue_id / version / brief="dates"`（提示语义——全量实体永不上行广播、载荷 ≤ 2KB、BR-05 红线）；改期字段正文由 B 端 store 对该 issue 发起**单实体增量拉取**补齐（`COLLAB-004` §4.4.2 定向 patch 映射）。拖拽改期不新增事件类型、不扩展载荷字段。
 
 ### 2.3 延期概览口径
 
 | 指标 | 口径 |
 | --- | --- |
-| 逾期任务数 | `state_group ∉ {completed, cancelled} ∧ target_date < today ∧ 有起止日期`（与 `GANTT-001` is_overdue 同源） |
-| 最大逾期天数 | `max(today - target_date)` |
-| 按执行人分布 | 逾期任务按 `IssueAssignee` 分组计数（多人任务每人各计 1——与 `RPT-001` 口径一致） |
+| 逾期任务数 | `state_group ∉ {completed, cancelled} ∧ target_date 非空 ∧ target_date < today`（与 `GANTT-001` is_overdue 同源——**不要求 start_date**，start 为空 + target 已逾期的开放端条同样计入） |
+| 最大逾期天数 | `max(today - target_date)`——在**完整逾期集**上聚合（§4.3.1 `aggregate`，非 `items` 前 20 明细集） |
+| 按执行人分布 | 逾期任务按 `IssueAssignee` 分组计数（多人任务每人各计 1——与 `RPT-001` 口径一致），同样基于完整逾期集 |
 | 数据来源 | 服务端聚合端点（§4.2.1），与甘特行集同一筛选管道 |
 
 ### 2.4 业务规则汇总
@@ -156,7 +159,7 @@ sequenceDiagram
 | BR-06 | 依赖冲突是**提示非拦截**：确认弹层「仍按此排期」放行（排期自由；流转硬拦在 `TASK-005`） | 前端 | — |
 | BR-07 | 未排期入轨默认工期 3 天 | 前端 | — |
 | BR-08 | 乐观更新 + 失败回滚：拖拽期间条呈提交态（透明 + spinner 角标），失败动画弹回 | 前端 | — |
-| BR-09 | 并发改期 last-write-wins（PATCH 字段级）；B 端以 WebSocket 到达序收敛 | 后端 | — |
+| BR-09 | 并发改期 last-write-wins（PATCH 字段级）；B 端按 `COLLAB-004` BR-07 的 `version` 比对收敛（事件旧于等于本地即忽略，不按到达序盲写） | 后端 | — |
 | BR-10 | 每次改期产生 Activity（field=start_date / target_date 同 epoch） | `TASK-010` | — |
 | BR-11 | 导出 = 当前视窗（表头/可见行/连线/今日线/图例）+ 右下角水印（项目/时间/导出人） | 前端 | — |
 | BR-12 | 导出过滤浮层与拖拽中的条；2x 分辨率；>200 可见行提示仅含滚动视窗 | 前端 | — |
@@ -166,7 +169,7 @@ sequenceDiagram
 | 场景 | 触发条件 | 前端表现 | 后端 | 错误码 |
 | --- | --- | --- | --- | --- |
 | 起止反转 | 绕过前端直连 | — | 400（chk 约束） | `VALIDATION_INVALID_DATE_RANGE` |
-| 无权限拖拽 | VIEWER | 光标 default + tooltip | 403（直连） | `PERM_ROLE_INSUFFICIENT` |
+| 无权限拖拽 | VIEWER / COMMENTER | 光标 default + tooltip | 403（直连） | `PERM_ROLE_INSUFFICIENT` |
 | 归档任务 | 拖归档条 | 同上 + 「已归档」 | 409 | `RESOURCE_STATE_INVALID` |
 | 改期失败 | 网络/5xx | 动画弹回 + Toast + request_id | — | `SERVER_*` |
 | 并发覆盖 | 两人改同一条 | B 收事件后条移动；B 正在拖则其松手覆盖 | last-write-wins | — |
@@ -204,7 +207,8 @@ sequenceDiagram
 ┌────────────────────────────────────────────────────────────────────┐
 │ ⚠ 逾期 6 个任务 · 最长逾期 9 天 · 张三(3) 李四(2) 王五(1)   [查看 ▾] │
 └────────────────────────────────────────────────────────────────────┘
-  无逾期时整条隐藏；[查看▾] 展开逾期任务列表（编号/标题/逾期天数/执行人，点击跳行）
+  无逾期时整条隐藏；[查看▾] 展开逾期任务列表（编号/标题/逾期天数/执行人，点击跳行）；
+  明细上限 20 条（按逾期天数降序），超出时列表尾提示「已展示前 20 条，完整清单见任务列表 overdue 筛选（TASK-011）」——统计三数字仍为完整集口径（§2.3）
 ```
 
 ### 3.3 导出交互
@@ -228,16 +232,29 @@ sequenceDiagram
 
 ### 4.1 数据模型
 
-**零新增表、零 DDL**。写通道 = `Issue` PATCH；冲突数据 = `GANTT-001` relations/batch 的 violation。
+**零新增表、零 DDL**。写通道 = `Issue` PATCH；冲突数据 = `GANTT-001` `relations/bulk/` 连线批量端点下发的 `violation` 派生标记（命名对齐 `issues/bulk/` 动作子资源，api-conventions §2.6）。
 
 ### 4.2 API 定义
 
 | # | 方法 | 路径 | 描述 | 权限 | 成功码 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `PATCH` | `…/issues/{issue_id}/` | 改期（既有端点） | `issue.update`（CONTRIBUTOR+） | `200` |
-| 2 | `GET` | `…/gantt/overdue-summary/` | 延期概览 | `gantt.read` | `200` |
+| 2 | `GET` | `…/gantt/overdue-summary/` | 延期概览（参数与限流见 §4.2.1） | `gantt.read` | `200` |
 
-#### 4.2.1 `GET …/gantt/overdue-summary/`
+#### 4.2.1 `GET …/projects/{project_id}/gantt/overdue-summary/` — 延期概览
+
+**请求**
+
+```http
+GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/gantt/overdue-summary/?view_id=<uuid> HTTP/1.1
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `view_id` | UUID | ❌ | 筛选 DSL 由视图解析（`GANTT-001` §4.2.1 契约要点 4 同一管道，`TASK-011`）——聚合与甘特行集**同源筛选**（§2.3） |
+| 临时筛选参数 | 同 `GANTT-001` 视窗行取数 | ❌ | 不携带 `view_id` 时使用，语义与甘特行集一致 |
+
+> 聚合与时间视窗无关——**不接受** `granularity/viewport_*` 参数；**无分页**（聚合结果单包返回，非列表端点）。
 
 **成功响应 `200`**
 
@@ -256,11 +273,19 @@ sequenceDiagram
       { "id": "c3d4e5f6-…", "issue_key": "RBT-22", "name": "导出灰度方案",
         "target_date": "2026-08-23", "overdue_days": 9,
         "assignee_ids": ["6c7d…"] }
-    ]
+    ],
+    "items_truncated": false
   },
   "meta": { "today": "2026-09-01" }
 }
 ```
+
+**契约要点**：
+
+1. **统计三数字 = 完整逾期集口径**（§2.3）：`overdue_count` / `max_overdue_days` / `by_assignee` 在命中筛选管道的全量逾期行上聚合（§4.3.1 `aggregate`）；`items` 仅为按 `overdue_days` 降序（次键 `id` 稳定序）的**前 20 条明细**，`overdue_count > 20` 时 `items_truncated=true`（前端提示见 §3.2）；
+2. `items[].issue_key` 由服务端拼接下发（`{project.identifier}-{sequence_id}`，`unified-issue-model.md` 编号规则）；`items[].assignee_ids` 经**单条批量查询**组装，防逐行 N+1（§4.3.1）；
+3. `meta.today` = 项目时区当日（与 `GANTT-001` `is_overdue` 同一判定基准，天然同源）；
+4. **端点级专用限流**：本端点为高 CPU 聚合端点，自带 DRF throttle——**10 请求/分钟**，按 `user_id` 计数（Valkey 计数键 `gantt-agg:{user_id}`，固定窗口 60s），层级与配额分别对齐 `api-conventions.md` §7.1 **L3 端点限流**与 §7.2「报表聚合端点 10 请求/分钟」行；超限 `429 RATE_LIMIT_EXCEEDED` + `Retry-After`（§7.3 模板，前端退避同 §7.4）。`INFRA-004` 不含限流框架（全局限流归 Sprint 6 `INFRA-005`），故本端点按 `FILE-004` BR-07 同款「本文自带端点级 throttle」范式实现，`INFRA-005` 落地后收编配置、不改语义。
 
 #### 4.2.2 改期 PATCH（复用示例）
 
@@ -289,27 +314,43 @@ sequenceDiagram
 #### 4.3.1 概览聚合（服务端）
 
 ```python
-@action(detail=False, methods=["get"], url_path="gantt/overdue-summary")
+@action(detail=False, methods=["get"], url_path="gantt/overdue-summary",
+        throttle_classes=[GanttAggregationThrottle])   # 10/min·user（§4.2.1 契约要点 4）
 def overdue_summary(self, request, *args, **kwargs):
     today = localdate(self.get_project_tz())
-    base = build_issue_queryset(ctx=…).filter(               # 与甘特行集同源管道
+    base = build_issue_queryset(                    # 与甘特行集同源管道（view_id/临时筛选）
+        ctx=…, params=request.query_params).filter(
         target_date__lt=today,
         deleted_at__isnull=True, archived_at__isnull=True,
-        start_date__isnull=False, target_date__isnull=False,
+        target_date__isnull=False,        # 不要求 start_date——开放端条计入（§2.3，真同源 is_overdue）
     ).exclude(state__group__in=["completed", "cancelled"])   # 口径同 is_overdue
+     .annotate(overdue_days=ExprWrapper(
+         Value(today) - F("target_date"), IntegerField()))
 
+    agg = base.aggregate(                           # 统计三数字：完整逾期集（§2.3），
+        overdue_count=Count("id"),                  # 不基于 items 前 20 截断集
+        max_overdue_days=Coalesce(Max("overdue_days"), Value(0)))
     all_ids = list(base.values_list("id", flat=True))
-    rows = list(base.annotate(
-        overdue_days=ExprWrapper(Value(today) - F("target_date"), IntegerField()),
-    ).values("id", "sequence_id", "name", "target_date", "overdue_days")[:20])
-    by_assignee = (IssueAssignee.objects
+    rows = list(base.order_by("-overdue_days", "id")          # 明细截断口径：§4.2.1 要点 1
+                .values("id", "sequence_id", "name", "target_date",
+                        "overdue_days")[:20])
+
+    assignees = defaultdict(list)                   # 明细行执行人：批量一次查询，防 N+1
+    for issue_id, assignee_id in (IssueAssignee.objects
+            .filter(issue_id__in=[r["id"] for r in rows], deleted_at__isnull=True)
+            .values_list("issue_id", "assignee_id")):
+        assignees[issue_id].append(assignee_id)
+    items = [{**r,                                 # issue_key 服务端拼接（DB 列为 sequence_id）
+              "issue_key": f"{project.identifier}-{r.pop('sequence_id')}",
+              "assignee_ids": assignees[r["id"]]} for r in rows]
+    by_assignee = (IssueAssignee.objects           # 分布：完整集上单条聚合 SQL
         .filter(issue_id__in=all_ids, deleted_at__isnull=True)
-        .values("assignee_id", "assignee__display_name")
+        .annotate(display_name=F("assignee__display_name"))
+        .values("assignee_id", "display_name")     # 键名对齐 §4.2.1 示例（不带 __ 双下划线路径）
         .annotate(count=Count("issue")).order_by("-count"))
     return success_response({
-        "overdue_count": len(all_ids),
-        "max_overdue_days": max((r["overdue_days"] for r in rows), default=0),
-        "by_assignee": list(by_assignee), "items": rows}, meta={"today": today})
+        **agg, "items_truncated": agg["overdue_count"] > len(rows),
+        "by_assignee": list(by_assignee), "items": items}, meta={"today": today})
 ```
 
 #### 4.3.2 前端拖拽（pragmatic-dnd + 乐观回滚）
@@ -363,6 +404,8 @@ export async function exportGanttPng(container: HTMLElement, meta: ExportMeta) {
 
 > 导出依赖 DOM 截图而非 canvas 重绘：甘特是 DOM/SVG 混合渲染，重绘成本远高于截图；2x `pixelRatio` 保证打印可读。
 
+> **依赖登记声明（架构文档待回改）**：导出库 `html-to-image`（建议 `^1.11.x`，MIT 许可，自带 TS 类型，gzip ≈ 10KB）**尚未在 [`tech-stack.md`](../architecture/tech-stack.md) §2（前端技术栈）版本表登记**——按其 §1（版本锁定原则）「必须先修改本文档，再修改 `package.json`」，实现前须先在 §2 登记一行（用途：DOM/SVG 混合渲染的甘特视窗 PNG 截图导出；自研替代需手写 SVG 序列化 + 字体/图片内联，远超 §9.1 第 1 条「少量自研（< 100 行）可替代」的豁免线；与既有依赖无功能重叠）。该依赖为 npm 包而非权限码，不涉 `rbac` 附录 B。
+
 ### 4.4 前端实现补充
 
 - `GanttStore` 扩展：`previewDrag/commitDrag/rollbackDrag`（拖拽会话状态机）；键盘改期 300ms 合并器。
@@ -383,7 +426,7 @@ export async function exportGanttPng(container: HTMLElement, meta: ExportMeta) {
 | UT-04 | 一天最短 | 压缩至 0 天 | 钳制 1 天 | 边界 |
 | UT-05 | 过去日期放行 | 拖到上月 | 保存成功（BR-04） | 边界 |
 | UT-06 | 完成态禁拖 | completed | 手势禁用 | 正常 |
-| UT-07 | VIEWER 禁拖 | — | 入口禁用；直连 403 | 安全 |
+| UT-07 | VIEWER/COMMENTER 禁拖 | — | 入口禁用；直连 403 | 安全 |
 | UT-08 | 冲突提示放行 | 新起 < 阻塞方终 | 确认后保存成功（BR-06） | 正常 |
 | UT-09 | 未排期入轨 | 落点 9-10 | start=9-10, target=9-12 | 正常 |
 | UT-10 | 失败回滚 | PATCH 500 | 条动画回原位 | 异常 |
@@ -392,6 +435,9 @@ export async function exportGanttPng(container: HTMLElement, meta: ExportMeta) {
 | UT-13 | 多人分布 | 1 任务 2 执行人 | 两人各 +1 | 边界 |
 | UT-14 | 导出过滤 | 拖拽中的条 | 不在 PNG 中 | 正常 |
 | UT-15 | 并发 last-write | 两 PATCH 竞态 | 后到生效 | 并发 |
+| UT-16 | 归档禁拖 | 拖归档条 / 绕前端直连 PATCH | 手势禁用 + tooltip「已归档」；直连 409 `RESOURCE_STATE_INVALID`（§2.5） | 边界 |
+| UT-17 | 概览限流 | 同一 user 60s 窗口内第 11 次请求 | 429 `RATE_LIMIT_EXCEEDED`（10/min·user，§4.2.1 契约要点 4；FILE-004 UT-05 范式） | 安全 |
+| UT-18 | 概览读权限 | VIEWER/COMMENTER 请求；非成员请求 | VIEWER/COMMENTER 200 只读聚合正常（`gantt.read` 读端点）；非成员 404（`GANTT-001` UT-15 先例） | 安全 |
 
 ### 5.2 集成测试
 
@@ -400,9 +446,10 @@ export async function exportGanttPng(container: HTMLElement, meta: ExportMeta) {
 | IT-01 | 改期全链路 | 两人在线 | A 拖 +5d | B 条 2s 内移动 |
 | IT-02 | Activity 留痕 | — | 平移一次 | 两条同 epoch |
 | IT-03 | 约束双保险 | 绕前端直连反转 | PATCH | 400 chk 拦截 |
-| IT-04 | 概览一致性 | 造 6 逾期 | 概览 vs 逐条 | 计数与明细一致 |
+| IT-04 | 概览一致性 | 造 6 逾期（含 1 条 start_date 为空、target 已逾期的开放端条） | 概览 vs 逐条（is_overdue 标记） | 计数与明细一致；开放端条计入（与 `GANTT-001` 同源口径，§2.3） |
 | IT-05 | 导出产物 | 含连线视窗 | 导出 | 2x；水印齐全；文件名规范 |
 | IT-06 | 未排期联动 | 12 未排期 | 入轨 1 条 | 计数 11；时间轴出现条 |
+| IT-07 | 限流 429 端到端 | 有效项目视图 | 同一用户连续请求 `overdue-summary` 10 次后第 11 次 | 429 `RATE_LIMIT_EXCEEDED` + `Retry-After` / `X-RateLimit-*` 头（§4.2.1 契约要点 4、api-conventions §7.3 模板）；加速时钟过 60s 固定窗口后恢复（与 UT-17 单元断言互补，FILE-004 IT-08 范式） |
 
 ### 5.3 E2E 测试
 
@@ -414,6 +461,7 @@ export async function exportGanttPng(container: HTMLElement, meta: ExportMeta) {
 | E2E-04 | 未排期入轨 | 拖入 9-10 | 3 天条出现；计数 -1 |
 | E2E-05 | 延期概览 | 6 逾期项目 | 数字/分布正确；点开跳行 |
 | E2E-06 | 键盘改期 | 选中行 Shift+→ | 播报 + 就位；合并一次提交 |
+| E2E-07 | 归档条不可拖 | 打开含归档行的甘特，尝试拖拽/绕前端直连改期 | 光标 default + tooltip「已归档」；直连 409 `RESOURCE_STATE_INVALID` |
 
 ---
 
@@ -446,15 +494,15 @@ export async function exportGanttPng(container: HTMLElement, meta: ExportMeta) {
 | 类型 | 交付物 |
 | --- | --- |
 | Model / Migration | 零 DDL |
-| 后端 | `gantt/overdue-summary/` 聚合端点 |
-| 前端 | 三手势拖拽（钳制/吸附/Δ徽标/冲突脉冲/回滚）、未排期入轨、键盘改期（合并）、延期概览与明细、PNG 导出（水印/过滤/2x） |
-| 测试 | UT-01~15、IT-01~06、E2E-01~06 |
+| 后端 | `gantt/overdue-summary/` 聚合端点（含端点级限流 10/min，§4.2.1 契约要点 4） |
+| 前端 | 三手势拖拽（钳制/吸附/Δ徽标/冲突脉冲/回滚）、未排期入轨、键盘改期（合并）、延期概览与明细（前 20 截断提示）、PNG 导出（水印/过滤/2x） |
+| 测试 | UT-01~18、IT-01~07、E2E-01~07 |
 
 ### 7.2 可操作演示的验收标准
 
 1. 拖条平移与拖缘改工期：徽标实时、钳制正确、松手就位刷新保持；动态两条同 epoch；另一在线用户的条 2 秒内同步移动。
 2. 把被阻塞任务拖到早于前置完成日：连线红点脉冲 + 确认弹层；「仍按此排期」保存成功。
 3. 未排期任务拖入时间轴：3 天默认工期成条，计数减一，可继续再拖。
-4. 延期概览：逾期数/最长天数/按人分布与逐条标记一致；明细可跳转。
+4. 延期概览：逾期数/最长天数/按人分布与逐条标记一致（含 start_date 为空、仅 target 逾期的开放端条——与 `GANTT-001` is_overdue 同源）；明细可跳转。
 5. `⌘E` 导出：PNG 含表头/条/连线/今日线与水印；拖拽中的条不出现在产物。
 6. 纯键盘完成 +3 天改期（阅读器播报），连续键击仅一次提交。

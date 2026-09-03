@@ -49,16 +49,16 @@
 ```mermaid
 flowchart LR
     A["用户平移/缩放/滚动"] --> B["计算当前视窗：<br/>{timeStart, timeEnd, rowStart, rowEnd}"]
-    B --> C["GET …/gantt/?viewport_start&viewport_end<br/>&row_cursor&row_limit&granularity"]
+    B --> C["GET …/gantt/?viewport_start&viewport_end<br/>&cursor&per_page&granularity&tz"]
     C --> D["服务端：任务集 = 筛选语义（TASK-011 复用）<br/>∩ 日期与视窗相交"]
-    D --> E["行窗口：按 sort_order 的第 N~M 行<br/>（游标分页）"]
-    E --> F["相交条件：start_date ≤ viewport_end<br/>AND target_date ≥ viewport_start<br/>（NULL 日期任务单列「未排期」泳道）"]
+    D --> E["行窗口：sort_order 稳定序下一页 60 行<br/>（全局 CursorPagination：cursor/per_page）"]
+    E --> F["相交条件：start_date ≤ viewport_end<br/>AND target_date ≥ viewport_start<br/>（单边 NULL = 无穷端恒相交；双 NULL → 未排期区/聚合条）"]
     F --> G["响应：rows[] + 视窗内连线 edges[] + meta"]
 ```
 
 **「日期相交」而非「日期包含」**：一个横跨整年的任务条在用户只看 8 月时也必须渲染（它的条与视窗相交）——`start_date <= 视窗尾 AND target_date >= 视窗首` 是区间相交的标准判定。
 
-**未排期任务**：`start_date` 与 `target_date` 均为空的任务不进时间轴主体，收敛到左侧独立的「未排期」折叠区（可拖入时间轴——交互归 `GANTT-002`）。
+**未排期任务与单边缺省**：`start_date` 与 `target_date` **均为空且子树亦无日期**的任务不进时间轴主体，收敛到左侧独立的「未排期」折叠区（可拖入时间轴——交互归 `GANTT-002`）；自身双空但子树有日期的父任务不入未排期区，而以「聚合条」进入时间轴（BR-11）。仅一侧为空的任务按 BR-02 的无穷语义参与相交，条体缺省端画为「开放端」（左端开放 = 未设开始、右端开放 = 未设截止，样式见 §3.2），其连线端遵循 BR-08 锚定今日。
 
 ### 1.4 三粒度定义
 
@@ -95,6 +95,7 @@ flowchart LR
 | `TASK-005` | `relations/` 契约（含 `related_issue` 内联 `start_date/target_date/state_group`） | 连线渲染数据源 |
 | `TASK-004` | 树形行结构、`subtree` 深度 | 左侧行树 |
 | `TASK-011` | 筛选 DSL | 甘特取数复用（筛选结果的时间轴投影） |
+| `TASK-006` | `estimate_minutes` / `spent_minutes`（任务响应 annotate 口径） | 任务条工时对照位（§3.2 悬浮）与行契约字段（§4.2.1） |
 | `BOARD-003` | 视图框架（layout=gantt 入 `IssueView.Layout` 枚举） | 视图保存与切换 |
 | `INFRA-002` | live 服务（`COLLAB-004` 事件 → 甘特条实时刷新） | 增量更新 |
 
@@ -117,13 +118,15 @@ flowchart LR
 flowchart TD
     A["进入甘特视图（或从其他视图切换）"] --> B["读取视图配置（IssueView layout=gantt）<br/>默认视窗 = 今天 ± 1 个月 / day 粒度"]
     B --> C["并行请求：<br/>① rows（视窗行窗口 60 行）<br/>② states ③ schema（筛选器）"]
-    C --> D{"首屏 rows 中含依赖？"}
-    D -->|是| E["POST …/gantt/relations/batch/<br/>（按 issue_id 列表一次合并请求）"]
+    C --> D{"首屏 rows 中任一行<br/>relation_count > 0？"}
+    D -->|是| E["POST …/gantt/relations/bulk/<br/>（按 issue_id 列表一次合并请求）"]
     D -->|否| F["跳过"]
     E --> G["渲染：时间表头 → 行树 → 任务条 → 连线 → 今日线"]
     F --> G
     G --> H["用户滚动/平移 → 触发下一视窗预取<br/>（滚动到 80% 行时预取下一页行）"]
 ```
+
+> 「含依赖」的判定信号 = rows 契约的 `relation_count` 字段（§4.2.1 契约要点 7，服务端按正反向关联 annotate 计数随行下发）：任一行 `relation_count > 0` 即发 `relations/bulk/`，全为 0 跳过（省一次空请求）。
 
 ### 2.2 平移 / 缩放 / 滚动的取数时序
 
@@ -137,13 +140,13 @@ sequenceDiagram
 
     U->>FE: 水平平移至 2026-11（day 粒度）
     FE->>FE: 防抖 150ms 计算新视窗 {11-01, 11-30}
-    FE->>API: GET …/gantt/?viewport_start=2026-11-01&viewport_end=2026-11-30&row_cursor=…
-    API->>PG: 行窗口查询（视窗相交 + 筛选 + 行游标）
+    FE->>API: GET …/gantt/?viewport_start=2026-11-01&viewport_end=2026-11-30&per_page=60&cursor=…（上一页 meta.next_cursor 原样回传）
+    API->>PG: 行窗口查询（视窗相交 + 筛选 + 游标定位）
     PG-->>API: 60 行（含日期/进度/深度）
-    API-->>FE: rows + meta（row_next_cursor）
+    API-->>FE: rows + meta（next_cursor 等分页全字段）
     FE->>FE: 增量合并入 GanttStore（按 id 去重）
-    FE->>API: POST …/gantt/relations/batch/ {issue_ids: […]}
-    API->>PG: relations WHERE issue_id IN (…)（只取正向行）
+    FE->>API: POST …/gantt/relations/bulk/ {issue_ids: […]}
+    API->>PG: relations WHERE issue_id IN (…)（正向 blocks + 对称类型镜像去重）
     API-->>FE: edges[]
     FE->>FE: 重绘连线层（仅新增/移除的边做进出动画）
     U->>FE: 切换 week 粒度
@@ -155,16 +158,16 @@ sequenceDiagram
 | 编号 | 规则 | 判定位置 | 违反后果 |
 | --- | --- | --- | --- |
 | BR-01 | 甘特取数复用 `TASK-011` 筛选语义（同 DSL 同白名单）——筛选结果即甘特行集 | ViewSet | — |
-| BR-02 | 视窗相交判定：`start_date ≤ viewport_end AND target_date ≥ viewport_start`；单边 NULL 视为无穷（start NULL → 从视窗首起算；target NULL → 至视窗尾） | Service | — |
-| BR-03 | 未排期任务（双 NULL）不入时间轴，入「未排期」折叠区（计数徽标） | Service + UI | — |
+| BR-02 | 视窗相交判定：`start_date ≤ viewport_end AND target_date ≥ viewport_start`；单边 NULL 视为无穷（start NULL → 从视窗首起算、条左端开放；target NULL → 至视窗尾、条右端开放，样式见 §3.2） | Service + 前端 | — |
+| BR-03 | 未排期任务（双 NULL **且子树无日期**）不入时间轴，入「未排期」折叠区（计数徽标）；自身双 NULL 但子树有日期的父行走 BR-11 聚合条、不计入未排期数 | Service + UI | — |
 | BR-04 | 进度口径唯一：§1.2 表（子任务比例 > 语义组约定），由服务端下发 | Service | 评审拒绝（禁止前端自算） |
-| BR-05 | 日期显示时区：列边界按项目设置时区（默认 Asia/Shanghai）计算自然日/周/月边界；服务端存 UTC 不受影响 | 前端 | — |
+| BR-05 | 日期显示时区：按**请求级时区**（query `?tz=` > `X-Client-TZ` 头 > 默认 `Asia/Shanghai`——`RPT-001` BR-04 同款范式；Project/Profile 均无 timezone 字段，时区由前端持、后端折算）计算自然日/周/月边界与「今天」/逾期判定；服务端存 UTC 不受影响；`tz` 非法（非 IANA 时区名）→ 400。下游 `GANTT-002` 的 `get_project_tz()`（项目时区）为旧口径，**待同步本范式** | Service + 前端 | — |
 | BR-06 | 连线只读：渲染 `relations/` 数据，甘特侧不产生任何依赖写操作；`GANTT-002` 的拖拽建依赖走 `TASK-005` 端点 | 架构约束 | — |
 | BR-07 | 连线仅绘制**两端行均可见**的边；一端折叠/滚出视窗的边收拢为其可见端的小锚点（悬浮提示目标） | 前端 | — |
 | BR-08 | 无日期端的连线：锚定「今日」虚线节点（`TASK-005` 契约允许 NULL 日期） | 前端 | — |
-| BR-09 | 虚拟滚动行高固定 36px；行窗口默认 60 行，滚动至 80% 预取下一页 | 前端 | — |
+| BR-09 | 虚拟滚动行高固定 36px；行分页 `per_page` 默认 60（全局 CursorPagination，api-conventions §6.2/§6.3），滚动至 80% 预取下一页 | 前端 | — |
 | BR-10 | 折叠状态（哪些父节点收起）持久化到视图 `display_props.collapsed`（`BOARD-003` IssueView） | 前端 + View | — |
-| BR-11 | 甘特行排序：`sort_order`（与看板/列表同源）；父自身无日期而子树有日期时显示「聚合条」（区间 = 子树最早 start ~ 最晚 target，半透明样式） | Service | — |
+| BR-11 | 甘特行排序：`sort_order`（与看板/列表同源）；父自身无日期而子树有日期时显示「聚合条」（区间 = 子树最早 start ~ 最晚 target，`is_aggregated=true` 下发，半透明样式，不计入 unscheduled_count） | Service | — |
 | BR-12 | 权限：`gantt.read`（VIEWER+）可见；行集经项目过滤，无越权行 | Permission | 403/404 |
 | BR-13 | 性能门禁：1 万任务/5 年跨度，首屏（含连线）P95 < 1.5s；平移预取 P95 < 300ms | 测试门禁 | — |
 | BR-14 | `COLLAB-004` 事件（issue.updated/board.moved）到达时增量更新对应行与连线，不做全量刷新 | 前端 | — |
@@ -175,11 +178,12 @@ sequenceDiagram
 | --- | --- | --- | --- | --- |
 | 视窗参数非法（start > end） | 构造请求 | — | 400 | `VALIDATION_INVALID_PARAM` |
 | 粒度非法 | granularity=hour | — | 400 | `VALIDATION_INVALID_PARAM` |
+| 请求时区非法 | `tz=ABC`（非 IANA 时区名） | — | 400 | `VALIDATION_ERROR` + 子码 `INVALID`（`RPT-001` 同款） |
 | 项目无任务 | 空项目 | 空态插画「排期第一个任务」 | — | — |
 | 全部任务未排期 | 无日期 | 时间轴空 + 「未排期 (N)」展开列表 | — | — |
 | 预取失败 | 网络 | 保持当前渲染 + 顶部黄条「实时更新暂停 · 重试」 | — | — |
 | 单行数据损坏（日期反转） | 脏数据 | 该条渲染为 1 天最小条 + 错误角标 | `chk_issue_start_before_target` 常开约束（理论不可达） | — |
-| 视图保存失败 | layout 参数越权 | Toast | — | `PERM_DENIED` |
+| 视图保存失败 | layout 非法值（枚举外，如 `layout=calendar`） | Toast（保存失败提示，视图保持原值） | 400 | `VALIDATION_ERROR` + 子码 `NOT_A_CHOICE`（枚举校验，api-conventions §8.8；与 `BOARD-003` 视图保存同管道） |
 
 ### 2.5 边界条件
 
@@ -188,7 +192,7 @@ sequenceDiagram
 | 单项目任务数 | 1 万（门禁基准） | 虚拟滚动线性扩展 |
 | 时间跨度 | 5 年（门禁基准） | month 粒度扩展 |
 | 视窗宽 | ≤ 366 天（day） | 前端强制切 week/month |
-| 行窗口 | 60 行/页 | 游标 |
+| 行分页 | per_page 默认 60、上限 100 | 全局游标分页；超限静默截断（meta.degraded） |
 | 连线批量请求 | 一次 ≤ 60 issue | 分批 |
 | 最小任务条宽 | 4px（同日起止） | — |
 | 折叠深度 | 与 `MAX_ISSUE_DEPTH=5` 一致 | — |
@@ -240,9 +244,10 @@ sequenceDiagram
 | 已取消 | 虚线边框灰底 | 无 | 1px dashed |
 | 逾期（未完成且 target < 今天） | 红 15% 底 | 状态色填充 | 1.5px 红 + 右端 ⚠ |
 | 聚合条（父无日期） | 渐变半透明 | 子树整体进度 | 虚线（提示为聚合） |
+| 开放端条（单边 NULL） | 同所属状态样式 | 同所属状态口径 | 缺省端无圆角 + 渐隐边缘；悬浮提示「未设置开始/截止日期」（BR-02） |
 | 今日线跨越的条 | — | — | 左缘 2px 亮色高亮 |
 
-条内文本：宽度 ≥ 80px 时显示 `编号+标题`（truncate）；不足时悬浮 tooltip 全量信息（编号/标题/起止/进度/执行人头像）。
+条内文本：宽度 ≥ 80px 时显示 `编号+标题`（truncate）；不足时悬浮 tooltip 全量信息（编号/标题/起止/进度/执行人头像/工时对照 `spent/estimate`——格式化与超耗红显口径同 `TASK-006` §3，`estimate_minutes` 为空不显示该行）。
 
 ### 3.3 依赖连线样式矩阵（消费 `TASK-005` 四类型）
 
@@ -329,7 +334,7 @@ indexes = [
 | # | 方法 | 路径 | 描述 | 权限 | 成功码 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `GET` | `…/projects/{project_id}/gantt/` | 视窗行取数 | `gantt.read`（VIEWER+） | `200` |
-| 2 | `POST` | `…/projects/{project_id}/gantt/relations/batch/` | 可见行连线批量 | `gantt.read` | `200` |
+| 2 | `POST` | `…/projects/{project_id}/gantt/relations/bulk/` | 可见行连线批量（命名对齐 `issues/bulk/` 动作子资源，api-conventions §2.6） | `gantt.read` | `200` |
 | 3 | `GET` | `…/projects/{project_id}/gantt/unscheduled/` | 未排期任务列表 | `gantt.read` | `200` |
 
 #### 4.2.1 `GET …/gantt/` — 视窗行取数
@@ -337,7 +342,7 @@ indexes = [
 **请求**
 
 ```http
-GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/gantt/?granularity=day&viewport_start=2026-09-01&viewport_end=2026-09-30&row_cursor=0&row_limit=60&view_id=<uuid> HTTP/1.1
+GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/gantt/?granularity=day&viewport_start=2026-09-01&viewport_end=2026-09-30&per_page=60&view_id=<uuid>&tz=Asia/Shanghai HTTP/1.1
 ```
 
 **成功响应 `200`**
@@ -355,24 +360,29 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/gantt/?granularity=day&viewpor
         "progress": 40, "progress_source": "subtasks",
         "state_group": "started", "state_color": "#3B82F6",
         "is_overdue": false, "assignee_ids": ["6c7d…"],
-        "is_aggregated": false
+        "is_aggregated": false,
+        "relation_count": 2,
+        "estimate_minutes": 480, "spent_minutes": 240
       },
       {
         "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
         "issue_key": "RBT-13", "name": "后端导出 API", "depth": 1,
         "has_children": true, "collapsed": false,
         "start_date": "2026-09-01", "target_date": "2026-09-05",
-        "progress": 100, "progress_source": "state",
+        "progress": 100, "progress_source": "subtasks",
         "state_group": "completed", "state_color": "#10B981",
         "is_overdue": false, "assignee_ids": ["2b3a…"],
-        "is_aggregated": false
+        "is_aggregated": false,
+        "relation_count": 1,
+        "estimate_minutes": null, "spent_minutes": 120
       }
     ],
-    "unscheduled_count": 12,
-    "total_rows_in_viewport": 328
+    "unscheduled_count": 12
   },
   "meta": {
-    "row_next_cursor": "60", "row_next_page_results": true,
+    "next_cursor": "NjA6MTow", "prev_cursor": "NjA6MDox",
+    "next_page_results": true, "prev_page_results": false,
+    "count": 2, "total_count": 328, "total_pages": 6, "page": 1, "per_page": 60,
     "granularity": "day", "viewport": { "start": "2026-09-01", "end": "2026-09-30" },
     "today": "2026-09-01"
   }
@@ -381,10 +391,14 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/gantt/?granularity=day&viewpor
 
 **契约要点**：
 
-1. `progress`（0~100 整数）与 `progress_source`（`subtasks|state`）由服务端按 §1.2 口径计算下发——前端禁止自算（BR-04）；
-2. `is_aggregated=true` 表示该行为「子树聚合条」（父无日期但子树有，`start/target` 为聚合区间）；
+1. `progress`（0~100 整数）与 `progress_source`（`subtasks|state`）由服务端按 §1.2 口径计算下发——前端禁止自算（BR-04）；有子任务的行 `progress_source` 恒为 `subtasks`；
+2. `is_aggregated=true` 表示该行为「子树聚合条」：自身双 NULL 但子树含日期的父行（BR-11），`start_date/target_date` 下发子树聚合区间（最早 start ~ 最晚 target，按 `TASK-004` 子树 CTE annotate），不计入 `unscheduled_count`；其余行 `is_aggregated=false`，单边 NULL 照实下发 `null`，前端按 §3.2「开放端」渲染；
 3. `collapsed` 回显视图保存的折叠状态（BR-10）；行序 = `sort_order` 同层序；
-4. `view_id` 携带时筛选 DSL 由视图解析（`TASK-011` 管道），不携带时用临时筛选参数。
+4. `view_id` 携带时筛选 DSL 由视图解析（`TASK-011` 管道），不携带时用临时筛选参数；
+5. 行分页复用全局 `CursorPagination`（api-conventions §6.2/§6.3）：参数 `cursor`/`per_page`（首页不带 `cursor`；本端点 `per_page` 默认 60、上限 100 静默截断），游标为不透明 Base64（`value:offset:is_prev`，客户端原样回传、禁止拼装，解码失败 `400 VALIDATION_INVALID_CURSOR`），`meta` 携带 `next_cursor/prev_cursor/next_page_results/prev_page_results/count/total_count/total_pages/page/per_page` 全字段——决策登记见 §6.3；
+6. `estimate_minutes`/`spent_minutes` 为 `TASK-006` 契约字段（整数分钟，`spent` 为 annotate 实时聚合），供条悬浮的工时对照位消费；`estimate_minutes` 为 `null` 时前端不显示该位。
+7. `relation_count`（整数）：该行为端点的关联关系数（正向 + 反向、四种类型全计；软删或对方软删不计），服务端按正反向子查询 annotate 计数随行下发——供前端判定是否发起 `relations/bulk/`（§2.1：任一行 `> 0` 即请求），不参与条/线渲染；
+8. `tz` 与 `granularity` 均为**选填**：`tz` 解析优先级 `?tz=` > `X-Client-TZ` 头 > 默认 `Asia/Shanghai`（BR-05，`RPT-001` BR-04 同款），`meta.today` 与 `is_overdue` 按该时区折算，非法值（非 IANA 时区名）→ 400 `VALIDATION_ERROR`（子码 `INVALID`）；`granularity` 默认 `day`，服务端仅校验枚举（`day|week|month`）并在 `meta.granularity` 回显，**不影响取数**（三粒度下行集/分页口径完全相同，列宽与表头刻度是前端渲染层概念，§1.4）。
 
 **失败响应 `400`（视窗非法）**
 
@@ -394,14 +408,14 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/gantt/?granularity=day&viewpor
   "error": {
     "code": "VALIDATION_INVALID_PARAM",
     "message": "查询参数非法",
-    "details": [{ "field": "viewport_start", "code": "INVALID_DATE",
+    "details": [{ "field": "viewport_start", "code": "INVALID_DATE_RANGE",
                   "message": "视窗起始晚于结束" }],
     "request_id": "01JCBB1A4Y9CE4W6D7F0H2J4K6M8N0"
   }
 }
 ```
 
-#### 4.2.2 `POST …/gantt/relations/batch/` — 连线批量
+#### 4.2.2 `POST …/gantt/relations/bulk/` — 连线批量
 
 **请求**
 
@@ -423,14 +437,21 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/gantt/?granularity=day&viewpor
         "relation_type": "blocks",
         "from": { "issue_key": "RBT-13", "target_date": "2026-09-05" },
         "to":   { "issue_key": "RBT-12", "start_date": "2026-09-01", "violation": true }
+      },
+      {
+        "from_issue_id": "d4e5f6a7-b8c9-4d0e-a1f2-3b4c5d6e7f8a",
+        "to_issue_id": "8a1f9c2e-6b3d-4a7e-9f11-2c4d5e6f7a8b",
+        "relation_type": "relates_to",
+        "from": { "issue_key": "RBT-31", "target_date": "2026-09-10" },
+        "to":   { "issue_key": "RBT-12", "start_date": "2026-09-01", "violation": false }
       }
     ]
   },
-  "meta": { "requested": 2, "edges": 1 }
+  "meta": { "requested": 2, "edges": 2 }
 }
 ```
 
-> `violation=true` 标注「被阻塞方起期早于阻塞方终期」的排期冲突（服务端一行 CASE 计算，供前端红点提示，§3.3）。数据本体与 `TASK-005` 契约一致，仅增派生标记。
+> `violation` 仅对 `blocks` 边派生（标注「被阻塞方起期早于阻塞方终期」的排期冲突，服务端一行 CASE 计算，供前端红点提示，§3.3）；`relates_to` / `duplicates` 边恒为 `false`（字段保留保证边形状一致）。`relation_type` 下发全集 = `blocks` / `relates_to` / `duplicates`——`is_blocked_by` 镜像行与对称类型的反向行在服务端去重（§4.3.3），四种线型渲染见 §3.3。数据本体与 `TASK-005` 契约一致，仅增派生标记。
 
 #### 4.2.3 `GET …/gantt/unscheduled/` — 未排期区
 
@@ -448,46 +469,66 @@ def gantt_rows(self, request, *args, **kwargs):
     viewport_end = parse_date(request.query_params["viewport_end"])
     if viewport_start > viewport_end:
         raise ValidationError({"viewport_start": "视窗起始晚于结束"})
+    tz_name = (request.query_params.get("tz")
+               or request.headers.get("X-Client-TZ")
+               or "Asia/Shanghai")              # BR-05：请求级时区（RPT-001 BR-04 同款；
+    try:                                       # Project/Profile 均无 timezone 字段）
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        raise ValidationError({"tz": "tz 须为合法 IANA 时区名"})   # 400 INVALID
 
     base = build_issue_queryset(            # TASK-011 管道：权限 + 筛选 + 排序
         ctx=self.compile_context(request), view=self.resolve_view(request))
-    rows = (base
-            .filter(deleted_at__isnull=True, archived_at__isnull=True)
-            .exclude(start_date__isnull=True, target_date__isnull=True)   # BR-03
-            .filter(start_date__isnull=False, target_date__isnull=False)
-            .filter(start_date__lte=viewport_end,                          # BR-02 相交
-                    target_date__gte=viewport_start)
-            .annotate(
-                sub_issues_count=…, completed_sub_issues_count=…,         # TASK-004 口径
-            )
-            .order_by("sort_order", "-created_at", "-id")[offset:offset + 60])
-
-    payload = [serialize_gantt_row(r, project.timezone) for r in rows]
-    unscheduled = base.filter(start_date__isnull=True, target_date__isnull=True,
-                              deleted_at__isnull=True,
-                              archived_at__isnull=True).count()
-    return success_response({"rows": payload, "unscheduled_count": unscheduled,
-                             "total_rows_in_viewport": base.count()}, meta=…)
+    active = (base
+              .filter(deleted_at__isnull=True, archived_at__isnull=True)
+              .annotate(sub_issues_count=…, completed_sub_issues_count=…,   # TASK-004 口径
+                        subtree_min_start=…, subtree_max_target=…,          # 子树聚合区间（BR-11）
+                        relation_count=…,                                   # 正反向关联计数（§2.1 判定信号）
+                        spent_minutes=…))                                  # TASK-006 实时聚合
+    rows_qs = active.filter(
+        (Q(start_date__isnull=True) | Q(start_date__lte=viewport_end))      # BR-02：单边 NULL = 无穷端
+        & (Q(target_date__isnull=True) | Q(target_date__gte=viewport_start))
+        & (Q(start_date__isnull=False) | Q(target_date__isnull=False)       # BR-03：双 NULL 自身不入时间轴
+           | (Q(subtree_min_start__isnull=False)                            #   例外：子树有日期 → 聚合条，
+              & Q(subtree_min_start__lte=viewport_end,                      #   且聚合区间与视窗相交（BR-11）
+                  subtree_max_target__gte=viewport_start))))
+    rows = self.paginate_queryset(          # 全局 CursorPagination（api-conventions §6.2/§6.3）
+        rows_qs.order_by("sort_order", "-created_at", "-id"))               # 排序尾追加唯一键（§5.4）
+    payload = [serialize_gantt_row(r, tz) for r in rows]                  # tz：请求级解析（BR-05）
+    unscheduled = active.filter(            # BR-03：双 NULL 且子树全无日期 → 未排期区
+        start_date__isnull=True, target_date__isnull=True,
+        subtree_min_start__isnull=True).count()
+    return success_response({"rows": payload, "unscheduled_count": unscheduled},
+                            meta=self.get_paginated_meta())                 # 分页 meta 全字段
 ```
 
-**执行计划期望**：`idx_issue_gantt_viewport` 索引扫描（project + 日期相交）→ 行排序在窗口内完成（60 行 sort 开销可忽略）；`unscheduled` 计数走 `idx_issue_active_by_project`。
+**执行计划期望**：`idx_issue_gantt_viewport` 索引命中（project + 日期相交；BR-02 的 NULL 容忍 OR 分支展开后，规划器可能走 Index Scan 直扫或经 BitmapOr 合并的 Bitmap Index Scan——**均算命中**，IT-07 断言按索引名而非扫描形态）→ 行排序在窗口内完成（60 行 sort 开销可忽略）；`unscheduled` 计数走 `idx_issue_active_by_project`。
 
 #### 4.3.2 进度与逾期派生（行序列化内）
 
 ```python
 def serialize_gantt_row(issue, tz) -> dict:
+    is_aggregated = (issue.start_date is None and issue.target_date is None
+                     and issue.subtree_min_start is not None)              # BR-11 聚合条
     if issue.sub_issues_count > 0:                                  # BR-04 唯一口径
         progress = round(100 * issue.completed_sub_issues_count
                          / issue.sub_issues_count)
         source = "subtasks"
     else:
+        # state.group 五组全枚举：缺键 = KeyError → 500（cancelled 由渲染层跳过填充，§1.2/UT-08）
         progress = {"completed": 100, "started": 50,
-                    "unstarted": 0, "backlog": 0}[issue.state_group]
+                    "unstarted": 0, "backlog": 0, "cancelled": 0}[issue.state_group]
         source = "state"
-    today = localdate(tz)
+    today = localdate(tz)                                  # BR-05：请求级时区折算的「今天」
     return {
         …,
+        "start_date": issue.subtree_min_start if is_aggregated else issue.start_date,
+        "target_date": issue.subtree_max_target if is_aggregated else issue.target_date,
         "progress": progress, "progress_source": source,
+        "is_aggregated": is_aggregated,
+        "relation_count": issue.relation_count,             # §2.1 连线批量判定信号
+        "estimate_minutes": issue.estimate_minutes,                  # TASK-006 工时对照位
+        "spent_minutes": issue.spent_minutes,
         "is_overdue": (issue.state_group not in ("completed", "cancelled")
                        and issue.target_date is not None
                        and issue.target_date < today),
@@ -497,27 +538,33 @@ def serialize_gantt_row(issue, tz) -> dict:
 #### 4.3.3 连线批量（合并请求，杜绝 N+1）
 
 ```python
-@action(detail=False, methods=["post"], url_path="gantt/relations/batch")
-def relations_batch(self, request, *args, **kwargs):
-    ids = request.data.get("issue_ids", [])[:60]
-    rows = (IssueLink.objects
-            .filter(issue_id__in=ids, deleted_at__isnull=True,
-                    related_issue__deleted_at__isnull=True)
-            .filter(relation_type="blocks")          # 成对存储只取正向行（防重复边）
-            .select_related("issue", "related_issue"))
+@action(detail=False, methods=["post"], url_path="gantt/relations/bulk")
+def relations_bulk(self, request, *args, **kwargs):
+    requested_ids = request.data.get("issue_ids", [])
+    requested = len(requested_ids)            # 截断前计数（§4.2.2 meta.requested，UT-14）
+    ids = requested_ids[:60]                  # §2.5 批量上限（超限由前端分批）
+    FORWARD_TYPES = ("blocks", "relates_to", "duplicates")   # 排除镜像 is_blocked_by（防重复边）
+    links = (IssueLink.objects
+             .filter(issue_id__in=ids, deleted_at__isnull=True,
+                     related_issue__deleted_at__isnull=True,
+                     relation_type__in=FORWARD_TYPES)
+             .filter(Q(relation_type="blocks") |            # blocks 族成对异型：只取正向行
+                     Q(issue_id__lt=F("related_issue_id")))  # 对称类型成对同型：按 id 序取一行去重
+             .select_related("issue", "related_issue"))
     edges = []
-    for l in rows:
+    for l in links:
         to = l.related_issue
-        violation = (l.issue.target_date and to.start_date
-                     and to.start_date < l.issue.target_date)
+        violation = (l.relation_type == "blocks" and l.issue.target_date
+                     and to.start_date and to.start_date < l.issue.target_date)
         edges.append({"from_issue_id": str(l.issue_id), "to_issue_id": str(to.id),
-                      "relation_type": "blocks",
+                      "relation_type": l.relation_type,
                       "from": {"issue_key": issue_key(l.issue),
                                "target_date": l.issue.target_date},
                       "to": {"issue_key": issue_key(to),
                              "start_date": to.start_date,
                              "violation": bool(violation)}})
-    return success_response({"edges": edges})
+    return success_response({"edges": edges},
+                            meta={"requested": requested, "edges": len(edges)})   # §4.2.2 meta 同步
 ```
 
 ### 4.4 前端实现
@@ -526,7 +573,7 @@ def relations_batch(self, request, *args, **kwargs):
 
 ```typescript
 // packages/shared-state/src/gantt.store.ts
-import { differenceInCalendarDays, max } from "date-fns";
+import { addDays, differenceInCalendarDays, max, min } from "date-fns";
 
 const DAY_WIDTH = { day: 32, week: 8, month: 2 } as const;
 
@@ -538,13 +585,20 @@ export class GanttStore {
   @observable edges: GanttEdge[] = [];
   @observable collapsed = observable.set<string>();
 
-  @computed barGeometry(row: GanttRow): { left: number; width: number } {
+  /** 条几何——纯派生方法（非 @computed：MobX 不支持带参 computed；
+   *  响应性经调用点读取的 granularity / viewport / rowsById 可观察量建立） */
+  barGeometry(row: GanttRow): { left: number; width: number;
+                                openStart: boolean; openEnd: boolean } {
     const dayWidth = DAY_WIDTH[this.granularity];
-    const start = max([row.start_date!, this.viewport.start]);
+    // BR-02 渲染口径：start NULL → 自视窗首起算（开放左端）；target NULL → 至视窗尾（开放右端）。
+    // is_aggregated 行的 start_date/target_date 即服务端下发的子树聚合区间（§4.2.1 契约要点 2）。
+    const start = max([row.start_date ?? this.viewport.start, this.viewport.start]);
+    const end = min([row.target_date ?? this.viewport.end, this.viewport.end]);
     const left = differenceInCalendarDays(start, this.viewport.start) * dayWidth;
     const width = Math.max(
-      4, differenceInCalendarDays(row.target_date!, row.start_date!) * dayWidth);
-    return { left, width };
+      4, differenceInCalendarDays(end, start) * dayWidth);
+    return { left, width,
+             openStart: row.start_date === null, openEnd: row.target_date === null };
   }
 
   /** 平移/缩放统一入口：防抖 150ms → 取数 → 增量合并（按 id 去重） */
@@ -560,7 +614,7 @@ export class GanttStore {
 | 时间表头 | 纯 DOM（sticky 双行：粒度主行 + 子刻度） | 随平移 transform |
 | 行区 | `@tanstack/react-virtual`（行虚拟，36px 行高，overScan 10） | 左树与右条同滚动容器（横向共用 transform） |
 | 任务条 | 绝对定位 div（`left/width` 来自 `barGeometry`） | 状态色 class 矩阵（§3.2） |
-| 连线层 | 单一 SVG 覆盖（pointer-events 仅线本身） | 只绘可见边（BR-07）；D3 curve 生成贝塞尔 |
+| 连线层 | 单一 SVG 覆盖（pointer-events 仅线本身） | 只绘可见边（BR-07）；贝塞尔 path 由自研 `bezierPath()` 工具函数生成（SVG `C` 指令，≈20 行——按 tech-stack §9.1 准入第 1 条「少量自研可替代则不引入」，**不引入 d3**） |
 | 今日线 | 2px 绝对定位竖线 | — |
 
 - 横向滚动 = 容器 transform（rAF 节流），**不触发取数**；视窗（时间范围）变化才防抖取数——「像素平移」与「数据视窗」解耦是性能关键；
@@ -577,19 +631,24 @@ export class GanttStore {
 | UT-01 | 相交判定 | 条 9-01~9-08，视窗 9-05~9-30 | 命中 | 正常 |
 | UT-02 | 相交判定（跨界） | 条 1-01~12-31，视窗 8 月 | 命中 | 边界 |
 | UT-03 | 不相交排除 | 条 8-01~8-15，视窗 9 月 | 不返回 | 正常 |
-| UT-04 | 单边 NULL | start NULL / target 9-10，视窗 9 月 | 命中（BR-02 无穷语义） | 边界 |
-| UT-05 | 双 NULL 归未排期 | — | 不入 rows；计数 +1 | 边界 |
+| UT-04 | 单边 NULL | start NULL / target 9-10，视窗 9 月 | 命中（BR-02 无穷语义；`start_date` 下发 null，条左端开放） | 边界 |
+| UT-05 | 双 NULL 归未排期 | 双 NULL 且子树无日期 | 不入 rows；unscheduled_count +1 | 边界 |
 | UT-06 | 进度：子任务口径 | 2/5 | 40，source=subtasks | 正常 |
 | UT-07 | 进度：语义组 | started 无子 | 50，source=state | 正常 |
 | UT-08 | 进度：取消 | cancelled | 虚线样式（无填充口径） | 边界 |
 | UT-09 | 逾期判定 | target 昨天 + started | is_overdue=true | 正常 |
 | UT-10 | 逾期豁免 | target 昨天 + completed | false | 边界 |
-| UT-11 | violation 派生 | B.start < A.target | edges.violation=true | 正常 |
-| UT-12 | 连线只取正向 | 成对两行 | 仅 blocks 行成边 | 正常 |
-| UT-13 | 视窗参数校验 | start > end | 400 INVALID_PARAM | 异常 |
+| UT-11 | violation 派生（仅 blocks） | B.start < A.target（blocks 边） | violation=true；relates_to 边恒 false | 正常 |
+| UT-12 | 连线镜像去重 | blocks+is_blocked_by 两行 + relates_to 正反两行 | 各成 1 条边，无重复（§4.3.3） | 正常 |
+| UT-13 | 视窗参数校验 | start > end | 400 `VALIDATION_INVALID_PARAM`（与 §4.2.1 失败响应/`API_TRUTH` 同源） | 异常 |
 | UT-14 | 批量上限 | 61 ids | 截断 60（meta.requested=61） | 边界 |
 | UT-15 | 权限 | 非成员 | 404 | 安全 |
 | UT-16 | 筛选复用 | view_id 携带 DSL | 行集与列表视图一致 | 正常 |
+| UT-17 | 工时对照下发 | estimate 480 / spent 240；另一行 estimate null | 两字段随行下发；null 时前端不渲染工时位（`TASK-006` 口径） | 边界 |
+| UT-18 | 聚合条口径 | 父双 NULL、子树最早 9-02 / 最晚 9-20，视窗 9 月 | 命中 rows；is_aggregated=true；start/target=子树区间；不计 unscheduled（BR-11） | 边界 |
+| UT-19 | 请求级时区折算 | tz=America/New_York，行 target_date=该时区本地今日 | meta.today / is_overdue 按请求时区日历判定（BR-05，RPT-001 范式） | 边界 |
+| UT-20 | tz 非法校验 | tz=ABC | 400 `VALIDATION_ERROR`（子码 `INVALID`）；不静默回退 | 异常 |
+| UT-21 | 连线判定信号下发 | 一行 2 条关联、一行 0 条 | relation_count 随行下发 2 / 0（§2.1 判定信号） | 正常 |
 
 ### 5.2 集成测试
 
@@ -601,7 +660,7 @@ export class GanttStore {
 | IT-04 | 折叠持久化 | 展开视图保存 | 刷新 | collapsed 回显（BR-10） |
 | IT-05 | 实时更新 | 两人同项目 | A 改日期 | B 甘特条位置 2s 内更新（COLLAB-004） |
 | IT-06 | 未排期计数 | 12 条无日期 | 加载数据 | unscheduled_count=12，列表一致 |
-| IT-07 | 索引命中 | EXPLAIN | 视窗查询 | `idx_issue_gantt_viewport` 扫描 |
+| IT-07 | 索引命中 | EXPLAIN | 视窗查询 | `idx_issue_gantt_viewport` 命中（Index Scan 直扫或经 BitmapOr 合并的 Bitmap Index Scan 均算——按索引名断言，不锁扫描形态） |
 
 ### 5.3 E2E 测试
 
@@ -634,6 +693,7 @@ export class GanttStore {
 3. **连线消费冻结契约**：甘特不拥有依赖数据，只渲染——依赖的唯一真相在 `TASK-005`，P3 关键路径算法也吃同一份数据，视图层零聚合逻辑。
 4. **violation 是提示不是拦截**：排期冲突（被阻塞方早于阻塞方）在甘特上红点提示，但**不阻止保存**——排期是计划行为，流转拦截（`TASK-005`）才是执行硬门。两级约束的分工避免「画个图都得先解依赖」的过度僵硬。
 5. **开源交付 EE 级能力**：视窗 + 虚拟滚动 + 三粒度的组合在开源项目管理工具中罕见——这是对标 Plane 定价墙的直接差异化。
+6. **行分页复用全局游标分页（豁免登记）**：行窗口沿 `sort_order` 稳定序翻页，直接采用 api-conventions §6.2 的 `value:offset:is_prev` 不透明 Base64 游标与 §6.3 全字段 meta，本端点差异仅 `per_page` 默认 60（≤ 100 上限），已在 §4.2.1 契约要点 5 登记。**不另造 keyset 游标格式**——该格式按架构规范本身携带 offset（翻页稳定性由游标不透明 + 服务端定位保证），两种游标格式并存的契约分叉成本高于收益；若 P3 万级任务深翻实测出现 offset 定位性能塌陷，再按 ADR 流程申请豁免升级为 keyset。
 
 ---
 
@@ -644,9 +704,9 @@ export class GanttStore {
 | 类型 | 交付物 |
 | --- | --- |
 | Model / Migration | `idx_issue_gantt_viewport` 复合偏索引（受控 DDL，迁移记录） |
-| 后端 | `gantt/` 视窗行取数（相交判定/进度派生/未排期计数）、`relations/batch/` 批量连线（violation 派生）、`unscheduled/` 端点；筛选管道复用（view_id 支持） |
+| 后端 | `gantt/` 视窗行取数（相交判定/进度派生/未排期计数/工时对照字段下发/请求级 tz 解析与 relation_count 计数）、`relations/bulk/` 批量连线（violation 派生 + meta 构造）、`unscheduled/` 端点；筛选管道复用（view_id 支持） |
 | 前端 | 甘特视图页（表头/行树/条/连线/今日线/底纹）、`GanttStore`（视窗状态机/防抖取数/增量合并）、虚拟滚动、粒度切换与缩放锚点、未排期折叠区、键盘导航 |
-| 测试 | UT-01~16、IT-01~07、E2E-01~05 |
+| 测试 | UT-01~21、IT-01~07、E2E-01~05 |
 
 ### 7.2 可操作演示的验收标准
 

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router";
-import { AuthAPI } from "../services/api";
+import { AuthAPI, type MeEnvelope } from "../services/api";
 import { useStores } from "../stores";
 
 export default function Home() {
@@ -9,7 +9,7 @@ export default function Home() {
   useEffect(() => {
     AuthAPI.me()
       .then((r) => {
-        const env = (r as any).data as { default_workspace_slug: string | null };
+        const env = (r as any).data as MeEnvelope;
         session.setSession(env);
         nav(`/${env.default_workspace_slug ?? "login"}/projects`);
       })

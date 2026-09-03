@@ -130,7 +130,7 @@ export default function Board() {
                         onDragStart={(e) => { setDragId(it.id); e.dataTransfer.setData("text/plain", it.id); }}
                         onDragEnd={() => setDragId(null)}
                         onClick={() => openPeek(it.id)}>
-                        <div className="absolute left-0 top-2 bottom-2 w-[3px] rounded" style={{ background: { unstarted: "#9ca3af", started: "#3b82f6", completed: "#10b981" }[it.state_group ?? "unstarted"] }} />
+                        <div className="absolute left-0 top-2 bottom-2 w-[3px] rounded" style={{ background: { backlog: "#a1a1aa", unstarted: "#9ca3af", started: "#3b82f6", completed: "#10b981", cancelled: "#f87171" }[it.state_group] }} />
                         <div className="text-[13px] text-neutral-900 line-clamp-3">{it.name}</div>
                         <div className="flex items-center justify-between mt-2 text-xs">
                           <span className="font-mono text-neutral-400">{it.issue_key}</span>

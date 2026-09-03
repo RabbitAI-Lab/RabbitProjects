@@ -17,8 +17,8 @@ export interface WorkspaceSummary {
   id: UUID;
   name: string;
   slug: string;
-  /** 当前用户在该团队的角色 label */
-  role: string;
+  /** 当前用户在该团队的角色等级（rbac §2.2：20/15/10/5） */
+  role: number;
 }
 
 export interface ProjectSummary {
@@ -39,8 +39,12 @@ export interface Issue {
   description_html: string;
   description_stripped: string;
   state: State;
+  state_id: UUID;
+  state_name: string;
+  state_group: "backlog" | "unstarted" | "started" | "completed" | "cancelled";
   assignee: { id: UUID; name: string; avatar_url: string | null } | null;
-  due_date: string | null;
+  /** 截止日期（全局裁决 C：字段名 target_date，后端 IssueSerializer 同名） */
+  target_date: string | null;
   sort_order: number;
   created_by: { id: UUID; name: string };
   created_at: string;

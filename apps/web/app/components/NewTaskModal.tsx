@@ -50,10 +50,10 @@ export function NewTaskModal({ slug, projectId, projectName, onClose, onCreated 
     try {
       await IssueAPI.create(slug, projectId, {
         name,
-        description_html: descHtml || undefined,
-        state_id: stateId || undefined,
-        assignee_ids: assignMe && session.user ? [session.user.id] : undefined,
-        target_date: targetDate || undefined,
+        ...(descHtml ? { description_html: descHtml } : {}),
+        ...(stateId ? { state_id: stateId } : {}),
+        ...(assignMe && session.user ? { assignee_ids: [session.user.id] } : {}),
+        ...(targetDate ? { target_date: targetDate } : {}),
       });
       onCreated?.();
       if (keepOpen) { setName(""); setDescHtml(""); if (descRef.current) descRef.current.innerHTML = ""; setTargetDate(""); setAssignMe(false); setLoading(false); }

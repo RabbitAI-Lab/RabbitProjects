@@ -9,11 +9,11 @@ import type { ProjectSummary, WorkspaceSummary } from "@rp/types";
 
 export default function ProjectsList() {
   const { workspaceSlug } = useParams<{ workspaceSlug: string }>();
+  const { session } = useStores();
   const [ws, setWs] = useState<WorkspaceSummary | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [showWelcome, setShowWelcome] = useState(session.justRegistered);
-  const { session } = useStores();
 
   useEffect(() => {
     WorkspaceAPI.list().then((r) => {

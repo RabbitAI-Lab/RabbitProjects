@@ -9,7 +9,7 @@ import { toast } from "../components/Toast";
  *  - 强制尾斜杠（api-conventions §2.2） */
 function csrf(): string {
   const m = document.cookie.match(/csrftoken=([^;]+)/);
-  return m ? decodeURIComponent(m[1]) : "";
+  return m?.[1] ? decodeURIComponent(m[1]) : "";
 }
 
 export const api: AxiosInstance = axios.create({

@@ -1,7 +1,7 @@
 import { api } from "./axios";
-import type { Issue, Project, ProjectSummary, WorkspaceSummary } from "@rp/types";
+import type { Issue, ProjectSummary, WorkspaceSummary } from "@rp/types";
 
-export type { Issue, Project, ProjectSummary, WorkspaceSummary } from "@rp/types";
+export type { Issue, ProjectSummary, WorkspaceSummary } from "@rp/types";
 
 export interface MeEnvelope {
   user: { id: string; email: string; display_name: string; avatar_url: string; is_active: boolean };

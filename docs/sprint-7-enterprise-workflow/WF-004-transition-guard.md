@@ -5,7 +5,7 @@
 | 文档编号 | WF-004 |
 | 所属迭代 | Sprint 7 — 企业工作流核心（第 9 周 D3-4 主线） |
 | 优先级 | P3（企业版核心级） |
-| 覆盖模块 | M5-WF 工作流与审批（守卫切面） |
+| 覆盖模块 | M11-WF 企业工作流与审批（守卫切面；模块码以 `dependency-graph.md` §1.2 为唯一事实） |
 | 工作量估算 | 5 人日（后端 3 + 前端 1.5 + QA 0.5） |
 | 文档状态 | 待评审（Draft，R2 修复第 2 轮） |
 | 最后更新日期 | 2026-09-04 |
@@ -71,10 +71,11 @@ flowchart TB
 | 竞品 | 参考点 | 处置 |
 | --- | --- | --- |
 | Jira | Conditions（谁能流转）/ Validators（值是否合法）/ Post Functions 三段 | 合并为 guards 一类（WF-001 决策）；**Validators 的「补齐引导」Jira 无，本系统结构化拦截是差异点** |
-
-> **跨文档登记（TASK-012 §4.4 access_map / hidden 字段豁免协议）**：本文档消费 TASK-012 §4.4 `access_map` 接口——`hidden` 字段（`access == 'hidden'`）在 §4.2 `RequiredFieldsGuard.check` 与 `FieldLockGuard.check` 取值前先按 `FieldPermissionService.resolve(actor, project, definitions)` 过滤：hidden 字段从 `required_fields` 守卫白名单中剔除（不参与必填补齐要求）；hidden 字段亦不进入 `field_locks` 拦截集（`locked_hit` 计算时跳过 hidden）。判定结果：hidden 字段不会因 `RequiredFieldsGuard` 失败抛 400 `REQUIRED`、也不会因 `FieldLockGuard` 抛 400 `FIELD_LOCKED`——sprint-overview §3 风险 5（字段权限四处不可见）的守卫侧闭环。**双向登记**：TASK-012 §1.5「WF-004 待同步登记（上游待回改）」自本迭代起同步生效；Task-012 §3.3 hidden 创建/编辑表单「该字段必填被豁免」渲染与本守卫豁免语义同源。
 | Ones | 流转必填字段配置 + 拦截弹窗补录 | 体验对齐；拦截响应协议化（Ones 为前端特判，本系统 details 契约开放给任何客户端） |
 | Plane | 无守卫能力 | 差异化卖点 |
+
+> **跨文档登记（TASK-012 §4.4 access_map / hidden 字段豁免协议）**：本文档消费 TASK-012 §4.4 `access_map` 接口——`hidden` 字段（`access == 'hidden'`）在 §4.2 `RequiredFieldsGuard.check` 取值前、以及 §4.4 `IssueUpdateSerializer.validate` 的 `locked_hit` 计算时，先按 `FieldPermissionService.resolve(actor, project, definitions)`（TASK-012 §4.4 单一判定入口）过滤：hidden 字段从 `required_fields` 守卫白名单中剔除（不参与必填补齐要求）、不进入 `field_locks` 拦截集。判定结果：hidden 字段不会因 `RequiredFieldsGuard` 抛 400 `REQUIRED`、也不会因锁定拦截抛 400 `FIELD_LOCKED`——sprint-overview §9 风险 5（字段权限四处不可见）的守卫侧闭环。**双向登记**：TASK-012 §0 meta/§1.2/§1.3「WF-004 待同步登记（上游待回改）」自本迭代起同步生效；TASK-012 §3.3 hidden 创建/编辑表单「该字段必填被豁免」渲染与本守卫豁免语义同源。
+
 
 ---
 
@@ -84,7 +85,7 @@ flowchart TB
 
 | type | 语义 | config | 拦截产出（`error.details[]` 逐项，§4.5） |
 | --- | --- | --- | --- |
-| `required_fields` | 目标状态要求字段非空 | `{"fields": ["assignees", "target_date", "cf_6f4a8c2d-…"]}` | 逐缺失字段一项：`code=REQUIRED` + `meta`（字段元数据含类型/选项，供就地补录） |
+| `required_fields` | 目标状态要求字段非空 | `{"fields": ["assignees", "target_date", "cf_severity"]}`（cf_* 为 TASK-008 field_key 语义名形态） | 逐缺失字段一项：`code=REQUIRED` + `meta`（字段元数据含类型/选项，供就地补录） |
 | `estimate_required` | 要求已填预估工时（`estimate_minutes > 0`） | `{}`（可选 `{"min_minutes": 30}`） | 一项：`field=estimate_minutes`、`code=REQUIRED` + `meta`（含阈值） |
 | `blocker_completed` | 阻塞方全部完成/取消（TASK-005 读时判定）——**判定域与 TASK-005 完全一致：仅迁入 `completed` 组的边求值**，迁入 `started`/`unstarted`/`cancelled` 不拦截（「先干能干的部分」原语义保持） | `{}` 或 `{"enabled": false}`（显式关闭默认守卫，需 `workflow.manage`） | 一项：`field=blockers`、`code=BLOCKED_BY` + `blockers` 清单（TASK-005 §4.3.3 键格式：id/issue_key/name/state_group） |
 | `role_allowed` | 仅指定角色可执行此边 | `{"roles": ["PROJ_ADMIN", "custom:6f9c1e3a-5b7d-4f2a-9e4c-8d1b3a7f5c14"]}`——值域 = 项目角色码（`PROJ_*`）或自定义角色 `custom:<role_id>`（UUID v4，与 WF-001 §4.7 冻结同一格式） | 一项：`field=transition`、`code=ROLE_REQUIRED` + `required_roles` 清单 |
@@ -125,7 +126,7 @@ sequenceDiagram
 
 | 规则 | 语义 |
 | --- | --- |
-| 配置 | `WorkflowState.field_locks = [{"field": "target_date"}, {"field": "cf_<uuid>"}]` |
+| 配置 | `WorkflowState.field_locks = [{"field": "target_date"}, {"field": "cf_release_version"}]`（cf_* 为 TASK-008 field_key 语义名形态） |
 | 生效 | 任务**处于**该状态期间，锁定字段只读：PATCH 含锁定字段 → `400 VALIDATION_ERROR` + `FIELD_LOCKED`（details 给锁定来源状态） |
 | 解锁 | 流转离开该状态即自动解锁（读时判定，无物化列——与 TASK-005 拦截同理，锁定 = `issue.state → 当前生效工作流节点 field_locks` 的实时派生，工作流按 WF-001 §4.5 兜底链选定，见 §4.4） |
 | 豁免 | `PROJ_ADMIN` 不受锁（走 `actor.has_role` 有效角色判定，非原始角色串比较，见 §4.4；落 Activity `verb=updated` + `field="field_locks.force"` 单字段特例，范式同 §2.2 强制通道）；锁定字段仍可被守卫要求补齐——`guard_payload` 值在迁移事务内直接写入（迁移边上的写不受字段锁拦截，锁仅拦独立 PATCH 路径的 `IssueUpdateSerializer`，见 §4.3；管理员 force 路径同理） |
@@ -148,9 +149,10 @@ sequenceDiagram
 | BR-10 | 守卫求值只读——执行器禁止写库（注册表约束 + code review 红线） | GuardRegistry | 评审拒绝 |
 | BR-11 | 审批终审/自动化 transition 与手动流转共用同一守卫入口，无任何旁路 | 引擎 | 评审拒绝 |
 | BR-12 | 详情接口暴露任务当前状态生效锁集 `locked_fields: [str]`；与 TASK-002 详情冻结契约兼容（仅追加字段，不改既有键；`field_locks` 求值走 §4.4 `current_field_locks`，按兜底链 + 类型专属 + 默认工作流优先级取值） | Issue 详情 Service | `404 RESOURCE_NOT_FOUND`（行级过滤不可见时，rbac §6） |
-| BR-13 | `guard_payload` 值层校验失败码：assignees 不存在 → `DOES_NOT_EXIST`；日期格式非法 → `INVALID_DATE`；cf_* 自定义字段非法 → `VALIDATION_CUSTOM_FIELD_INVALID`（与 TASK-008 §4.3.2 同源） | `guard_payload` 值层校验 | `400 VALIDATION_ERROR` + 上述子码 |
-| BR-12 | `blocker_completed` 显式关闭需 `workflow.manage` 权限，且关闭事实写入图版本 Activity | 保存校验 | `403 PERM_ROLE_INSUFFICIENT` |
-| BR-13 | 守卫失败计数计入 `transitions/available/` 预览：`blocked_by` 作为**新增键**挂在 WF-001 §4.8① 冻结项结构上（不改既有键，与 `requires_payload` 分工见 §4.6），列表态即可见 | 预览查询 | — |
+| BR-13 | `guard_payload` 值层校验失败码（按 TASK-008 §2.5 口径拆主码）：assignees 不存在 → 主码 `VALIDATION_ERROR` + 子码 `DOES_NOT_EXIST`；日期格式非法 → 主码 `VALIDATION_ERROR` + 子码 `INVALID_DATE`；cf_* 自定义字段非法 → **主码 `VALIDATION_CUSTOM_FIELD_INVALID`**（api-conventions §8.4 全局主码，其自带子码 INVALID/INVALID_DATE——与 TASK-008 §4.3.2 同源） | `guard_payload` 值层校验 | 见左列（前两者 400 VALIDATION_ERROR、cf_* 为 400 VALIDATION_CUSTOM_FIELD_INVALID） |
+| BR-14 | `blocker_completed` 显式关闭需 `workflow.manage` 权限，且关闭事实写入图版本 Activity | 保存校验 | `403 PERM_ROLE_INSUFFICIENT` |
+| BR-16 | **`guard_payload` 写入域白名单**：补齐值仅允许「当前边守卫声明字段集」——`required_fields.fields ∪ {estimate_minutes}`（estimate_required 守卫）；域外键（含未在守卫声明的锁定字段）→ `400 VALIDATION_ERROR` + 子码 `NOT_A_CHOICE`——与 §2.3「锁定字段只读、豁免仅 PROJ_ADMIN」不冲突：迁移边上的写虽不触发 `IssueUpdateSerializer` 锁拦截，仍受本白名单约束（锁定字段须由守卫显式声明才可经 guard_payload 补齐） | `apply_guard_payload` 入口 | `400 VALIDATION_ERROR` + `NOT_A_CHOICE`（details[].field = 域外键名） |
+| BR-15 | 守卫失败计数计入 `transitions/available/` 预览：`blocked_by` 作为**新增键**挂在 WF-001 §4.8① 冻结项结构上（不改既有键，与 `requires_payload` 分工见 §4.6），列表态即可见 | 预览查询 | — |
 
 ### 2.5 异常处理
 
@@ -656,7 +658,7 @@ catch (e) {
 | --- | --- | --- |
 | UT-01 | 空值判定矩阵（7 类型 × 空/非空） | 文本空白/数值 0/空数组等边界全对 |
 | UT-02 | 隐式 `blocker_completed` 注入与判定域 | 未配置时对**迁入 `completed` 组**的边默认生效；对迁入 `started`/`unstarted`/`cancelled` 的边**不注入不求值**（TASK-005 原语义）；`enabled:false` 关闭 |
-| UT-02b | `enabled:false` 显式关闭留痕（BR-12） | 关闭事实写入图版本 Activity `verb=updated` + `field="guards.enabled"`（TASK-010 verb 冻结枚举不扩展，单字段特例范式同 §2.2）；无 `workflow.manage` 权限保存拒绝 `403 PERM_ROLE_INSUFFICIENT` |
+| UT-02b | `enabled:false` 显式关闭留痕（BR-14） | 关闭事实写入图版本 Activity `verb=updated` + `field="guards.enabled"`（TASK-010 verb 冻结枚举不扩展，单字段特例范式同 §2.2）；无 `workflow.manage` 权限保存拒绝 `403 PERM_ROLE_INSUFFICIENT` |
 | UT-03 | 固定执行序 | 失败列表顺序 = required→estimate→blocker→role |
 | UT-04 | 全量收集 | 三守卫失败 `details[]` 含 3 个守卫各自的条目（不短路） |
 | UT-05 | `min_minutes` 阈值 | estimate 29/30/31 边界 |
@@ -669,6 +671,8 @@ catch (e) {
 | UT-12 | force 跳过全部守卫 + comment 必填 | Activity `verb=updated` + `field="state.force"` 含原失败清单 |
 | UT-13 | 守卫执行器只读约束 | mock 断言求值过程零写查询 |
 | UT-14 | 预览 `blocked_by` 计数 | 与全量求值结果计数一致 |
+| UT-15b | `guard_payload` 值层校验失败码矩阵（BR-13）：assignees 不存在 / 日期非法 / cf_* 非法三场景 | 依次 400 `VALIDATION_ERROR`+`DOES_NOT_EXIST` / 400 `VALIDATION_ERROR`+`INVALID_DATE` / 400 `VALIDATION_CUSTOM_FIELD_INVALID` |
+| UT-15c | `guard_payload` 写入域白名单（BR-16）：携带守卫未声明的域外键（含锁定字段） | 400 `VALIDATION_ERROR`+`NOT_A_CHOICE`，`details[].field` = 域外键名；任务字段未被改写 |
 | UT-15 | §2.5 主码分流并存：`role_allowed` + `required_fields` 同时失败 | HTTP 主码 403 `PERM_TRANSITION_NOT_ALLOWED`；`details[]` 全量同时含字段项（`REQUIRED`）与角色项（`ROLE_REQUIRED` + `required_roles`），非仅角色项 |
 
 ### 5.2 集成测试

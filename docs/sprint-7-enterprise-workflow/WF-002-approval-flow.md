@@ -140,11 +140,11 @@ stateDiagram-v2
 | 任务删除/归档 | 级联终止实例（原因 `issue_deleted`/`issue_archived`），记录保留 |
 
 > **终止触发落点**（§2.3 / §4.4 / §4.7 三处触发器实现挂点）：
-> - `state_changed`：消费 WF-001 §4.4 `state_changed` `on_commit` 事件（`WorkflowEngine.transition` 第 6 步 `issue_activity.delay` 同一事务钩子触发器），handler 内 `ApprovalInstance.objects.filter(issue_id=…, status="pending").update(status=TERMINATED, terminated_reason="state_changed")`。
-> - `issue_deleted`：订阅 `Issue.post_delete` signal（`Issue` 模型删除钩子，TASK-001 既有 signal 总线），handler 同上。
-> - `issue_archived`：订阅 `Issue` 归档字段更新 signal（TASK-001 `Issue.archived_at` 写入钩子，BOARD-001/BOARD-004 复用），handler 同上。
+> - `state_changed`：消费 WF-001 §7.3 `state_changed` 事件（`WorkflowService.transition` 第 6 步 `on_commit` 发布，事件登记面在 §7.3 下游消费表——**WF-001 §7.3 待同步登记本文消费方（上游待回改）**），handler 内 `ApprovalInstance.objects.filter(issue_id=…, status="pending").update(status=TERMINATED, terminated_reason="state_changed")`。
+> - `issue_deleted`：订阅 `Issue.post_delete` signal（**本文新增**的 Django 信号订阅——注册于审批域 `apps.py.ready()`，不依赖 TASK-001 侧总线），handler 同上。
+> - `issue_archived`：订阅 `Issue` 归档字段更新 signal（`Issue.archived_at` 写入钩子——**本文新增**订阅，与 `issue_deleted` 同一注册点），handler 同上。
 > - `admin` / `guard_failed_at_complete`：直接调 `_finalize(TERMINATED, reason=…)`。
-> - 全部落库用单 UPDATE 减少 IO；UT-12/UT-13 覆盖四条路径。
+> - 全部落库用单 UPDATE 减少 IO；用例覆盖：UT-13（state_changed）+ UT-17（issue_deleted）/ UT-18（issue_archived，§5.1）；`admin`/`guard_failed_at_complete` 分别由 UT-14/UT-06 覆盖。
 
 ### 2.4 超时与提醒
 
@@ -166,7 +166,7 @@ stateDiagram-v2
 | BR-06 | 驳回/撤回/终止后任务保持发起前状态；驳回意见 `comment` 必填（reject），approve 选填 | Serializer | `400 VALIDATION_ERROR` + `REQUIRED` |
 | BR-07 | 撤回仅发起人本人（`approval.withdraw`，rbac §8.2「仅本人提交」），且实例内无任何 approve/reject 记录 | ApprovalService | `403 PERM_DENIED`（非发起人）/ `409 RESOURCE_CONFLICT`（已有动作，子码 `HAS_ACTIONS`） |
 | BR-08 | `PROJ_ADMIN` 可终止任意 pending 实例，comment 必填，落审计（WF-006） | ApprovalService | 缺 comment 400 |
-| BR-09 | 审批票「一次合法迁移」：开票即 INSERT（`pending`），动作 = 唯一一次 UPDATE（`pending → approve/reject/skipped` 单向、仅 `action/comment/acted_at` 三列可写——触发器 `approval_records_guard` 列级白名单，WF-006 §2.2/§4.2）；其余 UPDATE（改 `level`/审批人/二次动作）与全部 DELETE 一律拒绝；审计事件流 `approval_audit_events` 纯 append（WF-006 交付，与票据双轨） | DB | 触发器异常 |
+| BR-09 | 审批票「一次合法迁移」：开票即 INSERT（`pending`），动作 = 唯一一次 UPDATE（`pending → approve/reject/skipped` 单向、仅 `action/comment/acted_at` 三列可写——触发器 `approval_records_guard` 列级白名单，WF-006 §2.2/§4.2）；其余 UPDATE（改 `level`/审批人/二次动作）拒绝；DELETE **直连一律拒绝，仅 `pg_trigger_depth()>0` 的项目 FK 级联上下文放行**（WF-006 BR-11 级联放行口）；审计事件流 `approval_audit_events` 纯 append（WF-006 交付，与票据双轨） | DB | 触发器异常 |
 | BR-10 | 同任务同边仅允许一个 pending 实例；其他边发起成功则本实例自动终止 | 唯一约束（部分索引）+ 服务 | `409 RESOURCE_ALREADY_EXISTS` |
 | BR-11 | `field` 来源审批人 = 立案时刻快照；快照后人员变动不影响本次 | 立案服务 | — |
 | BR-12 | 禁止自审开关：流级 `forbid_self_approve`（默认开）——发起人是审批人时其票自动记 `skipped(self)`，会签中不计入通过集、或签中若仅剩自己则转交 `PROJ_ADMIN` | 动作服务 | 自动处置 + 记录 |
@@ -196,7 +196,7 @@ stateDiagram-v2
 
 | 边界场景 | 限制值 | 超出处理 |
 | --- | --- | --- |
-| 单流节点数 | 10 级 | `400 VALIDATION_ERROR` + `LIMIT` |
+| 单流节点数 | 10 级 | `409 RESOURCE_LIMIT_EXCEEDED`（裁决 F 上限类口径，与 TASK-002 层级深度/TASK-012 字段数同构；`LIMIT` 为其 details 子码） |
 | 单节点审批人 | 20 人 | 同上 |
 | 并发同级动作（会签两人同时提交） | 行锁串行 | 后到者按最新实例状态判定（可能因前者驳回而 409） |
 | 审批人离职/移出项目 | 快照不变（BR-11） | 其待办转交：beat 每日扫描，pending 超 24h 且审批人已非成员 → 该票 `skipped(offboarded)` 并提醒 `PROJ_ADMIN` 补位（补位 = admin 动作，留痕） |
@@ -327,6 +327,7 @@ erDiagram
         jsonb flow_snapshot "立案时刻流+节点定义快照（§4.3）"
         int current_level
         string status
+        boolean is_terminal_passed "终审回填瞬态位（§4.5 三文档时序闭环，默认 false）"
     }
     APPROVAL_RECORDS {
         bigint id PK
@@ -407,6 +408,12 @@ class ApprovalInstance(BaseModel):
     initiator = models.ForeignKey(User, on_delete=models.PROTECT, related_name="+")
     current_level = models.PositiveSmallIntegerField(default=1)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    is_terminal_passed = models.BooleanField(
+        default=False,
+        help_text="终审回填瞬态位（§4.5 _complete_via_engine 三文档时序闭环）：终级票据全通过后、"
+                  "引擎 transition() 回调前置 True——WF-001 §4.4 守门据此放行「is_terminal_passed=True "
+                  "AND status=pending」形态；迁移成功 finalize APPROVED / 守卫失败复位 False 并 finalize "
+                  "TERMINATED(guard_failed_at_complete)。恒 False 除非处于该回调窗口")
     terminal_reason = models.CharField(max_length=32, blank=True, default="",
         help_text="terminated 时：state_changed|guard_failed_at_complete|issue_deleted|issue_archived|admin（与 §2.3 终止原因一致）")
     from_state = models.ForeignKey(State, on_delete=models.PROTECT, related_name="+",
@@ -459,9 +466,9 @@ class ApprovalRecord(models.Model):
 
 ### 4.4 迁移要点
 
-1. 四表迁移全部 `CONCURRENTLY` 建索引；`uniq_pending_instance_per_edge` 为部分唯一索引（PG 原生支持，`CREATE UNIQUE INDEX … WHERE status='pending'`）。
+1. 四表迁移全部 `CONCURRENTLY` 建索引；`uniq_pending_instance_per_edge` 为部分唯一索引（PG 原生支持，`CREATE UNIQUE INDEX … WHERE status='pending'`）。`approval_instances.is_terminal_passed` 布尔列随本表迁移落列（§4.3 字段定义；默认 false，存量行无需回填）。
 2. `approval_records` 无 `updated_at`（动作一次成型、无二次更新语义——BR-09 落到表结构）。
-3. 触发器 `approval_records_guard`（DDL 见 WF-006 §4.2）：DELETE 一律拒绝；UPDATE 仅放行 BR-09 的一次合法迁移（列级白名单 `action/comment/acted_at` + `pending` 单向出边），其余一律 EXCEPTION。
+3. 触发器 `approval_records_guard`（DDL 见 WF-006 §4.2）：**直连 DELETE 拒绝；仅 `pg_trigger_depth()>0` 的项目 FK 级联上下文放行 DELETE（WF-006 BR-11）**；UPDATE 仅放行 BR-09 的一次合法迁移（列级白名单 `action/comment/acted_at` + `pending` 单向出边），其余一律 EXCEPTION。
 4. 历史数据零迁移：无工作流配置的项目不触碰（WF-001 默认工作流兜底不变）。
 
 ### 4.5 核心服务（`ApprovalService`）
@@ -529,22 +536,24 @@ class ApprovalService:
     def _complete_via_engine(self, instance, actor):
         """终审回填（WF-001 §4.4 / WF-006 §4.2 三文档时序闭环）：
         ① 先置 `is_terminal_passed=True`（实例仍 `pending`，守卫在 WF-001 §4.4 守门接受「`is_terminal_passed=True AND status=pending`」形态）；
-        ② 单事务内调 `WorkflowService().transition(... approval_instance_id=…)` 重跑守卫——失败抛 `GuardFailed`（**WF-004 现行 `guard_error(list[GuardFailure])` → ApiError**；WF-001 §4.4 捕获 `TransitionError`/`ApiError`）；
+        ② 单事务内调 `WorkflowService().transition(... approval_instance_id=…)` 重跑守卫——守卫失败经 **WF-004 现行 `guard_error(list[GuardFailure]) → ApiError`** 抛出（WF-001 §4.4 引擎对非守卫失败抛 `TransitionError(ApiError 子类)`，两类统一按 `ApiError` 捕获）；
         ③ 成功 → finalize `APPROVED`；失败 → 守门置 `is_terminal_passed=False`（回滚守卫放行位）+ finalize `TERMINATED(reason=guard_failed_at_complete)`。
-        WF-006 §4.2 触发器 `pg_trigger_depth()>0` 级联放行口对 `pending→approved` 与 `pending→terminated` 两条出边均放行（白名单见 WF-006 §4.2 表尾）。"""
+        WF-006 §4.2 实例守卫仅锁终态（approved/rejected/withdrawn/terminated 后任何 UPDATE 拒绝），
+        pending 四条出边（approved/rejected/withdrawn/terminated）全放行——本闭环所需两条出边自然放行。"""
         from plane.workflow.services import WorkflowService        # 防循环导入（领域服务层，api-conventions §2.1）
         instance.is_terminal_passed = True
         instance.save(update_fields=["is_terminal_passed", "updated_at"])
         try:
             WorkflowService().transition(                          # WF-001 §4.4 单事务入口（重跑守卫，BR-05）
                 issue_id=str(instance.issue_id),
-                # **WF-001 §4.4 引擎 to_state 形参为 State 主键**（`get_object_or_404(State, pk=…)` 解析），
-                # WorkflowState 主键须经 `.to_state.state_id` 换算——sprint-7 R2 cross-doc 修订
-                to_state_id=str(instance.to_state.state_id),
+                # **WF-001 §4.4 引擎 to_state 形参为 State 主键**（`get_object_or_404(State, pk=…)` 解析）。
+                # ApprovalInstance 无 to_state 直连 FK——经 transition 边取 WorkflowTransition.to_state
+                # （WorkflowState），再取其 .state_id（State 主键）——sprint-7 R3 修订
+                to_state_id=str(instance.transition.to_state.state_id),
                 actor=actor,
                 transition_id=str(instance.transition_id),
                 approval_instance_id=str(instance.id))             # 终审回填标识：携带则走「跳过二次挂起」分支
-        except (GuardFailed, ApiError) as e:                       # WF-001 §4.4 捕获 WF-004 现行 `guard_error` ApiError；WF-001 引擎 `TransitionError` 同源
+        except ApiError as e:                                      # 守卫失败经 WF-004 guard_error → ApiError；引擎非守卫失败 TransitionError 为其子类，统一按 ApiError 捕获
             instance.is_terminal_passed = False
             instance.save(update_fields=["is_terminal_passed", "updated_at"])
             return self._finalize(instance, Status.TERMINATED, actor,
@@ -560,12 +569,12 @@ class ApprovalService:
 | L3 本级 reject 成功 | `action=reject` 校验通过 | 已通过 L1、L2 | 票一次性迁移 → 任一人 reject 立即 `instance=rejected`（BR-03） | — |
 | L4 本级 approve 失败（级未过） | `action=approve` 校验通过 | 已通过 L1；会签未满 / 或签同票已存在 | 票一次性迁移，停留当前级 | — |
 | L5 本级 approve 通过且存在下一级 | `action=approve` 校验通过；`_level_passed()` 为真 | 已通过 L1；当前级全员满足 `pass_mode` | `current_level += 1`、开新级审批票、`on_commit` 通知下一级审批人 | — |
-| L6 本级 approve 终级通过 | `action=approve` 校验通过；`_level_passed()` 为真且无下一级 | 已通过 L1；当前级为终级且全员满足 `pass_mode` | 调 `_complete_via_engine()`：携带 `approval_instance_id` 走「终审回填直放行」路径——引擎侧守卫重跑通过则迁移 + Activity；失败抛 `GuardFailed` → 实例 `terminated(guard_failed_at_complete)`，任务**未迁移**（BR-05） | 终审守卫重跑失败：实例 `terminated(guard_failed_at_complete)`、任务保持发起前状态，双方通知（§2.5） |
+| L6 本级 approve 终级通过 | `action=approve` 校验通过；`_level_passed()` 为真且无下一级 | 已通过 L1；当前级为终级且全员满足 `pass_mode` | 调 `_complete_via_engine()`：携带 `approval_instance_id` 走「终审回填直放行」路径——引擎侧守卫重跑通过则迁移 + Activity；失败抛 `ApiError`（WF-004 `guard_error`）→ 实例 `terminated(guard_failed_at_complete)`，任务**未迁移**（BR-05） | 终审守卫重跑失败：实例 `terminated(guard_failed_at_complete)`、任务保持发起前状态，双方通知（§2.5） |
 | L7 撤回 | `action=withdraw` | 调用人 == `initiator`（rbac §8.2「仅本人提交」）且实例内无任何 `approve/reject` 记录 | 调 `_lifecycle(instance, actor, "withdraw", comment)` | 非发起人 → `403 PERM_DENIED`；已有动作 → `409 RESOURCE_CONFLICT` + `HAS_ACTIONS`（BR-07） |
 | L8 终止 | `action=terminate` | 调用人具备 `PROJ_ADMIN`（rbac §8.2）且 `comment` 非空 | 调 `_lifecycle(instance, actor, "terminate", comment)`，comment 落审计（WF-006） | 缺 comment → `400 VALIDATION_ERROR` + `REQUIRED`；非管理员 → `403 PERM_DENIED`（BR-08） |
 | L9 实例非 pending | 任意 `action` | `instance.status != "pending"` | — | `409 RESOURCE_CONFLICT` + `INVALID_STATE`（§2.6） |
 
-> L6「终级通过」为 act() 唯一对外触发引擎 `transition()` 的分支，与 §4.5 引擎契约对齐「② 终审回填」路径同源——引擎侧依 `approval_instance_id` 跳过二次挂起、直放行迁移。本表 L1~L9 边界按动作类型 + 调用人身份 + 实例状态三元组正交判定，不引入「WF-001 引擎锁图」等额外状态；图状态由 WF-001 自身维护，act() 仅消费引擎结果（`GuardFailed` / 正常返回）。
+> L6「终级通过」为 act() 唯一对外触发引擎 `transition()` 的分支，与 §4.5 引擎契约对齐「② 终审回填」路径同源——引擎侧依 `approval_instance_id` 跳过二次挂起、直放行迁移。本表 L1~L9 边界按动作类型 + 调用人身份 + 实例状态三元组正交判定，不引入「WF-001 引擎锁图」等额外状态；图状态由 WF-001 自身维护，act() 仅消费引擎结果（`ApiError`（守卫/引擎失败，WF-004 `guard_error` 与 WF-001 `TransitionError` 同基类）/ 正常返回）。
 ```
 
 **`_open_level` 审批人解析**（快照语义 BR-11 + 禁自审 BR-12）：
@@ -594,12 +603,12 @@ def _open_level(self, instance, level: int):
 **引擎契约对齐（WF-001 §4.4 现行版）**：
 
 1. 两个回调签名逐字取自 WF-001 §4.4：`ApprovalService().start(edge, issue=…, actor=…)`（审批挂接分支的唯一被调方）与 `WorkflowService().transition(issue_id=…, to_state_id=…, actor=…, transition_id=…, approval_instance_id=None)`（构造器无参、关键字传参，`approval_instance_id` 为可选项，仅终审回填路径携带）——本文**不另设** `complete_transition` 之类的第二引擎入口。
-2. 终审回填复用 `transition()` 单事务：守卫在引擎事务内重跑（WF-001 BR-12 顺序「守卫 → 审批触发 → 副作用 → 状态更新 → Activity」），失败抛 `GuardFailed` → 实例 `terminated(guard_failed_at_complete)`、不迁移（BR-05）。引擎审批分支（`approval_flow` 非空 → 挂起）须严格区分两条进入路径，与 WF-001 §4.4「审批发起与终审回填」同源同义——两文档以本节判定口径为权威：
+2. 终审回填复用 `transition()` 单事务：守卫在引擎事务内重跑（WF-001 BR-12 顺序「守卫 → 审批触发 → 副作用 → 状态更新 → Activity」），失败抛 `ApiError`（WF-004 `guard_error`）→ 实例 `terminated(guard_failed_at_complete)`、不迁移（BR-05）。引擎审批分支（`approval_flow` 非空 → 挂起）须严格区分两条进入路径，与 WF-001 §4.4「审批发起与终审回填」同源同义——**协议权威为 WF-001 §4.4 引擎定义，本表为其 WF-002 侧调用形态镜像**（任一侧变更须同步，见 §8 跨文档契约同步点）：
 
    | 进入路径 | `approval_instance_id` | 触发条件 | 引擎行为 | 视图层响应 |
    | --- | --- | --- | --- | --- |
    | ① 发起 | `None`（缺省） | 用户常规流转（点击按钮 / 看板拖拽） | 守卫先过 → `ApprovalService().start()` 创建实例并挂起，状态不变 | `202 Accepted` + `pending_approval`（§4.6 发起响应） |
-   | ② 终审回填 | 携带 `approval_instance_id` | WF-002 终审通过经 `_complete_via_engine()` 再入 | 引擎校验实例归属本边且 `status == approved` → 守卫按 BR-12 顺序重跑 → 跳过二次挂起，直接执行副作用与状态更新 | `200 OK` + `issue_state`（§4.6 终审通过响应） |
+   | ② 终审回填 | 携带 `approval_instance_id` | WF-002 终审通过经 `_complete_via_engine()` 再入 | 引擎校验实例归属本边且 `status=approved` **或**（`is_terminal_passed=True` 且 `status=pending`，§4.5 时序闭环）→ 守卫按 BR-12 顺序重跑 → 跳过二次挂起，直接执行副作用与状态更新 | `200 OK` + `issue_state`（§4.6 终审通过响应） |
    | 守门失败 | 携带 `approval_instance_id` 但实例不属于本边 / 未到 `approved` 终态（如 `pending`/`rejected`/`withdrawn`/`terminated`） | WF-002 误调或竞态 | 拒绝再入，不迁移 | `409 RESOURCE_STATE_INVALID`（`details[].field=approval_instance_id`、`code=INVALID`，WF-001 §4.4 同码同 `details[]` 形态） |
 
    `rejected`/`withdrawn`/`terminated` 终态由 WF-002 业务规则保证不发起回填（驳回 / 撤回 / 终止链路无 `_complete_via_engine` 调用），守门为**深度防御**——后端不可信边界。
@@ -622,7 +631,7 @@ def _open_level(self, instance, level: int):
 
 > **路径参数记号**：`{aid}` = 审批实例 UUID（`ApprovalInstance.id`）；`{issue_id}` = 任务 UUID——两者不同名，避免同符异义。
 
-> **WF-001 `transitions/` 端点入参契约**（发起 / 终审回填两条路径的入参差异，与 §4.5 引擎契约对齐表同源；端点本体定义在 WF-001 §4.8②，本处仅声明 WF-002 视角下的入参形态）：`POST /api/v1/workspaces/{slug}/projects/{id}/issues/{issue_id}/transitions/` 请求体 `{transition_id, approval_instance_id?}`——`approval_instance_id` 缺省 = 发起路径（§4.5 表 ①）；携带 = 终审回填路径（§4.5 表 ②），仅 WF-002 终审通过后 `_complete_via_engine()` 内部调用、**不暴露给前端**（前端发起流转永远不带该字段，由后端守卫入参与守门逻辑共同保证路径唯一）。
+> **WF-001 `transitions/` 端点入参契约**（发起 / 终审回填两条路径的入参差异，与 §4.5 引擎契约对齐表同源；端点本体定义在 WF-001 §4.8②，本处仅声明 WF-002 视角下的入参形态）：`POST /api/v1/workspaces/{slug}/projects/{id}/issues/{issue_id}/transitions/` 请求体为 WF-001 §4.8② 正典形态 `{to_state_id, transition_id?, guard_payload?}` **外加可选 `approval_instance_id`**——`approval_instance_id` 缺省 = 发起路径（§4.5 表 ①，前端必填 `to_state_id`）；携带 = 终审回填路径（§4.5 表 ②，`to_state_id` 由后端从边取、客户端无须传），仅 WF-002 终审通过后 `_complete_via_engine()` 内部调用、**不暴露给前端**（前端发起流转永远不带该字段，由后端守卫入参与守门逻辑共同保证路径唯一；**WF-001 §4.8② 待同步登记 `approval_instance_id` 可选键与 202 变体（上游待回改）**）。
 
 **审批中心三端点公共约定**（`pending` / `acted` / `mine` 与 §3.1 三 Tab 一一对应，游标分页按 api-conventions §6.2/§6.3）：
 
@@ -644,7 +653,7 @@ def _open_level(self, instance, level: int):
 ```
 
 - **排序固定**、不开放 `?ordering=`（无白名单，不适用 api-conventions §5.4 参数）：`pending`/`mine` 按实例 `created_at` 倒序、`acted` 按动作票 `acted_at` 倒序；末级一律追加 `-created_at, -id` 保游标稳定（§5.4 默认排序规则）。
-- **`?count_only=1`**（仅 `pending` 支持）：跳过列表构造，返回**完整信封** `{"status":"success","data":{"count": <int>}}`（与 §4.6 全量列表信封对称，仅 `data` 退化为单数字段；`count` = 行级口径下的待办票总数）——§4.8 `refreshCount` 徽标轮询与 WS `approval.updated` 增量刷新共用该端点。**登记**：参数已并入 api-conventions §5.4 查询参数白名单（与 `?view_id=`、`?filters=` 等同族），非「全仓首见」新参数。
+- **`?count_only=1`**（仅 `pending` 支持）：跳过列表构造，返回**完整信封** `{"status":"success","data":{"count": <int>}}`（与 §4.6 全量列表信封对称，仅 `data` 退化为单数字段；`count` = 行级口径下的待办票总数）——§4.8 `refreshCount` 徽标轮询与 WS `approval.updated` 增量刷新共用该端点。**登记**：该参数为本文档新增查询参数，api-conventions §5 现文未含——**架构文档待回改**（随 Sprint 7 首个 PR 补登入 §5 查询参数白名单；同款「待补登」范式见 WF-001 §4.8④ PUT 白名单注）。
 
 **发起响应**（WF-001 transitions/ 端点在挂审批边时的 202 变体。WF-001 §4.8② 为该响应的**最小摘要**（`{instance_id, flow, current_node}` 三键）；下表为**全量展开形态**——**语义映射**（键名不一一对应）：摘要 `flow` = 全量 `flow_name`（流程展示名）；摘要 `current_node` = 全量 `current_level`（当前级号）的**渲染层简化**——前端展示用「当前审批人姓名」直接代替「级号 N + 人员表」。两文档以本表为审批详情权威，WF-001 侧摘要语义映射到本表全量形态的解释口径以本节为准。
 
@@ -828,7 +837,9 @@ async function runTransition(edge: TransitionEdge) {
 | UT-13 | 其他边流转成功 → 本实例自动 `terminated(state_changed)` | §2.3 |
 | UT-14 | 超时扫描：到点提醒、24h 升级、去重窗口 | 通知次数精确断言 |
 | UT-15 | BR-02 空审批人集两入口同码：role 组展开后全员非项目成员 | 立案（发起流转）→ 400 `VALIDATION_ERROR` + 子码 `EMPTY_APPROVERS`；审批流定义保存（POST/PATCH nodes）→ 同码同子码 |
-| UT-16 | §2.7 三截断边界：节点 11 级 / 单节点 21 人 / role 组展开 > 50 人 | 前两者 → 400 `VALIDATION_ERROR` + 子码 `LIMIT`（§2.7 现行口径）；role 组展开 > 50 人 → 200 + `meta.warnings[]` 截断告警（定义保存时校验，TASK-013 BR-08 软上限同范式） |
+| UT-16 | §2.7 三截断边界：节点 11 级 / 单节点 21 人 / role 组展开 > 50 人 | 前两者 → 409 `RESOURCE_LIMIT_EXCEEDED`（details 子码 `LIMIT`，§2.7 裁决 F 口径）；role 组展开 > 50 人 → 200 + `meta.warnings[]` 截断告警（定义保存时校验，TASK-013 BR-08 软上限同范式） |
+| UT-17 | §2.3 终止触发：任务删除 → pending 实例自动 `terminated(issue_deleted)` | 实例状态/原因断言；审批票保留（审计） |
+| UT-18 | §2.3 终止触发：任务归档（`archived_at` 写入）→ pending 实例自动 `terminated(issue_archived)` | 同上 |
 
 ### 5.2 集成测试
 
@@ -842,7 +853,8 @@ async function runTransition(edge: TransitionEdge) {
 | IT-06 | 审批中任务字段编辑 → 终审守卫重跑 | 编辑导致必填缺失时终审失败路径 |
 | IT-07 | 通知管道 | on_commit 后 Celery 收到任务；偏好关闭邮件时仅收件箱 |
 | IT-08 | 审批流删除：被引用时 DELETE 200 + 摘挂清单 | `data.affected_transition_ids` 含全部引用边；各边 `approval_flow` 变 NULL（SET_NULL，BR-13）；停用流再发起 → 409（UT-11 关联） |
-| IT-09 | 审批端点权限矩阵（rbac §8.2 `approval.act`/`approval.withdraw` + §8.4 R8；四主体，TASK-005 IT-09 范式）：项目内 `PROJ_VIEWER`/`PROJ_COMMENTER`/非本级审批人的 `PROJ_CONTRIBUTOR` 三名成员 + 一名他项目成员，存在 1 条 pending 实例（当前级审批人 = `PROJ_ADMIN`） | VIEWER/COMMENTER：GET 实例详情/待办 200（`project.read`，行级过滤），POST actions 403 `PERM_ROLE_INSUFFICIENT`（无 `approval.act`）；CONTRIBUTOR（非本级）：approve 403 `PERM_APPROVAL_NOT_ASSIGNEE`、withdraw 403 `PERM_DENIED`（非发起人）；他项目成员：全部端点 404 `RESOURCE_NOT_FOUND`（行级过滤不可见，rbac §6）；PROJ_ADMIN（本级审批人）approve 200 对照 |
+| IT-09 | 审批端点权限矩阵（rbac §8.2 `approval.act`/`approval.withdraw` + §8.4 R8；四主体，TASK-005 IT-09 范式）：项目内 `PROJ_VIEWER`/`PROJ_COMMENTER`/非本级审批人的 `PROJ_CONTRIBUTOR` 三名成员 + 一名**同工作空间**他项目成员，存在 1 条 pending 实例（当前级审批人 = `PROJ_ADMIN`） | VIEWER/COMMENTER：GET 实例详情/待办 200（`project.read`，行级过滤），POST actions 403 `PERM_ROLE_INSUFFICIENT`（无 `approval.act`）；CONTRIBUTOR（非本级）：approve 403 `PERM_APPROVAL_NOT_ASSIGNEE`、withdraw 403 `PERM_DENIED`（非发起人）；他项目成员：**项目级端点**（实例详情/动作/任务实例列表）404 `RESOURCE_NOT_FOUND`（行级过滤不可见，rbac §6）、**工作空间级三端点**（`pending/acted/mine`）200 空列表（工作空间成员即有权限，行级过滤为空）；PROJ_ADMIN（本级审批人）approve 200 对照 |
+| IT-10 | 审批流定义配置端点负向矩阵（`workflow.manage`，rbac §8.2；WF-001 IT-08 四主体范式）：`PROJ_VIEWER`/`PROJ_COMMENTER`/`PROJ_CONTRIBUTOR` 三名项目成员分别调 `approval-flows/` 四端点（GET 列表 / POST 创建 / GET|PATCH|DELETE 详情） | GET 列表 200（名称可见，`project.read` 面）；POST/PATCH/DELETE 全部 403 `PERM_ROLE_INSUFFICIENT`（无 `workflow.manage`）；PROJ_ADMIN 对照组全通过 |
 
 ### 5.3 E2E 测试
 
@@ -928,9 +940,9 @@ WF-002 排期严格对齐 `WF-001` §1.2 目标 5「画布编辑器在第 10 周
 | 引擎与模型：`ApprovalService`（立案 / act() / 终审回填 / 撤回 / 终止 / 超时扫描）+ 四表 + 触发器 `approval_records_guard`（WF-006 §4.2） | 后端 3.0 | WF-002 | 第 9 周 D1-2 窗 | 必须在 WF-001 引擎交付同期可联调，触发器由 WF-006 提供 DDL |
 | API 端点：审批流 CRUD + 审批中心三端点（`pending`/`acted`/`mine`，§4.6）+ 实例详情 / 动作 / 任务实例列表 | 后端 1.0 | WF-002 | 第 9 周 D1-2 窗（与引擎同窗交付） | 与 WF-001 `transitions/` 端点对齐 `approval_instance_id` 入参契约（§4.5、§4.6 注） |
 | 端到端接口测试：JMeter `sprint-7-flow.py` + 静态检查 `ci-checks-sprint-7.sh`（新增 WF-002 集合断言：守卫双跑 / 终审回填 200 / 实例未终态回填 409 / 触发器白名单 / BR-02 空审批人集） | 后端 0.5 | WF-002 | 第 9 周 D1-2 窗 | 与 WF-001 引擎 IT-03 同窗收口（WF-001 §6.1 IT-03 已覆盖「发起挂起 / 终审回填 / 守门 409」三态） |
-| 前端审批中心页：三 Tab（待办 / 已办 / 我发起，§3.1）+ 详情抽屉（§3.2）+ 任务侧徽标 + 202 分支流转交互 | 前端 2.0 | WF-002 | 第 10 周 D3-4 窗 | 与 WF-001 流转按钮侧（§3.4、§4.8 `runTransition`）同窗联调，徽标走 COLLAB-004 个人房间 `approval.updated` |
+| 前端审批中心页：三 Tab（待办 / 已办 / 我发起，§3.1）+ 详情抽屉（§3.2）+ 任务侧徽标 + 202 分支流转交互 | 前端 2.0 | WF-002 | 第 10 周 D1-2 起步、D3-4 联调收口 | 与 WF-001 流转按钮侧（§3.4、§4.8 `runTransition`）联调，徽标走 COLLAB-004 个人房间 `approval.updated` |
 | 前端画布审批分区侧栏（§3.3，挂在 WF-001 流转边侧栏内） | 前端 0.5 | WF-002 | 第 10 周 D3-4 窗 | 与 WF-001 画布编辑器（§1.2 目标 5）同窗交付——WF-001 画布先稳定侧栏挂点，本分区挂接后联调；画布本体不属 WF-002 |
 | 测试：UT-01~16、IT-01~09、E2E-01~06 + Playwright `parity.spec.ts` 新增审批中心 / 画布侧栏 / 任务徽标字段断言（带出处注释，UI parity 五步纪律②，ADR-0010） | QA 1.0 | WF-002 | 第 10 周 D3-4 窗收口 | — |
 
-> **排期对齐锚点**：上表「第 9 周 D1-2 窗 / 第 10 周 D3-4 窗」与 `WF-001` §1.2 目标 5、`sprint-overview.md` §8 概览槽位「WF-001 模型与执行引擎」「WF-002 画布编辑器」逐字同义；概览 §8「WF-002 画布编辑器」槽位指本表「前端画布审批分区侧栏」+ WF-001「画布编辑器」同窗联调窗口，画布编辑器本体仍归属 WF-001（不重复计入 WF-002 工作量）。
+> **排期对齐锚点**：上表「第 9 周 D1-2 窗（后端三项）」与 `sprint-overview.md` §8 第 9 周 D1-2 主线 A「`WF-001` 模型与执行引擎 + `WF-002` 审批引擎与端点（同窗联调）」一致——TASK-013 第 9 周 D5 工时审批依赖本引擎，同窗交付不倒挂；「前端审批中心页 D1-2 起步、D3-4 联调收口」与概览 §8 第 10 周 D1-2 主线 A 一致；「前端画布审批分区侧栏 D3-4」与概览 §8 第 10 周 D3-4 槽位（WF-001 画布编辑器同窗联调）一致，画布编辑器本体仍归属 WF-001（不重复计入 WF-002 工作量）。
 > **跨文档契约同步点**：WF-001 §4.4「审批发起与终审回填」与本节 §4.5「引擎契约对齐」为同一协议的两端文档化形态；WF-001 侧定义引擎守门与 `details[]` 形态，WF-002 侧定义 `act()` 边界条件表与 `_complete_via_engine()` 调用形态，任一侧变更须同步更新另一侧（CI 静态检查：`tests/jmeter/_contract.py` 错误码枚举 + 路径口径为唯一事实源）。

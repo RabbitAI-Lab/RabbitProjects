@@ -8,7 +8,7 @@
 | 优先级 | P3（企业版核心） |
 | 工作量估算 | 后端 3.5 人日（四类型校验器 1.5 + 权限序列化层 1.5 + 筛选集成 0.5）｜前端 3.0 人日（级联配置器 1 + 权限矩阵 1 + 渲染/隐藏 1）｜测试 1.5 人日 |
 | 关联架构文档 | [`dynamic-fields-design.md`](../architecture/dynamic-fields-design.md)（字段域唯一权威：§3.1/§7.3 `permission_config` 结构、§5.1 筛选操作符映射表）、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md)（§2.2/§2.3 角色等级与角色码、§3.4/§11.2 字段级权限四档与三处生效）、[`unified-issue-model.md`](../architecture/unified-issue-model.md)、[`api-conventions.md`](../architecture/api-conventions.md)（§8.3 `PERM_FIELD_READ_ONLY/HIDDEN`、§8.4 `VALIDATION_CUSTOM_FIELD_INVALID`） |
-| 上游依赖 | `TASK-008`（`CustomFieldDefinition` 全量基座；**P3 扩展列 `permission_config`/`cascade_config` 与四个高级类型枚举建列即定义，本文档启用，零 DDL**）；`TASK-011`（FilterCompiler）；`FILE-001`（附件管道）；`WF-004`（流转守卫消费本文 §4.4 access_map 接口：hidden 字段豁免其 `required_fields` 守卫——WF-004 现行版未记载此协议，待同步登记（上游待回改）；按角色必填不在 WF-004 范围，由本文档 `required_for` 承载） |
+| 上游依赖 | `TASK-008`（`CustomFieldDefinition` 全量基座；**P3 扩展列 `permission_config`/`cascade_config` 与四个高级类型枚举建列即定义，本文档启用，零 DDL**）；`TASK-011`（FilterCompiler）；`FILE-001`（附件管道）；`WF-004`（流转守卫消费本文 §4.4 access_map 接口：hidden 字段豁免其 `required_fields` 守卫——WF-004 §1.5 现行版已登记本协议（hidden 豁免 required_fields 守卫与 locked_hit 跳过），双向闭环生效；按角色必填不在 WF-004 范围，由本文档 `required_for` 承载） |
 | 下游消费 | P4 `TASK-014`（公式/多级级联/跨项目关联在本四类型之上扩展）；`RPT-002/004`（导出权限感知）；Sprint 8 `AUTH-008`（自定义角色进入权限矩阵） |
 | 文档状态 | 待评审（Draft） |
 | 最后更新日期 | 2026-09-04 |
@@ -31,7 +31,7 @@
 1. 管理入口开放四个高级类型，各配校验器、渲染器、筛选操作符——与 P2 十二类型同一管线（定义 → Schema API → 值校验 → 筛选编译）。
 2. `cascade_config` 启用：级联字段的多级选项树配置与校验。
 3. `permission_config` 启用：`read`/`write`/`required_for` 三集合白名单（字段 × 角色），服务端**单一判定入口**产出四态，序列化层剔除隐藏字段。
-4. 「必填」语义三层——字段定义级必填 `is_required`（全场景、全角色）、按角色必填 `required_for`（本文档在定义级自实现，缺失时 400，承 rbac §11.2 required 档）、流转守卫级必填（仅流转时，WF-004 `required_fields`，无角色维度）；WF-004 另消费本文 §4.4 access_map 接口，对 hidden 字段豁免守卫校验——该协议 WF-004 现行版未记载，待同步登记（上游待回改）。
+4. 「必填」语义三层——字段定义级必填 `is_required`（全场景、全角色）、按角色必填 `required_for`（本文档在定义级自实现，缺失时 400，承 rbac §11.2 required 档）、流转守卫级必填（仅流转时，WF-004 `required_fields`，无角色维度）；WF-004 另消费本文 §4.4 access_map 接口，对 hidden 字段豁免守卫校验——该协议 WF-004 §1.5 现行版已登记，双向闭环生效。
 
 ### 1.3 范围与边界
 
@@ -41,7 +41,7 @@
 | 字段权限 | `read`/`write`/`required_for` 三集合 × 固定角色码（判定四态）；序列化剔除 | `field:` 主体与 `readonly_when` 条件只读（dynamic-fields §7.3 预留位）、按自定义角色的矩阵（Sprint 8 `AUTH-008` 后自动生效——矩阵成员即 `role:<自定义角色码>`，无需改表）、字段级审计（`AUTH-010`） |
 | 级联 | ≤3 级选项树、父选子过滤 | 级联联动显隐其他字段（P3 预留——dynamic-fields §7 归属 Sprint 7-9；具体载体待 dependency-graph 回改时定） |
 | 关联 | 同项目工作项选择器（多选） | 跨项目关联（P4 `TASK-014`） |
-| 流转必填 | 协议对齐（WF-004 消费本文 §4.4 access_map 接口：hidden 字段豁免 `required_fields` 守卫——WF-004 待同步登记（上游待回改）） | 守卫执行本体与按流转边必填配置（`WF-004`，无角色维度） |
+| 流转必填 | 协议对齐（WF-004 消费本文 §4.4 access_map 接口：hidden 字段豁免 `required_fields` 守卫——WF-004 §1.5 已登记，双向闭环生效） | 守卫执行本体与按流转边必填配置（`WF-004`，无角色维度） |
 
 ### 1.4 术语表
 
@@ -211,7 +211,7 @@ sequenceDiagram
 └──────────────────────────────────────────────────────────┘
 ```
 
-> 三态单选与「按角色必填」开关是 `read`/`write`/`required_for` 集合的视图层换算：可写 = 该角色不在任一集合（默认态）；只读 = `read` 含该角色而 `write` 不含；隐藏 = `read` 不含该角色；必填开关写 `required_for`。保存时序列化器按全角色集 diff 写回白名单。
+> 三态单选与「按角色必填」开关是 `read`/`write`/`required_for` 集合的视图层换算：可写 = 该角色不在任一集合（默认态）；只读 = `read` 含该角色且 `write` 非空未列入（`write` 为空恒视为可写——全员，见 §4.4 `can_write`）；隐藏 = `read` 不含该角色；必填开关写 `required_for`。保存时序列化器按全角色集 diff 写回白名单。
 
 ### 3.3 消费侧渲染规则
 
@@ -663,7 +663,7 @@ class RelationPickerStore {
 4. readonly：PROJ_CONTRIBUTOR PATCH 该字段被静默丢弃（200，值不变，`meta.warning.dropped_fields` 回显）；ADMIN 同样受 readonly 约束（§2.2）。
 5. 权限矩阵修改后**即时生效**（无缓存延迟）；ETag 与 access 缓存按角色隔离、存在 `user:` 授权时按用户隔离，无串数据。
 6. 标准版许可下创建高级类型返回 403 `PERM_LICENSE_REQUIRED`。
-7. WF-004 联调（以其登记本文 §4.4 access_map 接口为前提——WF-004 待同步登记（上游待回改））：hidden 字段豁免其 `required_fields` 守卫校验；按角色必填由 `required_for` 独立生效（400 `REQUIRED`）。
+7. WF-004 联调（WF-004 §1.5 已登记本文 §4.4 access_map 接口，双向闭环生效）：hidden 字段豁免其 `required_fields` 守卫校验；按角色必填由 `required_for` 独立生效（400 `REQUIRED`）。
 8. 全部端点通过 `api-conventions.md` §14 检查清单；错误码零新增。
 
 ---
@@ -674,7 +674,7 @@ class RelationPickerStore {
 - 字段基座：[`docs/sprint-2-task-full/TASK-008-custom-fields-basic.md`](../sprint-2-task-full/TASK-008-custom-fields-basic.md)
 - 筛选编译器：[`docs/sprint-3-views-collab/TASK-011-advanced-filter.md`](../sprint-3-views-collab/TASK-011-advanced-filter.md)
 - 附件管道：[`docs/sprint-1-mvp/FILE-001-task-attachment.md`](../sprint-1-mvp/FILE-001-task-attachment.md)
-- 流转守卫：[`docs/sprint-7-enterprise-workflow/WF-004-transition-guard.md`](WF-004-transition-guard.md)（消费本文 §4.4 access_map 接口：hidden 字段豁免 `required_fields` 守卫——WF-004 待同步登记（上游待回改））
+- 流转守卫：[`docs/sprint-7-enterprise-workflow/WF-004-transition-guard.md`](WF-004-transition-guard.md)（消费本文 §4.4 access_map 接口：hidden 字段豁免 `required_fields` 守卫——WF-004 §1.5 已登记，双向闭环生效）
 - P4 扩展：[`docs/sprint-future-p4/TASK-014-formula-fields.md`](../sprint-future-p4/TASK-014-formula-fields.md)
 
 

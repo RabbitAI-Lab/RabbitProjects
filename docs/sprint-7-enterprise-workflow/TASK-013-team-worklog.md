@@ -105,7 +105,7 @@ flowchart TB
 
 | 编号 | 规则 | 强制层 | 违约响应 |
 | --- | --- | --- | --- |
-| BR-01 | 批次维度 = `(actor, project, week_start)`（周一 00:00 **取值链**：成员 `User.timezone`（AUTH-004 profile 字段，缺省 Asia/Shanghai——本迭代零 DDL 借助既有字段，无新加列）；同维度至多一个非删除批次） | DB 唯一约束 | `409 RESOURCE_ALREADY_EXISTS` |
+| BR-01 | 批次维度 = `(actor, project, week_start)`（周一 00:00；**时区口径（本迭代降级）**：全系统单一时区 `settings.TIME_ZONE = "Asia/Shanghai"`——`User.timezone`/`Project.timezone` 字段**均不存在**（AUTH-004 profile 白名单无时区项），按 PROJ-002 既有约定周一界由 Django `current_week_start()`（服务器时区）计算；**待补列登记**：多时区需求出现时在 User 表补 `timezone` 列并回改本 BR 与 BR-12 取值链（列入 §7.1 待回改清单，非本迭代 DDL））；同维度至多一个非删除批次 | DB 唯一约束 | `409 RESOURCE_ALREADY_EXISTS` |
 | BR-02 | 批次四态：`draft → submitted → approved`；`submitted → rejected → submitted`（可循环）；`submitted → draft` 仅成员撤回路径（§3.4）；`approved` 为业务终态，唯一出边 = 撤销审批 `approved → rejected`（BR-07，必填意见）——除该边外不可再流转 | 状态机（Service） | `409 RESOURCE_STATE_INVALID` |
 | BR-03 | 提交时批次须非空（覆盖周内有 ≥1 条**未软删**工时，口径见 §4.4 软删说明） | Service | `400 VALIDATION_ERROR` |
 | BR-04 | 审批人 = 持 `worklog.approve`（`rbac-permission-model.md` §8.2，默认 PROJ_ADMIN+）；不可审批自己的批次 | Permission + Service | `403 PERM_DENIED` / `400 VALIDATION_ERROR` |
@@ -116,7 +116,7 @@ flowchart TB
 | BR-09 | 回填窗口承 TASK-006（30 天）；审批通过后回填窗口对该周失效（锁定优先） | Service | `400 VALIDATION_ERROR` |
 | BR-10 | 任务超额预警：`spent/estimate ≥ warn_ratio`（`ProjectWorklogConfig.warn_ratio`，默认 0.8，可配 0.5-1.5）触发一次；≥1.0 再触发一次；`estimate` 变更重置已触发标记；`spent` 口径与 TASK-006 一致为 `SUM(minutes)` 实时聚合（非物化列） | Celery on_commit + Redis SETNX 幂等 | — |
 | BR-11 | 人日 >8h（480 分钟）在台账行标红，不产生通知（噪音控制） | 台账渲染 | — |
-| BR-12 | 周五 17:00（**项目时区——多时区部署时 beat 按 UTC 固定时刻调度、任务内按项目 `Project.timezone` 二次判定时刻**——Project 时区字段为 P3 AUTH-010 阶段补登，本迭代读 `Project.created_by.timezone` 兜底；缺省 Asia/Shanghai）未提交批次 → 提醒成员；下周一 10:00（**上一周**，§4.4 `timedelta(days=7)`）仍未交 → 汇总未交名单提醒负责人（两条独立 beat 调度，§4.4）；每周至多各一条——幂等键含周期且按 mode 分离（成员键按人、催办键按项目），成员提醒不压制负责人催办 | Celery beat + SETNX | — |
+| BR-12 | 周五 17:00（**服务器时区**——`settings.TIME_ZONE = "Asia/Shanghai"`，与 BR-01 同口径；多时区部署随 BR-01 待补列一并回改）未提交批次 → 提醒成员；下周一 10:00（**上一周**，§4.4 `timedelta(days=7)`）仍未交 → 汇总未交名单提醒负责人（两条独立 beat 调度，§4.4）；每周至多各一条——幂等键含周期且按 mode 分离（成员键按人、催办键按项目），成员提醒不压制负责人催办 | Celery beat + SETNX | — |
 | BR-13 | 快照表只增改不删：明细变更（驳回重交流程内）触发对应 `(project, actor, week)` 行重算；`is_frozen` 行拒绝**日常增量**重算（`freeze=None` 被守卫拦截，须先 BR-07 解锁；审批显式 `freeze=True/False` 穿透守卫，§4.4） | 聚合任务 | — |
 | BR-14 | 台账可见性：成员（`worklog.read` 仅本人语义）只见自己；持 `worklog.approve`（PROJ_ADMIN+）见项目全员；导出（CSV）需 `report.export`（`rbac-permission-model.md` §8.2）且入审计（Sprint 8 `AUTH-010` 挂接点预留）。RPT-004 负载热力图侧按 `report.read` 放开到全员读（其 BR-08 自行约束）——**报表读与台账管理面分码分工**，两文档口径以此为准 | Permission | `403 PERM_DENIED` |
 | BR-15 | 项目归档/成员移出：批次与快照保留（历史可审计），新项目周期不可再提交 | Service | `403 PERM_PROJECT_ARCHIVED` |
@@ -142,7 +142,14 @@ sequenceDiagram
     else reject
         SVC->>DB: 批次 rejected + note；工时解锁可改
     end
-    SVC->>DB: Activity 留痕（落 `record_project_activity` worker，PROJ-003 §4.3 交付——TASK-010 `IssueActivity` 以 `issue_id` 必填维度不适合批次级审批，事件命名 `worklog.approval.<verb>`（verb ∈ `submitted/approved/rejected/withdrawn/revoked`）、`entity_type='worklog_approval'`、`entity_id=<batch_id>`、`field='approval'`、`project_id` 由 `actor.project_id` 取——actor 必填 rbac §5.4，BR-07）
+    SVC->>DB: Activity 留痕（record_worklog_approval_activity 专用投递——
+    复用 PROJ-003 §4.3.1 record_project_activity 的 project 域 worker 模式，
+    落 IssueActivity 表 project 域行（issue_id=NULL、project_id=批次所属项目）：
+    verb='updated'（TASK-010 §1.2 枚举不扩展）、field='approval'（WF-002 BR-14
+    单字段特例同范式）、old_value/new_value=批次迁移前后状态、
+    comment="{batch_id}:{动作原词}"（submitted/approved/rejected/withdrawn/revoked，
+    UUID 前缀可解析回查批次）、event_key=sha256(verb+project_id+actor_id+epoch)
+    ——PROJ-003 同格式幂等键，BR-07）
     API-->>R: 200
 ```
 
@@ -199,7 +206,7 @@ sequenceDiagram
 │ 王思远   40.0   42.5†  39.0   26.5   148.0    75%    ▓▓▓▓▓▓░░░░ 66%    │
 │ 陈默     32.0   35.0   33.0   22.0   122.0   100%    ▓▓▓▓▓░░░░░ 55%    │
 │ ────────────────────────────────────────────────────────────────────  │
-│ † 含 >8h 人日（悬停查看明细）  ° 负载 = W36 当周工时/40h（W36 即末尾列；与 RPT-004 热力图单周负载同口径，分母 40h 见 §4.6 容量声明）   │
+│ † 含 >8h 人日（悬停查看明细）  ° 负载 = W36 当周工时/40h（W36 即末尾列；与 RPT-004 热力图单周负载同口径，分母 40h = §4.2 weekly_capacity_minutes 默认值，§4.4 容量声明）   │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -371,6 +378,9 @@ class ProjectWorklogConfig(BaseModel):
     warn_ratio = models.DecimalField(
         max_digits=3, decimal_places=2, default=Decimal("0.80"),
         verbose_name="任务超额预警阈值（BR-10）")
+    weekly_capacity_minutes = models.PositiveIntegerField(
+        default=2400, verbose_name="周容量（分钟，30-60h 可配——负载°分母唯一配置源，§4.4/§4.6）",
+        validators=[MinValueValidator(1800), MaxValueValidator(3600)])
 
     class Meta(BaseModel.Meta):
         db_table = "project_worklog_configs"
@@ -379,10 +389,17 @@ class ProjectWorklogConfig(BaseModel):
                 check=models.Q(warn_ratio__gte=0.5) & models.Q(warn_ratio__lte=1.5),
                 name="chk_worklog_warn_ratio_range",
             ),
+            models.CheckConstraint(
+                check=models.Q(weekly_capacity_minutes__gte=1800)
+                      & models.Q(weekly_capacity_minutes__lte=3600),
+                name="chk_worklog_weekly_capacity_range",
+            ),
         ]
 ```
 
 **WorkLog 增列**：`locked = BooleanField(default=False, db_index=True)`——审批通过置真，TASK-006 的改/删 Service 前置检查（BR-06）。**本迭代受控 DDL 清单**：新建 `worklog_approvals` / `worklog_summaries` / `project_worklog_configs` 三表 + `work_logs.locked` 增列（与 §7.1 交付清单对齐）。
+
+> **周容量配置归属裁定（与 RPT-004 唯一配置源）**：`weekly_capacity_minutes` 落本表（工时域自带、本迭代交付）。RPT-004（Sprint 9）BR-06 的负载热力分母**待回改为消费本字段**（其现行 `HealthConfig.cfg.weekly_capacity_minutes` 为同义双源——**RPT-004 待回改登记**：HealthConfig 侧移除该键或改为透传引用，随 Sprint 9 首个 PR 同步）。在 RPT-004 回改前，两处读值以本表为准；前端 §4.6 `loadRateOf` 分母由配置下发值驱动（随 `GET worklog-config/` 响应 / 台账 `meta` 附带），**禁止硬编码 2400**。
 
 ### 4.3 审批服务（状态机 + 锁定）
 
@@ -572,12 +589,12 @@ def weekly_submit_reminder(mode: str):
 
 > **报表聚合端点声明**（`api-conventions.md` §7.2 / §5.4 / §6，与 `RPT-002` BR-13 同范式）：
 > - **限流**：`worklog-summary/` 与 `export/` 归入「报表聚合端点」配额——**10 请求/分钟**（按 `user_id` 计数，复用 `ReportAggregationThrottle`），超限 `429 RATE_LIMIT_EXCEEDED` + `Retry-After`；响应头必带 `X-RateLimit-*` 与 `Cache-Control: no-store`。
-> - **分页**：台账 `rows` 按成员游标分页（§6.3）——`per_page` 默认 50、上限 100（超限静默截断并记 `meta.degraded`）；`meta` 必含 `next_cursor / prev_cursor / next_page_results / prev_page_results / count / total_count / total_pages / page / per_page`。
+> - **分页**：台账 `rows` 按成员游标分页（§6.3）——`per_page` 默认 100、上限 100（§6.3 既有口径，超限静默截断并记 `meta.degraded`）；`meta` 必含 `next_cursor / prev_cursor / next_page_results / prev_page_results / count / total_count / total_pages / page / per_page`。
 > - **排序**：`ordering` 白名单 = `display_name`（默认）、`-total_minutes`（按查询窗口合计工时降序）；默认排序以唯一键收尾（`display_name, actor_id`）保游标稳定；白名单外 `400 VALIDATION_INVALID_PARAM`（§5.4 不忽略）。
 > - **窗口校验**：`from/to` 必填（自然周起始日，周一）、跨度 ≤ 12 周，越界 `400 VALIDATION_INVALID_PARAM`。
 
 > **批次列表端点声明**（`api-conventions.md` §5.4 / §6.3，常规列表端点——**不入**报表聚合限流；分页/meta 与台账端点对称）：
-> - **分页**：批次按游标分页（§6.3）——`per_page` 默认 50、上限 100（超限静默截断并记 `meta.degraded`）；`meta` 必含 9 字段：`next_cursor / prev_cursor / next_page_results / prev_page_results / count / total_count / total_pages / page / per_page`。
+> - **分页**：批次按游标分页（§6.3）——`per_page` 默认 100、上限 100（§6.3 既有口径，超限静默截断并记 `meta.degraded`）；`meta` 必含 9 字段：`next_cursor / prev_cursor / next_page_results / prev_page_results / count / total_count / total_pages / page / per_page`。
 > - **排序**：`ordering` 白名单 = `-submitted_at`（默认，待审优先）、`display_name`（成员名）、`status`（按业务权重：待审→已通过→已驳回→待提交，非字典序）；默认排序以唯一键收尾（`-submitted_at, actor_id`）保游标稳定；白名单外 `400 VALIDATION_INVALID_PARAM`（§5.4 不忽略）。
 > - **筛选**：`week_start` 精确匹配（周一）；`status` 枚举白名单（draft/submitted/approved/rejected），越界同 `400 VALIDATION_INVALID_PARAM`。
 
@@ -683,7 +700,9 @@ class TeamWorklogStore {
 
   @computed loadRateOf(actorId: string, week: string): number {
     const cell = this.rows.get(actorId)?.cells.find(c => c.week_start === week);
-    return cell ? cell.total_minutes / 2400 : 0;               // 周负载率（§3.3，RPT-004 同源）
+    // 周负载率（§3.3，RPT-004 同源）——分母读配置（§4.2 weekly_capacity_minutes，随台账响应
+    // meta.capacity_minutes / GET worklog-config/ 下发），禁止硬编码 2400
+    return cell ? cell.total_minutes / this.capacityMinutes : 0;
   }
 
   async review(batchId: string, action: "approve" | "reject" | "revoke", note?: string) {
@@ -711,7 +730,7 @@ class TeamWorklogStore {
 | 编号 | 用例 | 断言 |
 | --- | --- | --- |
 | UT-01 | 状态机全合法路径（draft→submitted→approved；submitted→draft；rejected→submitted；approved→rejected） | 逐条通过 |
-| UT-02 | 非法流转（draft→approved、approved→submitted 等 8 组） | 全部 409 `RESOURCE_STATE_INVALID` |
+| UT-02 | 非法流转 6 组全列举（draft→approved、draft→rejected、rejected→approved、rejected→draft、approved→submitted、approved→draft——§4.2 状态机非自环非法有向边全集；自环另由 UT-01 枚举校验） | 全部 409 `RESOURCE_STATE_INVALID` |
 | UT-03 | 空批次提交 | 400 `REQUIRED` |
 | UT-04 | 审批自己批次 | 400 `INVALID` |
 | UT-05 | 驳回/撤销缺意见 | 400 `REQUIRED` |
@@ -770,7 +789,7 @@ class TeamWorklogStore {
 | 类别 | 交付物 |
 | --- | --- |
 | Model / Migration | `worklog_approvals`、`worklog_summaries`、`project_worklog_configs` 三表 + 3 唯一约束（含 OneToOne）+ 1 CheckConstraint + 3 索引；`work_logs.locked` 增列（本迭代受控 DDL，§4.2） |
-| 后端 | `WorkLogApprovalService` 状态机、锁定钩子（WorkLog Service 增/改/删三路径前置——`create_worklog`/`update_worklog`/`delete_worklog` 入口均按 `(actor, worked_on)` 命中 `WorkLogApproval(week_start=worked_on 周一, status=approved)` 时抛 `409 RESOURCE_LOCKED`）、`refresh_summary`（含 freeze 冻结路径与 `over_8h_days` 日级聚合）/ `check_estimate_alerts` / `weekly_submit_reminder` 三 Celery 任务（全部 on_commit + SETNX 幂等；beat 两条调度：周五 17:00 成员提醒 / 下周一 10:00 负责人催办取 `current_week_start() - timedelta(days=7)`，§4.4）、10 个端点（批次 6 + 台账/导出 2 + 配置读写 2，§4.5） |
+| 后端 | `WorkLogApprovalService` 状态机、锁定钩子（WorkLog Service 增/改/删三路径前置——`create_worklog`/`update_worklog`/`delete_worklog` 入口均按 `(actor, worked_on)` 命中 `WorkLogApproval(week_start=worked_on 周一, status=approved)` 时抛 `409 RESOURCE_LOCKED`）、`record_worklog_approval_activity` 专用投递（project 域 Activity，PROJ-003 worker 模式——§2.3 留痕契约：verb='updated'/field='approval'/comment="{batch_id}:{动作原词}"）、`refresh_summary`（含 freeze 冻结路径与 `over_8h_days` 日级聚合）/ `check_estimate_alerts` / `weekly_submit_reminder` 三 Celery 任务（全部 on_commit + SETNX 幂等；beat 两条调度：周五 17:00 成员提醒 / 下周一 10:00 负责人催办取 `current_week_start() - timedelta(days=7)`，§4.4）、10 个端点（批次 6 + 台账/导出 2 + 配置读写 2，§4.5）。**待回改登记**：多时区需求出现时 User 表补 `timezone` 列并回改 BR-01/BR-12 取值链（非本迭代 DDL） |
 | 前端 | 周视图批次状态与锁定、审批队列、台账矩阵（热力 + 导出）、预估进度环 |
 | 测试 | UT-01~15、IT-01~08、E2E-01~05 |
 

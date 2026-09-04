@@ -9,7 +9,7 @@
 | 工作量估算 | 4 人日（后端 2 + 前端 1.5 + QA 0.5） |
 | 文档状态 | 待评审（Draft） |
 | 最后更新日期 | 2026-09-01 |
-| 上游依赖 | `WF-001`（三表模型与草稿/发布）、`WF-002`（审批流可随模板预置）、`WF-004`（守卫随模板预置）、`TEAM-003`（工作空间级全局标签/状态模板下发机制——Sprint 5 已交付，组织级下发复用其路径） |
+| 上游依赖 | `WF-001`（三表模型与草稿/发布）、`WF-002`（审批流可随模板预置）、`WF-004`（守卫随模板预置）、`TEAM-003`（工作空间级全局标签/状态模板——Sprint 5 已交付；本文复用其**治理语义先例**（WS 级配置权 + 快照不直改既有项目），**不复用其下发路径**：TEAM-003 是引用式语义（并集展示 + 本地覆盖），本文是复制式实例化，§1.5/§6.1 刻意不学共享引用） |
 | 下游消费 | Sprint 8 组织治理（组织级配置权审计） |
 
 ---
@@ -65,7 +65,7 @@ flowchart LR
 | `WF-001` §4.2 | 三表模型、草稿/发布、`issue_type` 绑定 | 序列化目标结构 |
 | `WF-002` §4.2 | ApprovalFlow/Node 结构 | 模板含审批引用 |
 | `WF-004` §4.1 | guards config schema | 序列化校验 |
-| `TEAM-003` §2.2/§2.3 | 工作空间级全局标签/状态模板的**下发记录 + 快照覆盖**机制（Sprint 5 已交付） | 组织级工作流下发复用其空间级下发路径与治理语义 |
+| `TEAM-003` §2.2/§2.3 | 工作空间级全局标签/状态模板的**并集展示 + 本地覆盖 + default_states 快照**机制（Sprint 5 已交付，引用式语义） | 组织级工作流下发**仅复用其治理语义先例**（WS 级配置权 + 快照不直改既有项目）；下发路径不复用——本文为复制式实例化（§1.5/§6.1 刻意不学共享引用），无「下发记录」共享 |
 | `TASK-008`/`TASK-012` | `CustomFieldDefinition` 作用域（`project` 可空）与 `FieldType` 枚举 | 快照内嵌 `field_definitions`（§2.1/§2.2）实例化到项目作用域 |
 
 ### 1.5 竞品参考
@@ -115,7 +115,8 @@ flowchart LR
 | --- | --- |
 | `key` 为模板内符号引用 | 实例化时映射为新生成的 UUID（状态/流转/审批全部新建，不复用模板内 id） |
 | `group` 必须属于五语义组 | 实例化校验；未知 group 拒绝 |
-| 审批内联定义（非引用） | 实例化时按定义新建 `ApprovalFlow/Node`（同名冲突自动加后缀） |
+| **`issue_types` 空数组语义** | 空数组 `[]` ＝ 实例化为**项目默认工作流**（`issue_type=NULL`，WF-001 §2 三级兜底的第三级）——「日常任务」预设即此形态，向导在确认步骤明示「将设为项目默认工作流」；非空数组按类型逐条实例化（注 1） |
+| 审批内联定义（非引用） | 实例化时按定义新建 `ApprovalFlow/Node`（同名冲突自动加后缀）；内联对象**必填 `key`**（模板内符号引用，transitions 经 `approval_key` 引用，§2.3 示例 `"a1"`） |
 | `version` | 序列化协议版本（非模板版本）；解析器按版本分派，向前兼容 |
 | `field_definitions` 可随模板 | 自定义字段定义内嵌：每项 `{key, name, field_type, options?, cascade_config?}`；`key` 恒 `cf_` 前缀，`field_type` 枚举同 TASK-008/012 `FieldType`——守卫/字段锁引用的 `cf_*` 字段由此自包含，实例化与降级规则见 §2.2 |
 | 自动化规则可随模板 | 默认空；预置规则同样内联定义实例化——`trigger`/`conditions`/`actions` config 逐字段遵循 WF-003 §2.2/§4.8 冻结 DSL（条件三键 `field`/`operator`/`value`，`op` 是其逻辑节点保留字不得使用；快照内 `to_state`/`from_state` 以状态 `key` 承载，实例化时随 §4.2 key 映射表替换为新状态 UUID） |
@@ -138,7 +139,7 @@ flowchart LR
 | 测试上线 | 待提测(unstarted) / 测试中(started) / 待上线(started) / 已上线(completed) / 已取消(cancelled) | 待提测→测试中（开始测试）；测试中→待上线（测试通过）；待上线→已上线（发布）；测试中→待提测（打回）；任意→已取消 | 发布：或签审批（运维/值班角色，24h 超时）；已上线节点 `field_locks: [target_date, cf_release_version]`（`cf_release_version` 亦为内嵌定义） |
 | 日常任务 | 待开始(unstarted) / 进行中(started) / 已完成(completed) / 已取消(cancelled) | 待开始↔进行中、待开始↔已完成、进行中↔已完成（两两全通）；任意→已取消（取消） | 无（隐式 `blocker_completed` 仍生效） |
 
-**规模口径**（§3.1 卡片与 §5 E2E 断言同此）：状态数**含「已取消」**；边数按**快照边**计——`from:"*"` 通配取消边计 1 条，实例化展开为逐源显式边（§2.3 注）。四套预设：研发需求 **6 状态·6 边**、缺陷修复 **5 状态·5 边**、测试上线 **5 状态·5 边**、日常任务 **4 状态·7 边**（三非取消状态两两全通 6 边 + 取消通配 1 边）。
+**规模口径**（§3.1 卡片与 §5 E2E 断言同此）：状态数**含「已取消」**；边数按**快照边**计——`from:"*"` 通配取消边计 1 条，实例化展开为逐源显式边（§2.3 注）。四套预设：研发需求 **6 状态·6 边**、缺陷修复 **5 状态·5 边**、测试上线 **5 状态·5 边**、日常任务 **4 状态·7 边**（三非取消状态两两全通 6 边 + 取消通配 1 边）。**跨文档口径登记**：WF-001 E2E-01/§7.2 演示与 sprint-overview §6 验收 3 的「研发需求流程模板编辑（5 状态 6 边）」为**画布演示视图口径——不含「已取消」态**（5 = 6 − 已取消；边数两口径同为 6：演示图不画取消通配边但含一条显式打回边），非数字冲突；概览措辞随 Sprint 8 文档回改时统一标注「（不含取消态）」。
 
 **预设的自定义字段依赖**：缺陷修复守卫引用 `cf_fix_solution`（修复方案）、测试上线锁定 `cf_release_version`（发布版本）——两个 `cf_*` 字段**随快照以 `field_definitions` 内嵌定义**（§2.1），模板自包含，不依赖目标项目预建。实例化三态：
 
@@ -265,6 +266,8 @@ stateDiagram-v2
 | 超配额 | 409 | `RESOURCE_LIMIT_EXCEEDED` | `TEMPLATE_LIMIT` | — |
 | 快照体积超 256KB | 413 | `VALIDATION_PAYLOAD_TOO_LARGE` | `TOO_LARGE` | 「模板内容超上限（256KB），请精简后重试」——api-conventions §8.4 已注册码，复用不新增 |
 
+> **字段级子码登记**：`REQUIRED` / `TOO_LARGE` 直用 api-conventions §8.8/§8.4 既有条目；`UNSUPPORTED_VERSION` / `INVALID_GRAPH` / `TEMPLATE_LOCKED` / `IN_USE` / `BUILTIN` / `TEMPLATE_LIMIT` 六个为本迭代新增 `details[].code` 字段级子码，不占用全局错误码注册表，交付时按 TASK-005 §2.5 同款模式在 §8.8 补登——**架构文档待回改登记**（同 WF-002 §2.6 / WF-004 §2.5 注范式，随 Sprint 7 首个 PR 同步）。
+
 ### 2.8 边界条件
 
 | 边界场景 | 限制值 | 超出处理 |
@@ -381,9 +384,44 @@ class TemplateDistribution(BaseModel):
         constraints = [
             models.UniqueConstraint(fields=["template", "project"], name="uniq_distribution"),
         ]
+
+
+class TemplateUnlockRequest(BaseModel):
+    """项目侧解锁/升级申请（§4.4 端点族：POST …/projects/{project_id}/workflow-templates/
+    unlock-requests/；「每项目至多一条待审」由部分唯一约束承载，§2.6）"""
+
+    class Kind(models.TextChoices):
+        UNLOCK = "unlock", "解锁（转独立副本）"
+        UPGRADE = "upgrade", "升级（替换式升级到新版本）"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "待审"
+        APPROVED = "approved", "已批准（WS_ADMIN 经 §4.4 ③ 执行）"
+        REJECTED = "rejected", "已驳回"
+
+    distribution = models.ForeignKey(TemplateDistribution, on_delete=models.CASCADE,
+                                     related_name="unlock_requests")
+    project = models.ForeignKey(Project, on_delete=models.CASCADE,
+                                related_name="template_unlock_requests")
+    kind = models.CharField(max_length=8, choices=Kind.choices)
+    reason = models.CharField(max_length=255, verbose_name="申请理由（必填）")
+    status = models.CharField(max_length=8, choices=Status.choices, default=Status.PENDING)
+    handled_by = models.ForeignKey("User", null=True, on_delete=models.SET_NULL,
+                                   related_name="+", verbose_name="处理人（WS_ADMIN）")
+    handled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta(BaseModel.Meta):
+        db_table = "template_unlock_requests"
+        constraints = [
+            # 「每项目至多一条待审」（§4.6）：仅对 pending 态生效的部分唯一约束（软删行不计）
+            models.UniqueConstraint(fields=["project"],
+                                    condition=Q(status="pending", deleted_at__isnull=True),
+                                    name="uniq_unlock_request_pending_per_project"),
+        ]
+        indexes = [models.Index(fields=["project", "status"], name="idx_unlock_req_proj")]
 ```
 
-> **锁定唯一事实源与溯源接线**：锁定判定/解除/升级全部以本表记录为准（§4.2 `assert_graph_editable` 查活跃 distribution，`Workflow` 自身无锁定字段）；实例化产物通过 `Workflow.source_template_id`（WF-001 §7.3 下游冻结契约预留的溯源列）由 §4.2 `instantiate()` 统一写入 `template.id`——项目工作流可反查来源模板，供升级推送与 WF-006 审计消费。
+> **锁定唯一事实源与溯源接线**：锁定判定/解除/升级全部以本表记录为准（§4.2 `assert_graph_editable` 查活跃 distribution，`Workflow` 自身无锁定字段）；实例化产物通过 `Workflow.source_template_id`（WF-001 §7.3 下游冻结契约预留的溯源列）由 §4.2 `instantiate()` 统一写入 `template.id`——项目工作流可反查来源模板，供升级推送与 WF-006 审计消费。申请受理即发 WS_ADMIN 通知（`notify_unlock_request.delay`，COLLAB-001 通道）；批准动作 = WS_ADMIN 调 `POST …/distributions/{id}/unlock/`（§4.4 ③）时同事务回写申请单 `status=approved / handled_by / handled_at`。
 
 ### 4.2 实例化服务
 
@@ -466,14 +504,19 @@ def distribute_template(template_id: str, project_ids: list[str], locked: bool, 
                 notify_distribution_pending.delay(pid, template.id)   # 通知项目管理员带映射确认（§4.4 ②）
             else:                                               # 无在途任务的新项目：无映射需求，可直接实例化
                 wfs = []
-                for k in snap.issue_types:                      # 按快照 issue_types 各建一条工作流并绑定对应类型（注 1）
+                if snap.issue_types:                            # 非空：按快照 issue_types 各建一条并绑定对应类型（注 1）
+                    for k in snap.issue_types:
+                        wfs.append(TemplateInstantiator().instantiate(
+                            template=template, project_id=pid, actor_id=actor_id,
+                            issue_type=project.issue_types.filter(key=k).first()))
+                else:                                           # 空数组：实例化为项目默认工作流（issue_type=NULL，§2.1 协议点）
                     wfs.append(TemplateInstantiator().instantiate(
                         template=template, project_id=pid, actor_id=actor_id,
-                        issue_type=project.issue_types.filter(key=k).first()))
+                        issue_type=None))                       # 「日常任务」预设形态；向导明示（注 2）
                 TemplateDistribution.objects.update_or_create(
                     template=template, project_id=pid,
                     defaults={"template_version": template.version, "locked": locked,
-                              "applied_workflow": wfs[0] if wfs else None, "status": "active"})
+                              "applied_workflow": wfs[0], "status": "active"})
         except Exception as e:
             report_distribution_failure(template, pid, e)       # 汇总通知 WS_ADMIN
 
@@ -494,7 +537,7 @@ def confirm_distribution(*, distribution_id: str, state_mapping: dict,
 ```
 
 > **注 1（下发场景的类型绑定）**：下发到**新项目**——按快照 `issue_types` 逐类型各建一条工作流并绑定对应 `IssueType`（多类型快照时 `applied_workflow` 承首条产物，其余经 `Workflow.source_template_id` 溯源可查）；下发到**既有项目**——确认步骤向导含任务类型重绑（快照 `issue_types` → 项目现有类型，§3.2 步骤 3），`issue_type_id` 随确认请求提交。
-> **注 2（`issue_type=None` 兜底边界）**：`issue_type=None`（落为项目默认工作流，WF-001 §2 三级兜底）**仅限**「项目缺模板引用的类型」的兜底场景，且须在向导差异/确认结果中明示；禁止作为下发默认值静默套用。
+> **注 2（`issue_type=None` 兜底边界）**：`issue_type=None`（落为项目默认工作流，WF-001 §2 三级兜底）有两个**显式**入口——① 快照 `issue_types` 为**空数组**（§2.1 协议点：「日常任务」预设形态，向导确认步骤明示「将设为项目默认工作流」）；② 「项目缺模板引用的类型」的兜底场景（向导差异/确认结果中明示）。两个入口之外的静默套用一律禁止。
 
 ### 4.4 API 定义
 
@@ -662,7 +705,7 @@ export class WorkflowTemplateStore {
 }
 ```
 
-画布只读模式：查项目活跃 distribution（`TemplateDistribution.locked=true` 且 `status in active/upgrade_available`，§4.1 唯一事实源；通过 `GET workflow-templates/{id}/distributions/?project_id=` 过滤命中），命中时 `<ReactFlow nodesDraggable={false} …>` + 侧栏保存按钮替换为横幅（§3.3）——`Workflow` 自身无锁定字段（无 `workflow.locked_by_template` 模型定义）。
+画布只读模式：查项目活跃 distribution（`TemplateDistribution.locked=true` 且 `status in active/upgrade_available`，§4.1 唯一事实源）。**数据源权限**：`GET workflow-templates/{id}/distributions/?project_id=` 为 WS_ADMIN 端点（§4.4 ①），非管理员的画布读者（锁定横幅受众 = 全项目成员）走**项目侧只读来源**——WF-001 `GET …/workflows/{wf_id}/` 图详情响应对本迭代扩展 `distribution` 摘要键（`{template_id, template_name, template_version, locked, status}`，§4.4① 同构子集；WF-001 §4.8⑤ 响应扩展登记——**WF-001 待同步登记（上游待回改）**），项目成员持 `project.read` 可读，命中 `locked=true` 时 `<ReactFlow nodesDraggable={false} …>` + 侧栏保存按钮替换为横幅（§3.3）——`Workflow` 自身无锁定字段（无 `workflow.locked_by_template` 模型定义）。
 
 ### 4.6 性能预算
 
@@ -753,7 +796,7 @@ export class WorkflowTemplateStore {
 
 | 类别 | 产物 |
 | --- | --- |
-| Model / Migration | `workflow_templates`、`template_distributions` 两表 |
+| Model / Migration | `workflow_templates`、`template_distributions`、`template_unlock_requests` 三表（§4.1；第三表承载项目侧解锁/升级申请与「每项目至多一条待审」唯一约束） |
 | 后端 | 快照解析器（版本分派）、`TemplateInstantiator`（含字段定义实例化）、锁定判定、下发/升级 worker、四套预设模板 fixture（含内嵌字段定义） |
 | API | 模板 CRUD/发布/另存/下发/撤回 + 下发记录/升级确认/解锁审批 + 项目应用/解锁申请，共 12 端点（详情三方法计 1，§4.4） |
 | 前端 | 模板库页、应用/下发三步向导、锁定横幅与只读画布、升级提示流 |

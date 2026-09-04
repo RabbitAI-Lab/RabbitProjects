@@ -8,7 +8,7 @@
 | 覆盖模块 | M11-WF 企业工作流与审批（自动化切面；模块码以 `dependency-graph.md` §1.2 为唯一事实） |
 | 工作量估算 | 6 人日（后端 3.5 + 前端 1.5 + QA 1） |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
+| 最后更新日期 | 2026-09-04（R3 修复：cf_<key> 形态、操作符白名单 before/after/between 类型限定、-created_at 排序、due 豁免闸 3、§9 风险引用、时序图缓存口径、五语义组出处、UT-01b 同名 409；R2：automation.manage、field_changed 事件源、条件数 ≤20、相对值归一化、runs 时间参数；R1 见首评） |
 | 上游依赖 | `WF-001`（`side_effects` 协议、流转事件源）、`TASK-010`（Activity/事件管道）、`COLLAB-001`（通知通道） |
 | 下游消费 | Sprint 9 报表（规则执行统计）、`WF-005`（模板可预置规则） |
 
@@ -125,7 +125,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | `state_changed` | 流转完成事件（WF-001 引擎 on_commit 发布） | `to_state`/`to_group`/`from_state`/`transition_id`/`issue_types` 可选过滤 | 含审批终审完成的迁移 |
 | `issue_created` | 创建提交事件（`create_issue` 服务路径，TASK-001；经 TASK-010 管道发布——TASK-002 贡献的是类型/父项/标签**变更**事件，不覆盖创建） | `issue_types` | 导入/批量创建同样触发 |
-| `field_changed` | 字段更新事件（多源 TASK-001 任务字段 / TASK-002 类型·父项·标签 / TASK-005 依赖关系 / TASK-007 负责人 / **TASK-008 自定义字段值**；统一经 TASK-010 管道 diff 发布） | `fields`（字段白名单）+ 可选 `to_value` | 自定义字段用 `cf_<uuid>` |
+| `field_changed` | 字段更新事件（多源 TASK-001 任务字段 / TASK-002 类型·父项·标签 / TASK-005 依赖关系 / TASK-007 负责人 / **TASK-008 自定义字段值**；统一经 TASK-010 管道 diff 发布） | `fields`（字段白名单）+ 可选 `to_value` | 自定义字段用 `cf_<key>`（TASK-008 field_key 冻结形态：`cf_` + snake_case 语义名，如 `cf_severity`） |
 | `due_approaching` | beat 每 15min 扫描 `target_date` | `hours_before`（1..168）+ `issue_types`（可选） | 每任务每规则只触发一次（窗口即 `hours_before` 起点） |
 
 ### 2.3 执行语义与防循环
@@ -140,7 +140,7 @@ sequenceDiagram
 
     SRC->>BUS: on_commit 发布领域事件
     BUS->>W: automation_match.delay(event)
-    W->>PG: 查项目启用规则（触发器类型匹配）
+    W->>R: 读规则缓存 automation:rules:{project_id}<br/>（miss 回源 PG，§4.2 零 DB 命中口径）
     W->>W: 条件编译求值（FilterCompiler 子集）
     alt 匹配且过防循环闸
         W->>PG: INSERT automation_runs（status=running）
@@ -155,7 +155,7 @@ sequenceDiagram
 
 1. **来源标记闸**：规则执行产生的变更事件携带 `origin=automation:{run_id}`；默认 `state_changed/field_changed` 触发器**不匹配** `origin=automation` 的事件（规则不级联）。项目级开关 `allow_rule_chain` 可放开（存储于 `automation_settings` 表，§4.1；GET/PATCH `…/automation-settings/` 读写，默认 False，§3.1 设置入口——IT-02 与验收演示 2 的操作落点），但受闸 2/3 约束。
 2. **深度保险丝**：事件携带 `chain_depth`，规则动作产生的新事件 `chain_depth+1`；深度 ≥ 5 的事件不再触发任何规则（快速失败 + 告警）。
-3. **去重窗口**：同 `(rule, issue)` 在 `dedup_window_minutes` 内已成功执行过 → 跳过（`skipped(dedup)`）。Redis `SETNX` 实现，键 `autodedup:{rule}:{issue}`。
+3. **去重窗口**：同 `(rule, issue)` 在 `dedup_window_minutes` 内已成功执行过 → 跳过（`skipped(dedup)`）。Redis `SETNX` 实现，键 `autodedup:{rule}:{issue}`。**`due_approaching` 豁免闸 3**：该触发器的去重由扫描端独立键 `autodedup:due:{rule}:{issue}:{hours}` 承担（BR-10，§4.4 扫描在投递前已 SETNX 占键）——worker 端闸 3 对 `due_approaching` 事件跳过，避免双占键互斥导致全部 `skipped(dedup)`、提醒永不执行（UT-11 断言含此豁免分支）。
 
 ### 2.4 Dry Run
 
@@ -165,7 +165,7 @@ sequenceDiagram
 
 | 编号 | 规则 | 判定位置 | 违反后果 |
 | --- | --- | --- | --- |
-| BR-01 | 规则是项目级实体；`automation.manage`（PROJ_ADMIN+，rbac §8.2——注册表专行 `Automation(P3)｜manage｜automation.manage`，**严格对齐注册表**，与兄弟文档 WF-001/002/004 的 `workflow.manage` 同范式；sprint-overview §3 风险 5 明确「权限 Key 严格对齐 rbac，禁另立」）可写规则与自动化设置，成员可读名称与启停状态 | Permission | `403 PERM_DENIED` |
+| BR-01 | 规则是项目级实体；`automation.manage`（PROJ_ADMIN+，rbac §8.2——注册表专行 `Automation(P3)｜manage｜automation.manage`，**严格对齐注册表**，与兄弟文档 WF-001/002/004 的 `workflow.manage` 同范式；sprint-overview §9 风险 5 明确「权限 Key 严格对齐 rbac，禁另立」）可写规则与自动化设置，成员可读名称与启停状态 | Permission | `403 PERM_DENIED` |
 | BR-02 | trigger/conditions/actions 保存时静态校验（jsonschema + 动作注册表 + 条件字段白名单） | Serializer | `400 VALIDATION_ERROR` 定位到路径 |
 | BR-03 | 动作执行 = 异步（Celery `workflow` 队列——Sprint 7 新增、待 INFRA-002 §4.1 补登，见 §1.4 注），规则执行 P95 < 100ms（不含通知投递） | worker | 超时告警 |
 | BR-04 | 单规则动作 ≤ 5；动作失败默认 `stop`（后续不执行），可配 `continue` | worker | run=failed + 明细 |
@@ -461,7 +461,7 @@ def due_approaching_scan():
 | POST | `…/automation-rules/{rid}/toggle/` | 启停（`{"is_active": false}`） | 同上 |
 | POST | `…/automation-rules/{rid}/dry-run/` | Dry Run（BR-11 零写；请求体契约见下） | 同上 |
 | GET/PATCH | `…/automation-settings/` | 项目自动化设置读/写（`{"allow_rule_chain": false}`——闸 1 开关，§2.3/§4.1） | 读：成员；写：`automation.manage`（同上码） |
-| GET | `…/automation-runs/` | 运行日志（`?rule=&status=&from=&to=&cursor=`；默认排序 `-fired_at, -id`；时间区间过滤） | 成员读 |
+| GET | `…/automation-runs/` | 运行日志（`?rule=&status=&from=&to=&cursor=`；默认排序 `-created_at, -id`（`AutomationRun` 仅有 `created_at`，`(rule, created_at)` 索引同序支撑）；时间区间过滤） | 成员读 |
 
 **创建请求**：
 
@@ -586,11 +586,11 @@ export class AutomationRuleStore {
 | trigger.type | config 字段 | 类型/约束 | 说明 |
 | --- | --- | --- | --- |
 | `state_changed` | `to_state` / `from_state` | uuid，可选 | 精确状态 |
-| | `to_group` | 枚举 `backlog`/`unstarted`/`started`/`completed`/`cancelled`，可选 | 五语义组（WF-001 §2 `State.Group`）；与 `to_state` 互斥——需精确「进入评审」改用 `to_state`/`transition_id` |
+| | `to_group` | 枚举 `backlog`/`unstarted`/`started`/`completed`/`cancelled`，可选 | 五语义组（`unified-issue-model.md` §2.6 `State.group` 枚举冻结）；与 `to_state` 互斥——需精确「进入评审」改用 `to_state`/`transition_id` |
 | | `transition_id` | uuid，可选 | 限定特定边（如仅「提交评审」触发） |
 | | `issue_types` | string[]，可选 | 类型 UUID 或 `__requirement__` 类名占位符（解析复用 TASK-011 §4.3）；空 = 全部类型 |
 | `issue_created` | `issue_types` | string[]，可选 | 同 `state_changed.issue_types` |
-| `field_changed` | `fields` | string[]，必填，≤10 | 系统字段名或 `cf_<uuid>`；`state` 非法（用 state_changed） |
+| `field_changed` | `fields` | string[]，必填，≤10 | 系统字段名或 `cf_<key>`（TASK-008 field_key 语义名形态，非 UUID——与事件 field 名/Schema API 下拉值同源可直接匹配）；`state` 非法（用 state_changed） |
 | | `to_value` | any，可选 | 变更后值匹配（类型随字段） |
 | `due_approaching` | `hours_before` | int，1..168，必填 | — |
 | | `issue_types` | string[]，可选 | 同 `state_changed.issue_types`；扫描按其过滤（§4.4） |
@@ -612,7 +612,7 @@ export class AutomationRuleStore {
 | `add_label` | `label_id` | uuid，必填 | 项目内标签；幂等 |
 | 公共 | `on_error` | `stop` / `continue`，默认 stop | — |
 
-**条件操作符白名单**（FilterCompiler 子集）：`eq / neq / in / not_in / is_empty / is_not_empty / gt / gte / lt / lte / contains`（文本）——`between/range` 等复杂算子不开放（条件面保持可读）；日期字段相对值使用 FilterCompiler 字符串快捷形态（`today` / `this_week` / `next_n_days:N`，TASK-011 §4.1 DSL）——超集形态 `{"relative": "-7d"}` 不在条件子集内，条件端 Service 落库前须归一化。
+**条件操作符白名单**（FilterCompiler 子集）：`eq / neq / in / not_in / is_empty / is_not_empty / contains`（文本与选项）/ `gt / gte / lt / lte`（数字与日期，含绝对值）/ `before / after`（日期锚点）/ `between`（日期区间，TASK-011 快捷值 `this_week` / `next_n_days:N` 的唯一宿主算子）——均带适用类型限定，与 TASK-011 §2.3「操作符×类型」冻结矩阵逐行闭环；`range` 等其余复杂算子不开放（条件面保持可读）；日期字段相对值使用 FilterCompiler 字符串快捷形态（`today` / `this_week` / `next_n_days:N`，TASK-011 §4.1 DSL）——超集形态 `{"relative": "-7d"}` 不在条件子集内，条件端 Service 落库前须归一化。
 
 ---
 
@@ -623,6 +623,7 @@ export class AutomationRuleStore {
 | 编号 | 用例 | 断言 |
 | --- | --- | --- |
 | UT-01 | 四触发器 config 静态校验 | 非法字段/类型 400 定位路径 |
+| UT-01b | 同名规则冲突：建已存在名称 → 409 `RESOURCE_ALREADY_EXISTS`（子码 `UNIQUE`）；软删后重用名 → 201（§2.6/§4.1 唯一约束含软删偏条件） |
 | UT-02 | 条件编译：FilterCompiler 子集白名单 | 白名单外字段 `NOT_A_CHOICE`（`details[].field`=`conditions[i].field`） |
 | UT-03 | 动作数 0/6 拒绝 | `REQUIRED`/`LIMIT` |
 | UT-04 | 条件 AND 求值真值表 | 全组合正确 |

@@ -6,10 +6,10 @@
 | 所属迭代 | Sprint 7 — 企业工作流核心（第 9-10 周） |
 | 模块 | M5-WF 工作流与审批 |
 | 优先级 | P3（企业版核心 · Sprint 7 全部文档的模型基座） |
-| 工作量估算 | 后端 5.0 人日（模型 1.5 + 执行引擎 2 + 发布校验 1 + 缓存/权限 0.5）｜前端 4.0 人日（画布 2.5 + 侧栏 1 + 流转入口 0.5）｜测试 2.0 人日 |
-| 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md)（§2.6 State 与 `issue_type` 预留列、§2.5 IssueType）、[`api-conventions.md`](../architecture/api-conventions.md)（§8.5 `RESOURCE_TRANSITION_INVALID/BLOCKED`、§8.3 `PERM_TRANSITION_NOT_ALLOWED`）、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md)（`workflow.manage`） |
+| 工作量估算 | 后端 5.0 人日（模型 1.5 + 执行引擎 2 + 发布校验 1 + 缓存/权限 0.5）｜前端 4.0 人日（画布 2.5 + 侧栏 1 + 流转入口 0.5）｜测试 2.0 人日。排期对齐 `sprint-overview.md` §8：引擎/端点/流转入口（后端 5.0 + 前端 0.5 人日）在第 9 周 D1-2 窗（概览槽位「WF-001 模型与执行引擎」）交付；画布 2.5 + 侧栏 1 人日在第 10 周 D3-4 窗交付（概览该槽位标注「WF-002 画布编辑器」——因 `WF-002` 审批分区侧栏挂接在画布内、同窗联调；画布编辑器的规格与实现归属仍为 WF-001，见 §1.2 目标 5） |
+| 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md)（§2.6 State 与 `issue_type` 预留列、§2.5 IssueType）、[`api-conventions.md`](../architecture/api-conventions.md)（§8.5 `RESOURCE_TRANSITION_INVALID/BLOCKED`、§8.3 `PERM_TRANSITION_NOT_ALLOWED`、§3.2 PUT 白名单、§3.3 乐观并发）、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md)（`workflow.manage`、§8.2 `issue.state.transition`） |
 | 上游依赖 | Sprint 6 标准版 V1.0 发布（状态模型稳定）；`TASK-005` 完成守卫（BLOCKER_SQL 钩子）；`TASK-010` Activity 管道 |
-| 下游消费 | **WF-002**（审批挂接 `side_effects`/`approval`）、**WF-003**（自动化规则消费流转事件）、**WF-004**（守卫矩阵落地 `guards` 协议）、**WF-005**（模板序列化为三表结构）、**WF-006**（审批留痕）、Sprint 8 组织治理 |
+| 下游消费 | **WF-002**（审批挂接 `side_effects` 协议 / `approval_flow` FK）、**WF-003**（自动化规则消费流转事件）、**WF-004**（守卫矩阵落地 `guards` 协议）、**WF-005**（模板序列化为三表结构）、**WF-006**（审批留痕）、Sprint 8 组织治理 |
 | 文档状态 | 待评审（Draft） |
 | 最后更新日期 | 2026-09-01 |
 
@@ -26,7 +26,7 @@
 - 「上线必须经过测试负责人审批」——流转触发审批；
 - 「需求、缺陷、测试单走不同的流程」——按任务类型绑定独立流程。
 
-WF-001 交付**引擎层**：三张表的数据模型、单事务状态机执行器、草稿/发布机制，以及 React Flow 可视化画布。本迭代其余五份 WF 文档（审批/自动化/守卫/模板/留痕）全部建立在本模型的 `guards` / `side_effects` / `approval` 三个 JSONB 协议字段之上——**协议先冻结，功能后填充**。
+WF-001 交付**引擎层**：三张表的数据模型、单事务状态机执行器、草稿/发布机制，以及 React Flow 可视化画布。本迭代其余五份 WF 文档（审批/自动化/守卫/模板/留痕）全部建立在本模型的两个 JSONB 协议字段（`guards` / `side_effects`）加 `approval_flow` UUID FK 挂点之上——**协议先冻结，功能后填充**。
 
 ### 1.2 目标
 
@@ -34,7 +34,7 @@ WF-001 交付**引擎层**：三张表的数据模型、单事务状态机执行
 2. **状态机执行器**：`WorkflowService.transition()` 单事务执行「守卫校验 → 审批触发 → 状态更新 → Activity 落库」，失败全回滚。
 3. **零迁移兜底**：未配置工作流的项目行为与 V1.0 完全一致（自由流转 + TASK-005 守卫）——标准版升级企业版无数据迁移、无行为突变。
 4. **草稿/发布**：画布编辑落在草稿，发布前图校验（可达性/死状态/初始态唯一），发布即生效并归档旧版本。
-5. **画布编辑器**：React Flow 拖拽建节点/连边/侧栏配置，100 节点 200 边流畅编辑。
+5. **画布编辑器**：React Flow 拖拽建节点/连边/侧栏配置，100 节点 200 边流畅编辑。排期归属：第 9 周先冻结本规格（§3）与 `graph/` 端点契约（§4.8 ④），编辑器 UI 实现按 `sprint-overview.md` §8 排在第 10 周 D3-4 窗、与 `WF-002` 审批分区侧栏（`WF-002` §3.3，挂接在 WF-001 画布内）同窗交付——概览 §8 该槽位标注「WF-002 画布编辑器」即指此联调窗口，画布编辑器本体归属 WF-001。
 
 ### 1.3 范围与边界
 
@@ -44,8 +44,8 @@ WF-001 交付**引擎层**：三张表的数据模型、单事务状态机执行
 | 执行引擎 | 流转匹配/执行/兜底链/事务边界 | 审批节点执行细节（`WF-002`） |
 | 守卫协议 | `guards` JSONB schema 定义与执行入口 | 四类守卫完整矩阵（`WF-004`） |
 | 副作用协议 | `side_effects` JSONB schema 定义 | 自动化规则引擎（`WF-003`） |
-| 审批挂接 | `approval` 字段协议（触发点与返回值） | 会签/或签/逐级逻辑（`WF-002`） |
-| 画布 | React Flow 编辑器 + 发布校验 | 多人同时编辑画布（P4） |
+| 审批挂接 | `approval_flow` FK 协议（触发点与返回值） | 会签/或签/逐级逻辑（`WF-002`） |
+| 画布 | React Flow 编辑器（规格与 graph 端点第 9 周冻结；编辑器实现第 10 周 D3-4 窗交付，与 WF-002 同窗，见 §1.2 目标 5）+ 发布校验 | 多人同时编辑画布（P4） |
 | 模板 | 仅预留 `source_template_id` 列 | 模板库（`WF-005`） |
 
 ### 1.4 术语表
@@ -133,21 +133,22 @@ flowchart LR
 
 | 编号 | 规则 | 强制层 | 违约响应 |
 | --- | --- | --- | --- |
-| BR-01 | 工作流绑定维度 = 项目 × 任务类型；`issue_type=NULL` 表示项目默认工作流 | DB 部分唯一约束 | `409 RESOURCE_ALREADY_EXISTS` |
-| BR-02 | 同一 `(project, issue_type)` 至多一个 `published`、至多一个 `draft` | DB 部分唯一约束 | `409 RESOURCE_ALREADY_EXISTS` |
+| BR-01 | 工作流绑定维度 = 项目 × 任务类型；`issue_type=NULL` 表示项目默认工作流 | DB 部分唯一约束（仅类型专属生效；项目默认走 Service 行锁，§4.2 注） | `409 RESOURCE_ALREADY_EXISTS` |
+| BR-02 | 同一 `(project, issue_type)` 至多一个 `published`、至多一个 `draft` | DB 部分唯一约束（仅类型专属生效；项目默认走 Service 行锁，§4.2 注） | `409 RESOURCE_ALREADY_EXISTS` |
 | BR-03 | 状态节点引用既有 `State`；同一工作流内 `state` 不重复 | DB 唯一约束 | `409 RESOURCE_ALREADY_EXISTS` |
 | BR-04 | 被引用 `State` 必须属于同项目；若工作流绑定类型，State 须满足 `issue_type` 相同或为 NULL（通用状态） | Service | `400 VALIDATION_ERROR` + `DOES_NOT_EXIST` |
 | BR-05 | 图内恰一个 `is_initial` 状态节点 | 发布校验 + Service | 发布 `400 VALIDATION_ERROR` |
 | BR-06 | 流转边 `(workflow, from_state, to_state, name)` 唯一；允许同两端点多条**不同名**边（如「通过」「特批通过」） | DB 唯一约束 | `409 RESOURCE_ALREADY_EXISTS` |
 | BR-07 | 禁止自环边（from=to） | Service + DB CHECK | `400 VALIDATION_ERROR` |
 | BR-08 | 发布校验四项：恰一初始态；全部节点自初始态可达；`completed` 组节点 ≥1 且可达；无引用缺失 | 发布事务内 | `400 VALIDATION_ERROR`，`details` 逐条列问题并定位节点/边 ID |
-| BR-09 | 发布阻断：当前项目该类型下**存在任务的状态不在新图状态集内** → 拒绝发布并列出受影响任务数，须先迁移 | 发布校验 | `409 RESOURCE_STATE_INVALID` + `details.affected_count` |
+| BR-09 | 发布阻断：当前项目该类型下**存在任务的状态不在新图状态集内** → 拒绝发布并列出受影响任务数，须先迁移 | 发布校验 | `409 RESOURCE_STATE_INVALID`，`details[]` 项携带 `affected`（state_id + count） |
 | BR-10 | 归档工作流只读保留（历史 Activity 仍可追溯其边名）；归档不影响进行中任务——该类型回落兜底链下一级 | Service | — |
 | BR-11 | 画布编辑仅作用于 `draft`；`published` 不可直接改——「编辑」按钮 = 基于已发布版本克隆出新草稿 | Service | `409 RESOURCE_STATE_INVALID` |
 | BR-12 | 流转执行 = 单事务：守卫 → 审批触发 → 副作用 → 状态更新 → Activity，任一失败全回滚 | 引擎 | 对应错误码 |
 | BR-13 | 状态更新仍走 `Issue.state` 外键直改，**不引入状态历史表**——历史由 `TASK-010` Activity 管道承载 | 引擎 | — |
-| BR-14 | `name` 命名的边在 Activity 中记录（「经『提交评审』从 待办 → 评审中」），审计可回溯 | 引擎 + Activity | — |
+| BR-14 | `name` 命名的边在 Activity 中记录（「经『提交评审』从 待办 → 评审中」），审计可回溯；登记为 `field="transition"` 单字段特例（§4.4，与 TASK-004 `parent` / WF-002 `approval` 同范式，event_key 键空间共用） | 引擎 + Activity | — |
 | BR-15 | 删除被工作流引用的 `State` 被阻断（`RESOURCE_IN_USE`），须先从所有草稿/已发布图中移除 | State 删除钩子 | `409 RESOURCE_IN_USE` |
+| BR-16 | **初始态创建接线**：发布校验强约束「`is_initial` 的 `WorkflowState.state` 与该项目该 `issue_type` 的默认状态一致」（`unified-issue-model.md` §2.6 `State.is_default`，新建落点）；新建任务时 `IssueService.create` 单事务内经 `WorkflowService.resolve_initial_state(project, issue_type)` 解析 → 写 `Issue.state_id`；无 `published` 工作流覆盖该类型时回落 `State.is_default`（兜底链最浅一级，§4.4 解析路径 `resolve_workflow` 同形）；类型专属工作流的项目默认（`issue_type=NULL`）仅作兜底、不被 `is_initial` 引用 | 发布校验 + Issue 创建 Service | 缺失 `is_initial` 状态→`409 RESOURCE_STATE_INVALID`；`is_initial.state` 与项目默认状态不一致→发布 `400 VALIDATION_ERROR` |
 | BR-16 | 仅 `workflow.manage`（PROJ_ADMIN+）可配置；组织级模板下发另需 WS 级权限（WF-005） | Permission | `403 PERM_ROLE_INSUFFICIENT` |
 
 ### 2.4 流转执行时序
@@ -170,7 +171,7 @@ sequenceDiagram
         ENG->>ENG: run_guards(edge)（WF-004）<br/>失败 → 409 BLOCKED / 400 必填
         alt edge.approval 非空
             ENG->>DB: 创建审批实例，任务挂起（WF-002）
-            ENG-->>API: 202 + approval_instance_id
+            ENG-->>API: 202 + pending_approval.instance_id
         end
         ENG->>ENG: apply_side_effects(edge)（WF-003）
     end
@@ -178,10 +179,10 @@ sequenceDiagram
     ENG->>ACT: on_commit → issue_activity.delay（幂等扇出）
     ENG->>DB: COMMIT
     ENG-->>API: 200 + 任务最新 state
-    API-->>FE: 信封 {status:0, data:{issue}}
+    API-->>FE: 信封 {status:"success", data:{issue}}
 ```
 
-**并发语义**：与 `TASK-002` 属性更新同一行锁（`select_for_update`），拖卡片与改字段互斥；两用户同时执行不同边时先获锁者胜，后者按新状态重新匹配边——失败返回 `409 RESOURCE_TRANSITION_INVALID`（前端刷新 available 列表）。乐观锁 `If-Match`（`api-conventions` §2.4）同样适用于本端点。
+**并发语义**：与 `TASK-002` 属性更新同一行锁（`select_for_update`），拖卡片与改字段互斥；两用户同时执行不同边时先获锁者胜，后者按新状态重新匹配边——失败返回 `409 RESOURCE_TRANSITION_INVALID`（前端刷新 available 列表）。乐观锁 `If-Match`（`api-conventions` §3.3 乐观并发控制）同样适用于本端点。
 
 ### 2.5 状态集与 `State.issue_type` 启用
 
@@ -368,7 +369,7 @@ class Workflow(BaseModel):
         indexes = [models.Index(fields=["project", "status"], name="idx_workflow_project_status")]
 ```
 
-> **NULL 与部分唯一索引**：PostgreSQL 中 `NULL ≠ NULL`，`(project, NULL)` 的 published/draft 唯一性对项目默认工作流同样成立（`NULL` 在唯一索引中被视为互不相同——因此项目默认工作流的唯一性由 **Service 层 + 事务内 `SELECT … FOR UPDATE` 项目行锁**兜底，迁移期并发测试 IT-06 覆盖）。
+> **NULL 与部分唯一索引**：PostgreSQL 唯一索引默认 `NULLS DISTINCT`（`NULL ≠ NULL`），因此当 `issue_type IS NULL`（项目默认工作流）时，`(project, NULL)` 的多行 published/draft **不会**触发上述两个部分唯一约束——这两个约束只对**类型专属**工作流（`issue_type` 非空）完全生效。项目默认工作流「至多一个 published / draft」因此改由 **Service 层 + 事务内 `SELECT … FOR UPDATE` 锁项目行**兜底（并发创建恰一个 draft 由 IT-06 覆盖）；类型专属冲突仍由 DB 约束兜底返回 `409 RESOURCE_ALREADY_EXISTS`（BR-02）。
 
 ```python
 class WorkflowState(BaseModel):
@@ -386,7 +387,7 @@ class WorkflowState(BaseModel):
     layout_y = models.FloatField(default=0.0, verbose_name="画布 Y")
     field_locks = models.JSONField(
         default=list, blank=True, verbose_name="进入本状态锁定的字段",
-        help_text='WF-004 协议：[{"field": "due_date"}, {"field": "cf_<uuid>"}]',
+        help_text='WF-004 协议：[{"field": "target_date"}, {"field": "cf_<uuid>"}]',
     )
 
     class Meta(BaseModel.Meta):
@@ -398,7 +399,7 @@ class WorkflowState(BaseModel):
 
 ```python
 class WorkflowTransition(BaseModel):
-    """流转边 —— 三个 JSONB 协议字段是 WF-002/003/004 的全部挂接点"""
+    """流转边 —— guards/side_effects 两个 JSONB 协议字段 + approval_flow FK 是 WF-002/003/004 的全部挂接点"""
 
     workflow = models.ForeignKey(
         Workflow, on_delete=models.CASCADE, related_name="transitions", verbose_name="所属工作流"
@@ -460,7 +461,9 @@ class WorkflowService:
 
     @transaction.atomic
     def transition(self, *, issue_id, to_state_id, actor, transition_id=None,
-                   guard_payload: dict | None = None) -> TransitionResult:
+                   guard_payload: dict | None = None,
+                   approval_instance_id=None) -> TransitionResult:
+        epoch = time.time() * 1000  # TASK-010 BR-04：动作入口毫秒时间戳，贯穿本次流转全部日志
         # 1. 行锁：与 TASK-002 属性更新互斥（§2.4 并发语义）
         issue = Issue.objects.select_for_update().select_related("state", "project").get(pk=issue_id)
         to_state = get_object_or_404(State, pk=to_state_id, project=issue.project)
@@ -468,32 +471,55 @@ class WorkflowService:
         wf = self.resolve_workflow(issue)  # §4.5，缓存
         if wf is None:
             # 2a. V1.0 兜底：自由流转 + TASK-005 完成守卫
-            assert_completable(issue, to_state)  # 409 RESOURCE_TRANSITION_BLOCKED
+            # TASK-005 §4.3.3 冻结签名 `(*, issue, to_state, force, actor)`（keyword-only）；
+            # V1.0 兜底路径强制 force=False 禁止标准版豁免，actor 必填用于审计溯源（rbac §5.4）。
+            assert_completable(*, issue=issue, to_state=to_state, force=False, actor=actor)  # 409 RESOURCE_TRANSITION_BLOCKED
             matched_edge = None
         else:
             # 2b. 受控流转：匹配边
             matched_edge = self._match_edge(wf, issue.state_id, to_state_id, transition_id)
             if matched_edge is None:
-                raise TransitionError("RESOURCE_TRANSITION_INVALID", 409, details={
-                    "from_state_id": str(issue.state_id), "to_state_id": str(to_state_id)})
+                raise TransitionError("RESOURCE_TRANSITION_INVALID", 409, details=[
+                    {"field": "from_state_id", "code": "INVALID", "message": str(issue.state_id)},
+                    {"field": "to_state_id", "code": "INVALID",
+                     "message": "与当前状态间不存在流转边，请刷新可用流转列表"},
+                ])
             # 3. 守卫（WF-004）：失败抛 409 BLOCKED / 400 REQUIRED_FIELD_MISSING / 400 ESTIMATE_REQUIRED
             self.guard_registry.run_all(matched_edge.guards, issue=issue, actor=actor,
                                         payload=guard_payload)
-            # 4. 审批挂接（WF-002）：非空则创建审批实例并挂起——状态不变
-            if matched_edge.approval_flow_id:
+            # 4. 审批挂接（WF-002）：发起 / 终审回填两条进入路径共用本入口（见下方「审批发起与终审回填」）
+            #    发起（approval_instance_id=None）→ 创建审批实例并挂起——状态不变，视图层返回 202；
+            #    终审回填（带 approval_instance_id 且目标边审批实例已终态 approved，WF-002 §4.5 注 2）
+            #    → 跳过二次挂起，直接执行副作用与状态更新
+            if matched_edge.approval_flow_id and approval_instance_id is None:
                 instance = ApprovalService().start(matched_edge, issue=issue, actor=actor)
                 return TransitionResult(pending_approval=instance)  # 视图层返回 202
+            if approval_instance_id is not None:
+                # 终审回填守门：实例不属于本边或未到 approved 终态 → 409（WF-002 仅终审通过路径回调）
+                # **时序闭环**：WF-002 `_complete_via_engine` 先置 `is_terminal_passed=True` 再入 transition()
+                # （避免「先置 approved 失败回滚、终态触发器锁死」与「pending 状态调引擎被守卫拒」三方矛盾；
+                # 三文档同步：WF-001 §4.4 守门、WF-002 §4.5 _complete_via_engine、WF-006 §4.2 实例终态触发器白名单）。
+                if not ApprovalInstance.objects.filter(
+                        id=approval_instance_id, transition_id=matched_edge.id
+                ).filter(Q(status=ApprovalInstance.Status.APPROVED) |
+                         Q(is_terminal_passed=True, status=ApprovalInstance.Status.PENDING)).exists():
+                    raise TransitionError("RESOURCE_STATE_INVALID", 409, details=[
+                        {"field": "approval_instance_id", "code": "INVALID",
+                         "message": "审批实例未终审通过，不可回填执行流转"}])
             # 5. 副作用（WF-003）：同事务执行，失败回滚
             self.effect_registry.apply_all(matched_edge.side_effects, issue=issue, actor=actor)
 
-        # 6. 状态更新 + Activity（TASK-010 管道，BR-13/14）
+        # 6. 状态更新 + Activity（TASK-010 §4.3.2 issue_activity 管道，BR-13/14）
         old_state = issue.state
         issue.state = to_state
         issue.save(update_fields=["state", "updated_at"])
-        transaction.on_commit(lambda: build_activities.delay(
-            issue_id=str(issue.id), actor_id=str(actor.id),
-            changes=[{"field": "state", "old": str(old_state.id), "new": str(to_state.id),
-                      "transition": matched_edge.name if matched_edge else None}]))
+        edge_name = matched_edge.name if matched_edge else None
+        transaction.on_commit(lambda: issue_activity.delay({   # TASK-010 §4.3.2 冻结载荷契约
+            "issue_id": str(issue.id), "actor_id": str(actor.id),
+            "verb": "updated", "epoch": epoch,
+            "before": {"state": str(old_state.id), "transition": None},
+            "after": {"state": str(to_state.id), "transition": edge_name},
+        }))
         return TransitionResult(issue=issue, edge=matched_edge)
 
     def _match_edge(self, wf, from_state_id, to_state_id, transition_id):
@@ -504,12 +530,17 @@ class WorkflowService:
         edges = list(qs.order_by("sort_order"))
         if len(edges) > 1:
             # 同名两端点多边时必须显式指定 transition_id（BR-06）
-            raise TransitionError("VALIDATION_ERROR", 400, details={
-                "transition_id": [{"code": "REQUIRED", "message": "存在多条同名流转路径，须指定 transition_id"}]})
+            raise TransitionError("VALIDATION_ERROR", 400, details=[
+                {"field": "transition_id", "code": "REQUIRED",
+                 "message": "存在多条同名流转路径，须指定 transition_id"}])
         return edges[0] if edges else None
 ```
 
 **为什么副作用在同事务**：副作用失败（如自动指派的目标成员已被移出项目）必须让状态不变——否则出现「状态变了但指派没执行」的半完成态。通知类副作用（webhook/邮件）不阻塞，走 `on_commit` 异步（WF-003 详述）。
+
+**Activity 投递（TASK-010 §4.3.2 冻结契约）**：任务名 `issue_activity`（不自造任务名），载荷 dict `{issue_id, actor_id, verb, epoch, before, after}`——`verb` 固定 `updated`（不新增 verb）、`epoch` 为本方法入口生成的毫秒时间戳（BR-04，禁止传 `datetime` 对象），幂等键 `sha256(verb + issue_id + actor_id + epoch)` 与 TASK-010 共用键空间。`state` 行由 worker 逐字段 diff 自然产出；边名（BR-14）按 WF-002 R1 修复的 `field="transition"` **单字段特例**范式登记——与 TASK-004 `parent`（§4.3.6）/ WF-002 `approval` 同范式：固定 verb + field、不入 TASK-010 `TRACKED_*` 常量、行内容由载荷 `before/after` 显式携带（`{"transition": null} → {"transition": "提交评审"}`，event_key 键空间共用），时间线渲染为「经『提交评审』从 待办 → 评审中」。
+
+**审批发起与终审回填（WF-002 §4.5 注 2 对齐，两文档以本定义为准同步）**：`approval_flow` 非空的边分两条进入路径，共用 `transition()` 单事务入口——① **发起**：用户常规流转（不携带 `approval_instance_id`）→ 创建审批实例并挂起、状态不变、视图层返回 202；② **终审回填**：202 挂起后，WF-002 终审通过经 `transition(issue_id, to_state_id, actor, transition_id, approval_instance_id=…)` 再入——引擎检测到 `approval_instance_id` 参数且目标边审批实例已终态（`approved`）时**跳过二次挂起**，守卫在同一事务内按 BR-12 顺序重跑后直接执行副作用与状态更新；`rejected/withdrawn/terminated` 终态不迁移，WF-002 不发起回填（再入守门返回 `409 RESOURCE_STATE_INVALID`）。
 
 ### 4.5 解析缓存（`resolve_workflow`）
 
@@ -579,7 +610,7 @@ def validate_for_publish(wf: Workflow) -> list[PublishIssue]:
     return issues
 ```
 
-发布端点事务：校验通过 → 同事务内旧 `published` 转 `archived`、本草稿转 `published`（`version = 旧版本 + 1`、`published_at/by` 落值）→ `on_commit` 失效缓存。任一约束冲突（并发发布）以 DB 部分唯一索引兜底返回 `409 RESOURCE_ALREADY_EXISTS`。
+发布端点事务：校验通过 → 同事务内旧 `published` 转 `archived`、本草稿转 `published`（`version = 旧版本 + 1`、`published_at/by` 落值）→ `on_commit` 失效缓存。任一约束冲突（并发发布）以 DB 部分唯一索引兜底返回 `409 RESOURCE_ALREADY_EXISTS`（仅类型专属工作流；项目默认工作流 `issue_type=NULL` 不受索引约束，走 §4.2 的 Service 行锁路径）。
 
 ### 4.7 `guards` / `side_effects` JSONB 协议（冻结契约）
 
@@ -588,10 +619,10 @@ def validate_for_publish(wf: Workflow) -> list[PublishIssue]:
 ```json
 {
   "guards": [
-    {"type": "required_fields", "config": {"fields": ["assignee", "due_date", "cf_01J9X…"]}},
+    {"type": "required_fields", "config": {"fields": ["assignees", "target_date", "cf_6f4a8c2d-…"]}},
     {"type": "estimate_required", "config": {}},
     {"type": "blocker_completed", "config": {}},
-    {"type": "role_allowed", "config": {"roles": ["PROJ_ADMIN", "product"]}}
+    {"type": "role_allowed", "config": {"roles": ["PROJ_ADMIN", "custom:6f9c1e3a-5b7d-4f2a-9e4c-8d1b3a7f5c14"]}}
   ],
   "side_effects": [
     {"type": "set_field", "config": {"field": "priority", "value": "high"}},
@@ -603,46 +634,47 @@ def validate_for_publish(wf: Workflow) -> list[PublishIssue]:
 
 | 约束 | 说明 |
 | --- | --- |
-| 数组元素必含 `type` + `config`；未知 `type` 在保存（`PUT graph/`）时拒绝 | `400 VALIDATION_ERROR` + `NOT_A_CHOICE`，`details` 给出合法枚举 |
+| 数组元素必含 `type` + `config`；未知 `type` 在保存（`PUT graph/`）时拒绝 | `400 VALIDATION_ERROR` + `NOT_A_CHOICE`，`details[]` 给出合法枚举 |
 | 服务端注册表驱动：`GuardRegistry` / `SideEffectRegistry` 按 `type` 分发执行器 | 新增守卫类型 = 注册新执行器，零表结构变更 |
-| JSON Schema 校验内嵌 Serializer（`jsonschema`），非法 config 保存即拒 | 错误定位到 `guards[2].config.fields` |
+| JSON Schema 校验内嵌 Serializer（`jsonschema`，准入登记见 §4.9 表），非法 config 保存即拒 | 错误定位到 `guards[2].config.fields` |
+| 字段名对齐 `unified-issue-model.md` §2：多执行人为 `assignees`（M2M，请求载荷 `assignee_ids`）；`role_allowed.roles` 取值为项目角色码（`PROJ_*`）或自定义角色 `custom:<role_id>`（WF-004 §2 同一格式） | 命名与 WF-003/WF-004 冻结协议逐字一致 |
 | `blocker_completed` 默认隐式存在（TASK-005），显式配置仅用于**关闭**该守卫（`{"enabled": false}`，需 `workflow.manage`） | 兼容语义统一 |
 
 ### 4.8 API 端点
 
 | 方法 | 路径 | 说明 | 权限 |
 | --- | --- | --- | --- |
-| GET | `/api/v1/workspaces/{slug}/projects/{id}/workflows/` | 工作流列表（含各状态计数） | 项目成员可读 |
+| GET | `/api/v1/workspaces/{slug}/projects/{id}/workflows/` | 工作流列表（含各状态计数） | `project.read`（项目成员可读） |
 | POST | 同上 | 创建草稿（BR-02 至多一个） | `workflow.manage` |
-| GET | `…/workflows/{wf_id}/` | 图详情（states+transitions 全量，画布载荷，**ETag**） | 项目成员可读 |
+| GET | `…/workflows/{wf_id}/` | 图详情（states+transitions 全量，画布载荷，**ETag**） | `project.read`（项目成员可读） |
 | PATCH | 同上 | 改名/说明/绑定类型 | `workflow.manage` |
-| PUT | `…/workflows/{wf_id}/graph/` | **整图替换**（画布保存，单事务，协议校验） | `workflow.manage` |
+| PUT | `…/workflows/{wf_id}/graph/` | **整图替换**（画布保存，单事务，协议校验；§3.2 PUT 白名单登记见 ④） | `workflow.manage` |
 | POST | `…/workflows/{wf_id}/publish/` | 发布（§4.6 校验 + 版本轮转） | `workflow.manage` |
 | POST | `…/workflows/{wf_id}/archive/` | 归档（BR-10） | `workflow.manage` |
-| GET | `…/projects/{id}/issues/{issue_id}/transitions/available/` | 当前可用流转列表 | 项目成员 |
-| POST | `…/projects/{id}/issues/{issue_id}/transitions/` | 执行流转 | `issue.update` + 边角色守卫 |
+| GET | `…/projects/{id}/issues/{issue_id}/transitions/available/` | 当前可用流转列表 | `issue.read`（项目成员） |
+| POST | `…/projects/{id}/issues/{issue_id}/transitions/` | 执行流转 | `issue.state.transition`（rbac §8.2，`PROJ_CONTRIBUTOR`+）+ 边 `role_allowed` 守卫（WF-004） |
 
 **① `GET …/transitions/available/` 响应（200）**——任务详情/看板按钮数据源：
 
 ```json
 {
-  "status": 0,
+  "status": "success",
   "data": {
-    "workflow": { "id": "01J9XQK7M3N4P5R6S7T8V9W0Y1", "name": "研发需求流程", "version": 2 },
-    "current_state": { "id": "01J9XQK7M3N4P5R6S7T8V9W0A2", "name": "待办", "group": "unstarted", "color": "#F59E0B" },
+    "workflow": { "id": "7b1e9a2c-4d3f-4c8e-a1b2-9f0d6e5c4a10", "name": "研发需求流程", "version": 2 },
+    "current_state": { "id": "3f2c8e6a-1b4d-4e9f-8a7c-2d5b9e4f1a01", "name": "待办", "group": "unstarted", "color": "#F59E0B" },
     "available": [
       {
-        "transition_id": "01J9XQK7M3N4P5R6S7T8V9W0B3",
+        "transition_id": "5d4a7c1e-9b3f-4a2e-8c6d-1e0f3a5b7c02",
         "name": "提交评审",
-        "to_state": { "id": "01J9XQK7M3N4P5R6S7T8V9W0C4", "name": "评审中", "group": "started", "color": "#3B82F6" },
-        "requires_payload": ["assignee", "due_date"],
+        "to_state": { "id": "8c5d2f7a-3e1b-4c9d-b2a8-7f4e6d1c3a03", "name": "评审中", "group": "started", "color": "#3B82F6" },
+        "requires_payload": ["assignees", "target_date"],
         "has_approval": false,
         "allowed": true
       },
       {
-        "transition_id": "01J9XQK7M3N4P6S7T8V9W0D5E6",
+        "transition_id": "6e3b5a8d-2c7f-4b1e-9d4a-5c8b2f0e6d04",
         "name": "直接关闭",
-        "to_state": { "id": "01J9XQK7M3N4P6S7T8V9W0E7F8", "name": "已关闭", "group": "completed", "color": "#10B981" },
+        "to_state": { "id": "9a7e4c2b-8d1f-4e3a-b5c9-2d6f8a1e4c05", "name": "已关闭", "group": "completed", "color": "#10B981" },
         "requires_payload": [],
         "has_approval": true,
         "allowed": false,
@@ -661,57 +693,168 @@ def validate_for_publish(wf: Workflow) -> list[PublishIssue]:
 ```json
 // 请求
 {
-  "to_state_id": "01J9XQK7M3N4P5R6S7T8V9W0C4",
-  "transition_id": "01J9XQK7M3N4P5R6S7T8V9W0B3",
-  "guard_payload": { "assignee": "01J9XQK7M3N4P5R6S7T8V9W0G9", "due_date": "2026-09-15" }
+  "to_state_id": "8c5d2f7a-3e1b-4c9d-b2a8-7f4e6d1c3a03",
+  "transition_id": "5d4a7c1e-9b3f-4a2e-8c6d-1e0f3a5b7c02",
+  "guard_payload": { "assignees": ["4b8d1f6c-2a9e-4c7b-8d3f-1e5a0c9b7d07"], "target_date": "2026-09-15" }
 }
 // 200 成功
 {
-  "status": 0,
+  "status": "success",
   "data": {
-    "issue": { "id": "01J9XQK7M3N4P5R6S7T8V9W0H0", "state": { "id": "01J9XQK7M3N4P5R6S7T8V9W0C4", "name": "评审中", "group": "started" } },
+    "issue": { "id": "1c9f6e3a-7b2d-4a8c-b4e1-6d0a9c5f2e06", "state": { "id": "8c5d2f7a-3e1b-4c9d-b2a8-7f4e6d1c3a03", "name": "评审中", "group": "started" } },
     "applied_transition": "提交评审"
-  },
-  "meta": { "request_id": "01J9XQK7M3N4P5R6S7T8V9W0J1" }
+  }
 }
 // 202 触发审批挂起
 {
-  "status": 0,
+  "status": "success",
   "data": {
-    "pending_approval": { "instance_id": "01J9XQK7M3N4P5R6S7T8V9W0K2", "flow": "上线审批", "current_node": "测试负责人" }
-  },
-  "meta": { "request_id": "01J9XQK7M3N4P5R6S7T8V9W0L3" }
+    "pending_approval": { "instance_id": "2e6a9c4f-8b1d-4e3a-a7c5-9f2b6d8e0c08", "flow": "上线审批", "current_node": "测试负责人" }
+  }
 }
 ```
+
+> 成功响应不携带 `meta.request_id`——信封约定（`api-conventions` §4.1/§4.2）：`request_id` 仅出现在 `error` 对象内；全部响应（含成功）经 `X-Request-Id` 响应头回传。
 
 **③ 错误响应矩阵**：
 
-| 场景 | HTTP | code | details 要点 |
+| 场景 | HTTP | code | details[] 要点 |
 | --- | --- | --- | --- |
-| 无匹配边 | 409 | `RESOURCE_TRANSITION_INVALID` | `from_state_id`/`to_state_id`；前端刷新 available |
+| 无匹配边 | 409 | `RESOURCE_TRANSITION_INVALID` | `from_state_id`/`to_state_id` 两项（见下方示例）；前端刷新 available |
 | 前置任务未完成 | 409 | `RESOURCE_TRANSITION_BLOCKED` | `blockers[]`（同 TASK-005 §4 格式） |
 | 必填字段缺失 | 400 | `VALIDATION_REQUIRED_FIELD_MISSING` | `fields[]` 逐字段，前端弹补齐表单 |
 | 工时必填未填 | 400 | `VALIDATION_ESTIMATE_REQUIRED` | — |
-| 边角色不符 | 403 | `PERM_TRANSITION_NOT_ALLOWED` | `roles[]` 所需角色 |
+| 边角色不符 | 403 | `PERM_TRANSITION_NOT_ALLOWED` | `required_roles` 所需角色清单（WF-004 §2 格式） |
 | 多边未指定 `transition_id` | 400 | `VALIDATION_ERROR` | 子码 `REQUIRED` |
-| 发布校验失败 | 400 | `VALIDATION_ERROR` | `issues[]`（§4.6 四类 + 节点/边定位 ID） |
-| 发布在用状态阻断 | 409 | `RESOURCE_STATE_INVALID` | `affected[]`（state_id + count） |
+| 发布校验失败（BR-08 四类结构问题：NON_SINGLE_INITIAL/UNREACHABLE/NO_COMPLETED/MISSING_REF） | 400 | `VALIDATION_ERROR` | `details[]` 每项一条，`code`=上述四类、`message`=描述，附 `node_ids` 定位 |
+| 发布在用状态阻断（BR-09 STATE_IN_USE；优先级高于 400） | 409 | `RESOURCE_STATE_INVALID` | `affected[]`（state_id + count） |
 | 重复发布/草稿 | 409 | `RESOURCE_ALREADY_EXISTS` | DB 部分唯一索引兜底 |
 
 ```json
-// 409 RESOURCE_TRANSITION_INVALID 示例
+// 409 RESOURCE_TRANSITION_INVALID 示例（信封见 api-conventions §4.2）
 {
-  "status": 1,
+  "status": "error",
   "error": {
     "code": "RESOURCE_TRANSITION_INVALID",
     "message": "当前状态「待办」不可直接流转到「测试中」",
-    "details": { "from_state_id": "01J9XQK7M3N4P5R6S7T8V9W0A2", "to_state_id": "01J9XQK7M3N4P5R6S7T8V9W0M4" }
-  },
-  "meta": { "request_id": "01J9XQK7M3N4P5R6S7T8V9W0N5" }
+    "details": [
+      { "field": "from_state_id", "code": "INVALID", "message": "3f2c8e6a-1b4d-4e9f-8a7c-2d5b9e4f1a01" },
+      { "field": "to_state_id", "code": "INVALID", "message": "与当前状态间不存在流转边，请刷新可用流转列表" }
+    ],
+    "request_id": "01J9XQK7M3N4P5R6S7T8V9W0N5"
+  }
 }
 ```
 
-**④ `PUT …/graph/`（画布保存）**：整图替换——请求体为 `{states: [...], transitions: [...]}` 全量，服务端单事务内「删旧图 + 插新图 + 协议校验」，仅允许作用于 `draft`；`If-Match` 乐观锁防画布并发覆盖（`409 RESOURCE_CONFLICT`）。画布坐标 `layout_x/y` 随节点一并保存。
+**④ `PUT …/workflows/{wf_id}/graph/`（画布保存，整图替换）**——请求体为 `{states: [...], transitions: [...]}` 两集合**全量**，服务端单事务内「删旧图 + 插新图 + 协议校验 + `Workflow.updated_at` 同步 bump」，仅允许作用于 `draft`（BR-11，非草稿 → `409 RESOURCE_STATE_INVALID`）；`If-Match` 乐观锁防画布并发覆盖（`409 RESOURCE_CONFLICT`）。**`updated_at` 轮转契约**：`graph/` 仅写 `WorkflowState`/`Transition` 子表不直接改 `Workflow` 行——为保 ETag 自洽（`api-conventions.md` §3.3 = `updated_at` 强哈希），单事务末尾须 `Workflow.objects.filter(pk=wf_id).update(updated_at=timezone.now())`，使新 ETag 必变化、`fetchGraph` 304 与画布并发检测双双成立（IT-05 可断言）。契约要点：
+
+- 边用节点 `id`（`WorkflowState` 主键）表达 `from_state_id` / `to_state_id`；节点 `state_id` 引用既有 `State`（BR-04 归属校验）。
+- 画布坐标 `layout_x/y` 随节点一并保存；`states`/`transitions` 传空数组合法（清空草稿图）。
+- 未命名边（`name` 为空）→ `400 VALIDATION_ERROR` 子码 `REQUIRED`（§3.2 连边强制命名）；自环边 → BR-07 双层拒绝；未知守卫/副作用 `type` → §4.7 表第 1 行。
+- 响应 200 返回保存后的完整图（与 ⑤ `GET …/workflows/{wf_id}/` 同构），响应头携带新 `ETag`（基于事务末 `updated_at` 重算）。
+
+> **PUT 白名单登记（`api-conventions.md` §3.2，待补登）**：本系统 `PUT` 仅允许「集合型子资源的全量替换」。`graph/` 正是此类——`states` + `transitions` 两集合一次替换、幂等、集合即完整表示。本端点按 §3.2 准入条件拟入 PUT 白名单（CI 路由扫描放行项，与 `PUT …/issues/{id}/assignees/` 同列）；架构文档 `api-conventions.md` §3.2 白名单现文未含本端点，按 sprint-overview §10.3 纪律标「架构文档待回改」，随 Sprint 7 首个 PR 同步补登。除此之外 WF-001 零 PUT（改名/说明/绑定类型一律 `PATCH`）。
+
+```json
+// 请求（携带 If-Match: "<上次 GET 返回的 ETag>"）
+{
+  "states": [
+    { "id": "e5a1c3f7-9b2d-4e6a-8d0c-4f7b2a9e1d11", "state_id": "3f2c8e6a-1b4d-4e9f-8a7c-2d5b9e4f1a01",
+      "is_initial": true, "layout_x": 120.0, "layout_y": 80.0, "field_locks": [] },
+    { "id": "f6b2d4a8-8c3e-4f7b-9e1d-5a8c3b0f2e12", "state_id": "8c5d2f7a-3e1b-4c9d-b2a8-7f4e6d1c3a03",
+      "is_initial": false, "layout_x": 420.0, "layout_y": 80.0, "field_locks": [{ "field": "target_date" }] }
+  ],
+  "transitions": [
+    { "id": "a7c3e5b9-7d4f-4a8c-b2e6-6d9e4c1a3f13",
+      "from_state_id": "e5a1c3f7-9b2d-4e6a-8d0c-4f7b2a9e1d11",
+      "to_state_id": "f6b2d4a8-8c3e-4f7b-9e1d-5a8c3b0f2e12",
+      "name": "提交评审",
+      "guards": [{ "type": "required_fields", "config": { "fields": ["assignees", "target_date"] } }],
+      "side_effects": [], "approval_flow_id": null, "sort_order": 1000 }
+  ]
+}
+// 200（图结构与 ⑤ GET 详情同构；响应头返回新 ETag）
+{
+  "status": "success",
+  "data": {
+    "id": "7b1e9a2c-4d3f-4c8e-a1b2-9f0d6e5c4a10", "name": "研发需求流程", "status": "draft", "version": 2,
+    "states": [ { "id": "e5a1c3f7-…", "state_id": "3f2c8e6a-…", "is_initial": true, "layout_x": 120.0, "layout_y": 80.0, "field_locks": [] } ],
+    "transitions": [ { "id": "a7c3e5b9-…", "name": "提交评审", "sort_order": 1000 } ]
+  }
+}
+```
+
+**⑤ 配置端点示例**（列表 / 建草稿 / 图详情 / 改名 / 发布 / 归档，信封同 `api-conventions` §4.1）：
+
+```json
+// GET /api/v1/workspaces/{slug}/projects/{id}/workflows/ → 200
+{
+  "status": "success",
+  "data": [
+    { "id": "7b1e9a2c-4d3f-4c8e-a1b2-9f0d6e5c4a10", "name": "研发需求流程",
+      "issue_type_id": "5c8e2a6f-1d4b-4a9e-b7c3-8f0a2d6e4b09", "status": "published", "version": 2,
+      "state_count": 5, "transition_count": 6, "updated_at": "2026-09-07T05:20:41.318Z" },
+    { "id": "0a3d6f9c-2e5b-4a7c-b8d1-4e6f2a9c3d15", "name": "项目默认流程",
+      "issue_type_id": null, "status": "draft", "version": 1,
+      "state_count": 4, "transition_count": 5, "updated_at": "2026-09-06T09:11:02.774Z" }
+  ],
+  "meta": {
+    "next_cursor": null, "prev_cursor": null, "next_page_results": false, "prev_page_results": false,
+    "count": 2, "total_count": 2, "total_pages": 1, "page": 1, "per_page": 100
+  }
+}
+
+// POST …/workflows/ → 201（Location: /api/v1/workspaces/{slug}/projects/{id}/workflows/{wf_id}/）
+// 请求：{ "name": "缺陷修复流程", "issue_type_id": "9d4b7e2a-6c1f-4b8d-a3e5-7f2c9b4d6e16", "description": "缺陷从提交到关闭" }
+//（issue_type_id 可空 = 项目默认工作流；同维度已有草稿 → 409 RESOURCE_ALREADY_EXISTS，BR-02）
+{
+  "status": "success",
+  "data": {
+    "id": "8d2f5b7e-1a4c-4e9d-b6f8-3c7a5e1d9f20", "name": "缺陷修复流程",
+    "issue_type_id": "9d4b7e2a-6c1f-4b8d-a3e5-7f2c9b4d6e16", "status": "draft", "version": 1,
+    "states": [], "transitions": [], "created_at": "2026-09-07T02:15:33.120Z"
+  }
+}
+
+// GET …/workflows/{wf_id}/ → 200（画布载荷，states/transitions 全量展开；响应头 ETag: "4f2a-1694066400"，供 If-Match/304 使用）
+{
+  "status": "success",
+  "data": {
+    "id": "7b1e9a2c-4d3f-4c8e-a1b2-9f0d6e5c4a10", "name": "研发需求流程",
+    "issue_type_id": "5c8e2a6f-1d4b-4a9e-b7c3-8f0a2d6e4b09", "status": "draft", "version": 2,
+    "based_on_version": 1,
+    "states": [
+      { "id": "e5a1c3f7-9b2d-4e6a-8d0c-4f7b2a9e1d11", "state_id": "3f2c8e6a-1b4d-4e9f-8a7c-2d5b9e4f1a01",
+        "name": "待办", "group": "unstarted", "is_initial": true, "layout_x": 120.0, "layout_y": 80.0, "field_locks": [] }
+    ],
+    "transitions": [
+      { "id": "a7c3e5b9-7d4f-4a8c-b2e6-6d9e4c1a3f13", "name": "提交评审",
+        "from_state_id": "e5a1c3f7-9b2d-4e6a-8d0c-4f7b2a9e1d11", "to_state_id": "f6b2d4a8-8c3e-4f7b-9e1d-5a8c3b0f2e12",
+        "guards": [{ "type": "required_fields", "config": { "fields": ["assignees", "target_date"] } }],
+        "side_effects": [], "approval_flow_id": null, "sort_order": 1000 }
+    ]
+  }
+}
+
+// PATCH …/workflows/{wf_id}/ → 200（仅变更字段；可选 If-Match）
+// 请求：{ "name": "研发需求流程（改版）", "description": "评审环节前移" }
+{ "status": "success", "data": { "id": "7b1e9a2c-…", "name": "研发需求流程（改版）", "description": "评审环节前移", "status": "draft", "version": 2 } }
+
+// POST …/workflows/{wf_id}/publish/ → 200（失败分支见 ③ 矩阵末三行）
+{
+  "status": "success",
+  "data": {
+    "id": "7b1e9a2c-4d3f-4c8e-a1b2-9f0d6e5c4a10", "status": "published", "version": 3,
+    "published_at": "2026-09-07T06:30:55.401Z",
+    "archived_previous_id": "7b1e9a2c-4d3f-4c8e-a1b2-9f0d6e5c4a10",
+    "archived_previous_version": 2
+  }
+}
+> 注：`archived_previous_id` 与本工作流同 id（同一 Workflow 行，发布后版本号递增、被取代版本 status 翻 `archived`——行为约束见 §4.6 `archived_previous_id` 语义段）；`archived_previous_version` 为被取代版本号，便于 Activity 与历史回溯区分。`based_on_version`（GET 详情响应）= 本草稿由何版本克隆/克隆点的 published 版本号（首次建草稿为 null，自 published 克隆时为克隆源的 version；BR-11 克隆路径明确登记）。
+
+// POST …/workflows/{wf_id}/archive/ → 200
+{ "status": "success", "data": { "id": "7b1e9a2c-4d3f-4c8e-a1b2-9f0d6e5c4a10", "status": "archived", "version": 3 } }
+```
 
 ### 4.9 前端实现（React Flow + MobX）
 
@@ -756,7 +899,7 @@ class WorkflowCanvasStore {
       await api.post(`…/workflows/${this.workflow!.id}/publish/`);
     } catch (e) {
       if (e.code === "VALIDATION_ERROR") runInAction(() => {
-        this.publishIssues = e.details.issues;   // §3.3 错误面板 + 画布聚焦高亮
+        this.publishIssues = e.details;   // details[] 每项一条校验问题（③ 矩阵）→ §3.3 错误面板 + 画布聚焦高亮
       });
     }
   }
@@ -771,14 +914,28 @@ class WorkflowCanvasStore {
 | 兜底退化 | `fallback: true` → 渲染 V1.0 状态下拉，零新交互（BR 零行为变化的前端侧） |
 | 拦截对话框 | 复用 `TASK-005` 阻塞对话框组件，`RESOURCE_TRANSITION_BLOCKED` 与必填补齐表单双形态（WF-004） |
 
+#### 新增依赖准入登记（`tech-stack.md` §9.1）
+
+本文档引入三个 `tech-stack.md` §2/§3 未登记的依赖，准入评估如下（§9.1 六条逐项核对）；版本表正式登记随 Sprint 7 首个 PR 并入 `tech-stack.md` §2（前端两席）/§3（后端一席），本文档为准入评估记录：
+
+| 依赖 | 版本 | §9.1 逐条核对 | 结论 |
+| --- | --- | --- | --- |
+| `@xyflow/react`（React Flow） | 12.x | ① 不可替代：画布需平移/缩放/连线命中/小地图/仅视口渲染，自研远超 100 行，且 `@atlaskit/pragmatic-drag-and-drop` 面向卡片拖拽、非图编辑，无重叠也不可复用；② MIT；③ 活跃维护、无未修复 High/Critical CVE；④ gzip 约 45KB，画布是 Sprint 7 核心交互且按路由懒加载（dynamic import，不进首屏 bundle）；⑤ 官方 TypeScript 类型；⑥ 与既有依赖功能无重叠 | ✅ 准入 |
+| `@dagrejs/dagre`（+`@types/dagre`） | 1.x | ① 仅服务「自动布局」单按钮（§3.2），但分层布局含交叉最小化，自研拓扑排序 + 坐标分配约 200 行且难以达到可用质量；② MIT；③ 活跃维护；④ gzip 约 12KB，随画布 chunk 懒加载；⑤ `@types/dagre` 提供类型定义；⑥ 无重叠（`date-fns`/`recharts` 均非图布局） | ✅ 准入 |
+| `jsonschema`（Python，后端） | 4.x | ① `guards`/`side_effects` 是**动态 schema**（`type` → `config` schema 由注册表下发，WF-004 §2 已冻结 `config_schema: jsonschema` + `jsonschema.validate()` 范式，WF-003/TASK-012 同选型）；改用 DRF Serializer 手写每个 config 的字段校验会与注册表 schema 形成双源漂移，违背「协议单一定义」；② MIT；③ 活跃维护；④ 服务端依赖无前端体积问题；⑤ 自带完整 type hints；⑥ 与 DRF 不重叠——DRF 管请求字段，`jsonschema` 管 JSONB 协议内嵌结构 | ✅ 准入 |
+
 ### 4.10 权限矩阵
 
-| 操作 | GUEST | VIEWER | COMMENTER | CONTRIBUTOR | ADMIN |
+项目级只有四个角色（rbac §2.3：`PROJ_ADMIN` / `PROJ_CONTRIBUTOR` / `PROJ_COMMENTER` / `PROJ_VIEWER`）——**项目级无 GUEST 角色**：工作空间访客 `WS_GUEST` 在项目中最高只能被分配为 `PROJ_COMMENTER`（rbac §7.3），其权限已包含在下表对应列中。`SYSTEM_ADMIN` 与 `WS_OWNER` / `WS_ADMIN` 一律按 `PROJ_ADMIN` 判定（rbac §7.4）。
+
+| 操作 | 权限 Key（rbac §8.2） | PROJ_VIEWER | PROJ_COMMENTER | PROJ_CONTRIBUTOR | PROJ_ADMIN |
 | --- | --- | --- | --- | --- | --- |
-| 查看工作流图/available 列表 | — | ✓ | ✓ | ✓ | ✓ |
-| 执行流转（边无角色守卫） | — | — | — | ✓ | ✓ |
-| 执行流转（边有 `role_allowed`） | 按守卫配置的角色集合判定（403 `PERM_TRANSITION_NOT_ALLOWED`） | | | | |
-| 画布编辑/发布/归档 | — | — | — | — | ✓（`workflow.manage`） |
+| 查看工作流图 / available 列表 | `project.read`（available 随任务 `issue.read`） | ✓ | ✓ | ✓ | ✓ |
+| 执行流转（边无角色守卫） | `issue.state.transition` | — | — | ✓ | ✓ |
+| 执行流转（边配置 `role_allowed` 守卫） | `issue.state.transition` + WF-004 守卫角色集合 | — | — | ⚠️ | ⚠️ |
+| 创建草稿 / 画布编辑 / 发布 / 归档 | `workflow.manage` | — | — | — | ✓ |
+
+⚠️ = 在 `issue.state.transition` 通过后由边上的 `role_allowed` 守卫二次判定（WF-004 §2）：守卫角色集合（项目角色码 + `custom:<role_id>` 自定义角色）不含当前成员 → `403 PERM_TRANSITION_NOT_ALLOWED`，available 列表中该边 `allowed:false` + `deny_reason`。非项目成员访问任一工作流端点 → `404 RESOURCE_NOT_FOUND`（第三层行级过滤，rbac §6，IT-08 覆盖）。
 
 ---
 
@@ -797,7 +954,7 @@ class WorkflowCanvasStore {
 | UT-07 | 无 completed 组节点 / completed 不可达 | `NO_TERMINAL` |
 | UT-08 | BR-09 在用状态不在新图 | `STATE_IN_USE` + affected count 准确 |
 | UT-09 | guards/side_effects 未知 `type` 保存 | 400 + `NOT_A_CHOICE`，枚举列表返回 |
-| UT-10 | 守卫执行顺序与短路 | 首个失败守卫即返回，结构化 details 完整 |
+| UT-10 | 守卫执行顺序与全量求值（无短路） | 按 WF-004 §2.2 固定执行序（`required_fields → estimate_required → blocker_completed → role_allowed`）全量求值，失败项按 details 全量收集（WF-004 BR-01/BR-04 冻结语义）；`details` 顺序与执行序一致 |
 | UT-11 | 副作用失败回滚 | 状态未变更（事务回滚验证） |
 | UT-12 | 发布版本轮转 | 旧 published→archived，version+1，published_at/by 落值 |
 | UT-13 | 缓存失效信号 | publish/archive/delete 后 `resolve_workflow` 重新查询 |
@@ -811,11 +968,13 @@ class WorkflowCanvasStore {
 | --- | --- | --- |
 | IT-01 | 全链路：建草稿→PUT graph→发布→available→执行流转 | 各端点信封/字段符合 §4.8；Activity 落库含边名 |
 | IT-02 | 并发流转同一任务（两条不同边） | 先锁者成功；后者 409 `RESOURCE_TRANSITION_INVALID`；DB 无中间态 |
-| IT-03 | 触发审批的边 | 202 + `pending_approval.instance_id`；任务状态**未变**；WF-002 挂点契约 |
+| IT-03 | 触发审批的边：发起挂起 / 终审回填再入（WF-002 挂点契约） | 发起：202 + `pending_approval.instance_id`，任务状态**未变**；终审回填（带 `approval_instance_id` 且实例已 `approved`）：跳过二次挂起直接迁移、Activity 含边名（§4.4 两路径）；实例未终态回填 → 409 `RESOURCE_STATE_INVALID` |
 | IT-04 | 发布校验失败响应 | `issues[]` 四类问题序列化与节点/边定位 ID 正确 |
 | IT-05 | `PUT graph/` 乐观锁 | 过期 ETag → 409 `RESOURCE_CONFLICT` |
 | IT-06 | 并发创建项目默认工作流（`issue_type=NULL`） | Service 行锁 + 约束兜底，恰一个 draft（§4.2 NULL 唯一性说明） |
 | IT-07 | 标准版回归：无工作流项目的看板拖拽/状态下拉 | 行为与 V1.0 快照逐字段一致（零行为变化验收） |
+| IT-08 | 配置端点权限负向矩阵（`workflow.manage`，rbac §8.2）：项目内 `PROJ_VIEWER` / `PROJ_COMMENTER` / `PROJ_CONTRIBUTOR` 三名成员 + 一名他项目成员，项目已有一份草稿；四个低权限/外部身份分别调 POST 创建 / PATCH / PUT graph / publish / archive 及 GET 列表、详情 | 三名项目成员：GET 200，其余全部 403 `PERM_ROLE_INSUFFICIENT`（`workflow.manage`）；他项目成员：GET 与写操作均 404 `RESOURCE_NOT_FOUND`（第三层行级过滤不可见，rbac §6）；PROJ_ADMIN 对照组全通过（同 TASK-005 IT-09 角色矩阵范式） |
+| IT-09 | 流转权限负向（`issue.state.transition`，rbac §8.2）：`PROJ_COMMENTER` 与 `PROJ_CONTRIBUTOR`（不在边角色集合内）各持一任务，目标边配置 `role_allowed`（仅 `custom:产品` 角色）；两人分别 GET available/ 与 POST transitions/ | COMMENTER：available 中全部边 `allowed:false`，POST 403 `PERM_ROLE_INSUFFICIENT`；CONTRIBUTOR：`role_allowed` 边 POST 403 `PERM_TRANSITION_NOT_ALLOWED` 且 `details` 携带 `required_roles`（WF-004 §2 格式），无守卫边 POST 200；产品角色成员对照通过 |
 
 ### 5.3 E2E
 
@@ -853,8 +1012,8 @@ class WorkflowCanvasStore {
 | --- | --- |
 | Model / Migration | `workflows` / `workflow_states` / `workflow_transitions` 三表 + 5 约束 + 2 索引（零 ALTER 既有表） |
 | 后端 | `WorkflowService.transition()` 执行引擎、兜底链解析 + 双层 Redis 缓存、`validate_for_publish` 四项校验、9 个端点、guards/side_effects 协议与注册表骨架 |
-| 前端 | React Flow 画布编辑器（节点/边/侧栏/自动布局/撤销/小地图）、发布错误面板、任务侧边按钮与看板禁投列、`fallback` 退化路径 |
-| 测试 | UT-01~16、IT-01~07、E2E-01~06 |
+| 前端 | React Flow 画布编辑器（节点/边/侧栏/自动布局/撤销/小地图）、发布错误面板、任务侧边按钮与看板禁投列、`fallback` 退化路径（画布与侧栏部分按 sprint-overview §8 在第 10 周 D3-4 排期窗交付，与 WF-002 审批分区同窗联调） |
+| 测试 | UT-01~16、IT-01~09、E2E-01~06 |
 
 ### 7.2 可操作演示的验收标准
 
@@ -871,9 +1030,10 @@ class WorkflowCanvasStore {
 
 | 契约 | 内容 | 消费方 |
 | --- | --- | --- |
-| `approval_flow_id` 挂点 | 非空 → `ApprovalService().start()` 返回 202，状态不变 | WF-002 |
+| `approval_flow_id` 挂点 | 非空 → `ApprovalService().start()` 返回 202，状态不变；终审回填经 `approval_instance_id` 再入跳过二次挂起（§4.4 审批发起与终审回填） | WF-002 |
 | `guards` 协议 | `GuardRegistry.run_all`，四类守卫 type 枚举扩展点 | WF-004 |
 | `side_effects` 协议 | `SideEffectRegistry.apply_all` 同事务；通知类走 `on_commit` | WF-003 |
+| `state_changed` 流转事件 | 流转成功后 `on_commit` 发布，载荷与 `issue.state.changed`（COLLAB-004 §2.3）同构 + 扩展 `transition_id`（含审批终审完成的迁移） | WF-003（§2.2 触发器语义 / §4.3 执行 worker 消费） |
 | `source_template_id` | 模板实例化溯源列 | WF-005 |
 | 发布/归档事件 | `on_commit` 缓存失效 + Activity，审批留痕挂接点 | WF-006 |
 

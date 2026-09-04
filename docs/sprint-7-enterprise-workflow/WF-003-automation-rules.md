@@ -5,7 +5,7 @@
 | 文档编号 | WF-003 |
 | 所属迭代 | Sprint 7 — 企业工作流核心（第 9 周 D5 主线） |
 | 优先级 | P3（企业版核心级） |
-| 覆盖模块 | M5-WF 工作流与审批（自动化切面） |
+| 覆盖模块 | M11-WF 企业工作流与审批（自动化切面；模块码以 `dependency-graph.md` §1.2 为唯一事实） |
 | 工作量估算 | 6 人日（后端 3.5 + 前端 1.5 + QA 1） |
 | 文档状态 | 待评审（Draft） |
 | 最后更新日期 | 2026-09-01 |
@@ -51,7 +51,7 @@ flowchart LR
 | 执行时机 | 流转事务内（同步、可回滚） | 事件提交后异步（Celery，最终一致） |
 | 典型用途 | 「提交评审时自动置优先级=高」 | 「任何任务进入评审且优先级=高 → 指派产品负责人」 |
 
-> 二者共享同一套**动作执行器注册表**（`ActionRegistry`）：`set_field/assign/notify` 的 config schema 与执行代码复用，差异仅在调用上下文（事务内同步 vs 异步 worker）——协议收敛是 WF-001 §4.7 冻结契约的兑现。
+> 二者共享同一套**动作执行器注册表**（即 WF-001 §4.7 的 `SideEffectRegistry`；自动化侧在同一注册表上扩展注册 `transition/add_label`，本文统称 `ACTION_REGISTRY`——一名两口径，特此对齐）：`set_field/assign/notify` 的 config schema 与执行代码复用，差异仅在调用上下文（事务内同步 vs 异步 worker）——协议收敛是 WF-001 §4.7 冻结契约的兑现。
 
 ### 1.3 范围边界
 
@@ -68,10 +68,12 @@ flowchart LR
 | 依赖 | 内容 | 阻塞原因 |
 | --- | --- | --- |
 | `WF-001` §4.7 | 动作 config schema（`set_field/assign/notify`） | 协议复用 |
-| `TASK-010` | `issue_activity` worker 事件总线（状态/字段变更事件） | 触发器事件源 |
-| `TASK-003` | FilterCompiler DSL | 条件编译 |
+| `TASK-010` | `issue_activity` worker 事件总线（创建/状态/字段变更事件，其 §1.2 覆盖矩阵） | 触发器事件源 |
+| `TASK-011` | FilterCompiler 全量编译器（字段白名单 `BUILTIN_FIELD_PATHS` / 操作符矩阵） | 条件编译 |
 | `COLLAB-001` | 通知通道 | notify 动作 |
-| `INFRA-002` | Celery `workflow` 队列与 beat | 异步执行与截止扫描 |
+| `INFRA-002` | Celery 基础设施（broker / 队列 / DLX 范式）与 beat | 异步执行与截止扫描 |
+
+> **`workflow` 队列待补登**：该队列为 Sprint 7 新增（WF-002/003/005/006 共用），**未在 INFRA-002 §4.1 服务矩阵的队列清单（`notifications` / `webhooks` / `reports` / `imports`）中定义**——实现前须回改 INFRA-002 §4.1 补登 `workflow` 队列（worker 启动命令 `-Q` 与 DLX 绑定同步扩展），登记一次全迭代生效；本文按「待补登」处理。
 
 ### 1.5 竞品参考
 
@@ -93,11 +95,11 @@ flowchart LR
   "name": "高优需求进评审 → 指派产品负责人",
   "trigger": {
     "type": "state_changed",
-    "config": {"to_group": "review", "issue_types": ["requirement"]}
+    "config": {"to_group": "started", "issue_types": ["__requirement__"]}
   },
   "conditions": [
-    {"field": "priority", "op": "in", "value": ["high", "urgent"]},
-    {"field": "assignees", "op": "is_empty", "value": null}
+    {"field": "priority", "operator": "in", "value": ["high", "urgent"]},
+    {"field": "assignees", "operator": "is_empty"}
   ],
   "actions": [
     {"type": "assign", "config": {"strategy": "role_group", "role": "product_owner"}},
@@ -112,7 +114,7 @@ flowchart LR
 | 字段 | 语义 |
 | --- | --- |
 | `trigger` | 单触发器（一条规则一个入口）；四类 `type`，config 依类型收窄 |
-| `conditions` | 数组，**AND 组合**；编译到 FilterCompiler 子集（字段名/操作符白名单）；空数组 = 恒真 |
+| `conditions` | 数组，**AND 组合**；条件节点三键 `field` / `operator` / `value`（与 TASK-011 DSL 条件节点逐字一致，`op` 是其逻辑节点保留字、本文扁平 AND 不使用）；编译到 FilterCompiler 子集（字段名/操作符白名单）；空数组 = 恒真 |
 | `actions` | 1..5 个，**顺序执行**；任一动作失败：前序已执行动作不回滚（异步语义），记录失败并继续与否按动作级 `on_error`（默认 `stop`） |
 | `dedup_window_minutes` | 同任务同规则去重窗口（默认 60，0 = 不限制）——防循环核心参数 |
 | `is_active` | 停用即不再匹配新事件，在途执行跑完 |
@@ -122,9 +124,9 @@ flowchart LR
 | 类型 | 事件源 | config | 备注 |
 | --- | --- | --- | --- |
 | `state_changed` | 流转完成事件（WF-001 引擎 on_commit 发布） | `to_state`/`to_group`/`from_state`/`transition_id`/`issue_types` 可选过滤 | 含审批终审完成的迁移 |
-| `issue_created` | 创建提交事件（TASK-002） | `issue_types` | 导入/批量创建同样触发 |
-| `field_changed` | 字段更新事件（TASK-010 diff） | `fields`（字段白名单）+ 可选 `to_value` | 自定义字段用 `cf_<uuid>` |
-| `due_approaching` | beat 每 15min 扫描 `due_date` | `hours_before`（1..168） | 每任务每规则只触发一次（窗口即 `hours_before` 起点） |
+| `issue_created` | 创建提交事件（`create_issue` 服务路径，TASK-001；经 TASK-010 管道发布——TASK-002 贡献的是类型/父项/标签**变更**事件，不覆盖创建） | `issue_types` | 导入/批量创建同样触发 |
+| `field_changed` | 字段更新事件（多源 TASK-001 任务字段 / TASK-002 类型·父项·标签 / TASK-005 依赖关系 / TASK-007 负责人 / **TASK-008 自定义字段值**；统一经 TASK-010 管道 diff 发布） | `fields`（字段白名单）+ 可选 `to_value` | 自定义字段用 `cf_<uuid>` |
+| `due_approaching` | beat 每 15min 扫描 `target_date` | `hours_before`（1..168）+ `issue_types`（可选） | 每任务每规则只触发一次（窗口即 `hours_before` 起点） |
 
 ### 2.3 执行语义与防循环
 
@@ -151,7 +153,7 @@ sequenceDiagram
 
 **防循环三闸**（BR-07/08/09）：
 
-1. **来源标记闸**：规则执行产生的变更事件携带 `origin=automation:{run_id}`；默认 `state_changed/field_changed` 触发器**不匹配** `origin=automation` 的事件（规则不级联）。项目级开关 `allow_rule_chain` 可放开，但受闸 2/3 约束。
+1. **来源标记闸**：规则执行产生的变更事件携带 `origin=automation:{run_id}`；默认 `state_changed/field_changed` 触发器**不匹配** `origin=automation` 的事件（规则不级联）。项目级开关 `allow_rule_chain` 可放开（存储于 `automation_settings` 表，§4.1；GET/PATCH `…/automation-settings/` 读写，默认 False，§3.1 设置入口——IT-02 与验收演示 2 的操作落点），但受闸 2/3 约束。
 2. **深度保险丝**：事件携带 `chain_depth`，规则动作产生的新事件 `chain_depth+1`；深度 ≥ 5 的事件不再触发任何规则（快速失败 + 告警）。
 3. **去重窗口**：同 `(rule, issue)` 在 `dedup_window_minutes` 内已成功执行过 → 跳过（`skipped(dedup)`）。Redis `SETNX` 实现，键 `autodedup:{rule}:{issue}`。
 
@@ -163,13 +165,13 @@ sequenceDiagram
 
 | 编号 | 规则 | 判定位置 | 违反后果 |
 | --- | --- | --- | --- |
-| BR-01 | 规则是项目级实体；`automation.manage`（PROJ_ADMIN+）可写，成员可读名称与启停状态 | Permission | `403 PERM_DENIED` |
+| BR-01 | 规则是项目级实体；`automation.manage`（PROJ_ADMIN+，rbac §8.2——注册表专行 `Automation(P3)｜manage｜automation.manage`，**严格对齐注册表**，与兄弟文档 WF-001/002/004 的 `workflow.manage` 同范式；sprint-overview §3 风险 5 明确「权限 Key 严格对齐 rbac，禁另立」）可写规则与自动化设置，成员可读名称与启停状态 | Permission | `403 PERM_DENIED` |
 | BR-02 | trigger/conditions/actions 保存时静态校验（jsonschema + 动作注册表 + 条件字段白名单） | Serializer | `400 VALIDATION_ERROR` 定位到路径 |
-| BR-03 | 动作执行 = 异步（Celery `workflow` 队列），规则执行 P95 < 100ms（不含通知投递） | worker | 超时告警 |
+| BR-03 | 动作执行 = 异步（Celery `workflow` 队列——Sprint 7 新增、待 INFRA-002 §4.1 补登，见 §1.4 注），规则执行 P95 < 100ms（不含通知投递） | worker | 超时告警 |
 | BR-04 | 单规则动作 ≤ 5；动作失败默认 `stop`（后续不执行），可配 `continue` | worker | run=failed + 明细 |
 | BR-05 | `transition` 动作走 WF-001 引擎完整路径（守卫照常；失败记 run=failed 不强行迁移） | 引擎 | run 明细含守卫错误 |
 | BR-06 | 规则不产生隐藏写：每个动作的字段变化落 `IssueActivity`（verb 标 `via=automation:{rule}`） | on_commit | — |
-| BR-07 | 默认规则不级联：origin=automation 的事件不匹配 state/field 触发器 | worker | `skipped(origin)` |
+| BR-07 | 默认规则不级联：origin=automation 的事件不匹配 state/field 触发器；项目级 `allow_rule_chain`（`automation_settings.allow_rule_chain`，§4.1，默认 False）显式放开 | worker | `skipped(origin)` |
 | BR-08 | 链深度 ≥5 熔断 | worker | `skipped(chain_depth)` + ERROR 告警 |
 | BR-09 | 同任务同规则去重窗口（默认 60min，Redis SETNX） | worker | `skipped(dedup)` |
 | BR-10 | `due_approaching` 每任务每规则只触发一次（窗口起点处） | beat + 去重键 | — |
@@ -181,16 +183,20 @@ sequenceDiagram
 
 ### 2.6 异常处理
 
-| 场景 | HTTP | 错误码 | details 子码 | 前端表现 |
+| 场景 | HTTP | 错误码 | details[].code | 前端表现 |
 | --- | --- | --- | --- | --- |
-| 未知 trigger/action type | 400 | `VALIDATION_ERROR` | `NOT_A_CHOICE` | 列出合法枚举 |
-| 条件字段非法（非白名单） | 400 | `VALIDATION_ERROR` | `INVALID_FIELD` | 条件行标红 |
+| 未知 trigger/action type | 400 | `VALIDATION_ERROR` | `NOT_A_CHOICE` | message 列出合法枚举 |
+| 条件字段非法（非白名单） | 400 | `VALIDATION_ERROR` | `NOT_A_CHOICE`（`details[].field` = `conditions[i].field`，对齐 TASK-011 白名单拒绝同形） | 条件行标红 |
 | 动作数超 5 / 空 actions | 400 | `VALIDATION_ERROR` | `LIMIT` / `REQUIRED` | — |
 | 规则不存在 | 404 | `RESOURCE_NOT_FOUND` | — | 通用 404 |
 | 非管理者写操作 | 403 | `PERM_DENIED` | — | 入口本不渲染 |
-| 规则数超配额（项目 ≤ 50 条） | 409 | `RESOURCE_LIMIT_EXCEEDED` | `RULE_LIMIT` | 「自动化规则已达 50 条上限」 |
-| 执行中动作失败 | —（异步） | 记入 run | `action_error` | 运行日志页可见 |
+| 同名规则已存在（未软删规则中重名） | 409 | `RESOURCE_ALREADY_EXISTS` | `UNIQUE` | 名称输入框标红「存在同名规则」 |
+| 规则数超配额（项目 ≤ 50 条） | 409 | `RESOURCE_LIMIT_EXCEEDED` | `LIMIT` | 「自动化规则已达 50 条上限」 |
+| 执行中动作失败 | —（异步） | 记入 run 明细（非 HTTP 响应） | — | 运行日志页可见 |
 | Dry Run 任务不可见 | 404 | `RESOURCE_NOT_FOUND` | — | — |
+| Dry Run `sample_size` 越界（0 或 >50）/ `issue_ids` 超过 50 个 | 400 | `VALIDATION_ERROR` | `LIMIT` | — |
+
+> `details[].code` 一律取 `api-conventions.md` §8.8 已注册子码（`NOT_A_CHOICE` / `REQUIRED` / `UNIQUE`）；`LIMIT`（数量/配额上限）沿用 TASK-011 §4.2.1 同形先例，**未在 §8.8 登记，随架构文档回改统一补登（待补登）**。
 
 ### 2.7 边界条件
 
@@ -198,10 +204,12 @@ sequenceDiagram
 | --- | --- | --- |
 | 单项目规则数 | 50 | `409 RESOURCE_LIMIT_EXCEEDED` |
 | 单规则动作数 | 5 | 保存拒绝 |
+| **单规则条件数** | **≤ 20（继承 TASK-011 FilterCompiler「条件节点总数 ≤ 20」冻结，§2.7 注）** | `400 VALIDATION_ERROR` + 子码 `LIMIT` |
 | 单事件匹配规则数 | 无硬限（逐条独立 run） | 顺序执行，互不影响 |
 | `due_approaching.hours_before` | 1..168（7 天） | 保存拒绝 |
 | 链深度 | 5 | 熔断 + 告警 |
 | 执行日志 | 90 天留存 | 每日清理（batch 500） |
+| Dry Run `sample_size` / `issue_ids` | 1..50（默认 20）/ ≤50 个 | `400 VALIDATION_ERROR`（`LIMIT`）；指定任务不可见 404 |
 | 高频事件风暴（批量导入 1 万任务） | 每任务独立事件 | worker 水平扩展；规则逐条匹配 O（规则数） 求值，单事件匹配 P95 < 20ms |
 
 ---
@@ -225,6 +233,8 @@ sequenceDiagram
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
+> 列表页头部为项目级开关「允许规则级联触发」（默认关）：`automation_settings.allow_rule_chain` 的 UI 入口（§2.3 闸 1 / §4.1 / §4.5 `…/automation-settings/`），写需 `automation.manage`；开启后在同一页面出提示条「规则可互相触发，受 5 层熔断保护」。
+
 ### 3.2 规则编辑器（三段式引导）
 
 ```
@@ -232,7 +242,7 @@ sequenceDiagram
 │ 名称：[高优需求进评审→指派产品负责人                        ]      │
 │                                                                   │
 │ ① 当…（触发器）                                                   │
-│   [状态变更 ▾]  目标状态组：[评审中 ▾]  任务类型：[需求 ▾]          │
+│   [状态变更 ▾]  目标状态组：[进行中 ▾]  任务类型：[需求 ▾]          │
 │                                                                   │
 │ ② 且满足…（条件，AND）                       [+ 添加条件]          │
 │   [优先级 ▾] [属于 ▾] [高, 紧急 ▾]                          [×]   │
@@ -249,10 +259,10 @@ sequenceDiagram
 
 | 元素 | 行为 |
 | --- | --- |
-| 触发器切换 | config 区随 `type` 动态换表单（状态组/字段选择/小时数） |
-| 条件字段下拉 | 与筛选器同一字段注册表（含 `cf_` 自定义字段，TASK-008 Schema API + ETag 缓存） |
+| 触发器切换 | config 区随 `type` 动态换表单（状态组 = 五语义组枚举 `backlog/unstarted/started/completed/cancelled` / 字段选择 / 小时数） |
+| 条件字段下拉 | 与筛选器（TASK-011）同一字段注册表（含 `cf_` 自定义字段，TASK-008 Schema API + ETag 缓存） |
 | 动作排序 | ↑↓ 调整执行顺序 |
-| Dry Run | 弹层选任务（默认最近 5 条匹配样本）→ 展示逐条「命中与否 + 将执行的动作解析」 |
+| Dry Run | 弹层选任务（`issue_ids` 指定试运行任务，或默认最近 20 条匹配事件样本，请求体契约见 §4.5）→ 展示逐条「命中与否 + 将执行的动作解析」 |
 
 ### 3.3 Dry Run 结果弹层
 
@@ -297,7 +307,11 @@ class AutomationRule(BaseModel):
     class Meta(BaseModel.Meta):
         db_table = "automation_rules"
         constraints = [
-            models.UniqueConstraint(fields=["project", "name"], name="uniq_rule_name_per_project"),
+            models.UniqueConstraint(
+                fields=["project", "name"],
+                condition=models.Q(deleted_at__isnull=True),  # 软删偏条件唯一：已删规则名可复用
+                name="uniq_rule_name_per_project",
+            ),
         ]
         indexes = [models.Index(fields=["project", "is_active"], name="idx_rule_active")]
 
@@ -306,6 +320,7 @@ class AutomationRun(models.Model):
     """执行日志（BR-12：90 天留存，成员可读）"""
 
     class Status(models.TextChoices):
+        RUNNING = "running", "执行中"   # §2.3 时序图：worker 匹配后先落 running，动作执行完再落终态
         SUCCESS = "success", "成功"
         FAILED = "failed", "失败"
         SKIPPED = "skipped", "跳过"
@@ -316,7 +331,7 @@ class AutomationRun(models.Model):
     event = models.JSONField(help_text="触发事件快照（type/payload/origin/chain_depth）")
     status = models.CharField(max_length=8, choices=Status.choices)
     skip_reason = models.CharField(max_length=32, blank=True, default="",
-        help_text="dedup|origin|chain_depth|rule_inactive")
+        help_text="dedup|origin|chain_depth")   # 无 rule_inactive：停用规则不进匹配集（cached_active_rules 只装启用规则，BR-14），不存在该跳过态
     action_results = models.JSONField(default=list,
         help_text='[{"type":"assign","ok":true,"detail":{…}}, …]')
     duration_ms = models.PositiveIntegerField(default=0)
@@ -328,36 +343,60 @@ class AutomationRun(models.Model):
             models.Index(fields=["rule", "created_at"], name="idx_run_rule"),
             models.Index(fields=["created_at"], name="idx_run_retention"),
         ]
+
+
+class AutomationSetting(BaseModel):
+    """项目级自动化设置：闸 1 显式放开级联的存储落点（BR-07 / §2.3）"""
+
+    project = models.OneToOneField(Project, on_delete=models.CASCADE, related_name="automation_setting")
+    allow_rule_chain = models.BooleanField(default=False, verbose_name="允许规则级联触发（默认关）")
+
+    class Meta(BaseModel.Meta):
+        db_table = "automation_settings"
 ```
+
+> **偏差登记（统一继承原则的显式例外）**：`AutomationRun` 不继承 `BaseModel`（`unified-issue-model.md` §2.2 全局基类）而直继承 `models.Model`——日志表瘦身动机（BigAutoField 主键、仅 `created_at`，不参与软删与 `created_by/updated_by` 审计字段，90 天物理清理即生命周期，BR-12），按「实现偏差先登记再继续」纪律在此显式登记；`AutomationRule`/`AutomationSetting` 均正常继承 `BaseModel`。
 
 ### 4.2 迁移要点
 
-1. 两表新建；`idx_run_retention` 支撑 90 天清理的范围删除（`DELETE … WHERE created_at < now()-90d` 分批 500 行）。
+1. 三表新建（`automation_settings` 为项目 OneToOne 行，惰性创建，读取兜底 `allow_rule_chain=False`）；`uniq_rule_name_per_project` 为**软删偏条件唯一**（partial unique index，同 `issues.uniq_issue_sequence_per_project` / `labels.uniq_label_name_per_project` 范式，仅约束未删除行，冲突落 409 `RESOURCE_ALREADY_EXISTS`）；`idx_run_retention` 支撑 90 天清理的范围删除（`DELETE … WHERE created_at < now()-90d` 分批 500 行）。
 2. `trigger/conditions/actions` 不落 GIN 索引（从不按内容查询，匹配在内存求值——规则数 ≤ 50，全量加载缓存）。
-3. **规则缓存**：`automation:rules:{project_id}` Redis 缓存启用规则集；保存/启停信号失效（与 TASK-008 字段缓存同范式）；worker 读缓存零 DB 命中。
+3. **规则缓存**：`automation:rules:{project_id}` Redis 缓存启用规则集；保存/启停信号失效（与 TASK-008 字段缓存同范式）；worker 读缓存零 DB 命中。`allow_rule_chain` 同范式走 `automation:settings:{project_id}` 缓存（settings 写后失效），闸 1 判定零 DB 命中。
 
 ### 4.3 执行 worker
 
 ```python
 @app.task(queue="workflow", bind=True, max_retries=3, ignore_result=True)
 def automation_match(self, event: dict):
-    """事件入口：匹配规则 → 防循环三闸 → 顺序执行动作（BR-03/07/08/09）"""
-    if event.get("origin", "").startswith("automation") and not allow_chain(event["project_id"]):
-        return                                                # 闸 1：来源标记（BR-07）
-    if event.get("chain_depth", 0) >= 5:
-        alert("automation chain depth exceeded", event)
-        return                                                # 闸 2：深度保险丝（BR-08）
+    """事件入口：匹配规则 → 防循环三闸 → 顺序执行动作（BR-03/07/08/09）
+    三闸拦截统一落 run=skipped（审计需要痕迹——与 §2.3 时序图、UT-05~07 同一口径）"""
+    gate = event_gate(event)                                  # 闸 1/2：事件级判定
+    if gate == "chain_depth":
+        alert("automation chain depth exceeded", event)       # 闸 2：深度保险丝（BR-08）
 
     rules = cached_active_rules(event["project_id"], trigger_type=event["type"])
     issue = load_issue(event["issue_id"])
     for rule in rules:
         if not match_trigger(rule.trigger, event) or not eval_conditions(rule.conditions, issue, event):
             continue
+        if gate:
+            log_run(rule, issue, event, status="skipped", reason=gate)      # 闸 1/2 拦截仍留痕
+            continue
         if not dedup_acquire(rule.id, issue.id, rule.dedup_window_minutes):
             log_run(rule, issue, event, status="skipped", reason="dedup")   # 闸 3（BR-09）
             continue
         run = log_run(rule, issue, event, status="running")
         execute_actions(run, rule, issue, event)
+
+
+def event_gate(event: dict) -> str | None:
+    """闸 1/2：返回 skip 原因（origin / chain_depth）或 None"""
+    if event["type"] in ("state_changed", "field_changed"):
+        if event.get("origin", "").startswith("automation") and not allow_rule_chain(event["project_id"]):   # 闸 1 放开开关：automation_settings（§4.1，缓存读取见 §4.2）
+            return "origin"                                   # 闸 1：来源标记（BR-07）
+    if event.get("chain_depth", 0) >= 5:
+        return "chain_depth"                                  # 闸 2：深度保险丝（BR-08）
+    return None
 
 
 def execute_actions(run, rule, issue, event):
@@ -376,7 +415,7 @@ def execute_actions(run, rule, issue, event):
     finalize_run(run, ok, results, rule)          # BR-13 熔断计数；BR-06 Activity 由动作内部 on_commit 落
 ```
 
-**动作注册表**（与 WF-001 `side_effects` 共享执行器）：
+**动作注册表**（`ACTION_REGISTRY` = WF-001 §4.7 `SideEffectRegistry` 同一注册表 + 本文扩展 `transition/add_label`，`set_field/assign/notify` 执行器直接复用）：
 
 ```python
 ACTION_REGISTRY: dict[str, ActionExecutor] = {
@@ -399,12 +438,15 @@ def due_approaching_scan():
     for project_id, rules in cached_due_rules().items():
         max_h = max(r.trigger["config"]["hours_before"] for r in rules)
         qs = Issue.objects.filter(
-            project_id=project_id, deleted_at__isnull=True, is_archived=False,
-            due_date__range=(timezone.now(), timezone.now() + timedelta(hours=max_h)),
+            project_id=project_id, deleted_at__isnull=True, archived_at__isnull=True,
+            target_date__range=(timezone.now(), timezone.now() + timedelta(hours=max_h)),
         ).exclude(state__group__in=["completed", "cancelled"])
         for issue in qs.iterator(chunk_size=500):
             for rule in rules:
                 h = rule.trigger["config"]["hours_before"]
+                types = rule.trigger["config"].get("issue_types")   # §4.8：issue_types 过滤（空 = 全部）
+                if types and not issue_type_match(issue, types):    # 占位符解析复用 TASK-011 §4.3
+                    continue
                 if due_within(issue, h) and dedup_acquire(rule.id, issue.id, hours=h):
                     automation_match.delay(build_event("due_approaching", issue, rule))
 ```
@@ -413,23 +455,24 @@ def due_approaching_scan():
 
 | 方法 | 路径 | 说明 | 权限 |
 | --- | --- | --- | --- |
-| GET | `/api/v1/ws/{slug}/projects/{id}/automation-rules/` | 规则列表（含本周运行计数） | 成员读 / `automation.manage` 写 |
-| POST | 同上 | 创建（静态校验 BR-02） | `automation.manage` |
+| GET | `/api/v1/workspaces/{slug}/projects/{id}/automation-rules/` | 规则列表（含本周运行计数） | 成员读 / `automation.manage` 写 |
+| POST | 同上 | 创建（静态校验 BR-02） | `automation.manage`（rbac §8.2 既有码，BR-01） |
 | GET/PATCH/DELETE | `…/automation-rules/{rid}/` | 详情/更新/删除 | 同上 |
 | POST | `…/automation-rules/{rid}/toggle/` | 启停（`{"is_active": false}`） | 同上 |
-| POST | `…/automation-rules/{rid}/dry-run/` | Dry Run（BR-11 零写） | 同上 |
-| GET | `…/automation-runs/` | 运行日志（`?rule=&status=&cursor=`） | 成员读 |
+| POST | `…/automation-rules/{rid}/dry-run/` | Dry Run（BR-11 零写；请求体契约见下） | 同上 |
+| GET/PATCH | `…/automation-settings/` | 项目自动化设置读/写（`{"allow_rule_chain": false}`——闸 1 开关，§2.3/§4.1） | 读：成员；写：`automation.manage`（同上码） |
+| GET | `…/automation-runs/` | 运行日志（`?rule=&status=&from=&to=&cursor=`；默认排序 `-fired_at, -id`；时间区间过滤） | 成员读 |
 
 **创建请求**：
 
 ```http
-POST /api/v1/ws/acme/projects/01J8P…/automation-rules/
+POST /api/v1/workspaces/acme/projects/0f9e8d7c-6b5a-4c3d-9e2f-1a0b9c8d7e6f/automation-rules/
 Content-Type: application/json
 
 {
   "name": "高优需求进评审→指派产品负责人",
-  "trigger": {"type": "state_changed", "config": {"to_group": "review", "issue_types": ["requirement"]}},
-  "conditions": [{"field": "priority", "op": "in", "value": ["high", "urgent"]}],
+  "trigger": {"type": "state_changed", "config": {"to_group": "started", "issue_types": ["__requirement__"]}},
+  "conditions": [{"field": "priority", "operator": "in", "value": ["high", "urgent"]}],
   "actions": [
     {"type": "assign", "config": {"strategy": "role_group", "role": "product_owner"}},
     {"type": "notify", "config": {"channel": "inbox", "targets": ["assignees"]}}
@@ -440,9 +483,9 @@ Content-Type: application/json
 
 ```json
 {
-  "status": 0,
+  "status": "success",
   "data": {
-    "id": "01J9B4K2M8P6R3T1V5X7Z9ACQD",
+    "id": "9b8a4c2e-1f3d-4a7b-8c5e-6d2f0a9b1c3e",
     "name": "高优需求进评审→指派产品负责人",
     "is_active": true,
     "created_at": "2026-09-07T10:22:31.118Z"
@@ -450,17 +493,31 @@ Content-Type: application/json
 }
 ```
 
-**Dry Run 响应**：
+**Dry Run 请求体契约**（`issue_ids` 与 `sample_size` 可并存，指定任务优先；两者均缺省 = 最近 20 条匹配事件样本）：
+
+| 字段 | 类型 | 约束 |
+| --- | --- | --- |
+| `sample_size` | int | 可选；默认 20，1..50——越界 `400 VALIDATION_ERROR`（`details[].code`=`LIMIT`，§2.6） |
+| `issue_ids` | uuid[] | 可选；指定试运行任务（≤50 个），逐任务求值；任务须为本项目可见任务，否则 404 `RESOURCE_NOT_FOUND`（§2.6） |
+
+```http
+POST /api/v1/workspaces/acme/projects/0f9e8d7c…/automation-rules/9b8a4c2e…/dry-run/
+Content-Type: application/json
+
+{"sample_size": 20}
+```
+
+**Dry Run 响应**（`issue_ids` 指定时 `samples` 按指定任务逐条返回，其余形态一致；零写——`side_effects: "none"`，BR-11）：
 
 ```json
 {
-  "status": 0,
+  "status": "success",
   "data": {
     "samples": [
       {"issue": "PROJ-131", "matched": true,
        "would_execute": [
-         {"type": "assign", "resolved": {"users": [{"id": "01J7U…", "name": "王一"}]}},
-         {"type": "notify", "resolved": {"targets": ["01J7U…"]}}
+         {"type": "assign", "resolved": {"users": [{"id": "3e7a1c9b-5d2f-4b8e-a6c0-9f1d2b3a4c5d", "name": "王一"}]}},
+         {"type": "notify", "resolved": {"targets": ["3e7a1c9b-5d2f-4b8e-a6c0-9f1d2b3a4c5d"]}}
        ],
        "gate": null},
       {"issue": "PROJ-130", "matched": false, "reason": "priority=medium 不在 [high, urgent]"},
@@ -475,12 +532,14 @@ Content-Type: application/json
 
 ```json
 {
-  "status": 1,
+  "status": "error",
   "error": {
     "code": "VALIDATION_ERROR",
     "message": "actions[2].type 不是合法的动作类型",
-    "details": {"sub_code": "NOT_A_CHOICE", "path": "actions[2].type",
-                "allowed": ["set_field", "assign", "transition", "notify", "add_label"]},
+    "details": [
+      {"field": "actions[2].type", "code": "NOT_A_CHOICE",
+       "message": "允许：set_field / assign / transition / notify / add_label"}
+    ],
     "request_id": "01J9B6N1C4F7H2K5M8P1R3T6VX"
   }
 }
@@ -518,7 +577,7 @@ export class AutomationRuleStore {
 | 单事件规则匹配 | P95 < 20ms | 规则 Redis 缓存 + 内存求值 |
 | 单规则执行（不含通知投递） | P95 < 100ms | 动作同步执行于 worker；通知 on_commit 异投 |
 | 日志查询 | P95 < 150ms | `idx_run_rule` 游标分页 |
-| 截止扫描 | 单轮 < 5s（1 万到期任务） | `due_date` 索引 + 分片迭代 |
+| 截止扫描 | 单轮 < 5s（1 万到期任务） | `target_date` 索引（`issues.target_date` 自带 `db_index`）+ 分片迭代 |
 
 ### 4.8 触发器与动作 config 协议全表
 
@@ -527,14 +586,14 @@ export class AutomationRuleStore {
 | trigger.type | config 字段 | 类型/约束 | 说明 |
 | --- | --- | --- | --- |
 | `state_changed` | `to_state` / `from_state` | uuid，可选 | 精确状态 |
-| | `to_group` | 五语义组，可选 | 与 `to_state` 互斥 |
+| | `to_group` | 枚举 `backlog`/`unstarted`/`started`/`completed`/`cancelled`，可选 | 五语义组（WF-001 §2 `State.Group`）；与 `to_state` 互斥——需精确「进入评审」改用 `to_state`/`transition_id` |
 | | `transition_id` | uuid，可选 | 限定特定边（如仅「提交评审」触发） |
-| | `issue_types` | string[]，可选 | 空 = 全部类型 |
-| `issue_created` | `issue_types` | string[]，可选 | — |
+| | `issue_types` | string[]，可选 | 类型 UUID 或 `__requirement__` 类名占位符（解析复用 TASK-011 §4.3）；空 = 全部类型 |
+| `issue_created` | `issue_types` | string[]，可选 | 同 `state_changed.issue_types` |
 | `field_changed` | `fields` | string[]，必填，≤10 | 系统字段名或 `cf_<uuid>`；`state` 非法（用 state_changed） |
 | | `to_value` | any，可选 | 变更后值匹配（类型随字段） |
 | `due_approaching` | `hours_before` | int，1..168，必填 | — |
-| | `issue_types` | string[]，可选 | — |
+| | `issue_types` | string[]，可选 | 同 `state_changed.issue_types`；扫描按其过滤（§4.4） |
 
 **动作 config schema**：
 
@@ -553,7 +612,7 @@ export class AutomationRuleStore {
 | `add_label` | `label_id` | uuid，必填 | 项目内标签；幂等 |
 | 公共 | `on_error` | `stop` / `continue`，默认 stop | — |
 
-**条件操作符白名单**（FilterCompiler 子集）：`eq / neq / in / not_in / is_empty / is_not_empty / gt / gte / lt / lte / contains`（文本）——`between/range` 等复杂算子不开放（条件面保持可读）；日期字段支持相对值 `{"relative": "-7d"}`。
+**条件操作符白名单**（FilterCompiler 子集）：`eq / neq / in / not_in / is_empty / is_not_empty / gt / gte / lt / lte / contains`（文本）——`between/range` 等复杂算子不开放（条件面保持可读）；日期字段相对值使用 FilterCompiler 字符串快捷形态（`today` / `this_week` / `next_n_days:N`，TASK-011 §4.1 DSL）——超集形态 `{"relative": "-7d"}` 不在条件子集内，条件端 Service 落库前须归一化。
 
 ---
 
@@ -564,11 +623,11 @@ export class AutomationRuleStore {
 | 编号 | 用例 | 断言 |
 | --- | --- | --- |
 | UT-01 | 四触发器 config 静态校验 | 非法字段/类型 400 定位路径 |
-| UT-02 | 条件编译：FilterCompiler 子集白名单 | 白名单外字段 `INVALID_FIELD` |
+| UT-02 | 条件编译：FilterCompiler 子集白名单 | 白名单外字段 `NOT_A_CHOICE`（`details[].field`=`conditions[i].field`） |
 | UT-03 | 动作数 0/6 拒绝 | `REQUIRED`/`LIMIT` |
 | UT-04 | 条件 AND 求值真值表 | 全组合正确 |
 | UT-05 | 闸 1：origin=automation 事件被跳过 | run=skipped(origin) |
-| UT-06 | 闸 2：chain_depth=5 熔断 | 告警发出，无 run |
+| UT-06 | 闸 2：chain_depth=5 熔断 | run=skipped(chain_depth) + 告警发出 |
 | UT-07 | 闸 3：去重窗口内跳过 | run=skipped(dedup)；窗口外执行 |
 | UT-08 | 动作 stop/continue 两策略 | 失败后动作执行边界正确 |
 | UT-09 | transition 动作走守卫 | 守卫失败 run=failed 含守卫明细 |
@@ -583,13 +642,15 @@ export class AutomationRuleStore {
 | 编号 | 用例 | 断言 |
 | --- | --- | --- |
 | IT-01 | 全链路：状态变更 → worker 匹配 → assign+notify 落 | 任务负责人变更 + Activity via=automation + 收件箱通知 |
-| IT-02 | 级联防护：规则 A 改状态触发规则 B（默认关） | B 不执行；放开 allow_rule_chain 后 B 执行且 chain_depth=2 |
+| IT-02 | 级联防护：规则 A 改状态触发规则 B（默认关） | B 不执行（B 侧留 run=skipped(origin)）；放开 allow_rule_chain 后 B 执行且 chain_depth=2 |
 | IT-03 | 深度熔断链路：构造 A→B→C→D→E 链 | 第 5 层熔断告警 |
 | IT-04 | 批量创建 1000 任务触发 issue_created | 全部匹配执行；队列无积压回归 |
 | IT-05 | 规则停用瞬间在途 run 完成、新事件不匹配 | BR-14 |
 | IT-06 | 90 天清理任务 | 过期 run 删除，边界数据保留 |
-| IT-07 | 配额：第 51 条规则 409 | `RESOURCE_LIMIT_EXCEEDED/RULE_LIMIT` |
+| IT-07 | 配额：第 51 条规则 409 | `RESOURCE_LIMIT_EXCEEDED`（`details[].code`=`LIMIT`） |
 | IT-08 | 审批终审完成的迁移触发 state_changed 规则 | 事件源覆盖完整 |
+| IT-09 | Dry Run 请求体契约（§4.5）：`sample_size` 0/51 越界、`issue_ids` 超 50 个、`issue_ids` 含他项目任务、合法 `issue_ids` 指定试运行 | 越界/超量 400 `VALIDATION_ERROR`（`LIMIT`）；跨项目任务 404 `RESOURCE_NOT_FOUND`；合法 `issue_ids` 逐任务返回 samples（顺序即请求顺序） |
+| IT-10 | 配置端点权限负向矩阵（`automation.manage`，rbac §8.2；WF-001 IT-08 四主体范式）：项目内 `PROJ_VIEWER` / `PROJ_COMMENTER` / `PROJ_CONTRIBUTOR` 三名成员 + 一名他项目成员，分别调写操作（POST 创建 / PATCH / DELETE / toggle / dry-run / PATCH `automation-settings/`）与读操作（规则列表/详情、runs 日志、GET `automation-settings/`） | 三名项目成员：读全 200（成员读，BR-01），写全 403 `PERM_DENIED`（码 `automation.manage`，§2.6）；他项目成员：读写均 404 `RESOURCE_NOT_FOUND`（rbac §6 行级过滤不可见）；PROJ_ADMIN 对照组全通过 |
 
 ### 5.3 E2E 测试
 
@@ -600,7 +661,7 @@ export class AutomationRuleStore {
 | E2E-03 | 运行日志页筛选与展开 | 动作明细正确 |
 | E2E-04 | 熔断横幅：连续失败后列表显示停用 ⚠ → 管理者重新启用 | 状态流转正确 |
 | E2E-05 | 截止提醒：测试时钟拨到 24h 内 | 负责人收提醒一次（不重复） |
-| E2E-06 | 非管理者访问规则配置 | 入口隐藏，直连 403 |
+| E2E-06 | 非管理者访问规则配置 | 入口隐藏（`automation.manage` 判定，BR-01），直连 403 |
 
 ---
 
@@ -638,16 +699,16 @@ export class AutomationRuleStore {
 
 | 类别 | 产物 |
 | --- | --- |
-| Model / Migration | `automation_rules`、`automation_runs` 两表 + 规则 Redis 缓存 |
+| Model / Migration | `automation_rules`、`automation_runs`、`automation_settings` 三表 + 规则/设置 Redis 缓存 |
 | 后端 | `automation_match` worker、防循环三闸、五类动作执行器（复用 WF-001 注册表 + transition/add_label 新增）、`due_approaching_scan` beat、90 天清理任务、熔断机制 |
-| API | 规则 CRUD + toggle + dry-run + runs 日志共 8 端点 |
-| 前端 | 规则列表页、三段式规则编辑器、Dry Run 弹层、运行日志页 |
-| 测试 | UT-01~14、IT-01~08、E2E-01~06 |
+| API | 规则 CRUD + toggle + dry-run + automation-settings + runs 日志共 10 端点（§4.5） |
+| 前端 | 规则列表页（含级联开关）、三段式规则编辑器、Dry Run 弹层、运行日志页 |
+| 测试 | UT-01~14、IT-01~10、E2E-01~06 |
 
 ### 7.2 可操作演示的验收标准
 
 1. 配置迭代验收规则「高优先级需求进入评审时自动指派产品负责人」：Dry Run 展示命中/未命中/去重三态；保存后真实拖动触发，指派与通知生效，Activity 标 `via=automation`。
-2. 防循环演示：配两条互触发规则（A 改状态触发 B、B 改字段触发 A），默认不级联零执行；显式放开 `allow_rule_chain` 后链在第 5 层熔断并告警。
+2. 防循环演示：配两条互触发规则（A 改状态触发 B、B 改字段触发 A），默认不级联零执行；经 `…/automation-settings/`（§3.1 开关）显式放开 `allow_rule_chain` 后链在第 5 层熔断并告警。
 3. 去重演示：同任务 60 分钟内两次满足条件，第二次 run=skipped(dedup)。
 4. 截止提醒演示：截止 24h 内任务触发一次提醒；扫描重复运行不重复触发。
 5. 熔断演示：构造必败动作（指派已删除成员组），连续 10 败后规则自动停用并通知管理者。

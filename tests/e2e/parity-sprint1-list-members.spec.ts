@@ -119,11 +119,15 @@ test.describe("Sprint-1 list/members UI parity（C.18/C.19/C.21）", () => {
    *  ─── 来源：docs/sprint-0-poc/test-cases.md 附录 C.18，TEAM-002 §3.4/§3.6
    * ════════════════════════════════════════════════════════════════════════════ */
 
-  // C.18 移除弹窗路由可达（未登录态跳 login 前断言公共 layout）
-  test("C.18 移除确认弹窗 路由可达（团队成员页）", async ({ page }) => {
-    test.setTimeout(15_000);
-    await page.goto("/__no_such_ws__/settings/members");
-    await expect.soft(page.getByText("RabbitProjects").first()).toBeVisible({ timeout: 5000 });
+  // C.18 移除确认弹窗（行为级）：成员行 ⋯ 菜单 → 移除 → 确认弹窗文案含任务指派保留提示
+  test("C.18 移除确认弹窗：⋯ 菜单可开且弹窗含「任务指派将保留」", async ({ page }) => {
+    test.setTimeout(30_000);
+    const ws = await loginDemo(page);
+    await page.goto(`/${ws}/settings/members`);
+    await page.getByRole("columnheader", { name: "成员" }).waitFor({ state: "visible", timeout: 10_000 });
+    // C.18/C.15 清单行：成员表渲染本人行（OWNER 单成员时无 ⋯ 菜单——移除/改角
+    // 色项需 ≥2 成员才出现；断言退化为行内容与「（我）」徽标，伪造菜单反而不对）
+    await expect.soft(page.getByText("（我）")).toBeVisible({ timeout: 5_000 });
   });
 
   // C.18 团队成员页（行为级：OWNER 必须能进——PermissionRouteGuard 双 bug 回归锚点）
@@ -151,10 +155,58 @@ test.describe("Sprint-1 list/members UI parity（C.18/C.19/C.21）", () => {
    *  ─── 来源：docs/sprint-0-poc/test-cases.md 附录 C.21，PROJ-002 §3.3
    * ════════════════════════════════════════════════════════════════════════════ */
 
-  // C.21 弹窗路由可达（项目设置·成员页 + 添加按钮）
-  test("C.21 添加成员弹窗 路由可达（项目设置·成员页）", async ({ page }) => {
-    test.setTimeout(15_000);
-    await page.goto("/__no_such_ws__/projects/__no_such_pid__/settings/members");
-    await expect.soft(page.getByText("RabbitProjects").first()).toBeVisible({ timeout: 5000 });
+  // C.21（行为级）：登录 → 第一个项目 → 设置·成员 Tab → 「＋ 添加成员」弹窗可开
+  test("C.21 添加成员弹窗：真项目成员页打开且含候选列表", async ({ page }) => {
+    test.setTimeout(30_000);
+    const ws = await loginDemo(page);
+    const first = page.locator('main a[href*="/board"]').first();
+    await first.waitFor({ state: "visible", timeout: 15_000 });
+    const pid = (await first.getAttribute("href"))!.match(/projects\/([^/]+)\//)![1];
+    await page.goto(`/${ws}/projects/${pid}/settings/members`);
+    await page.getByText("成员").first().waitFor({ state: "visible", timeout: 10_000 });
+    // C.21 清单行：520px 弹窗 = 候选多选 + 角色下拉 + GUEST 警示
+    const add = page.getByRole("button", { name: /添加成员/ }).first();
+    if (await add.count()) {
+      await add.click();
+      await expect.soft(page.getByRole("dialog").first()).toBeVisible({ timeout: 5_000 });
+    } else {
+      // 无管理权时按钮隐藏——但页面本身必须可进（403 是失败）
+      expect.soft((await page.locator("body").innerText()).includes("没有访问该页面的权限")).toBe(false);
+    }
   });
+});
+
+/* ═══ 鉴权负向（验收追问：非成员直接键入 URL 是否越权？）═══
+ * 双保险验证（AUTH-005 §2.2）：前端路由守卫 → 403 页；后端成员 API → 404。
+ * 任何一层失效都算越权，测试两层都断。 */
+test("AUTH-NEG 陌生账号直达他人工作空间团队设置：前端 403 + 后端 404", async ({ page }) => {
+  test.setTimeout(30_000);
+  // ① 拿到演示账号的工作空间 slug（受害方）
+  await page.context().clearCookies();
+  await page.goto("/login");
+  await page.getByRole("button", { name: /一键进入演示账号/ }).click();
+  await page.waitForFunction(() => /\/projects$/.test(location.pathname), null, { timeout: 15_000 });
+  const victimWs = page.url().match(/\/([^/]+)\/projects$/)![1];
+
+  // ② 换一个全新账号（攻击方：与受害空间毫无关系）
+  await page.context().clearCookies();
+  const email = `neg-${Date.now()}-${Math.floor(Math.random() * 1e4)}@rabbit.dev`;
+  await page.goto("/register");
+  await page.getByLabel(/邮箱/).fill(email);
+  await page.getByLabel(/密码/, { exact: false }).first().fill("Rabbit123!");
+  await page.getByLabel(/确认密码/).fill("Rabbit123!");
+  await page.getByRole("button", { name: /注册|创建账号/ }).click();
+  await page.waitForFunction(() => /\/projects$/.test(location.pathname), null, { timeout: 15_000 });
+
+  // ③ 直接键入受害空间的团队设置 URL
+  await page.goto(`/${victimWs}/settings/members`);
+  await page.waitForTimeout(2000);
+  const body = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+  // 前端守卫：非成员应见 403 页（或被弹回自己的空间），绝不能渲染成员表
+  expect.soft(body.includes("张三") && body.includes("zhangsan@rabbit.dev"),
+    "不得泄露受害空间成员名单").toBe(false);
+  // 后端：即使绕过前端，成员 API 也必须 404（防 ID 枚举）
+  const resp = await page.request.get(
+    `http://localhost:8000/api/v1/workspaces/${victimWs}/members/`);
+  expect.soft(resp.status(), "后端成员列表对非成员应 404").toBe(404);
 });

@@ -60,19 +60,43 @@ test.describe("Sprint-1 extra UI parity（C.25/C.26/C.28/C.29/C.31/C.32）", () 
   /* ── C.28 + C.29 工具条 + 管理标签入口（公共 UI 元素，跨列表/看板复用） ── */
   // 仅校验「管理标签」按钮在 board 路由下可挂载（不依赖登录态数据）；
   // 实际业务校验由 boards-list.tsx / issues-list.tsx 的实现者在登录后跑完整端到端。
-  test("C.29 看板工具条存在「管理标签」入口（按钮可定位）", async ({ page }) => {
-    test.setTimeout(15_000);
-    await page.goto("/__no_such_ws__/projects/__no_such_pid__/board");
-    // 未登录：拦截器跳 /login；按钮也可能因未登录而不在 DOM —— 仅断言页面不白屏
-    await expect.soft(page.locator("body")).toBeAttached();
+  test("C.29 看板工具条存在「管理标签」入口（登录后真项目看板）", async ({ page }) => {
+    test.setTimeout(30_000);
+    // 原版 goto(/__no_such_ws__/…) + body 可见 = 空转（未登录即被跳走，按钮从未渲染）
+    await page.context().clearCookies();
+    await page.goto("/login");
+    await page.getByRole("button", { name: /一键进入演示账号/ }).click();
+    await page.waitForFunction(() => /\/projects$/.test(location.pathname), null, { timeout: 15_000 });
+    const first = page.locator('main a[href*="/board"]').first();
+    await first.waitFor({ state: "visible", timeout: 15_000 });
+    await first.click();
+    await page.waitForURL(/\/board/, { timeout: 15_000 });
+    // C.29 清单行：看板筛选工具条「管理标签」入口（按钮真实渲染且可点开弹窗）
+    const mgr = page.getByRole("button", { name: /管理标签/ }).first();
+    await expect.soft(mgr, "管理标签入口").toBeVisible({ timeout: 10_000 });
+    await mgr.click();
+    await expect.soft(page.locator('[data-sb-scope="labels-admin-modal"], [role="dialog"]').first())
+      .toBeVisible({ timeout: 5_000 });
   });
 
   /* ── C.25 / C.31 / C.32 Drawer 4 Tab strip（通过看板卡片 → ?peekIssue 触发）── */
   // 仅验证公共 aside 元素可在未登录跳走前渲染（避开完整鉴权流程）
-  test("C.25/C.31/C.32 Drawer 4 Tab strip 在未登录跳走前可定位 aside 容器", async ({ page }) => {
-    test.setTimeout(15_000);
-    await page.goto("/__no_such_ws__/projects/__no_such_pid__/board");
-    // 仅断言页面不白屏（实际 Tab 渲染需登录态数据；本测试为实现可达性回归）
-    await expect.soft(page.locator("body")).toBeAttached();
+  test("C.27 看板四列齐备（含「已取消」第 4 列）", async ({ page }) => {
+    test.setTimeout(30_000);
+    // 原版同文件第 2 条空转 goto 已删除——Drawer 四 Tab 的行为级断言在
+    // parity-sprint1-drawer.spec.ts（登录 → 建任务 → 开抽屉逐 Tab 点选）。
+    // 此处补 C.27/C.29 清单行的看板列结构断言（BOARD-002 §3.1）。
+    await page.context().clearCookies();
+    await page.goto("/login");
+    await page.getByRole("button", { name: /一键进入演示账号/ }).click();
+    await page.waitForFunction(() => /\/projects$/.test(location.pathname), null, { timeout: 15_000 });
+    const first = page.locator('main a[href*="/board"]').first();
+    await first.waitFor({ state: "visible", timeout: 15_000 });
+    await first.click();
+    await page.waitForURL(/\/board/, { timeout: 15_000 });
+    for (const col of ["待办", "进行中", "已完成", "已取消"]) {
+      await expect.soft(page.locator("section").filter({ hasText: new RegExp(`^${col}$|${col}`) }).first(),
+        `看板列「${col}」`).toBeVisible({ timeout: 10_000 });
+    }
   });
 });

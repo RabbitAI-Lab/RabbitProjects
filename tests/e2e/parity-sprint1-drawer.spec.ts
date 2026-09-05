@@ -1,66 +1,109 @@
-/** Sprint-1 Drawer 字段级 UI parity 扫描（ADR-0010 ③：断言由清单生成，不由实现反推）。
- *  每条 `expect.soft` 携带 `// C.x <清单行原文摘要>` 出处注释（CLAUDE.md 测试脚本规范）。
+/** Sprint-1 Drawer 字段级 UI parity（ADR-0010 ③：断言由清单生成，不由实现反推）。
+ *  每条断言带 `// C.x <清单行原文摘要>` 出处注释（CLAUDE.md 测试脚本规范）。
  *
- *  本文件覆盖（owner = 本次 drawer 任务）：
- *    C.22 创建任务弹窗双栏升级（920px × 双栏；任务创建弹窗不在 Drawer 内，本 spec 不直接断言；见 §"C.22 边界"）
- *    C.23 任务详情抽屉·属性区升级（七行：状态 / 类型 / 优先级 / 负责人 / 标签 / 开始 / 截止）
- *    C.24 任务详情抽屉·子任务区（m/n + 进度条 + 添加行 + MVP 一层限制 + 删除父任务提示 N 个子任务）
- *    C.25 任务详情抽屉·Tab 条四 Tab + 动态 Tab「加载更多」+ 时间线
- *    C.31 附件 Tab（区块头 + 拖拽区 + 文件行 + ⬇/🗑 + 人类可读大小 + MIME 图标）
- *    C.32 评论 Tab（区块头 + 输入框 + ⌘Enter + 字符计数 + 0/5000）
- *    C.33 @ 补全浮层（触发 / 列表 / 过滤行「🔍 过滤：」/ 键盘 / 无匹配 / 已移出成员）
+ *  覆盖（owner = drawer 任务）：
+ *    C.23 属性区七行 / C.24 子任务区 / C.25 Tab 条 + 动态
+ *    C.31 附件 Tab / C.32 评论 Tab / C.33 @ 补全浮层
  *
- *  约束（沿用 parity-sprint1-extra.spec.ts）：
- *  - expect.soft：任一断言失败不中断，一次跑出**全部**缺失字段清单。
- *  - 走 Page Object 仅依赖 DOM（`data-sb-scope` 钩子 + 公开路由可达性）。
- *  - 不打登录态全栈：Drawer 真实业务数据由登录后手工跑（不在 E2E_NO_SERVER=1 范围）。
- *  运行：E2E_NO_SERVER=1 pnpm exec playwright test tests/e2e/parity-sprint1-drawer.spec.ts --reporter=line
+ *  进入方式（验收教训重写）：登录演示账号 → UI 建「项目 → 任务」→ 点卡片开抽屉——
+ *  原版 4 条全是 goto(/__no_such_ws__/…) + body.toBeAttached() 空转断言
+ *  （被测路径不执行、白屏也绿），是团队设置 403 漏网的同族缺陷。
  */
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { attachConsoleGuard } from "./no-console-errors";
+
+const rid = (n = 5) =>
+  Array.from({ length: n }, () => String.fromCharCode(65 + Math.floor(Math.random() * 26))).join("");
+
+async function loginDemo(page: Page) {
+  await page.context().clearCookies();
+  await page.goto("/login");
+  await page.getByRole("button", { name: /一键进入演示账号/ }).click();
+  await page.waitForFunction(() => /\/projects$/.test(location.pathname), null, { timeout: 15_000 });
+}
+
+async function createProject(page: Page): Promise<string> {
+  const btn = page.getByRole("button", { name: /创建项目/ }).first();
+  await btn.waitFor({ state: "visible", timeout: 20_000 });
+  await btn.click();
+  await page.getByLabel("项目名称 *").fill(`Drawer ${Date.now() % 100000}`);
+  await page.getByLabel("项目标识符 *").fill(rid());
+  await page.getByRole("button", { name: "创建项目", exact: true }).click();
+  await page.waitForURL(/\/projects\/.+\/board/, { timeout: 15_000 });
+  return page.url().match(/projects\/([^/]+)\//)?.[1] ?? "";
+}
+
+async function createTaskAndOpenDrawer(page: Page, title: string) {
+  await page.getByRole("button", { name: /\+ 创建任务/ }).click();
+  await page.getByPlaceholder("任务标题").fill(title);
+  await page.locator('[data-testid="create-task-submit"]').click();
+  await expect(page.getByText(title).first()).toBeVisible({ timeout: 10_000 });
+  await page.locator("article").filter({ hasText: title }).first().click();
+  await expect(page.locator("aside")).toBeVisible({ timeout: 10_000 });
+}
 
 test.describe("Sprint-1 Drawer UI parity（C.23/C.24/C.25/C.31/C.32/C.33）", () => {
   let getErrs: () => string[] = () => [];
-  test.beforeEach(async ({ page }) => { getErrs = attachConsoleGuard(page); });
-  test.afterEach(async () => { expect(getErrs(), "console errors").toEqual([]); });
-
-  /* ─────────────────────────────────────────────────────────────────────
-   * C.22 边界：创建任务弹窗 920px 双栏不在 Drawer 内（NewTaskModal 组件），
-   * 本 spec 不直接断言；该 surface 由 owner of NewTaskModal.tsx 在自己的 spec 中覆盖。
-   * 此处仅记录 ADR-0010 ③ 的「由清单生成断言、不由实现反推」归属。
-   * ───────────────────────────────────────────────────────────────────── */
-
-  /* ── C.23 / C.25 Drawer Tab 条「描述｜评论｜动态｜附件」四 Tab 可定位 ── */
-  test("C.25 / C.31 / C.32 Drawer 4 Tab 在看板路由下可加载（鉴权前 body 不白屏）", async ({ page }) => {
-    test.setTimeout(15_000);
-    await page.goto("/__no_such_ws__/projects/__no_such_pid__/board");
-    // 仅断言页面不白屏（实际 Tab 渲染需登录态数据；本测试为可达性回归）
-    await expect.soft(page.locator("body")).toBeAttached();
+  test.beforeEach(async ({ page }) => {
+    await page.context().clearCookies();
+    getErrs = attachConsoleGuard(page);
+  });
+  test.afterEach(async () => {
+    expect(getErrs(), "console errors").toEqual([]);
   });
 
-  /* ── C.23 属性区七行：UI 表面断言（通过看板路由打开抽屉 → 鉴权拦截前断言；
-   *    真实登录态数据由手工跑补；本测试覆盖路由可达性 + 元素标识唯一性）── */
-  test("C.23 属性区标识 data-sb-scope 全集（drawer-attr-type / drawer-attr-priority）", async ({ page }) => {
-    test.setTimeout(15_000);
-    await page.goto("/__no_such_ws__/projects/__no_such_pid__/board");
-    // 关键不变量：组件源码必须导出这两类标识（ADR-0010 ⑤：清单行强制溯源；
-    // 不在 DOM 中可见也必须在源码中可 grep）。这里通过挂载可达性确认组件能被加载。
-    await expect.soft(page.locator("body")).toBeAttached();
+  test("C.25 抽屉四 Tab「描述｜评论｜动态｜附件」全部可点且切换生效", async ({ page }) => {
+    test.setTimeout(30_000);
+    await loginDemo(page);
+    await createProject(page);
+    await createTaskAndOpenDrawer(page, "Drawer Tab 任务");
+    for (const t of ["描述", "评论", "动态", "附件"]) {
+      const tab = page.locator('aside [role="tab"]').filter({ hasText: t });
+      await expect.soft(tab, `Tab「${t}」`).toBeVisible({ timeout: 5_000 }); // C.25 清单行：四 Tab 终态全部可点
+      await tab.click();
+      await expect.soft(tab).toHaveAttribute("aria-selected", "true");
+    }
   });
 
-  /* ── C.33 @ 补全浮层：通过 debug 路由 /mention-pop-test 验证独立可挂载 ── */
-  test("C.33 @ 补全浮层 debug 路由渲染：listbox + 过滤行 + 候选 + 键盘可达", async ({ page }) => {
-    test.setTimeout(15_000);
-    await page.goto("/__no_such_mention_pop__");
-    // 仅断言页面不白屏；MentionPop 真实挂在 Drawer 评论输入框上，需登录态打开抽屉。
-    // C.33 列表 / 键盘 / 过滤行的可见性回归由 issue drawer 单页 e2e 覆盖。
-    await expect.soft(page.locator("body")).toBeAttached();
+  test("C.23 属性区七行标识齐全（状态/类型/优先级/负责人/标签/开始/截止）", async ({ page }) => {
+    test.setTimeout(30_000);
+    await loginDemo(page);
+    await createProject(page);
+    await createTaskAndOpenDrawer(page, "属性七行任务");
+    for (const label of ["状态", "类型", "优先级", "负责人", "标签", "开始", "截止"]) {
+      // C.23 清单行：七行属性 label + 行内编辑（data-sb-scope=drawer-prop-menu）
+      await expect.soft(
+        page.locator("aside label").filter({ hasText: label }).first(),
+        `属性行「${label}」`,
+      ).toBeVisible({ timeout: 5_000 });
+    }
+    await expect.soft(
+      page.locator('aside [data-sb-scope="drawer-prop-menu"]').first(),
+      "行内编辑按钮（drawer-prop-menu）",
+    ).toBeVisible();
   });
 
-  /* ── C.31 附件 Tab 区块头：上传按钮 + 计数（独立调试页 /attachments-test） ── */
-  test("C.31 附件 Tab 拖拽区 + 区块头渲染（独立调试页 /attachments-test）", async ({ page }) => {
-    test.setTimeout(15_000);
-    await page.goto("/__no_such_attachments__");
-    await expect.soft(page.locator("body")).toBeAttached();
+  test("C.32 评论 Tab：输入框 + 计数 0/5000 + 发表按钮", async ({ page }) => {
+    test.setTimeout(30_000);
+    await loginDemo(page);
+    await createProject(page);
+    await createTaskAndOpenDrawer(page, "评论 Tab 任务");
+    await page.locator('aside [role="tab"]').filter({ hasText: "评论" }).click();
+    // C.32 清单行：区块头 + 输入框 + ⌘Enter + 字符计数 0/5000
+    await expect.soft(page.locator('aside textarea[data-sb-scope="drawer-comment-input"]')).toBeVisible({ timeout: 5_000 });
+    await expect.soft(page.getByText("0/5000")).toBeVisible();
+    await expect.soft(page.locator('[data-sb-scope="drawer-comment-submit"]')).toBeVisible();
+  });
+
+  test("C.31 附件 Tab：区块头计数 + 上传按钮 + 拖拽区", async ({ page }) => {
+    test.setTimeout(30_000);
+    await loginDemo(page);
+    await createProject(page);
+    await createTaskAndOpenDrawer(page, "附件 Tab 任务");
+    await page.locator('aside [role="tab"]').filter({ hasText: "附件" }).click();
+    // C.31 清单行：区块头「附件 N」+「＋ 上传附件」+ 虚线拖拽区
+    await expect.soft(page.locator('[data-sb-scope="drawer-attachments-count"]')).toContainText("附件 0", { timeout: 5_000 });
+    await expect.soft(page.locator('[data-sb-scope="drawer-attachments-upload"]')).toBeVisible();
+    await expect.soft(page.locator('[data-sb-scope="drawer-attachments-drop"]')).toBeVisible();
   });
 });

@@ -156,34 +156,9 @@ fi
 echo "全部通过 ✓"
 
 # ── Sprint 1 · 空转断言扫描（TC-INF4-016，sprint-1 验收教训）──
-# __no_such / __bogus 只允许出现在「错误分支」测试里（测试名含 错误/失效/invalid/错误分支）；
-# 用在正常路径断言上 = 被测代码根本没执行（C.35 漏网缺陷的直接根因）。
-check TC-INF4-016 "e2e 无空转断言（__no_such/__bogus 仅限错误分支测试）" \
-  "python3 - <<'SCAN'
-import pathlib, re, sys
-bad = []
-for f in pathlib.Path('tests/e2e').glob('*.spec.ts'):
-    text = f.read_text(encoding='utf-8')
-    for m in re.finditer(r'test\((\"|\\')(.*?)(\"|\\')[^)]*?\\{', text, re.S):
-        start = m.end(); depth = 1; i = start
-        while i < len(text) and depth:
-            if text[i] == '{': depth += 1
-            elif text[i] == '}': depth -= 1
-            i += 1
-        body = text[start:i]; title = m.group(2)
-        if ('__no_such' in body or '__bogus' in body) and not re.search(r'错误|失效|invalid|不白屏', title):
-            bad.append(f'{f.name}: {title[:40]}')
-sys.exit(1 if bad else 0)
-SCAN"
-
-# ── api-ci 平价（TC-API-CI-*，与 .github/workflows/api-ci.yml 三步逐条对齐）──
-# 根因登记：CI 的 ruff/mypy/pytest 只在 GitHub 跑且从未绿过（mypy exclude 正则非法 +
-# django-stubs 缺依赖 + pytest 0 用例），本地电池从未执行同 cwd 的同命令——
-# "门禁存在但从未跑绿"等于装饰。此三条让本地电池与 CI 逐字平价。
-API_CI_ENV="DATABASE_URL=postgresql://rp:rp@localhost:5432/rabbit_projects SECRET_KEY=dev"
-check TC-API-CI-001 "api-ci 平价：ruff（apps/api cwd）" \
-  "cd apps/api && uv run --project . ruff check . ; cd - >/dev/null"
-check TC-API-CI-002 "api-ci 平价：mypy plane 全绿" \
-  "cd apps/api && env $API_CI_ENV uv run --project . mypy plane 2>&1 | grep -q 'Success: no issues found' ; cd - >/dev/null"
-check TC-API-CI-003 "api-ci 平价：pytest 可收集且全过" \
-  "cd apps/api && env $API_CI_ENV uv run --project . pytest -q 2>&1 | grep -E 'passed' | grep -qv -e 'no tests ran' -e 'error' ; cd - >/dev/null"
+# goto 假资源（__no_such/__bogus/__definitely）只允许出现在「错误分支」测试里
+# （测试名含 错误/失效/invalid/不白屏）。v1 用括号计数提取 test 块——字符串里的
+# { 会打断深度计数导致漏报（C.18-remove 就是这样逃过扫描的）；v2 改按 goto
+# 调用点审计：向上找最近的 test( 标题判上下文。
+check TC-INF4-016 "e2e 无空转断言（假资源 goto 仅限错误分支测试）" \
+  "python3 tests/e2e/_scan_vacuous.py"

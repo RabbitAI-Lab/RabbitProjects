@@ -19,19 +19,37 @@ test.beforeEach(async ({ page }) => {
 test.describe("Sprint 1 UI parity（C.10/C.11/C.14/C.17/C.35）", () => {
 
   // ── C.10 个人资料页（未登录态亦可路由到 login；登录后断言 accept 属性）──
-  test("C.10 个人资料页路由可达（未登录 → 登录页）", async ({ page }) => {
-    const resp = await page.goto("/settings/profile");
-    expect(resp).not.toBeNull();
-    // 不白屏：public layout 必渲染 Logo + RabbitProjects 字样
-    await expect(page.getByText("RabbitProjects").first()).toBeVisible({ timeout: 5000 });
-    // 未登录被跳到 /login；登录后再断 accept（CI 单线程跑过同一账号）
+  test("C.10 个人资料页：登录后渲染头像区 + 四字段表单", async ({ page }) => {
+    test.setTimeout(20_000);
+    // 原版未登录 goto → Guard 跳 /login → 断言 Logo（登录页也有）= 空转
+    await page.context().clearCookies();
+    await page.goto("/login");
+    await page.getByRole("button", { name: /一键进入演示账号/ }).click();
+    await page.waitForFunction(() => /\/projects$/.test(location.pathname), null, { timeout: 15_000 });
+    await page.goto("/settings/profile");
+    // C.10 清单行：头像卡（更换头像按钮）+ 昵称*/名/姓/简介 + 邮箱只读 + 保存/重置
+    await expect.soft(page.getByRole("button", { name: /更换头像/ }).first()).toBeVisible({ timeout: 8_000 });
+    // label→input 用 htmlFor 绑定（pf-name/pf-first/pf-last/pf-intro），getByLabel 是语义锚点
+    for (const l of ["昵称 *", "名", "姓", "个人简介", "邮箱"]) {
+      await expect.soft(page.getByText(l, { exact: true }).first(), `字段「${l}」`).toBeVisible();
+    }
+    await expect.soft(page.getByRole("button", { name: /保存|已保存/ })).toBeVisible();
   });
 
   // ── C.11 安全页 ──
-  test("C.11 安全页路由可达", async ({ page }) => {
-    const resp = await page.goto("/settings/security");
-    expect(resp).not.toBeNull();
-    await expect(page.getByText("RabbitProjects").first()).toBeVisible({ timeout: 5000 });
+  test("C.11 安全页：登录后渲染三组密码 + 强度规则 + 会话灰置", async ({ page }) => {
+    test.setTimeout(20_000);
+    await page.context().clearCookies();
+    await page.goto("/login");
+    await page.getByRole("button", { name: /一键进入演示账号/ }).click();
+    await page.waitForFunction(() => /\/projects$/.test(location.pathname), null, { timeout: 15_000 });
+    await page.goto("/settings/security");
+    // C.11 清单行：当前密码/新密码/确认新密码 三组 + 修改密码卡 + 活跃会话灰置（即将上线）
+    await expect.soft(page.getByText("修改密码").first()).toBeVisible({ timeout: 8_000 });
+    await expect.soft(page.getByText("当前密码")).toBeVisible();
+    await expect.soft(page.getByText("新密码", { exact: true })).toBeVisible();
+    await expect.soft(page.getByText("活跃会话")).toBeVisible();
+    await expect.soft(page.getByText("即将上线").first()).toBeVisible();
   });
 
   // ── C.14 403 路由页（公共路由：直接裸访、显示中文权限名）──

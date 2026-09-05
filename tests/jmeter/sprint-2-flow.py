@@ -21,7 +21,7 @@ import sys
 import time
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from _contract import CODES, HTTP, Client, error_code, q
+from _contract import CODES, HTTP, Client, detail_of, error_code, q
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
 PASS = 0
@@ -587,16 +587,383 @@ ck("T7-23", "BR-12 移除成员 → 其指派级联清空（任务转未指派�
    code == HTTP["OK"] and (body or {}).get("data", {}).get("assignee_ids") == [],
    f"got {code} {(body or {}).get('data', {}).get('assignee_ids')}")
 
-# ═══ 5. TASK-008 自定义字段（随阶段 5 落地） ═══
-# 计划锚点：
-#   - POST issue-properties/（12 类型抽样：select 选项/number/currency/date/member/
-#     checkbox/url/email/phone）；field_key 冲突 → 409；改 field_type → 400 READ_ONLY
-#   - GET field-schema/（builtin+custom、filterable/sortable 推导、ETag/304）
-#   - PATCH issues/ custom_fields 合并语义（null 显式清空；未知 key → 400 INVALID；
-#     select 越界值 → 400 NOT_A_CHOICE；必填缺失 → 400 REQUIRED）
-#   - GET ?property.<id>= 等值/包含/null + order_by=±cf_x（数字字段 9<10<100）
-#   - DELETE issue-properties/{id}/ → 202（task_id/status_url）
-#   - 50 字段上限 → 409 LIMIT（BR-10）
+# ═══ 5. TASK-008 自定义字段（12 类型/Schema ETag/缓存失效/GIN 筛选/CONCURRENTLY 索引） ═══
+section("TASK-008 自定义字段")
+
+proj8 = make_project(admin, ws, "T8A")
+
+def _props(pid=None):
+    base = f"/api/v1/workspaces/{q(ws)}/projects/{proj8}/issue-properties/"
+    return base + (f"{pid}/" if pid else "")
+
+def _mkfield(c, payload):
+    return c.req("POST", _props(), payload, {"X-CSRFToken": c.csrf()})
+
+SEV_OPTS = [
+    {"label": "致命", "value": "critical", "color": "#DC2626", "sort_order": 1},
+    {"label": "严重", "value": "major", "color": "#F59E0B", "sort_order": 2},
+    {"label": "一般", "value": "minor", "color": "#3B82F6", "sort_order": 3},
+]
+code, body = _mkfield(admin, {
+    "name": "严重等级", "field_key": "cf_severity", "field_type": "select",
+    "is_required": True, "description": "critical 需 2 小时内响应",
+    "options": SEV_OPTS, "is_indexed": True,
+})
+d = (body or {}).get("data") or {}
+sev_id = d.get("id")
+ck("T8-01", "POST 创建 select 字段（必填+索引）→ 201 含完整定义",
+   code == HTTP["CREATED"] and d.get("key") == "cf_severity" and d.get("type") == "select"
+   and len(d.get("options") or []) == 3 and d.get("required") is True and d.get("indexed") is True,
+   f"got {code} {body}")
+
+# Schema API：builtin+custom、能力后端推导（IT-09 前半）
+SCHEMA_URL = f"/api/v1/workspaces/{q(ws)}/projects/{proj8}/field-schema/"
+code, body = admin.req("GET", SCHEMA_URL)
+d = (body or {}).get("data") or {}
+sev_schema = next((f for f in d.get("custom") or [] if f.get("key") == "cf_severity"), None)
+ck("T8-02", "field-schema → 200 builtin 6 项 + custom 含 cf_severity（filterable/sortable/groupable 推导）",
+   code == HTTP["OK"] and len(d.get("builtin") or []) >= 6 and sev_schema
+   and sev_schema.get("filterable") is True and sev_schema.get("sortable") is True
+   and sev_schema.get("groupable") is True and sev_schema.get("id") == sev_id,
+   f"got {code} builtin={len(d.get('builtin') or [])}")
+etag = ((body or {}).get("meta") or {}).get("etag")
+ck("T8-03", "meta.etag 下发（W/ 前缀弱校验）", bool(etag) and etag.startswith('W/"'), f"etag={etag}")
+
+# If-None-Match 命中 → 304 空体（Envelope 中间件显式放行）。
+# 304 不在 _contract.HTTP 表（该表镜像 tests/e2e/no-console-errors.ts，本任务禁改 e2e）
+NOT_MODIFIED = 304
+code304, body304 = admin.req("GET", SCHEMA_URL, headers={"If-None-Match": etag})
+ck("T8-04", "If-None-Match 命中 → 304 空体（IT-09）",
+   code304 == NOT_MODIFIED and body304 is None, f"got {code304} {body304!r}")
+
+# 定义变更 → 新 etag（Redis 缓存主动失效后回源）
+code, body = admin.req("PATCH", _props(sev_id), {"description": "critical 需 1 小时内响应"},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T8-05", "PATCH 改帮助说明 → 200（key/type 未动）", code == HTTP["OK"], f"got {code} {body}")
+code, body = admin.req("GET", SCHEMA_URL)
+etag2 = ((body or {}).get("meta") or {}).get("etag")
+ck("T8-06", "定义变更 → 200 新 etag（≠旧值，缓存已失效）",
+   code == HTTP["OK"] and etag2 and etag2 != etag, f"{etag} -> {etag2}")
+
+# 12 类型正例抽样创建（member 用 admin——项目创建者自带 ProjectMember(ADMIN) 行）
+SAMPLES = [
+    ("cf_points", "number", {}), ("cf_cost", "currency", {}),
+    ("cf_review", "date", {}), ("cf_owner", "member", {}),
+    ("cf_done", "checkbox", {}), ("cf_link", "url", {}),
+    ("cf_memo", "text", {}), ("cf_note", "textarea", {}),
+    ("cf_versions", "multi_select", {"options": [
+        {"label": "v2.2.1", "value": "v2.2.1"}, {"label": "v2.2.2", "value": "v2.2.2"}]}),
+    ("cf_del_me", "text", {}),      # 供 T8-40 删除链路（须在上限填充前创建）
+    ("cf_clean_me", "text", {}),    # 供 T8-41 异步清理链路
+]
+ok_codes = []
+field_ids = {}
+for key, ftype, extra in SAMPLES:
+    c2, b2 = _mkfield(admin, {"name": key, "field_key": key, "field_type": ftype, **extra})
+    ok_codes.append((key, c2))
+    if c2 == HTTP["CREATED"]:
+        field_ids[key] = b2["data"]["id"]
+ck("T8-07", "12 类型抽样创建全 201（10 类 + select 已建；auto_increment 稍后）",
+   all(c == HTTP["CREATED"] for _, c in ok_codes), f"got {ok_codes}")
+
+# 负例：key 冲突 409 / P3 类型 400 / 非法 key 400 / select 无选项 400
+code, body = _mkfield(admin, {"name": "重复", "field_key": "cf_severity", "field_type": "text"})
+ck("T8-08", "同 key 重复创建 → 409 alreadyExists(UNIQUE)",
+   code == HTTP["CONFLICT"] and error_code(body) == CODES["alreadyExists"]
+   and any(x.get("field") == "field_key" and x.get("code") == "UNIQUE"
+           for x in ((body or {}).get("error") or {}).get("details") or []),
+   f"got {code} {body}")
+code, body = _mkfield(admin, {"name": "P3", "field_key": "cf_casc", "field_type": "cascade"})
+ck("T8-09", "P3 类型（cascade）→ 400 NOT_A_CHOICE（P2_ALLOWED_TYPES 白名单）",
+   code == HTTP["BAD_REQUEST"] and error_code(body) == CODES["validation"]
+   and any(x.get("code") == "NOT_A_CHOICE" for x in ((body or {}).get("error") or {}).get("details") or []),
+   f"got {code} {body}")
+code, body = _mkfield(admin, {"name": "坏键", "field_key": "cf-BAD", "field_type": "text"})
+ck("T8-10", "非法 key（cf-BAD）→ 400 INVALID",
+   code == HTTP["BAD_REQUEST"] and any(x.get("field") == "field_key" and x.get("code") == "INVALID"
+           for x in ((body or {}).get("error") or {}).get("details") or []), f"got {code} {body}")
+code, body = _mkfield(admin, {"name": "空选项", "field_key": "cf_noopt", "field_type": "select"})
+ck("T8-11", "select 无选项 → 400 REQUIRED（BR-03）",
+   code == HTTP["BAD_REQUEST"] and any(x.get("field") == "options"
+           for x in ((body or {}).get("error") or {}).get("details") or []), f"got {code} {body}")
+code, body = admin.req("PATCH", _props(sev_id), {"field_type": "number"}, {"X-CSRFToken": admin.csrf()})
+ck("T8-12", "改 field_type → 400 READ_ONLY（BR-06）",
+   code == HTTP["BAD_REQUEST"] and any(x.get("code") == "READ_ONLY"
+           for x in ((body or {}).get("error") or {}).get("details") or []), f"got {code} {body}")
+
+# ── 值读写 ────────────────────────────────────────────────────────────
+def _mkissue(name, cf=None):
+    return admin.req("POST", f"/api/v1/workspaces/{q(ws)}/projects/{proj8}/issues/",
+                     {"name": name, **({"custom_fields": cf} if cf is not None else {})},
+                     {"X-CSRFToken": admin.csrf()})
+
+def _patch_cf(iid, cf):
+    return admin.req("PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj8}/issues/{iid}/",
+                     {"custom_fields": cf}, {"X-CSRFToken": admin.csrf()})
+
+code, body = _mkissue("T8-值A", {"cf_severity": "critical", "cf_points": 9})
+i8a = ((body or {}).get("data") or {}).get("id")
+cf_a = ((body or {}).get("data") or {}).get("custom_fields") or {}
+ck("T8-13", "POST 建任务带 custom_fields → 201 且值落库",
+   code == HTTP["CREATED"] and cf_a.get("cf_severity") == "critical" and cf_a.get("cf_points") == 9,
+   f"got {code} {cf_a}")
+
+# 默认值 + auto_increment（cf_seq 在此创建 → 首个取号 1）
+_mkfield(admin, {"name": "来源", "field_key": "cf_source", "field_type": "select",
+                 "default_value": "major", "options": SEV_OPTS})
+_mkfield(admin, {"name": "自增", "field_key": "cf_seq", "field_type": "auto_increment"})
+code, body = _mkissue("T8-默认", {"cf_severity": "major"})
+cf_b = ((body or {}).get("data") or {}).get("custom_fields") or {}
+i8b = ((body or {}).get("data") or {}).get("id")
+ck("T8-14", "默认值填充（cf_source=major）+ auto_increment 取号=1",
+   code == HTTP["CREATED"] and cf_b.get("cf_source") == "major" and cf_b.get("cf_seq") == 1,
+   f"got {code} {cf_b}")
+code, body = _mkissue("T8-自增2", {"cf_severity": "major"})
+ck("T8-15", "auto_increment 第二个任务 → 2（连续取号）",
+   ((body or {}).get("data") or {}).get("custom_fields", {}).get("cf_seq") == 2, f"{body}")
+
+code, body = _mkissue("T8-缺必填")
+ck("T8-16", "必填缺失创建 → 400 cfInvalid(REQUIRED)（BR-08）",
+   code == HTTP["BAD_REQUEST"] and error_code(body) == CODES["cfInvalid"]
+   and any(x.get("field") == "cf_severity" and x.get("code") == "REQUIRED"
+           for x in ((body or {}).get("error") or {}).get("details") or []),
+   f"got {code} {body}")
+
+# PATCH 合并语义（§4.2.4：覆盖提交、未提及保留、null 显式清空）
+code, body = _patch_cf(i8a, {"cf_points": 10})
+cf_a2 = ((body or {}).get("data") or {}).get("custom_fields") or {}
+ck("T8-17", "PATCH 合并语义：改 cf_points → cf_severity 保留",
+   code == HTTP["OK"] and cf_a2.get("cf_points") == 10 and cf_a2.get("cf_severity") == "critical",
+   f"got {code} {cf_a2}")
+_patch_cf(i8a, {"cf_memo": "备注", "cf_link": "https://wiki.example.com/prd/42"})
+code, body = _patch_cf(i8a, {"cf_memo": None})
+cf_a4 = ((body or {}).get("data") or {}).get("custom_fields") or {}
+ck("T8-18", "null 显式清空 → key 移除；未提及 key 保留",
+   code == HTTP["OK"] and "cf_memo" not in cf_a4
+   and cf_a4.get("cf_link") == "https://wiki.example.com/prd/42", f"{cf_a4}")
+
+# 逐字段负例矩阵（12 类型非法值抽样 + 未知 key + 自增拒赋值）
+import uuid as _uuid
+NEG = [
+    ({"cf_severity": "blocker"}, "NOT_A_CHOICE"),
+    ({"cf_points": "42"}, "INVALID"),
+    ({"cf_cost": {"amount": "x"}}, "INVALID"),
+    ({"cf_review": "2026/09/01"}, "INVALID_DATE"),
+    ({"cf_owner": str(_uuid.uuid4())}, "DOES_NOT_EXIST"),
+    ({"cf_done": "true"}, "INVALID"),
+    ({"cf_link": "ftp://x"}, "INVALID_URL"),
+    ({"cf_versions": ["v9.9"]}, "NOT_A_CHOICE"),
+    ({"cf_seq": 999}, "READ_ONLY"),
+    ({"cf_hack": "x"}, "INVALID"),
+]
+neg_results = []
+for payload, expect_code in NEG:
+    code, body = _patch_cf(i8a, payload)
+    det = detail_of(body, next(iter(payload)))
+    neg_results.append((
+        next(iter(payload)),
+        code == HTTP["BAD_REQUEST"] and error_code(body) == CODES["cfInvalid"]
+        and det is not None and det.get("code") == expect_code,
+    ))
+ck("T8-19", "值负例矩阵 10 组 → 全 400 cfInvalid 且子码精确（未知 key BR-07 / 自增拒赋 BR-09）",
+   all(ok for _, ok in neg_results), f"{[k for k, ok in neg_results if not ok]}")
+code, body = _patch_cf(i8a, {"cf_severity": None})
+ck("T8-20", "清空必填字段 → 400 REQUIRED",
+   code == HTTP["BAD_REQUEST"] and (detail_of(body, "cf_severity") or {}).get("code") == "REQUIRED",
+   f"got {code} {body}")
+
+# 逐键 diff Activity（BR-14）
+_patch_cf(i8a, {"cf_points": 100, "cf_done": True})
+code, body = admin.req(
+    "GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj8}/issues/{i8a}/activities/?per_page=100")
+fields_cf = [a.get("field") for a in (body or {}).get("data") or []
+             if (a.get("field") or "").startswith("cf_")]
+ck("T8-21", "改 2 个自定义字段 → Activity(field=cf_*) 逐键落账（BR-14）",
+   len(fields_cf) >= 2 and "cf_points" in fields_cf and "cf_done" in fields_cf, f"{fields_cf}")
+
+# ── 筛选：?property. 等值 / 逗号 IN / null（§4.2.5）──────────────────
+def _list_qs(qs):
+    return admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj8}/issues/{qs}")
+
+# 造一行「无 severity」数据：停用必填字段 → 裸建任务 → 启用（兼测 BR-12 数据保留）
+admin.req("PATCH", _props(sev_id), {"is_active": False}, {"X-CSRFToken": admin.csrf()})
+code, body = _mkissue("T8-空值")
+i8null = ((body or {}).get("data") or {}).get("id")
+ck("T8-22a", "停用必填字段后裸建任务 → 201（resolve 不含停用字段，BR-12）",
+   code == HTTP["CREATED"], f"got {code} {body}")
+admin.req("PATCH", _props(sev_id), {"is_active": True}, {"X-CSRFToken": admin.csrf()})
+
+code, body = _list_qs(f"?property.{sev_id}=critical")
+rows = (body or {}).get("data") or []
+ck("T8-22", "?property.<id>=critical → 等值命中（GIN @>）",
+   code == HTTP["OK"] and len(rows) >= 1
+   and all((r.get("custom_fields") or {}).get("cf_severity") == "critical" for r in rows),
+   f"got {code} {len(rows)}")
+code, body = _list_qs(f"?property.{sev_id}=critical,major")
+rows = (body or {}).get("data") or []
+vals = {(r.get("custom_fields") or {}).get("cf_severity") for r in rows}
+ck("T8-23", "?property.<id>=critical,major → IN（OR 展开）",
+   code == HTTP["OK"] and vals <= {"critical", "major"} and "major" in vals, f"{vals}")
+code, body = _list_qs(f"?property.{sev_id}=null")
+rows = (body or {}).get("data") or []
+ck("T8-24", "?property.<id>=null → 未设置该字段的行",
+   code == HTTP["OK"] and {r["id"] for r in rows} == {i8null},
+   f"got {code} {[r.get('name') for r in rows]}")
+code, body = _list_qs("?property.00000000-0000-0000-0000-000000000000=1")
+ck("T8-25", "未知 property id → 400 DOES_NOT_EXIST",
+   code == HTTP["BAD_REQUEST"] and any(x.get("code") == "DOES_NOT_EXIST"
+           for x in ((body or {}).get("error") or {}).get("details") or []), f"got {code} {body}")
+
+# ── 排序：数字数值序 9<10<100（IT-07）+ select 配置序（IT-08）────────
+code, body = _mkissue("T8-排序9", {"cf_severity": "major", "cf_points": 9})
+code, body = _mkissue("T8-排序10", {"cf_severity": "minor", "cf_points": 10})
+code, body = _list_qs("?order_by=cf_points")
+pts_order = [r.get("custom_fields", {}).get("cf_points") for r in (body or {}).get("data") or []
+             if (r.get("custom_fields") or {}).get("cf_points") is not None]
+ck("T8-26", "order_by=cf_points → 数值序 9<10<100（::numeric 非字典序，IT-07）",
+   code == HTTP["OK"] and pts_order == [9, 10, 100], f"{pts_order}")
+code, body = _list_qs("?order_by=-cf_points")
+pts_desc = [r.get("custom_fields", {}).get("cf_points") for r in (body or {}).get("data") or []
+            if (r.get("custom_fields") or {}).get("cf_points") is not None]
+ck("T8-27", "order_by=-cf_points → 降序 100>10>9 且 meta.applied 回显",
+   pts_desc == [100, 10, 9]
+   and ((body or {}).get("meta") or {}).get("applied", {}).get("order_by") == "-cf_points",
+   f"{pts_desc}")
+code, body = _list_qs("?order_by=cf_severity")
+sev_order = [r.get("custom_fields", {}).get("cf_severity") for r in (body or {}).get("data") or []
+             if (r.get("custom_fields") or {}).get("cf_severity")]
+ck("T8-28", "order_by=cf_severity → 选项配置序 critical<major<minor（array_position，IT-08）",
+   sev_order == ["critical", "major", "major", "major", "minor"], f"{sev_order}")
+
+# 拖拽排序（浮点插值，BOARD-001 同算法）
+code, body = admin.req("GET", _props())
+defs = (body or {}).get("data") or []
+code, body = admin.req("PATCH", _props(field_ids["cf_del_me"]) + "sort-order/",
+                       {"prev_id": defs[0]["id"], "next_id": defs[1]["id"]},
+                       {"X-CSRFToken": admin.csrf()})
+so = ((body or {}).get("data") or {}).get("sort_order")
+ck("T8-29", "PATCH sort-order（prev/next 插值）→ 200 且返回新 sort_order",
+   code == HTTP["OK"] and isinstance(so, (int, float))
+   and defs[0]["sort_order"] <= so <= defs[1]["sort_order"] + 65536, f"got {code} {body}")
+
+# 权限矩阵（IT-10：CONTRIBUTOR 无授权建字段 → 403）
+t8user, t8email = _signup("t8c-")
+_inv = admin.req("POST", f"/api/v1/workspaces/{q(ws)}/invitations/", {"emails": [t8email], "role": 10},
+                 {"X-CSRFToken": admin.csrf()})
+_links = ((_inv[1] or {}).get("meta") or {}).get("invite_links") or {}
+_tok = (_links.get(t8email) or "").rsplit("/", 1)[-1]
+t8user.req("POST", f"/api/v1/invitations/{_tok}/accept/", {}, {"X-CSRFToken": t8user.csrf()})
+admin.req("POST", f"/api/v1/workspaces/{q(ws)}/projects/{proj8}/members/",
+          {"member_ids": [_uid(t8user)], "role": 15}, {"X-CSRFToken": admin.csrf()})
+code, body = _mkfield(t8user, {"name": "越权", "field_key": "cf_no_auth", "field_type": "text"})
+ck("T8-30", "CONTRIBUTOR 建字段 → 403（BR-15 IT-10）",
+   code == HTTP["FORBIDDEN"] and error_code(body) == CODES["roleInsufficient"], f"got {code} {body}")
+code, _ = outsider.req("GET", _props(), None, {"X-CSRFToken": outsider.csrf()})
+ck("T8-31", "外部用户 GET 字段列表 → 404（AUTH-003 防枚举）", code == HTTP["NOT_FOUND"], f"got {code}")
+
+# WS 全局字段（BR-15 WS Admin）+ 缓存跨项目失效（BR-13 SCAN）
+code, body = admin.req("POST", f"/api/v1/workspaces/{q(ws)}/issue-properties/",
+                       {"name": "全局来源", "field_key": "cf_global_src", "field_type": "text"},
+                       {"X-CSRFToken": admin.csrf()})
+g = (body or {}).get("data") or {}
+ck("T8-32", "WS Admin 创建全局字段 → 201 scope=global",
+   code == HTTP["CREATED"] and g.get("scope") == "global", f"got {code} {body}")
+code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/field-schema/")
+g_in_old = any(f.get("key") == "cf_global_src" for f in ((body or {}).get("data") or {}).get("custom") or [])
+ck("T8-33", "全局字段出现在**另一项目** schema（全局变更 → 该 WS 全部项目缓存失效，BR-13）",
+   code == HTTP["OK"] and g_in_old, f"got {code}")
+code, body = t8user.req("POST", f"/api/v1/workspaces/{q(ws)}/issue-properties/",
+                        {"name": "越权全局", "field_key": "cf_no_ws_admin", "field_type": "text"},
+                        {"X-CSRFToken": t8user.csrf()})
+ck("T8-34", "WS 普通成员建全局字段 → 403", code == HTTP["FORBIDDEN"], f"got {code} {body}")
+
+# 50 字段上限（BR-10）：按**启用中**计数补满 → 第 51 个 409
+code, body = admin.req("GET", _props() + "?scope=all")
+cur_count = sum(1 for f in (body or {}).get("data") or [] if f.get("is_active"))
+for i in range(50 - cur_count):
+    c2, _b = _mkfield(admin, {"name": f"填充{i}", "field_key": f"cf_fill_{i:02d}", "field_type": "text"})
+    if c2 != HTTP["CREATED"]:
+        break
+code, body = _mkfield(admin, {"name": "第51个", "field_key": "cf_over_limit", "field_type": "text"})
+ck("T8-35", "第 51 个启用字段 → 409 LIMIT（BR-10）",
+   code == HTTP["CONFLICT"] and error_code(body) == CODES["limitExceeded"]
+   and any(x.get("code") == "LIMIT" for x in ((body or {}).get("error") or {}).get("details") or []),
+   f"got {code} cur={cur_count} {body}")
+
+# is_indexed ≤10：cf_severity 已 1 个 → 补到 10 后第 11 个 409
+code, body = admin.req("GET", _props() + "?scope=all")
+idx_fields = [f for f in (body or {}).get("data") or []]
+idx_count = sum(1 for f in idx_fields if f.get("indexed"))
+for f in idx_fields:
+    if idx_count >= 10:
+        break
+    if not f.get("indexed") and f.get("type") == "text":
+        admin.req("PATCH", _props(f["id"]), {"is_indexed": True}, {"X-CSRFToken": admin.csrf()})
+        idx_count += 1
+code, body = _mkfield(admin, {"name": "第11索引", "field_key": "cf_idx_over", "field_type": "text",
+                              "is_indexed": True})
+ck("T8-36", "第 11 个 is_indexed → 409 LIMIT",
+   code == HTTP["CONFLICT"] and error_code(body) == CODES["limitExceeded"], f"got {code} idx={idx_count} {body}")
+
+# CONCURRENTLY 表达式索引落地（IT-06：需本地 worker；md5 前 16 位命名幂等）
+def _pg_index_exists(idx_name):
+    import subprocess
+
+    r = subprocess.run(  # noqa: S603 —— 常量 SQL + 固定索引名
+        ["docker", "exec", "-i", "rp-pg", "psql", "-U", "rp", "-d", "rabbit_projects", "-t", "-A",
+         "-c", f"SELECT 1 FROM pg_indexes WHERE indexname = '{idx_name}'"],
+        capture_output=True, text=True, timeout=15)
+    return r.returncode == 0 and r.stdout.strip() == "1"
+
+import hashlib as _hl
+_idx_name = "idx_issue_cf_" + _hl.md5(b"cf_severity").hexdigest()[:16]
+try:
+    _idx_ok = False
+    for _ in range(20):  # 轮询 worker 异步建索引（≤10s）
+        if _pg_index_exists(_idx_name):
+            _idx_ok = True
+            break
+        time.sleep(0.5)
+    ck("T8-37", "CONCURRENTLY 表达式偏索引建成（IT-06，需 worker；idx_issue_cf_md5[:16]）",
+       _idx_ok, f"等待 {_idx_name} 超时（worker 未运行？）")
+except Exception as _e:  # noqa: BLE001 —— docker 不可达时显式红
+    ck("T8-37", "CONCURRENTLY 表达式偏索引建成（IT-06，需 worker）", False, f"pg 探测失败：{_e}")
+
+# ── 删除：202 + 异步清理（BR-11）────────────────────────────────────
+code, body = admin.req("DELETE", _props(field_ids["cf_del_me"]), None, {"X-CSRFToken": admin.csrf()})
+dd = (body or {}).get("data") or {}
+code2, body2 = admin.req("GET", SCHEMA_URL)
+gone = not any(f.get("key") == "cf_del_me" for f in ((body2 or {}).get("data") or {}).get("custom") or [])
+ck("T8-38", "DELETE 字段 → 202 {task_id,state,affected_issues,status_url} 且 Schema 立即无此字段",
+   code == HTTP["ACCEPTED"] and dd.get("task_id") and dd.get("status_url", "").startswith("/api/v1/tasks/")
+   and isinstance(dd.get("affected_issues"), int) and "state" in dd and gone,
+   f"got {code} {body}")
+
+# 停用/启用往返（BR-12）
+code, body = admin.req("PATCH", _props(sev_id), {"is_active": False}, {"X-CSRFToken": admin.csrf()})
+ck("T8-39", "停用字段 → 200（数据保留，表单/筛选隐藏）",
+   code == HTTP["OK"] and ((body or {}).get("data") or {}).get("is_active") is False, f"got {code} {body}")
+code, body = admin.req("GET", SCHEMA_URL)
+hidden = not any(f.get("key") == "cf_severity" for f in ((body or {}).get("data") or {}).get("custom") or [])
+code, body = admin.req("PATCH", _props(sev_id), {"is_active": True}, {"X-CSRFToken": admin.csrf()})
+ck("T8-40", "停用即从 Schema 消失（缓存失效）→ 重新启用原样恢复",
+   hidden and code == HTTP["OK"], f"hidden={hidden} got {code}")
+
+# 清理任务真跑通（worker 消费 cleanup_deleted_field_values → JSONB key 移除）
+_patch_cf(i8b, {"cf_clean_me": "x"})
+code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj8}/issues/{i8b}/")
+_seen = "cf_clean_me" in (((body or {}).get("data") or {}).get("custom_fields") or {})
+code, body = admin.req("DELETE", _props(field_ids["cf_clean_me"]), None, {"X-CSRFToken": admin.csrf()})
+ck("T8-41", "删除清理前置：值已落库且 DELETE → 202", _seen and code == HTTP["ACCEPTED"], f"_seen={_seen} {code}")
+_cleaned = False
+for _ in range(30):  # 轮询 ≤15s
+    code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj8}/issues/{i8b}/")
+    if "cf_clean_me" not in (((body or {}).get("data") or {}).get("custom_fields") or {}):
+        _cleaned = True
+        break
+    time.sleep(0.5)
+ck("T8-42", "异步清理 JSONB key（分批 2000 / GIN 扫描，需 worker）",
+   _cleaned, "轮询 15s 后 key 仍在（worker 未运行或任务失败）")
 
 # ═══ 6. TASK-009 复制/归档（随阶段 6 落地） ═══
 # 计划锚点：
@@ -616,7 +983,7 @@ ck("T7-23", "BR-12 移除成员 → 其指派级联清空（任务转未指派�
 
 # ═══ 汇总 ═══
 
-print(f"\n{'═' * 40}\nSprint 2 接口流程：{PASS} 通过 / {FAIL} 失败（TASK-008~010 段待逐段填充）")
+print(f"\n{'═' * 40}\nSprint 2 接口流程：{PASS} 通过 / {FAIL} 失败（TASK-009/010 段待逐段填充）")
 if FAILURES:
     print("\n".join("  ✗ " + f for f in FAILURES))
     sys.exit(1)

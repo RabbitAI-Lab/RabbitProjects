@@ -39,6 +39,12 @@ from plane.base.exception import AppException
 from plane.base.response import created_response, success_response
 from plane.db.models import Issue, IssueActivity, IssueType, Label, State
 from plane.db.models.roles import ProjectRole
+from plane.db.services.custom_fields import (
+    assign_auto_increments,
+    diff_custom_fields,
+    merge_custom_fields,
+    validate_custom_fields,
+)
 from plane.db.services.issue_assignee import sync_assignees_full
 from plane.db.services.issue_hierarchy import (
     CircularDependencyError,
@@ -130,7 +136,7 @@ class IssueListCreateView(ListCreateAPIView):
         # ── filter + search（IssueFilterSet 单一实现，TASK-003 §4.3.1）──
         # 看板模式裁剪 state_id（BOARD-002 §2.2）；list 默认全集
         drop_keys = ("state_id",) if request.query_params.get("group_by") == "state_id" else ()
-        filterset = IssueFilterSet(request, drop_keys=drop_keys)
+        filterset = IssueFilterSet(request, drop_keys=drop_keys, project=project)
         q_obj = filterset.build_query(request.query_params)
 
         qs = (
@@ -274,8 +280,13 @@ class IssueListCreateView(ListCreateAPIView):
 
         max_order = Issue.objects.filter(project=project, deleted_at__isnull=True).aggregate(m=Max("sort_order"))["m"]
         epoch = _current_epoch()
+        effective_type_id = s.validated_data.get("type_id")
 
         with transaction.atomic():
+            # TASK-008 §2.3：custom_fields 整体校验（未知 key 拒绝 → 逐字段 → 默认值填充
+            # → 空值不落 key）+ auto_increment 在事务内取号（advisory lock，BR-09）
+            cleaned_cf = validate_custom_fields(project, effective_type_id, request.data.get("custom_fields") or {})
+            cleaned_cf = assign_auto_increments(project.id, effective_type_id, cleaned_cf)
             issue = create_issue_svc(
                 project_id=project.id,
                 actor_id=request.user.id,
@@ -284,12 +295,13 @@ class IssueListCreateView(ListCreateAPIView):
                     "description_html": s.validated_data.get("description_html", "<p></p>"),
                     "description_json": s.validated_data.get("description_json", {}),
                     "state_id": state_id,
-                    "issue_type_id": s.validated_data.get("type_id"),
+                    "issue_type_id": effective_type_id,
                     "priority": s.validated_data.get("priority", Issue.Priority.NONE),
                     "start_date": s.validated_data.get("start_date"),
                     "target_date": s.validated_data.get("target_date"),
                     "parent_id": s.validated_data.get("parent_id"),
                     "prev_sort_order": max_order,
+                    "custom_fields": cleaned_cf,
                 },
             )
             if assignee_ids:
@@ -604,6 +616,23 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
             )
             issue.sort_order = data["sort_order"]
 
+        # ---- custom_fields（TASK-008 §4.2.4 PATCH 合并语义 + BR-14 逐键 diff）----
+        if "custom_fields" in data:
+            # 类型变更与字段值同请求提交时，按**新类型**的作用域校验（issue_type 段已先行赋值）
+            merged_cf = merge_custom_fields(
+                project, issue.issue_type_id, issue.custom_fields or {}, data["custom_fields"]
+            )
+            for change in diff_custom_fields(issue.custom_fields, merged_cf):
+                activities.append(
+                    {
+                        "field": change["key"],  # cf_<key>（key 本身已带前缀）
+                        "old": change["old"],
+                        "new": change["new"],
+                        "comment": f"更新了自定义字段 {change['key']}",
+                    }
+                )
+            issue.custom_fields = merged_cf
+
         # ---- 负责人（TASK-007：兼容路径收敛 sync_assignees_full 唯一写入口，
         #      保留原有 assignees 汇总 Activity 行；逐人明细行由 on_commit 任务补写 BR-10）----
         if "assignee_ids" in data:
@@ -828,6 +857,11 @@ class IssueSubIssueListCreateView(APIView):
         epoch = _current_epoch()
 
         with transaction.atomic():
+            # TASK-008：子任务创建同样走 12 类型校验 + auto_increment 取号
+            cleaned_cf = validate_custom_fields(
+                project, s.validated_data.get("type_id"), request.data.get("custom_fields") or {}
+            )
+            cleaned_cf = assign_auto_increments(project.id, s.validated_data.get("type_id"), cleaned_cf)
             sub = create_issue_svc(
                 project_id=project.id,
                 actor_id=request.user.id,
@@ -843,6 +877,7 @@ class IssueSubIssueListCreateView(APIView):
                     "start_date": s.validated_data.get("start_date"),
                     "target_date": s.validated_data.get("target_date"),
                     "prev_sort_order": max_order,
+                    "custom_fields": cleaned_cf,
                 },
             )
             if assignee_ids:

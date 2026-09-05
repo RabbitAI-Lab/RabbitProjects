@@ -43,3 +43,23 @@ class AppValidationError(APIException):
         self.extra_details = list(errors) if isinstance(errors, list) else [errors]
         self.doc_url = None
         super().__init__(self.detail_message)
+
+
+class CustomFieldValidationError(APIException):
+    """自定义字段值校验错误（TASK-008 §2.5）—— 400 VALIDATION_CUSTOM_FIELD_INVALID。
+
+    与 AppValidationError 同构（handler 第 1 步按 ``error_code`` 直接装配），
+    ``details[].field`` 为字段键名（``cf_<key>``），``code`` 为字段级子码
+    （INVALID / NOT_A_CHOICE / REQUIRED / INVALID_DATE / INVALID_URL / DOES_NOT_EXIST / READ_ONLY）。
+    """
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    default_code = "validation_custom_field_invalid"
+
+    def __init__(self, errors: list[dict] | dict):
+        self.error_code = "VALIDATION_CUSTOM_FIELD_INVALID"
+        self.http_status = self.status_code
+        self.detail_message = "自定义字段值不符合定义"
+        self.extra_details = list(errors) if isinstance(errors, list) else [errors]
+        self.doc_url = None
+        super().__init__(self.detail_message)

@@ -79,6 +79,7 @@ FEATURE_MODULES = (
     "comments",         # COLLAB-001 评论
     "notifications",    # COLLAB-001 通知中心
     "stats",            # RPT-001 个人统计
+    "custom_fields",    # TASK-008 自定义字段（Schema API + 管理 CRUD）
 )
 
 for _name in FEATURE_MODULES:

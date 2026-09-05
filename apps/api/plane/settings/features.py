@@ -17,3 +17,11 @@ MAX_SUB_ISSUES_PER_PARENT: int = 100
 
 #: subtree/ 展示截断阈值（TASK-004 BR-11：truncated=true 时不装配 stats）
 SUBTREE_NODE_LIMIT: int = 500
+
+#: ── Sprint-2 TASK-008 自定义字段（BR-10 / §4.3.1）──
+#: 单 Workspace 启用字段上限（超出 → 409 RESOURCE_LIMIT_EXCEEDED / LIMIT）
+MAX_CUSTOM_FIELDS_PER_WORKSPACE: int = 50
+#: 单 Workspace is_indexed 表达式索引上限（写入放大锁死在 10-15%，架构 §6.5）
+MAX_INDEXED_CUSTOM_FIELDS_PER_WORKSPACE: int = 10
+#: Schema Redis 缓存 TTL（秒）—— 读极多写极少，1h TTL + 写时失效双保险
+FIELD_SCHEMA_CACHE_TTL_SECONDS: int = 3600

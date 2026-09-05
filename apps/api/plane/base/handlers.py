@@ -39,7 +39,9 @@ CONSTRAINT_MAP = {
     "uniq_state_name_per_project_type": ("RESOURCE_ALREADY_EXISTS", "name"),
     "chk_issue_start_before_target":    ("VALIDATION_INVALID_DATE_RANGE", "target_date"),
     "chk_issue_link_no_self":           ("VALIDATION_ERROR", "related_issue_id"),
-    "chk_worklog_minutes_range":       ("VALIDATION_ERROR", "minutes"),
+    "chk_worklog_minutes_range":        ("VALIDATION_ERROR", "minutes"),
+    "uniq_global_field_key_per_workspace": ("RESOURCE_ALREADY_EXISTS", "field_key"),  # TASK-008 BR-02
+    "uniq_project_field_key":           ("RESOURCE_ALREADY_EXISTS", "field_key"),    # TASK-008 BR-02
 }
 
 

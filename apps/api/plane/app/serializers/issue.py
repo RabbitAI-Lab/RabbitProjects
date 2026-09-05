@@ -63,6 +63,8 @@ class IssueSerializer(serializers.ModelSerializer):
     archived_at = serializers.DateTimeField(read_only=True, allow_null=True)
     estimate_minutes = serializers.IntegerField(read_only=True, allow_null=True)
     spent_minutes = serializers.SerializerMethodField()
+    # TASK-008：自定义字段值（JSONB 整列透出；停用字段的值保留在响应中由 UI 过滤）
+    custom_fields = serializers.JSONField(read_only=True)
 
     def get_spent_minutes(self, obj) -> int:
         # 列表/详情 queryset 已 annotate（缺省 0）；无 annotate 场景兜底实时查
@@ -100,6 +102,7 @@ class IssueSerializer(serializers.ModelSerializer):
             "sort_order",
             "estimate_minutes",
             "spent_minutes",
+            "custom_fields",
             "created_by",
             "created_at",
             "updated_at",
@@ -180,6 +183,8 @@ class IssueWriteSerializer(serializers.Serializer):
     target_date = serializers.DateField(required=False, allow_null=True)
     sort_order = serializers.FloatField(required=False)
     estimate_minutes = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    # TASK-008 §4.2.4：custom_fields 对象读写（校验在 Service 层——12 类型校验器）
+    custom_fields = serializers.DictField(required=False)
 
     def validate(self, attrs):
         # 写侧校验需要的 project/instance 从 context 注入（view 层设置）

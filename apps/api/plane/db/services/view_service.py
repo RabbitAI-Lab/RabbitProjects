@@ -5,8 +5,14 @@
 """
 from __future__ import annotations
 
+import uuid as uuid_module
+from datetime import timedelta
+
+from django.db.models import Q
+from django.utils import timezone
+
 from plane.base.exception import AppException
-from plane.db.models import IssueView
+from plane.db.models import IssueType, IssueView
 from plane.db.services.field_schema import get_cached_schema
 from plane.settings.features import MAX_VIEWS_PER_PROJECT
 
@@ -296,3 +302,95 @@ def resolve_view(view: IssueView, *, project, user) -> tuple[dict, dict | None]:
         degraded["group_by"] = f"{group_by} 已停用，已回退为按状态分组"
         group_by = "state_id"
     return {"op": "AND", "conditions": conditions}, degraded
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 扁平条件编译（读取侧；TASK-011 全量编译器同族接管后由 compiler.py 收编）
+# ─────────────────────────────────────────────────────────────────────
+#: 类型名占位符 → 项目内 IssueType.name（编译期解析为 UUID，§4.1.1 注）
+_TYPE_NAME_PLACEHOLDERS = {"__requirement__": "需求", "__bug__": "缺陷", "__test__": "测试"}
+
+
+def _resolve_type_ids(project, values: list) -> list:
+    """类型值（占位符 / 类型名 / UUID）→ issue_type_id 列表；无匹配 → 空集（条件命中零行）。"""
+    names = {v for v in values if not _is_uuid(v)}
+    type_ids = [uuid_module.UUID(v) for v in values if _is_uuid(v)]
+    if names:
+        rows = IssueType.objects.filter(
+            workspace_id=project.workspace_id, name__in=names, deleted_at__isnull=True
+        ).values_list("id", flat=True)
+        type_ids.extend(rows)
+    return type_ids
+
+
+def _is_uuid(v) -> bool:
+    try:
+        uuid_module.UUID(str(v))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+def _date_range(value: str) -> tuple | None:
+    """日期占位符 → (start, end) 闭区间（按服务器本地时区；TASK-011 接管用户时区口径）。"""
+    today = timezone.localdate()
+    if value == "today":
+        return today, today
+    if value == "this_week":
+        start = today - timedelta(days=today.weekday())
+        return start, start + timedelta(days=6)
+    if value == "overdue":
+        return None, today
+    return None
+
+
+def compile_view_filters(project, user, conditions: list[dict]) -> tuple[Q, dict]:
+    """视图扁平条件 → Q + applied 回显（字段域经保存防线校验，此处只做映射）。
+
+    仅覆盖内置五视图与扁平个人视图用到的字段/操作符组合；TASK-011 全量编译器
+    （build_issue_queryset）落地后本函数退役收编。
+    """
+    q = Q()
+    applied: dict = {}
+    for cond in conditions:
+        field, op, value = cond.get("field"), cond.get("operator"), cond.get("value") or []
+        if field == "issue_type" and op == "in":
+            ids = _resolve_type_ids(project, value)
+            q &= Q(issue_type_id__in=ids)
+        elif field == "priority" and op == "in":
+            q &= Q(priority__in=value)
+        elif field == "state" and op == "in":
+            q &= Q(state_id__in=[v for v in value if _is_uuid(v)])
+        elif field == "state.group" and op == "in":
+            q &= Q(state__group__in=value)
+        elif field == "assignees" and op == "in":
+            ids = [str(user.id) if v == "@me" else v for v in value if v == "@me" or _is_uuid(v)]
+            q &= Q(issue_assignees__assignee_id__in=ids)
+        elif field == "assignees" and op == "is_empty":
+            q &= Q(issue_assignees__isnull=True)
+        elif field == "labels" and op == "in":
+            q &= Q(issue_labels__label_id__in=[v for v in value if _is_uuid(v)])
+        elif field == "target_date" and op == "between":
+            if len(value) == 1 and value[0] in ("today", "this_week", "overdue"):
+                rng = _date_range(value[0])
+                if rng:
+                    lo, hi = rng
+                    range_kwargs: dict = {}
+                    if lo is not None:
+                        range_kwargs["target_date__gte"] = lo
+                    if hi is not None:
+                        range_kwargs["target_date__lte"] = hi
+                    q &= Q(**range_kwargs)
+            elif len(value) == 2:
+                q &= Q(target_date__gte=value[0], target_date__lte=value[1])
+        elif field == "target_date" and op in ("eq", "before", "after"):
+            lookup = {"eq": "exact", "before": "lt", "after": "gt"}[op]
+            q &= Q(**{f"target_date__{lookup}": value[0] if value else None})
+        elif field == "created_by" and op == "in":
+            q &= Q(created_by_id__in=[v for v in value if _is_uuid(v)])
+        else:
+            # 保存防线外的组合（如历史数据）：跳过该条件并回显，不阻断读取
+            applied.setdefault("_skipped", []).append(f"{field}.{op}")
+            continue
+        applied[field] = value
+    return q, applied

@@ -22,7 +22,7 @@ import base64
 import time
 
 from django.db import transaction
-from django.db.models import Count, Max
+from django.db.models import Max, Q
 from rest_framework.exceptions import NotFound
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
 from rest_framework.views import APIView
@@ -37,7 +37,7 @@ from plane.app.serializers.issue import (
 from plane.app.views._access import get_project_or_404
 from plane.base.exception import AppException
 from plane.base.response import created_response, success_response
-from plane.db.models import Issue, IssueActivity, IssueType, Label, State
+from plane.db.models import Issue, IssueActivity, IssueType, IssueView, Label, State
 from plane.db.models.roles import ProjectRole
 from plane.db.services.custom_fields import (
     assign_auto_increments,
@@ -47,6 +47,14 @@ from plane.db.services.custom_fields import (
 )
 from plane.db.services.issue_archive import assert_issue_writable
 from plane.db.services.issue_assignee import sync_assignees_full
+from plane.db.services.issue_grouping import (
+    column_counts,
+    drop_filter_keys,
+    get_group_columns,
+    group_filter_q,
+    in_column_ordering,
+    resolve_dimension,
+)
 from plane.db.services.issue_hierarchy import (
     CircularDependencyError,
     DepthLimitExceeded,
@@ -62,6 +70,7 @@ from plane.db.services.issue_link import TransitionBlockedError
 from plane.db.services.issue_query import IssueFilterSet
 from plane.db.services.issue_sequence import create_issue as create_issue_svc
 from plane.db.services.issue_transition_guard import assert_completable
+from plane.db.services.view_service import compile_view_filters, resolve_view
 from plane.settings.features import (
     MAX_ISSUE_DEPTH,
     MAX_SUB_ISSUES_PER_PARENT,
@@ -141,18 +150,35 @@ class IssueListCreateView(ListCreateAPIView):
 
     def list(self, request, *args, **kwargs):
         project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
+        include_archived = str(request.query_params.get("archived", "")).lower() in ("true", "1")
+
+        # ── group_by 维度解析（BOARD-003 §4.2-6：白名单 + 别名归一，非法 → 400）──
+        dimension = None
+        if request.query_params.get("group_by"):
+            dimension = resolve_dimension(project, request.query_params.get("group_by"))
+
+        # ── view_id 展开（视图 filters 为底座，URL 筛选叠加恒取 AND——三层筛选的视图层）──
+        view_q = Q()
+        view_applied: dict = {}
+        degraded = None
+        view_id_out = None
+        if raw_vid := request.query_params.get("view_id"):
+            view = IssueView.objects.filter(id=raw_vid, project=project, deleted_at__isnull=True).first()
+            managed = project.current_user_role >= ProjectRole.CONTRIBUTOR  # board.manage（审计）
+            if view is None or not (view.is_system or view.owner_id == request.user.id or managed):
+                raise NotFound("RESOURCE_NOT_FOUND") from None  # 存在性隐藏（§6）
+            filters, degraded = resolve_view(view, project=project, user=request.user)
+            view_q, view_applied = compile_view_filters(project, request.user, filters.get("conditions", []))
+            view_id_out = str(view.id)
 
         # ── filter + search（IssueFilterSet 单一实现，TASK-003 §4.3.1）──
-        # 看板模式裁剪 state_id（BOARD-002 §2.2）；list 默认全集
-        drop_keys = ("state_id",) if request.query_params.get("group_by") == "state_id" else ()
+        # 分组维度对应的筛选参数动态出域（BOARD-002「减 state_id」的泛化，BOARD-003 §4.2 注）
+        drop_keys = drop_filter_keys(dimension) if dimension else ()
         filterset = IssueFilterSet(request, drop_keys=drop_keys, project=project)
-        q_obj = filterset.build_query(request.query_params)
+        q_obj = filterset.build_query(request.query_params) & view_q
 
         qs = (
-            self._base_queryset(
-                project,
-                include_archived=str(request.query_params.get("archived", "")).lower() in ("true", "1"),
-            )
+            self._base_queryset(project, include_archived=include_archived)
             .annotate(
                 # 计数 annotate —— 列表与卡片渲染消费
                 **issue_count_annotations(),
@@ -164,9 +190,13 @@ class IssueListCreateView(ListCreateAPIView):
         # ── 排序（含 priority 语义权重，BR-05）──
         qs, warning = filterset.apply_order(qs, request.query_params.get("order_by"))
 
-        # ── group_by=state_id 走看板分支（BOARD-002 §4.2.1）──
-        if request.query_params.get("group_by") == "state_id":
-            return self._kanban_grouped_response(request, project, qs, filterset, warning)
+        # ── group_by 走分组分支（BOARD-002 契约的维度泛化，BOARD-003 §4.2.2）──
+        if dimension:
+            base_unfiltered = self._base_queryset(project, include_archived=include_archived)
+            return self._grouped_response(
+                request, project, qs, base_unfiltered, filterset, warning,
+                dimension, view_applied, degraded, view_id_out,
+            )
 
         # ── 平铺列表：游标分页（轻量实现：created_at-desc + id + offset 编码）──
         return self._flat_list_response(qs, filterset, warning)
@@ -197,39 +227,57 @@ class IssueListCreateView(ListCreateAPIView):
             meta["ignored_params"] = filterset.ignored_params
         return success_response(IssueSerializer(rows, many=True).data, meta=meta)
 
-    def _kanban_grouped_response(self, request, project, base_qs, filterset, warning):
-        """看板分组：每 State 一键覆盖全量 State（含 cancelled 第 4 列）；组内 25 条。"""
+    def _grouped_response(
+        self, request, project, base_qs, base_unfiltered, filterset, warning,
+        dimension, view_applied, degraded, view_id,
+    ):
+        """分组响应（BOARD-003 §4.2.2，BOARD-002 契约的维度泛化）。
+
+        列集合从配置源生成（零 DISTINCT，BR-06）；空列恒在；组内 25 +
+        total_results（筛选后）/ unfiltered_total_results（筛选前）；键 = 裸列值
+        （State UUID / 枚举值 / 成员·标签 UUID / 选项值 / __none__），响应不内嵌
+        组元数据（BR-16）——列头名称与颜色由前端配置源渲染。
+        """
         per_group = self._parse_group_per_page()
-        states = State.objects.filter(project=project, deleted_at__isnull=True).order_by("sort_order")
-        # 用单条 GROUP BY 一次性取每组 count（避免 N+1）
-        # order_by() 清空排序是必须的：base_qs 已经过 apply_order()，Django 会把排序列
-        # 一并塞进 GROUP BY，于是每行自成一组、n 恒为 1，dict() 再把同 state 的组覆盖成
-        # 最后一条 —— 各组 total_results 之和会远小于真实总数（BRD-04 守护）。
-        # distinct=True 与上游 .distinct()（M2M 筛选去重）保持同口径。
-        counts_by_state = dict(base_qs.order_by().values_list("state_id").annotate(n=Count("id", distinct=True)))
+        columns = get_group_columns(project, dimension)
+        # 单条 GROUP BY 取每列计数（避免 N+1；order_by() 清空防排序列进 GROUP BY）
+        filtered_counts = column_counts(base_qs, dimension, project)
+        unfiltered_counts = column_counts(base_unfiltered, dimension, project)
+        ordering = in_column_ordering(dimension)
         grouped: dict[str, dict] = {}
         group_cursors: dict[str, dict] = {}
-        for st in states:
-            group_qs = base_qs.filter(state_id=st.id)
+        for col in columns:
+            key = col["key"]
+            total = filtered_counts.get(key, 0)
             offset = self._parse_cursor_offset()
-            total = counts_by_state.get(st.id, 0)
-            rows = list(group_qs.order_by("sort_order", "-created_at", "-id")[offset : offset + per_group])
+            rows = []
+            if total:
+                rows = list(
+                    base_qs.filter(group_filter_q(dimension, key)).order_by(*ordering)[
+                        offset : offset + per_group
+                    ]
+                )
             next_cursor = (
-                self._encode_cursor(offset + per_group, group_id=str(st.id)) if offset + per_group < total else None
+                self._encode_cursor(offset + per_group, group_id=key) if offset + per_group < total else None
             )
-            grouped[str(st.id)] = {
+            grouped[key] = {
                 "results": IssueSerializer(rows, many=True).data,
                 "total_results": total,
+                "unfiltered_total_results": unfiltered_counts.get(key, 0),
             }
-            group_cursors[str(st.id)] = {"next_cursor": next_cursor}
+            group_cursors[key] = {"next_cursor": next_cursor}
 
         meta = {
-            "grouped_by": "state_id",
+            "grouped_by": dimension,
             "sub_grouped_by": None,
             "total_count": base_qs.count(),
-            "applied": filterset.applied,
+            "applied": {**view_applied, **filterset.applied},
             "group_cursors": group_cursors,
         }
+        if view_id:
+            meta["view_id"] = view_id
+        if degraded:
+            meta["degraded"] = degraded
         merged_warning = filterset.merge_warnings(warning)
         if merged_warning:
             meta["warning"] = merged_warning

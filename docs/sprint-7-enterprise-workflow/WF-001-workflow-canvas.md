@@ -11,7 +11,7 @@
 | 上游依赖 | Sprint 6 标准版 V1.0 发布（状态模型稳定）；`TASK-005` 完成守卫（BLOCKER_SQL 钩子）；`TASK-010` Activity 管道 |
 | 下游消费 | **WF-002**（审批挂接 `side_effects` 协议 / `approval_flow` FK）、**WF-003**（自动化规则消费流转事件）、**WF-004**（守卫矩阵落地 `guards` 协议）、**WF-005**（模板序列化为三表结构）、**WF-006**（审批留痕）、Sprint 8 组织治理 |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-04（R3 修复：两行模型语义与 based_on_version 列、BR-16 重号、发布校验 code 统一、裸 `*` 语法、模块码 M11-WF；R2：BR-16 初始态接线、assert_completable 关键字、ETag bump、STATE_IN_USE 优先级、示例修正；R1：信封、issue.state.transition、GUEST 列、依赖登记、PUT graph 契约、示例、NULL 唯一性、If-Match） |
+| 最后更新日期 | 2026-09-04（R6 修复：§4.8③ 矩阵补 INITIAL_MISMATCH（BR-16 ⑤）；R5：BR-16 发布校验第⑤项 INITIAL_MISMATCH + UT-07b + IT-04、E2E-06 衍文、§4.5 signals 注；R3：两行模型语义与 based_on_version 列、BR-16 重号、发布校验 code 统一、裸 `*` 语法、模块码 M11-WF；R2：BR-16 初始态接线、assert_completable 关键字、ETag bump、STATE_IN_USE 优先级、示例修正；R1：信封、issue.state.transition、GUEST 列、依赖登记、PUT graph 契约、示例、NULL 唯一性、If-Match） |
 
 ---
 
@@ -767,7 +767,7 @@ def validate_for_publish(wf: Workflow) -> list[PublishIssue]:
 | 工时必填未填 | 400 | `VALIDATION_ESTIMATE_REQUIRED` | — |
 | 边角色不符 | 403 | `PERM_TRANSITION_NOT_ALLOWED` | `required_roles` 所需角色清单（WF-004 §2 格式） |
 | 多边未指定 `transition_id` | 400 | `VALIDATION_ERROR` | 子码 `REQUIRED` |
-| 发布校验失败（BR-08 四类结构问题：NON_SINGLE_INITIAL/UNREACHABLE/NO_COMPLETED/MISSING_REF） | 400 | `VALIDATION_ERROR` | `details[]` 每项一条，`code`=上述四类、`message`=描述，附 `node_ids` 定位 |
+| 发布校验失败（BR-08 四类结构问题 + BR-16 ⑤初始态一致） | 400 | `VALIDATION_ERROR` | `details[]` 每项一条，`code` ∈ {NON_SINGLE_INITIAL / UNREACHABLE / NO_COMPLETED / MISSING_REF / INITIAL_MISMATCH}、`message`=描述，附 `node_ids` 定位 |
 | 发布在用状态阻断（BR-09 STATE_IN_USE；优先级高于 400） | 409 | `RESOURCE_STATE_INVALID` | `affected[]`（state_id + count） |
 | 重复发布/草稿 | 409 | `RESOURCE_ALREADY_EXISTS` | DB 部分唯一索引兜底 |
 

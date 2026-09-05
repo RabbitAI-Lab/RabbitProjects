@@ -146,7 +146,7 @@ cf_ + snake_case 英文标识符
 
 前缀的三个作用：一是与未来可能加入的系统级 JSONB 键（如 `_meta`、`_version`）隔离；二是筛选器 DSL 解析时可仅凭 key 前缀判断走主表列还是 JSONB 路径；三是字段删除的数据清理脚本可安全地按前缀匹配。
 
-`field_key` 一旦创建**不可修改**（改 key 等于丢数据）。UI 上「字段名」（`name`）可随时改，`field_key` 只在创建时由系统按名称音译/转写生成并允许用户微调，创建后置灰。
+`field_key` 一旦创建**不可修改**（改 key 等于丢数据）。UI 上「字段名」（`name`）可随时改，`field_key` 只在创建时由系统按名称音译/转写生成并允许用户微调，创建后置灰。同理 **`field_type` 创建后不可修改**（TASK-008 BR-06）——类型变更等价于存量数据语义变更，无法安全转换，需先删后建；UI 类型下拉创建后置灰，Service 层拒绝（400，details 子码 `READ_ONLY`）。
 
 ### 2.5 方案选型对比
 
@@ -216,6 +216,9 @@ class CustomFieldDefinition(BaseModel):
     MULTI_VALUE_TYPES = frozenset({FieldType.MULTI_SELECT, FieldType.MEMBER_MULTI, FieldType.ATTACHMENT})
     #: 需要 options 配置的类型
     OPTION_REQUIRED_TYPES = frozenset({FieldType.SELECT, FieldType.MULTI_SELECT, FieldType.CASCADE})
+    #: P2 管理入口白名单——仅 12 种基础类型开放创建（TASK-008 §1.2）；
+    #: P3/P4 枚举值建表即定义（升级零 DDL），但管理入口与校验器在 P2/P3 之前拒绝
+    P2_ALLOWED_TYPES = frozenset(list(FieldType.values)[:12])
 
     workspace = models.ForeignKey(
         "db.Workspace", on_delete=models.CASCADE, related_name="custom_field_definitions", verbose_name="所属工作空间"
@@ -326,15 +329,19 @@ class CustomFieldDefinition(BaseModel):
                 raise ValidationError({"options": "每个选项必须同时包含 label 与 value"})
         if self.default_value is not None:
             validate_field_value(self, self.default_value)   # 复用值校验器
-        if self.field_type == self.FieldType.FORMULA and not self.formula:
-            raise ValidationError({"formula": "公式字段必须填写表达式"})
+        # P2 不做 formula 校验：公式字段属 P4，且 field_type 已被 P2_ALLOWED_TYPES
+        # 挡在管理入口之外；P4 激活公式类型时再补依赖图/环检测校验（§7.5）
+        if self.field_type == self.FieldType.FORMULA and False:  # P4 启用
+            if not self.formula:
+                raise ValidationError({"formula": "公式字段必须填写表达式"})
 
     def save(self, *args, **kwargs):
-        # field_key 创建后不可变
+        # field_key 与 field_type 创建后均不可变（BR-01 / BR-06）
         if self.pk:
-            original_key = CustomFieldDefinition.all_objects.values_list("field_key", flat=True).get(pk=self.pk)
-            if original_key != self.field_key:
-                raise ValidationError({"field_key": "字段键名创建后不可修改"})
+            original_key, original_type = CustomFieldDefinition.all_objects.values_list(
+                "field_key", "field_type").get(pk=self.pk)
+            if (original_key, original_type) != (self.field_key, self.field_type):
+                raise ValidationError({"field_key": "字段键名与类型创建后不可修改"})
         self.full_clean(exclude=None)
         super().save(*args, **kwargs)
 ```
@@ -1407,7 +1414,7 @@ def kanban_groups(definition: CustomFieldDefinition) -> list[dict]:
 | `idx_issue_desc_trgm` | GIN trgm | 中（中文搜索） | 中 | P1 起启用 |
 | 各字段表达式索引 | B-Tree 偏索引 | 按需 | 低（偏索引 + 单列） | 由 `is_indexed` 控制，上限 10 个 |
 
-**硬性上限：单个 Workspace 最多允许 10 个字段标记 `is_indexed`。** 超出时 API 返回明确错误并提示「请先取消其他字段的索引优化」。这个上限来自权衡：10 个偏索引对写入的累计影响约 10-15%（实测量级，取决于填充率），仍在可接受范围；无上限则会失控。
+**硬性上限（BR-10，TASK-008）：单个 Workspace 最多允许 50 个启用字段（`is_active=True`，全局 + 各项目合计），超出时 API 返回 409 `RESOURCE_LIMIT_EXCEEDED` 并提示「请先停用其他字段」；同时 `is_indexed` 标记最多 10 个**，超出时同样 409 并提示「请先取消其他字段的索引优化」。索引上限来自权衡：10 个偏索引对写入的累计影响约 10-15%（实测量级，取决于填充率），仍在可接受范围；无上限则会失控。字段总数上限则是防配置腐化的治理约束——超过 50 个字段时表单与 Schema 响应体积已明显劣化（§6.4），应推动用户停用废弃字段而非无限堆积。
 
 **GIN 写入代价的实测认知**（用于设定预期，非精确基准）：
 
@@ -1707,8 +1714,11 @@ Ones 未公开其存储实现，但从其查询能力（支持跨项目字段聚
 ### P2（Sprint 2-5）
 
 - [ ] `custom_field_definitions` 表 + 两个作用域唯一约束 + `applicable_types` GIN 索引
+- [ ] 管理入口类型白名单 `P2_ALLOWED_TYPES`（仅 12 种基础类型；级联/关联/日期区间/附件/公式枚举已定义但创建即 400）
+- [ ] 字段总量治理：单 WS 启用字段 ≤50（409）、`is_indexed` ≤10（409），见 §6.5
+- [ ] `field_key` 与 `field_type` 创建后不可变（格式校验 `cf_` 前缀 + snake_case + Service 拒绝修改）
 - [ ] `issue_views` 表 + 索引
-- [ ] `field_key` 格式校验（`cf_` 前缀 + snake_case）与创建后不可修改保护
+- [ ] `field_key` 格式校验（`cf_` 前缀 + snake_case）与创建后不可修改保护（`field_type` 同不可变，见 §2.4）
 - [ ] 12 种字段类型的 `validate_field_value` 实现 + 单测（覆盖 null / 空串 / 类型错误 / 选项非法 / 越界）
 - [ ] `validate_custom_fields` 整体校验：未知 key 拒绝、必填校验、默认值填充、空值不落库
 - [ ] `resolve_fields` 作用域解析（项目覆盖全局）+ Redis 缓存 + `post_save`/`post_delete` 失效

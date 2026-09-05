@@ -12,6 +12,7 @@
 | 下游消费 | **`TASK-011`（全字段 AND/OR 组合筛选器——直接消费字段元数据与 Schema API）**、`BOARD-003`（看板按自定义字段分组）、`TASK-012`（P3 高级字段类型与字段权限）、`RPT-002`（按自定义字段聚合） |
 | 上游依据 | `docs/需求文档.md` §3.4.2（动态自定义字段与全字段筛选体系）、§8.2 任务核心 P2 列（基础自定义字段）；§3.4.3 能力定论 |
 | 关联架构文档 | **[`dynamic-fields-design.md`](../architecture/dynamic-fields-design.md)（全文——本文档是其 P2 切片的落地规格）**、[`unified-issue-model.md`](../architecture/unified-issue-model.md)（§2.8 `custom_fields` 列与 GIN）、[`api-conventions.md`](../architecture/api-conventions.md)（§2.5 `issue-properties/` 端点、§5.3 `?property.<id>=` 筛选、§8.4 `VALIDATION_CUSTOM_FIELD_INVALID`） |
+| 实现偏差 | 后端落地口径与本文的出入登记于 [ADR-0015](../adr/0015-sprint-2-custom-fields-deviations.md)（9 项：details.field 口径矛盾 / IT-04 结构保证 / issue.field.manage 权限点 / 排序 SQL 表名限定 / celery include 修复 / tasks 状态端点 / UT-13 串行化 / email-phone 勘误 / prune 预置） |
 | 对标基线 | Plane 开源版（**无自定义字段——本系统核心差异化**） · Ones Custom Issue Fields（12 种基础类型对标全集） |
 | 工作量估算 | 后端 4 人日 / 前端 4 人日 / 联调与测试 2 人日，合计 **10 人日** |
 

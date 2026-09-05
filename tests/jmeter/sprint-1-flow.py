@@ -297,15 +297,15 @@ def main() -> int:
     code, body = owner.get(f"/api/v1/workspaces/{slug}/projects/{pid}/issues/{parent_id}/activities/")
     ck("ATTR-08", "操作日志时间线 200", code == HTTP["OK"], code)
 
-    # ── C.25 动态行结构（前端曾按 actor.name / epoch 取，恒显示「系 / 系统」）──
+    # ── C.25 动态行结构（TASK-010 §4.2.1 起升级为 epoch 组：data[].actor.display_name）──
     rows = body.get("data") or []
     ck("ACT-01", "★ 动态响应是裸数组（不是 {results:[]}）", isinstance(rows, list), type(rows).__name__)
-    ck("ACT-02", "★ 动态行含平铺 actor_name / created_at（无嵌套 actor 对象）",
-       all({"actor_name", "created_at"} <= set(r or {}) for r in rows),
+    ck("ACT-02", "★ 动态组含 actor 嵌套对象 + created_at + items[]（TASK-010 组结构）",
+       all({"actor", "created_at", "items"} <= set(r or {}) for r in rows),
        [sorted(r or {}) for r in rows][:2])
-    ck("ACT-03", "actor_name 非空且不等于兜底值「系统」",
-       rows and all(str((r or {}).get("actor_name") or "").strip() for r in rows),
-       [(r or {}).get("actor_name") for r in rows][:3])
+    ck("ACT-03", "actor.display_name 非空且不等于兜底值「系统」",
+       rows and all(str(((r or {}).get("actor") or {}).get("display_name") or "").strip() for r in rows),
+       [((r or {}).get("actor") or {}).get("display_name") for r in rows][:3])
     ck("ACT-04", "游标分页信息在 meta.next_cursor（不在 data 里）",
        "next_cursor" in (body.get("meta") or {}), sorted((body.get("meta") or {}).keys()))
 

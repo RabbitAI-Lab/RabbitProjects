@@ -323,6 +323,12 @@ def delete_subtree(issue_id: uuid.UUID, actor_id: uuid.UUID) -> dict:
             purged_labels AS (
                 DELETE FROM issue_labels
                  WHERE issue_id IN (SELECT id FROM target) RETURNING 1
+            ),
+            purged_links AS (
+                UPDATE issue_links SET deleted_at = %(now)s
+                 WHERE (issue_id IN (SELECT id FROM target)
+                        OR related_issue_id IN (SELECT id FROM target))
+                   AND deleted_at IS NULL RETURNING 1
             )
             SELECT (SELECT count(*) FROM marked),
                    (SELECT array_agg(id) FROM marked)""",

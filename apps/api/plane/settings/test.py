@@ -10,5 +10,6 @@ tests/jmeter/sprint-2-flow.py（HTTP 侧，自建自清）。
 from __future__ import annotations
 
 from .dev import *  # noqa: F401,F403
+from .dev import DATABASES  # noqa: F401
 
 DATABASES["default"]["TEST"] = {"NAME": DATABASES["default"]["NAME"]}

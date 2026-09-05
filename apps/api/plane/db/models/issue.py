@@ -185,6 +185,8 @@ class IssueLink(BaseModel):
         "relates_to": "relates_to",
         "duplicates": "duplicates",
     }
+    #: 参与防环/流转拦截的关系族（TASK-005 §4.1；环检测 CTE 只沿 blocks 正向边走）
+    BLOCKING_TYPES = frozenset({"blocks", "is_blocked_by"})
 
     issue = models.ForeignKey("db.Issue", on_delete=models.CASCADE, related_name="issue_links", verbose_name="源工作项")
     related_issue = models.ForeignKey(
@@ -203,8 +205,10 @@ class IssueLink(BaseModel):
                 condition=models.Q(deleted_at__isnull=True),
                 name="uniq_issue_relation",
             ),
-            models.CheckConstraint(check=~models.Q(issue=models.F("related_issue")),  # type: ignore[call-arg]
-                name="chk_issue_link_no_self"),
+            models.CheckConstraint(
+                check=~models.Q(issue=models.F("related_issue")),  # type: ignore[call-arg]
+                name="chk_issue_link_no_self",
+            ),
         ]
         indexes = [
             models.Index(fields=["issue", "relation_type"], name="idx_link_issue_type"),

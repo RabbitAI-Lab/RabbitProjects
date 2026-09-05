@@ -118,6 +118,22 @@ class IssueFilterSet:
                     q &= parsed
                     self.applied["target_date"] = raw_date
 
+        # ---- blocked（TASK-005 §4.2.5：只看被未完成前置阻塞的任务）----
+        if "blocked" not in self.drop_keys:
+            raw_blocked = params.get("blocked")
+            if raw_blocked is not None and str(raw_blocked).lower() in ("true", "1"):
+                from django.db.models import Exists, OuterRef
+
+                from plane.db.models import IssueLink
+                blocked_exists = IssueLink.objects.filter(
+                    issue_id=OuterRef("pk"),
+                    relation_type="is_blocked_by",
+                    deleted_at__isnull=True,
+                    related_issue__deleted_at__isnull=True,
+                ).exclude(related_issue__state__group__in=["completed", "cancelled"])
+                q &= Q(Exists(blocked_exists))  # Exists 是 Combinable，包 Q 统一类型
+                self.applied["blocked"] = True
+
         # ---- parent_id（TASK-004 §4.2.3：列表页树形行级懒加载入口）----
         if "parent_id" not in self.drop_keys:
             if (raw_parent := params.get("parent_id")) is not None:

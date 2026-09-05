@@ -52,8 +52,10 @@ from plane.db.services.issue_hierarchy import (
     fetch_subtree,
     issue_count_annotations,
 )
+from plane.db.services.issue_link import TransitionBlockedError
 from plane.db.services.issue_query import IssueFilterSet
 from plane.db.services.issue_sequence import create_issue as create_issue_svc
+from plane.db.services.issue_transition_guard import assert_completable
 from plane.settings.features import (
     MAX_ISSUE_DEPTH,
     MAX_SUB_ISSUES_PER_PARENT,
@@ -443,6 +445,44 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
         # ---- 状态 ----
         if "state_id" in data and str(data["state_id"] or "") != str(issue.state_id or ""):
             new_state = _resolve_state(data["state_id"], project)
+            # TASK-005 §4.3.3：迁入 completed 前的依赖拦截（force 通道仅管理员 + comment ≥5 字）
+            force_comment = None
+            if new_state.group == "completed" and ((issue.state.group if issue.state else None) != "completed"):
+                force = bool(request.data.get("force"))
+                if force and len(str(request.data.get("comment") or "").strip()) < 5:
+                    raise AppException(
+                        "VALIDATION_ERROR",
+                        message="强制完成需填写说明",
+                        details=[{"field": "comment", "code": "REQUIRED", "message": "强制完成说明不少于 5 个字符"}],
+                    )
+                try:
+                    assert_completable(
+                        issue=issue,
+                        to_state=new_state,
+                        force=force,
+                        is_admin=project.current_user_role >= ProjectRole.ADMIN,
+                    )
+                except TransitionBlockedError as e:
+                    raise AppException(
+                        "RESOURCE_TRANSITION_BLOCKED",
+                        message="存在未完成的前置任务，无法完成该工作项",
+                        details=[
+                            {
+                                "field": "state_id",
+                                "code": "BLOCKED_BY",
+                                "issue_key": b["issue_key"],
+                                "message": f"{b['issue_key']} {b['name']}",
+                            }
+                            for b in e.blockers
+                        ],
+                    ) from None
+                except PermissionError:
+                    raise AppException(
+                        "PERM_ROLE_INSUFFICIENT",
+                        message="仅项目管理员可强制完成",
+                    ) from None
+                if force:
+                    force_comment = str(request.data.get("comment") or "").strip()
             activities.append(
                 {
                     "field": "state",
@@ -450,7 +490,7 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
                     "new": new_state.name,
                     "old_identifier": issue.state_id,
                     "new_identifier": new_state.id,
-                    "comment": "更新了 状态",
+                    "comment": f"强制完成：{force_comment}" if force_comment else "更新了 状态",
                 }
             )
             issue.state = new_state

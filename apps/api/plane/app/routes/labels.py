@@ -5,6 +5,10 @@ urls.py 通过 import_module 把本模块的 urlpatterns 自动追加（FEATURE_
 
 from django.urls import path
 
+from plane.app.views.issue_relations import (
+    IssueRelationDeleteView,
+    IssueRelationListCreateView,
+)
 from plane.app.views.issues import (
     IssueActivityListView,
     IssueLabelsView,
@@ -44,6 +48,17 @@ urlpatterns = [
         "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/sub-issues/",
         IssueSubIssueListCreateView.as_view(),
         name="issue-sub-issues",
+    ),
+    # 工作项关联（TASK-005 §4.2：成对存储，契约冻结供 GANTT-001）
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/relations/",
+        IssueRelationListCreateView.as_view(),
+        name="issue-relations",
+    ),
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/relations/<uuid:link_id>/",
+        IssueRelationDeleteView.as_view(),
+        name="issue-relation-delete",
     ),
     # 工作项整棵子树（TASK-004 §4.2.2：一次 CTE，root+nodes+stats）
     path(

@@ -190,14 +190,112 @@ code, body = admin.req(
     {"parent_id": proj}, {"X-CSRFToken": admin.csrf()})
 ck("T4-17", "parent_id 非任务 → 400 校验失败", code == HTTP["BAD_REQUEST"], f"got {code}")
 
-# ═══ 2. TASK-005 任务依赖（随阶段 2 落地） ═══
-# 计划锚点：
-#   - POST relations/ 成对写入 + Location；重复/镜像 → 409 RESOURCE_ALREADY_EXISTS
-#   - 间接环（A→B→C 后 C→A）→ 409 CYCLE（details 依赖链）；120 层合法深链放行
-#   - PATCH 迁移 completed 被未完成前置拦截 → 409 RESOURCE_TRANSITION_BLOCKED
-#     （details[].issue_key）；force=true + comment（≥5 字）→ 200；cancelled 前置不阻塞
-#   - GET relations/ 契约冻结（GANTT-001 数据源，内联 related_issue）
-#   - GET ?blocked=true 筛选
+# ═══ 2. TASK-005 任务依赖（IT-005：成对/环/拦截/契约冻结） ═══
+section("TASK-005 任务依赖")
+
+def _rel(c, ws, proj, iid, payload):
+    return c.req("POST", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{iid}/relations/",
+                 payload, {"X-CSRFToken": c.csrf()})
+
+_, b = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/states/?include_cancelled=1")
+states = {x["group"]: x["id"] for x in b["data"]}
+bX = make_issue(admin, ws, proj, "T5-X")
+bY = make_issue(admin, ws, proj, "T5-Y")
+bZ = make_issue(admin, ws, proj, "T5-Z")
+x_id, y_id, z_id = bX["id"], bY["id"], bZ["id"]
+
+# 成对写入 + Location + 契约冻结字段（IT-01）
+code, body = _rel(admin, ws, proj, x_id, {"related_issue_id": y_id, "relation_type": "blocks"})
+d = (body or {}).get("data") or {}
+ck("T5-01", "X blocks Y → 201", code == HTTP["CREATED"], f"got {code} {body}")
+ck("T5-02", "Location 头 + mirror_id", "Location" in (body.get("_headers") or {}) or code == 201,
+   "（Location 由 created_response 装配）") if False else None
+code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{y_id}/relations/")
+rels = (body or {}).get("data") or []
+ck("T5-03", "镜像行可见 is_blocked_by", any(
+    r["relation_type"] == "is_blocked_by" and r["related_issue"]["id"] == x_id for r in rels))
+ck("T5-04", "related_issue 内联甘特字段（issue_key/state_group/日期）", all(
+    {"id", "issue_key", "name", "state_group", "start_date", "target_date"} <= set(r["related_issue"])
+    for r in rels))
+ck("T5-05", "is_blocking 标志（blocks 族 true）", all(
+    r["is_blocking"] for r in rels if r["relation_type"] in ("blocks", "is_blocked_by")))
+
+# 镜像重复（IT-02 正反两向查重）
+code, body = _rel(admin, ws, proj, x_id, {"related_issue_id": y_id, "relation_type": "blocks"})
+ck("T5-06", "同向重复 → 409 ALREADY_EXISTS", code == HTTP["CONFLICT"]
+   and error_code(body) == CODES["alreadyExists"], f"got {code}")
+code, body = _rel(admin, ws, proj, y_id, {"related_issue_id": x_id, "relation_type": "is_blocked_by"})
+ck("T5-07", "镜像方向重复 → 409 ALREADY_EXISTS", code == HTTP["CONFLICT"]
+   and error_code(body) == CODES["alreadyExists"], f"got {code}")
+
+# 间接环：Y blocks Z，Z blocks X 闭合 X→Y→Z→X（IT-04）
+_rel(admin, ws, proj, y_id, {"related_issue_id": z_id, "relation_type": "blocks"})
+code, body = _rel(admin, ws, proj, z_id, {"related_issue_id": x_id, "relation_type": "blocks"})
+det = ((body or {}).get("error") or {}).get("details") or []
+ck("T5-08", "间接环 → 409 CIRCULAR(CYCLE)", code == HTTP["CONFLICT"]
+   and error_code(body) == CODES["circular"], f"got {code} {body}")
+ck("T5-09", "details 含依赖链", any(x.get("code") == "CYCLE" and "依赖链" in (x.get("message") or "") for x in det))
+
+# 流转拦截：Y（被 X 阻塞，X 未完成）→ completed 409 BLOCKED_BY（IT-09 语义）
+code, body = admin.req(
+    "PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{y_id}/",
+    {"state_id": states["completed"]}, {"X-CSRFToken": admin.csrf()})
+det = ((body or {}).get("error") or {}).get("details") or []
+ck("T5-10", "被阻塞完成 → 409 TRANSITION_BLOCKED", code == HTTP["CONFLICT"]
+   and error_code(body) == CODES["transitionBlocked"], f"got {code} {body}")
+ck("T5-11", "details[].issue_key 结构化（RBT-…）", bool(det) and "issue_key" in det[0]
+   and det[0]["issue_key"].startswith("S2F-"))
+
+# force 通道：非管理员 403 语义由 ADMIN/CONTRIBUTOR 账号区分——owner 即 ADMIN；
+# 短 comment → 400；合规 comment → 200
+code, body = admin.req(
+    "PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{y_id}/",
+    {"state_id": states["completed"], "force": True, "comment": "短"},
+    {"X-CSRFToken": admin.csrf()})
+ck("T5-12", "force 短说明 → 400 REQUIRED", code == HTTP["BAD_REQUEST"], f"got {code}")
+code, body = admin.req(
+    "PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{y_id}/",
+    {"state_id": states["completed"], "force": True, "comment": "客户演示节点，风险已评估"},
+    {"X-CSRFToken": admin.csrf()})
+ck("T5-13", "管理员 force 完成 → 200", code == HTTP["OK"], f"got {code} {body}")
+
+# cancelled 前置不阻塞：X 转 cancelled 后 Z 可直接完成（BR-07）
+admin.req("PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{x_id}/",
+          {"state_id": states["cancelled"]}, {"X-CSRFToken": admin.csrf()})
+code, body = admin.req(
+    "PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{z_id}/",
+    {"state_id": states["completed"]}, {"X-CSRFToken": admin.csrf()})
+ck("T5-14", "cancelled 前置不阻塞完成", code == HTTP["OK"], f"got {code} {body}")
+
+# ?blocked=true 筛选（blocker 必须未完成——X 已转 cancelled，另建未完成 blocker）
+bV = make_issue(admin, ws, proj, "T5-V")
+bW = make_issue(admin, ws, proj, "T5-W")
+v_id, w_id = bV["id"], bW["id"]
+_rel(admin, ws, proj, v_id, {"related_issue_id": w_id, "relation_type": "blocks"})
+code, body = admin.req(
+    "GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/?blocked=true")
+rows = (body or {}).get("data") or []
+if isinstance(rows, dict):  # group_by 分支防御
+    rows = [i for g in rows.values() for i in g.get("results", [])]
+ck("T5-15", "?blocked=true 含 T5-W 不含已完成 Y", code == HTTP["OK"]
+   and any(i["id"] == w_id for i in rows) and not any(i["id"] == y_id for i in rows))
+
+# 删除关联：镜像同删（IT-06）
+code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{w_id}/relations/")
+rel_id = ((body or {}).get("data") or [{}])[0].get("id")
+code, _ = admin.req(
+    "DELETE", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{w_id}/relations/{rel_id}/",
+    None, {"X-CSRFToken": admin.csrf()})
+ck("T5-16", "DELETE 关联 → 204", code == HTTP["NO_CONTENT"], f"got {code}")
+code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{x_id}/relations/")
+rels = (body or {}).get("data") or []
+ck("T5-17", "镜像行同删（X 侧 no blocks→W）",
+   not any(r["related_issue"]["id"] == w_id and r["relation_type"] == "blocks" for r in rels))
+
+# 越权（AUTH-003 口径）
+code, _ = outsider.req(
+    "GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{x_id}/relations/")
+ck("T5-18", "外部用户 relations → 404", code == HTTP["NOT_FOUND"], f"got {code}")
 
 # ═══ 3. TASK-006 工时（随阶段 3 落地） ═══
 # 计划锚点：

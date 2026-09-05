@@ -271,6 +271,8 @@ class IssueFilterSet:
             "created_by",
             "target_date",
             "parent_id",
+            "blocked",
+            "archived",
             "order_by",
             "cursor",
             "per_page",

@@ -16,6 +16,7 @@ from plane.app.views._access import get_project_or_404
 from plane.base.exception import AppException
 from plane.base.response import created_response, success_response
 from plane.db.models import Issue, ProjectRole
+from plane.db.services.issue_archive import assert_issue_writable
 from plane.db.services.issue_link import (
     AlreadyExistsError,
     CircularDependencyError,
@@ -53,6 +54,7 @@ class IssueRelationListCreateView(APIView):
         if project.current_user_role < ProjectRole.CONTRIBUTOR:
             raise AppException("PERM_ROLE_INSUFFICIENT")
         issue = _get_issue_or_404(kwargs, project)
+        assert_issue_writable(issue)  # TASK-009：归档任务不可加关联
         related_id = request.data.get("related_issue_id")
         relation_type = request.data.get("relation_type")
         errors = []

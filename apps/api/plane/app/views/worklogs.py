@@ -20,6 +20,7 @@ from plane.app.views._access import get_project_or_404
 from plane.base.exception import AppException
 from plane.base.response import created_response, success_response
 from plane.db.models import Issue, ProjectRole, WorkLog
+from plane.db.services.issue_archive import assert_issue_writable
 from plane.db.services.worklog import (
     WorklogPermissionError,
     WorklogValidationError,
@@ -132,6 +133,7 @@ class WorkLogListCreateView(APIView):
         if project.current_user_role < ProjectRole.CONTRIBUTOR:
             raise AppException("PERM_ROLE_INSUFFICIENT")
         issue = _issue_or_404(kwargs, project)
+        assert_issue_writable(issue)  # TASK-009：归档任务不可记工时
         minutes = request.data.get("minutes")
         worked_on = request.data.get("worked_on")
         errors = []

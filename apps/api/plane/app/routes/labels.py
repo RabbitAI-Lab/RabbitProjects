@@ -10,6 +10,7 @@ from plane.app.views.issue_assignees import (
     IssueAssigneeDeleteView,
     IssueAssigneesView,
 )
+from plane.app.views.issue_lifecycle import IssueArchiveView, IssueDuplicateView
 from plane.app.views.issue_relations import (
     IssueRelationDeleteView,
     IssueRelationListCreateView,
@@ -81,6 +82,17 @@ urlpatterns = [
         "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/relations/<uuid:link_id>/",
         IssueRelationDeleteView.as_view(),
         name="issue-relation-delete",
+    ),
+    # 任务生命周期（TASK-009 §4.2：复制五选项 / 整树幂等归档恢复）
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/duplicate/",
+        IssueDuplicateView.as_view(),
+        name="issue-duplicate",
+    ),
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/archive/",
+        IssueArchiveView.as_view(),
+        name="issue-archive",
     ),
     # 工时记录（TASK-006 §4.2）
     path(

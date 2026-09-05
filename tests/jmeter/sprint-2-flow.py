@@ -965,13 +965,132 @@ for _ in range(30):  # 轮询 ≤15s
 ck("T8-42", "异步清理 JSONB key（分批 2000 / GIN 扫描，需 worker）",
    _cleaned, "轮询 15s 后 key 仍在（worker 未运行或任务失败）")
 
-# ═══ 6. TASK-009 复制/归档（随阶段 6 落地） ═══
-# 计划锚点：
-#   - POST duplicate/ 五选项（副本后缀 (副本)/(副本 2)；>500 节点 → 409 LIMIT；
-#     归档源 → 409 STATE；已归档子任务复制为活跃）
-#   - POST archive/ 整树幂等（重复 POST 200 count=0）；DELETE archive/ 恢复对称
-#   - 归档写保护：PATCH 归档任务 → 409 STATE；归档项目 → 403 PERM_PROJECT_ARCHIVED
-#   - GET ?archived=true 归档视图
+# ═══ 6. TASK-009 复制/归档（IT-009：深拷贝/幂等/写保护/视图） ═══
+section("TASK-009 复制/归档")
+
+_today = _dt.date.today()
+
+def _mk9(name, parent=None):
+    path = (f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/"
+            + (f"{parent}/sub-issues/" if parent else ""))
+    payload = {"name": name} if not parent else {"name": name}
+    code, body = admin.req("POST", path, payload, {"X-CSRFToken": admin.csrf()})
+    assert code == HTTP["CREATED"], f"{name} {code} {body}"
+    return body["data"]
+
+# 源树：R > S1 > S2（3 节点）
+r9 = _mk9("T9-根")
+s1 = _mk9("T9-子1", parent=r9["id"])
+s2 = _mk9("T9-孙1", parent=s1["id"])
+iurl = f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/"
+
+# 五选项：默认（含子树）→ 3 副本 + (副本) 后缀 + duplicates 关联（BR-01）
+code, body = admin.req("POST", iurl + f"{r9['id']}/duplicate/", {}, {"X-CSRFToken": admin.csrf()})
+d = (body or {}).get("data") or {}
+ck("T9-01", "默认复制整树 → 201 + total_created=3", code == HTTP["CREATED"]
+   and d.get("total_created") == 3, f"got {code} {body}")
+ck("T9-02", "副本标题 (副本) 后缀", d.get("name") == "T9-根 (副本)", d.get("name"))
+code, body = admin.req("GET", iurl + f"{r9['id']}/relations/")
+dup_rel = [x for x in (body or {}).get("data") or [] if x["relation_type"] == "duplicates"]
+ck("T9-03", "源任务可见 duplicates 关联（溯源锚点）", len(dup_rel) == 1
+   and dup_rel[0]["related_issue"]["name"] == "T9-根 (副本)")
+# 再复制 → (副本 2)
+code, body = admin.req("POST", iurl + f"{r9['id']}/duplicate/", {}, {"X-CSRFToken": admin.csrf()})
+ck("T9-04", "再复制 → (副本 2) 后缀", (body or {}).get("data", {}).get("name") == "T9-根 (副本 2)")
+# 不含子树 → 1 节点；不含标签/字段/日期
+code, body = admin.req("POST", iurl + f"{r9['id']}/duplicate/",
+                       {"include_subtrees": False, "include_labels": False,
+                        "include_custom_fields": False, "include_dates": False},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T9-05", "五选项全关 → total_created=1",
+   (body or {}).get("data", {}).get("total_created") == 1, f"got {body}")
+
+# >500 节点 409（docker psql 直插 501 节点子树构造，BR-05 全量计数拒绝）
+big = _mk9("T9-巨大树")
+_pg_exec(
+    "INSERT INTO issues (id, project_id, name, description_json, description_html, "
+    " priority, sequence_id, sort_order, custom_fields, parent_id, created_at, updated_at, "
+    " state_id, attachment_count) "
+    "SELECT gen_random_uuid(), (SELECT project_id FROM issues WHERE id = %s), 'bulk', "
+    "'{}'::jsonb, '<p></p>', 'none', g + 100000, g * 100.0, '{}'::jsonb, %s, now(), now(), "
+    "(SELECT state_id FROM issues WHERE id = %s), 0 "
+    "FROM generate_series(1, 505) g",
+    (big["id"], big["id"], big["id"]))
+code, body = admin.req("POST", iurl + f"{big['id']}/duplicate/", {}, {"X-CSRFToken": admin.csrf()})
+ck("T9-06", "506 节点 → 409 LIMIT（全量计数拒绝，非 500）",
+   code == HTTP["CONFLICT"] and error_code(body) == CODES["limitExceeded"], f"got {code}")
+_pg_exec(
+    "DELETE FROM issue_activities WHERE issue_id IN "
+    "(WITH RECURSIVE t AS (SELECT id FROM issues WHERE id = %s UNION ALL "
+    " SELECT i.id FROM issues i JOIN t ON i.parent_id = t.id) SELECT id FROM t)",
+    (big["id"],))
+_pg_exec(
+    "DELETE FROM issue_assignees, issue_labels WHERE issue_id = %s", (big["id"],)) if False else None
+_pg_exec("DELETE FROM issue_assignees WHERE issue_id IN (SELECT id FROM issues WHERE parent_id = %s)", (big["id"],))
+_pg_exec("DELETE FROM issue_labels WHERE issue_id IN (SELECT id FROM issues WHERE parent_id = %s)", (big["id"],))
+_pg_exec("DELETE FROM issue_links WHERE issue_id IN (SELECT id FROM issues WHERE parent_id = %s)", (big["id"],))
+_pg_exec("DELETE FROM issues WHERE parent_id = %s", (big["id"],))
+_pg_exec("DELETE FROM issues WHERE id = %s", (big["id"],))
+
+# 归档源 409（BR-08）
+_pg_exec("UPDATE issues SET archived_at = now() WHERE id = %s", (s2["id"],))
+code, body = admin.req("POST", iurl + f"{s2['id']}/duplicate/", {}, {"X-CSRFToken": admin.csrf()})
+ck("T9-07", "归档源复制 → 409 STATE", code == HTTP["CONFLICT"]
+   and error_code(body) == CODES["stateInvalid"], f"got {code}")
+
+# 归档 / 恢复（幂等 BR-09/10）
+_pg_exec("UPDATE issues SET archived_at = NULL WHERE id = %s", (s2["id"],))
+arch_url = iurl + f"{r9['id']}/archive/"
+code, body = admin.req("POST", arch_url, {}, {"X-CSRFToken": admin.csrf()})
+ck("T9-08", "整树归档 → 200 archived_count=3",
+   code == HTTP["OK"] and (body or {}).get("data", {}).get("archived_count") == 3, f"got {code} {body}")
+first_archived_at = (body or {}).get("data", {}).get("archived_at")
+code, body = admin.req("POST", arch_url, {}, {"X-CSRFToken": admin.csrf()})
+ck("T9-09", "重复归档幂等 → 200 count=0",
+   code == HTTP["OK"] and (body or {}).get("data", {}).get("archived_count") == 0)
+code, body = admin.req("GET", iurl + f"{r9['id']}/")
+ck("T9-10", "归档后默认详情仍可达（详情可见）", code == HTTP["OK"])
+tree9_ids = {r9["id"], s1["id"], s2["id"]}
+code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/?q=T9-&per_page=100")
+ids_now = {i["id"] for i in (body or {}).get("data") or []}
+ck("T9-11", "默认列表排除归档树（BR-11；按本轮 id 断言，历史同名任务不干扰）",
+   not (ids_now & tree9_ids), f"leaked={ids_now & tree9_ids}")
+code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/?archived=true&q=T9-&per_page=100")
+ids_arch = {i["id"] for i in (body or {}).get("data") or []}
+ck("T9-12", "?archived=true 归档视图命中整树（3 节点）",
+   tree9_ids <= ids_arch, f"hit={tree9_ids & ids_arch}")
+
+# 归档写保护四路径抽查（§4.3.3：PATCH / 子任务挂载 / 关联 / 工时）
+code, body = admin.req("PATCH", iurl + f"{s1['id']}/", {"name": "X"}, {"X-CSRFToken": admin.csrf()})
+ck("T9-13", "归档任务 PATCH → 409 STATE", code == HTTP["CONFLICT"]
+   and error_code(body) == CODES["stateInvalid"], f"got {code}")
+code, body = admin.req("POST", iurl + f"{s1['id']}/sub-issues/", {"name": "X"},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T9-14", "归档任务挂子任务 → 409 STATE", code == HTTP["CONFLICT"]
+   and error_code(body) == CODES["stateInvalid"], f"got {code}")
+code, body = admin.req("POST", iurl + f"{s1['id']}/relations/",
+                       {"related_issue_id": s2["id"], "relation_type": "relates_to"},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T9-15", "归档任务加关联 → 409 STATE", code == HTTP["CONFLICT"], f"got {code}")
+code, body = admin.req("POST", iurl + f"{s1['id']}/worklogs/", {"minutes": 30, "worked_on": str(_today)},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T9-16", "归档任务记工时 → 409 STATE", code == HTTP["CONFLICT"], f"got {code}")
+
+# 恢复对称（含此前归档的后代，§4.3.2）
+code, body = admin.req("DELETE", arch_url, None, {"X-CSRFToken": admin.csrf()})
+ck("T9-17", "整树恢复 → restored_count=3",
+   code == HTTP["OK"] and (body or {}).get("data", {}).get("restored_count") == 3, f"got {code}")
+code, body = admin.req("DELETE", arch_url, None, {"X-CSRFToken": admin.csrf()})
+ck("T9-18", "重复恢复幂等 → restored_count=0",
+   (body or {}).get("data", {}).get("restored_count") == 0)
+code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/?q=T9-&per_page=100")
+ids_now = {i["id"] for i in (body or {}).get("data") or []}
+ck("T9-19", "恢复后默认列表可见", r9["id"] in ids_now)
+
+# 越权
+code, _ = outsider.req("POST", iurl + f"{r9['id']}/archive/", {},
+                       {"X-CSRFToken": outsider.csrf()})
+ck("T9-20", "外部用户归档 → 404", code == HTTP["NOT_FOUND"], f"got {code}")
 
 # ═══ 7. TASK-010 审计日志（随阶段 7 落地） ═══
 # 计划锚点：

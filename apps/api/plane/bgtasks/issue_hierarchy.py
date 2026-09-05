@@ -81,3 +81,71 @@ def record_delete(self, issue_id: str, actor_id: str, deleted_count: int, epoch:
         )
     except Exception as exc:  # noqa: BLE001
         raise self.retry(countdown=4**self.request.retries) from exc
+
+
+@shared_task(bind=True, max_retries=3, retry_backoff=True)
+def record_duplicate(
+    self, root_id: str, source_id: str, actor_id: str, total: int, source_key: str, epoch: float
+) -> None:
+    """复制创建的系统事件（TASK-009 §4.3.1）：「由 RBT-12 复制创建（共 N 个任务）」。"""
+    if IssueActivity.objects.filter(
+        issue_id=root_id, actor_id=uuid.UUID(actor_id), verb="created", field="parent", epoch=epoch
+    ).exists():
+        return
+    try:
+        IssueActivity.objects.create(
+            issue_id=root_id,
+            actor_id=uuid.UUID(actor_id),
+            verb="created",
+            field="parent",
+            comment=f"由 {source_key} 复制创建（共 {total} 个任务）",
+            epoch=epoch,
+        )
+    except Exception as exc:  # noqa: BLE001 —— TASK-010 接 DLQ
+        raise self.retry(countdown=4**self.request.retries) from exc
+
+
+@shared_task(bind=True, max_retries=3, retry_backoff=True)
+def record_archive(
+    self, issue_id: str, actor_id: str, count: int, archived_at: str, epoch: float
+) -> None:
+    """归档 Activity（TASK-009 §4.3.2；幂等：count=0 的重复归档不重复投递——视图层跳过）。"""
+    if IssueActivity.objects.filter(
+        issue_id=issue_id, actor_id=uuid.UUID(actor_id), verb="updated", field="archived_at", epoch=epoch
+    ).exists():
+        return
+    try:
+        IssueActivity.objects.create(
+            issue_id=issue_id,
+            actor_id=uuid.UUID(actor_id),
+            verb="updated",
+            field="archived_at",
+            old_value=None,
+            new_value=archived_at,
+            comment=f"归档了任务（含 {count - 1} 个子任务）" if count > 1 else "归档了任务",
+            epoch=epoch,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise self.retry(countdown=4**self.request.retries) from exc
+
+
+@shared_task(bind=True, max_retries=3, retry_backoff=True)
+def record_restore(self, issue_id: str, actor_id: str, count: int, epoch: float) -> None:
+    """恢复 Activity（对称）。"""
+    if IssueActivity.objects.filter(
+        issue_id=issue_id, actor_id=uuid.UUID(actor_id), verb="updated", field="archived_at", epoch=epoch
+    ).exists():
+        return
+    try:
+        IssueActivity.objects.create(
+            issue_id=issue_id,
+            actor_id=uuid.UUID(actor_id),
+            verb="updated",
+            field="archived_at",
+            old_value="archived",
+            new_value=None,
+            comment=f"恢复了任务（含 {count - 1} 个子任务）" if count > 1 else "恢复了任务",
+            epoch=epoch,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise self.retry(countdown=4**self.request.retries) from exc

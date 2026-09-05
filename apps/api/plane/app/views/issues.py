@@ -45,6 +45,7 @@ from plane.db.services.custom_fields import (
     merge_custom_fields,
     validate_custom_fields,
 )
+from plane.db.services.issue_archive import assert_issue_writable
 from plane.db.services.issue_assignee import sync_assignees_full
 from plane.db.services.issue_hierarchy import (
     CircularDependencyError,
@@ -123,10 +124,14 @@ class IssueListCreateView(ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = IssueSerializer
 
-    def _base_queryset(self, project):
+    def _base_queryset(self, project, *, include_archived=False):
+        # TASK-009 BR-11：默认排除归档树（命中偏索引 idx_issue_active_by_project）；
+        # ?archived=true 反向查归档视图（issueQuery FilterSet applied 回显）
+        qs = Issue.objects.filter(project=project, deleted_at__isnull=True)
+        if not include_archived:
+            qs = qs.filter(archived_at__isnull=True)
         return (
-            Issue.objects.filter(project=project, deleted_at__isnull=True)
-            .select_related("project", "state", "issue_type")
+            qs.select_related("project", "state", "issue_type")
             .prefetch_related("issue_assignees", "issue_labels")
         )
 
@@ -140,7 +145,10 @@ class IssueListCreateView(ListCreateAPIView):
         q_obj = filterset.build_query(request.query_params)
 
         qs = (
-            self._base_queryset(project)
+            self._base_queryset(
+                project,
+                include_archived=str(request.query_params.get("archived", "")).lower() in ("true", "1"),
+            )
             .annotate(
                 # 计数 annotate —— 列表与卡片渲染消费
                 **issue_count_annotations(),
@@ -391,6 +399,7 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
         )
         s.is_valid(raise_exception=True)
         issue = self.get_object()
+        assert_issue_writable(issue)  # TASK-009 §4.3.3：归档任务只读（恢复/删除除外）
         # PATCH 安全：validated_data 含 default 字段（assignee_ids=[]、description_html="<p></p>"
         # 等），这些并非用户意图修改。只处理 request.data 中实际出现的字段，否则改优先级会
         # 顺带清空描述和负责人 —— 正是抽屉里优先级/负责人/日期"改不了"的根因。

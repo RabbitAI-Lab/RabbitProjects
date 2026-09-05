@@ -533,18 +533,21 @@ ck("T7-17", "?assignee_ids=null → 恰 2 条未指派（i7b/i7c）",
    code == HTTP["OK"] and {r["id"] for r in rows} == {i7b["id"], i7c["id"]},
    f"got {len(rows)} {[r['name'] for r in rows]}")
 
-# 归档任务写保护（IT-10：TASK-009 archive 端点未交付，直改库构造 archived_at；
-# 需 psycopg —— 以 `uv run --project apps/api python tests/jmeter/sprint-2-flow.py` 运行）
+# 归档任务写保护（IT-10：TASK-009 archive 端点未交付，直改库构造 archived_at。
+# 走 docker exec psql（CI/本地系统 python3 均可跑；无 psycopg 依赖）；
+# 容器名与 CLAUDE.md 环境表一致（rp-pg））
 def _pg_exec(sql, params=()):
-    import os
+    import subprocess
 
-    import psycopg  # noqa: PLC0415 —— 归档前置构造专用，主流程仍纯 HTTP
-
-    dsn = os.environ.get("DATABASE_URL", "postgresql://rp:rp@localhost:5432/rabbit_projects")
-    with psycopg.connect(dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-        conn.commit()
+    quoted = sql
+    for v in params:
+        quoted = quoted.replace("%s", "'" + str(v).replace("'", "''") + "'", 1)
+    r = subprocess.run(  # noqa: S603 —— 常量 SQL + 参数化转义
+        ["docker", "exec", "-i", "rp-pg", "psql", "-U", "rp", "-d", "rabbit_projects",
+         "-v", "ON_ERROR_STOP=1", "-c", quoted],
+        capture_output=True, text=True, timeout=15)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip()[:200])
 
 try:
     _pg_exec("UPDATE issues SET archived_at = now() WHERE id = %s", (i7c["id"],))

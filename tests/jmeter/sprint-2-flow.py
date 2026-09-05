@@ -26,6 +26,7 @@ from _contract import CODES, HTTP, Client, detail_of, error_code, q
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
 PASS = 0
 FAIL = 0
+SKIP = 0
 FAILURES: list[str] = []
 
 

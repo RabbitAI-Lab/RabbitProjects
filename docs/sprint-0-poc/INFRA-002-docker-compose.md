@@ -343,7 +343,7 @@ docker compose up               # 等价全新环境重来
 | `migrator` | 构建 `apps/api`（同 api 镜像） | — | — | `db`(healthy) | **no** | 一次性：`migrate --noinput` + 种子数据；退出码 0 即成功 |
 | `createbuckets` | `minio/mc:RELEASE.2025-xx-xx` | — | — | `minio`(healthy) | **no** | 一次性：创建 `rp-uploads` bucket 并设访问策略；mc 与 MinIO 服务端同期锁定 RELEASE tag（见下方版本对齐说明） |
 | `api` | 构建 `apps/api` | 8000 | 8000 | `db` `redis` `mq`(healthy)、`migrator`(completed) | unless-stopped | Django + DRF，gunicorn 23 + gthread |
-| `worker` | 构建 `apps/api`（同镜像，换 command） | — | — | 同 `api` | unless-stopped | Celery Worker；队列 `notifications,webhooks,reports,imports` |
+| `worker` | 构建 `apps/api`（同镜像，换 command） | — | — | 同 `api` | unless-stopped | Celery Worker；队列 `activity,celery,notifications,webhooks,reports,imports`（Sprint-2 TASK-010 回改：+`activity`/`celery`，含死信 `activity.dlq` 经 DLX 声明） |
 | `beat` | 构建 `apps/api`（同镜像，换 command） | — | — | 同 `api` | unless-stopped | Celery Beat 定时调度；DatabaseScheduler |
 | `live` | 构建 `apps/live` | 3000 | 3000 | `redis`(healthy)、`api`(healthy) | unless-stopped | Express + Hocuspocus 实时协作（**P0 仅编排就位，不承载业务**） |
 | `web` | 构建 `apps/web` | 3001 | 3001 | `api`(healthy) | unless-stopped | 主工作台（SPA 静态产物 + nginx-alpine 托底） |
@@ -1378,7 +1378,7 @@ class Command(BaseCommand):
 | CT-02 | api → redis | `docker compose exec api python -c "from django.core.cache import cache; cache.set('k','v'); assert cache.get('k')=='v'"` | 通过 |
 | CT-03 | **worker → mq（RabbitMQ 为唯一 broker）** | `docker compose exec worker celery -A plane inspect ping` | 返回 `pong`；且 `celery -A plane inspect conf \| grep broker_url` 显示 `amqp://...@mq:5672//`（**不是** redis://） |
 | CT-04 | result backend 为 Redis | 同上查 `result_backend` | `redis://redis:6379/1` |
-| CT-05 | 四个业务队列已声明 | RabbitMQ 管理 API 查队列列表 | 含 `notifications` `webhooks` `reports` `imports` |
+| CT-05 | 四个业务队列已声明（Sprint-2 起六个：+ `activity` `activity.dlq`，TASK-010 交付） | RabbitMQ 管理 API 查队列列表 | 含 `notifications` `webhooks` `reports` `imports` `activity` `activity.dlq` |
 | CT-06 | beat 正常调度 | `docker compose logs beat` | 含 `beat: Starting...`，无异常重启；`/tmp/celerybeat.pid` 存在 |
 | CT-07 | api → minio | `docker compose exec api python -c "<boto3 head_bucket>"` | bucket 可访问 |
 | CT-08 | live → api 内部连通 | `curl -s http://localhost:3000/health` | 200，且 body 中 api 连通性字段为 true |

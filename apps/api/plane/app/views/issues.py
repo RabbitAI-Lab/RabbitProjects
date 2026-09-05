@@ -928,10 +928,16 @@ class IssueSubIssueListCreateView(APIView):
 # 活动日志（操作时间线）
 # ─────────────────────────────────────────────────────────────────────
 class IssueActivityListView(APIView):
-    """GET /workspaces/{slug}/projects/{pid}/issues/{iid}/activities/ —— 游标分页 30/页。"""
+    """GET /workspaces/{slug}/projects/{pid}/issues/{iid}/activities/ —— TASK-010 §4.3.3。
+
+    epoch 组感知分页（30 组/页，§6.3 显式豁免）：两步取数（DISTINCT ON epoch 组边界
+    +1 探测 → epoch IN 整组取回），组永不跨页；游标 = 本页末组 epoch 毫秒 Base64
+    （keyset，偏离 §6.2 三段式的显式豁免）；排序 -epoch,-created_at,-id 全序。
+    field_label 服务端解析；?field= 与 ?actor_id= 过滤。
+    """
 
     permission_classes = [IsAuthenticated]
-    PER_PAGE = 30
+    GROUP_PAGE_SIZE = 30
 
     def get(self, request, *args, **kwargs):
         project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
@@ -940,59 +946,89 @@ class IssueActivityListView(APIView):
         except Issue.DoesNotExist:
             raise NotFound("RESOURCE_NOT_FOUND") from None
 
-        qs = IssueActivity.objects.filter(issue=issue).select_related("actor").order_by("-created_at", "-id")
-        try:
-            per_page = min(int(request.query_params.get("per_page", self.PER_PAGE)), 100)
-        except (TypeError, ValueError):
-            per_page = self.PER_PAGE
-        offset = self._parse_cursor(request.query_params.get("cursor"))
-        total = qs.count()
-        rows = list(qs[offset : offset + per_page])
-        next_cursor = self._encode_cursor(offset + per_page) if offset + per_page < total else None
-        data = [
-            {
-                "id": str(r.id),
-                "actor_id": str(r.actor_id) if r.actor_id else None,
-                "actor_name": r.actor.display_name if r.actor else None,
-                "verb": r.verb,
-                "field": r.field,
-                "old_value": r.old_value,
-                "new_value": r.new_value,
-                "old_identifier": str(r.old_identifier) if r.old_identifier else None,
-                "new_identifier": str(r.new_identifier) if r.new_identifier else None,
-                "comment": r.comment,
-                "epoch": r.epoch,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-            }
-            for r in rows
-        ]
+        base = IssueActivity.objects.filter(issue=issue).select_related("actor")
+        if field := request.query_params.get("field"):
+            base = base.filter(field=field)
+        if actor_id := request.query_params.get("actor_id"):
+            base = base.filter(actor_id=actor_id)
+        cursor_epoch = None
+        if cursor := request.query_params.get("cursor"):
+            cursor_epoch = self._decode_cursor(cursor)
+
+        qs_filter = base
+        if cursor_epoch is not None:
+            qs_filter = base.filter(epoch__lt=cursor_epoch)
+        epochs = list(
+            qs_filter.order_by("-epoch").values_list("epoch", flat=True)
+            .distinct("epoch")[: self.GROUP_PAGE_SIZE + 1])
+        has_next = len(epochs) > self.GROUP_PAGE_SIZE
+        epochs = epochs[: self.GROUP_PAGE_SIZE]
+        rows = list(
+            base.filter(epoch__in=epochs).order_by("-epoch", "-created_at", "-id"))
+
+        groups, current = [], None
+        for r in rows:
+            if current is not None and current["epoch"] == r.epoch:
+                current["items"].append(self._item(r))
+            else:
+                current = {
+                    "id": str(r.id),
+                    "epoch": r.epoch,
+                    "actor": {
+                        "id": str(r.actor_id) if r.actor_id else None,
+                        "display_name": r.actor.display_name if r.actor else None,
+                    },
+                    "verb": r.verb,
+                    "comment": r.comment,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "items": [self._item(r)],
+                }
+                groups.append(current)
+        total_groups = base.values("epoch").distinct().count()
+        per_page = self.GROUP_PAGE_SIZE
         return success_response(
-            data,
+            groups,
             meta={
-                "next_cursor": next_cursor,
+                "next_cursor": self._encode_cursor(epochs[-1]) if has_next and epochs else None,
                 "prev_cursor": None,
-                "next_page_results": (offset + per_page) < total,
-                "prev_page_results": offset > 0,
-                "count": len(rows),
-                "total_count": total,
-                "total_pages": (total + per_page - 1) // per_page,
-                "page": (offset // per_page) + 1,
+                "next_page_results": has_next,
+                "prev_page_results": False,
+                "count": len(groups),
+                "total_count": total_groups,
+                "total_pages": (total_groups + per_page - 1) // per_page,
+                "page": 1 if cursor_epoch is None else None,
                 "per_page": per_page,
+                "grouped_by": "epoch",
             },
         )
 
     @staticmethod
-    def _encode_cursor(offset: int) -> str:
-        return base64.urlsafe_b64encode(f"{offset}".encode()).decode().rstrip("=")
+    def _item(r) -> dict:
+        from plane.db.services.activity_builder import field_label
+
+        return {
+            "field": r.field,
+            "field_label": field_label(r.field),
+            "old_value": r.old_value,
+            "new_value": r.new_value,
+            "old_identifier": str(r.old_identifier) if r.old_identifier else None,
+            "new_identifier": str(r.new_identifier) if r.new_identifier else None,
+        }
 
     @staticmethod
-    def _parse_cursor(cur: str | None) -> int:
-        if not cur:
-            return 0
+    def _encode_cursor(epoch: float) -> str:
+        import base64
+
+        return base64.b64encode(str(int(epoch)).encode()).decode()
+
+    @staticmethod
+    def _decode_cursor(cursor: str) -> float:
+        import base64
+
         try:
-            return max(int(base64.urlsafe_b64decode(cur + "=" * (-len(cur) % 4)).decode().split(":")[0]), 0)
-        except (ValueError, UnicodeDecodeError, IndexError) as err:
-            raise AppException("VALIDATION_INVALID_CURSOR") from err
+            return float(base64.b64decode(cursor.encode()).decode())
+        except Exception:
+            raise AppException("VALIDATION_INVALID_CURSOR") from None
 
 
 # ─────────────────────────────────────────────────────────────────────

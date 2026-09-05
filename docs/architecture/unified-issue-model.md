@@ -901,7 +901,12 @@ class IssueActivity(BaseModel):
 #### 逐字段 diff 的生成逻辑
 
 ```python
-TRACKED_SCALAR_FIELDS = ("name", "priority", "start_date", "target_date", "description_html")
+# TASK-010 §4.3.1 三处回改（2026-09-05 统一）：
+#   ① description_html 移出标量清单——以 __modified__ 标记落库（BR-06 体积纪律）
+#   ② custom_fields 的 field 命名 = cf_<key>（不带 custom_fields. 前缀）
+#   ③ TRACKED_SCALAR_FIELDS 增补 estimate_minutes
+TRACKED_SCALAR_FIELDS = ("name", "priority", "start_date", "target_date", "estimate_minutes")
+DESCRIPTION_MARKER = "__modified__"   # ①：描述 diff 不落全文，仅标记化
 TRACKED_FK_FIELDS = ("state", "issue_type", "parent")
 TRACKED_M2M_FIELDS = ("assignees", "labels")
 
@@ -955,7 +960,7 @@ def build_activities(issue: Issue, before: dict, after: dict, actor_id: uuid.UUI
             activities.append(
                 IssueActivity(
                     issue_id=issue.id, actor_id=actor_id, verb=IssueActivity.Verb.UPDATED,
-                    field=f"custom_fields.{key}",
+                    field=f"cf_{key}",
                     old_value=json.dumps(before.get("custom_fields", {}).get(key), ensure_ascii=False),
                     new_value=json.dumps(after.get("custom_fields", {}).get(key), ensure_ascii=False),
                     epoch=epoch,

@@ -6,6 +6,12 @@ from django.urls import path
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
+from plane.app.views.activity_dlq_admin import (
+    ActivityDeadLetterBulkReplayView,
+    ActivityDeadLetterDiscardView,
+    ActivityDeadLetterListView,
+    ActivityDeadLetterReplayView,
+)
 from plane.app.views.auth import MeView, SignInView, SignOutView, SignUpView, csrf_token
 from plane.app.views.issues import IssueDetailView, IssueListCreateView
 from plane.app.views.projects import ProjectDetailView, ProjectListCreateView, ProjectStateListView
@@ -41,6 +47,23 @@ class HealthView(APIView):
 
 urlpatterns = [
     path("health/", HealthView.as_view(), name="health"),
+    # admin 死信补偿（TASK-010 §4.2.2：系统级顶层资源，不嵌套 workspace）
+    path("activity-dead-letters/", ActivityDeadLetterListView.as_view(), name="activity-dead-letters"),
+    path(
+        "activity-dead-letters/bulk/",
+        ActivityDeadLetterBulkReplayView.as_view(),
+        name="activity-dead-letters-bulk",
+    ),
+    path(
+        "activity-dead-letters/<uuid:message_id>/replay/",
+        ActivityDeadLetterReplayView.as_view(),
+        name="activity-dead-letter-replay",
+    ),
+    path(
+        "activity-dead-letters/<uuid:message_id>/",
+        ActivityDeadLetterDiscardView.as_view(),
+        name="activity-dead-letter-discard",
+    ),
     path("auth/sign-up/", SignUpView.as_view(), name="auth-signup"),
     path("auth/sign-in/", SignInView.as_view(), name="auth-signin"),
     path("auth/sign-out/", SignOutView.as_view(), name="auth-signout"),

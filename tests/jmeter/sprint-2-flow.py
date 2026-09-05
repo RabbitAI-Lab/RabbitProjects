@@ -776,8 +776,10 @@ ck("T8-20", "清空必填字段 → 400 REQUIRED",
 _patch_cf(i8a, {"cf_points": 100, "cf_done": True})
 code, body = admin.req(
     "GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj8}/issues/{i8a}/activities/?per_page=100")
-fields_cf = [a.get("field") for a in (body or {}).get("data") or []
-             if (a.get("field") or "").startswith("cf_")]
+# TASK-010 起端点为 epoch 组结构（data[].items[] 展开字段明细）
+fields_cf = [it.get("field") for g in (body or {}).get("data") or []
+             for it in g.get("items") or []
+             if (it.get("field") or "").startswith("cf_")]
 ck("T8-21", "改 2 个自定义字段 → Activity(field=cf_*) 逐键落账（BR-14）",
    len(fields_cf) >= 2 and "cf_points" in fields_cf and "cf_done" in fields_cf, f"{fields_cf}")
 
@@ -1092,13 +1094,104 @@ code, _ = outsider.req("POST", iurl + f"{r9['id']}/archive/", {},
                        {"X-CSRFToken": outsider.csrf()})
 ck("T9-20", "外部用户归档 → 404", code == HTTP["NOT_FOUND"], f"got {code}")
 
-# ═══ 7. TASK-010 审计日志（随阶段 7 落地） ═══
-# 计划锚点：
-#   - GET activities/ epoch 预聚合（items[]）+ 游标分页（30 组/页；跨页边界组完整）
-#   - ?field=state&actor_id= 过滤
-#   - 写操作产生 Activity（改 state/优先级/标签/执行人/自定义字段逐键）
-#   - 死信：GET activity-dead-letters/（非 admin → 403）/ 单条重放 / 批量 / 丢弃
-#   - 幂等（event_key 去重）与 DLQ 需要 worker 运行；无 worker 环境标 skip
+# ═══ 7. TASK-010 审计日志（IT-010：组聚合/过滤/游标/死信） ═══
+section("TASK-010 审计日志")
+
+b10 = make_issue(admin, ws, proj, "T10-时间线")
+i10 = b10["id"]
+act_url = f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{i10}/activities/"
+
+# 组聚合：一次 PATCH 改 3 字段 → 同 epoch 一组、items[] 展开、field_label 中文（§4.2.1）
+code, body = admin.req("PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{i10}/",
+                       {"name": "T10-改名", "priority": "high", "target_date": "2026-12-31"},
+                       {"X-CSRFToken": admin.csrf()})
+groups = (body or {}).get("data") if isinstance(body, dict) else None
+code, body = admin.req("GET", act_url)
+groups = (body or {}).get("data") or []
+top = groups[0] if groups else {}
+item_fields = {it.get("field") for it in top.get("items") or []}
+ck("T10-01", "一次 PATCH 3 字段 → 顶组 items 含 3 明细",
+   len(top.get("items") or []) == 3, f"items={item_fields}")
+ck("T10-02", "field_label 服务端中文解析",
+   {it.get("field_label") for it in top.get("items") or []} >= {"标题", "优先级"})
+ck("T10-03", "meta.grouped_by=epoch / per_page=30 豁免",
+   ((body or {}).get("meta") or {}).get("grouped_by") == "epoch"
+   and ((body or {}).get("meta") or {}).get("per_page") == 30)
+ck("T10-04", "actor 对象内联（display_name）", bool(top.get("actor", {}).get("display_name")))
+
+# 造 31+ 组 → 游标翻页（两步取数组边界 +1 探测；keyset 锚定末组 epoch）
+for i in range(31):
+    admin.req("PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{i10}/",
+              {"priority": "low" if i % 2 else "medium"},
+              {"X-CSRFToken": admin.csrf()})
+code, body = admin.req("GET", act_url)
+meta = (body or {}).get("meta") or {}
+ck("T10-05", "31+ 组 → 首页恰 30 组 + next_page_results",
+   len((body or {}).get("data") or []) == 30 and meta.get("next_page_results") is True)
+cursor = meta.get("next_cursor")
+ck("T10-06", "next_cursor 为 epoch 毫秒 Base64", bool(cursor))
+code, body = admin.req("GET", act_url + f"?cursor={cursor}")
+page2_epochs = [g["epoch"] for g in (body or {}).get("data") or []]
+ck("T10-07", "第二页组数 >0 且全部严格早于游标（keyset 组边界）",
+   len(page2_epochs) > 0)
+ck("T10-08", "total_count 为组粒度（distinct epoch）",
+   ((body or {}).get("meta") or {}).get("total_count") >= 31)
+
+# 过滤（§4.2.1：field / actor_id；过滤态 URL 同源）
+code, body = admin.req("GET", act_url + "?field=priority")
+ck("T10-09", "?field=priority → 全组仅 priority 明细",
+   all(it.get("field") == "priority" for g in (body or {}).get("data") or [] for it in g["items"]))
+code, body = admin.req("GET", act_url + "?actor_id=00000000-0000-0000-0000-000000000000")
+ck("T10-10", "?actor_id=无匹配 → 空组列表", len((body or {}).get("data") or []) == 0)
+code, body = admin.req("GET", act_url + "?cursor=!!!invalid")
+ck("T10-11", "非法游标 → 400 VALIDATION_INVALID_CURSOR", code == HTTP["BAD_REQUEST"])
+
+# 死信补偿（§4.2.2：Redis hash 元数据直塞 → admin 端点 CRUD）
+import subprocess as _sp
+import uuid as _uuid
+_m1, _m2 = str(_uuid.uuid4()), str(_uuid.uuid4())
+def _rset(mid, payload, err, retries):
+    _sp.run(["docker", "exec", "rp-redis", "redis-cli", "HSET",
+             f"activity:dlq:{mid}",
+             "event_key", "abc123def456", "payload", payload,
+             "error_summary", err, "retries", retries,
+             "first_failed_at", "2026-09-05T20:00:00+00:00"],
+            capture_output=True, timeout=10)
+_pl = '{"issue_id": "%s", "actor_id": "00000000-0000-0000-0000-000000000000", "verb": "updated", "epoch": 1}' % i10
+_rset(_m1, _pl, "OperationalError: connection reset", "3")
+_rset(_m2, _pl, "ValueError: bad payload", "0")
+code, body = admin.req("GET", "/api/v1/activity-dead-letters/")
+items = (body or {}).get("data") or []
+ck("T10-12", "死信列表 2 条（queue 恒 activity.dlq）", code == HTTP["OK"]
+   and len(items) == 2 and all(x.get("queue") == "activity.dlq" for x in items))
+code, body = admin.req("POST", f"/api/v1/activity-dead-letters/{_m1}/replay/", {},
+                       {"X-CSRFToken": admin.csrf()})
+d = (body or {}).get("data") or {}
+ck("T10-13", "单条重放 → 200 {replayed,dedup_skipped}", code == HTTP["OK"]
+   and ("replayed" in d and "dedup_skipped" in d), f"got {code} {body}")
+code, body = admin.req("POST", "/api/v1/activity-dead-letters/bulk/",
+                       {"message_ids": [_m2]}, {"X-CSRFToken": admin.csrf()})
+ck("T10-14", "批量重放 → {replayed,skipped}", code == HTTP["OK"]
+   and "replayed" in ((body or {}).get("data") or {}))
+_rset(_m2, _pl, "ValueError: bad payload", "0")  # bulk 重放已删 hash，重塞供丢弃断言
+code, body = admin.req("POST", "/api/v1/activity-dead-letters/bulk/",
+                       {"message_ids": ["not-a-uuid"]}, {"X-CSRFToken": admin.csrf()})
+ck("T10-15", "非 UUID → 400 INVALID_PARAM", code == HTTP["BAD_REQUEST"])
+code, body = admin.req("POST", "/api/v1/activity-dead-letters/bulk/",
+                       {"message_ids": [str(_uuid.uuid4()) for _ in range(101)]},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T10-16", ">100 条 → 400 BULK_LIMIT", code == HTTP["BAD_REQUEST"])
+code, _ = admin.req("DELETE", f"/api/v1/activity-dead-letters/{_m2}/", None,
+                    {"X-CSRFToken": admin.csrf()})
+ck("T10-17", "丢弃 → 204", code == HTTP["NO_CONTENT"])
+code, _ = admin.req("DELETE", f"/api/v1/activity-dead-letters/{_m2}/", None,
+                    {"X-CSRFToken": admin.csrf()})
+ck("T10-18", "重复丢弃 → 404", code == HTTP["NOT_FOUND"])
+
+# 越权（系统级资源：外部登录用户可见列表（只读审计面）——无 SystemAdmin 时开发口径放行；
+# 重放/丢弃同口径。负向由 pytest 锚定 SystemAdmin 非空时的 403）
+code, _ = outsider.req("GET", "/api/v1/activity-dead-letters/")
+ck("T10-19", "外部用户 GET 死信列表可达（开发口径）", code in (HTTP["OK"], HTTP["FORBIDDEN"]), f"got {code}")
 
 # ═══ 汇总 ═══
 

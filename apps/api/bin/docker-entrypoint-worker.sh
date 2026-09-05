@@ -3,4 +3,4 @@ set -e
 exec celery -A plane worker \
     --loglevel="${CELERY_LOG_LEVEL:-INFO}" \
     --concurrency="${CELERY_CONCURRENCY:-4}" \
-    -Q notifications,webhooks,reports,imports
+    -Q activity,celery,notifications,webhooks,reports,imports

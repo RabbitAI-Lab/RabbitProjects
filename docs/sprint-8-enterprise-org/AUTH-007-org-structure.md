@@ -7,11 +7,11 @@
 | 优先级 | P3（企业版核心级 · 组织治理三问之「谁在组织里」） |
 | 所属模块 | M1-AUTH｜账号与权限 |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
+| 最后更新日期 | 2026-09-05 |
 | 上游依赖 | `TEAM-001/002`（WorkspaceMember 成员体系）、`rbac-permission-model.md`（四层 Permission 体系）、`PROJ-002`（项目成员模型——批量授权的落点） |
 | 下游消费 | `AUTH-008`（按部门批量挂接自定义角色）、`AUTH-009`（SSO JIT 部门映射的落点）、`AUTH-010`（部门变更入审计）、`RPT-004`（按部门负载统计） |
 | 上游依据 | `docs/需求文档.md` §3.1 企业版专属（部门层级组织架构）、§8.2 组织架构 P3 列 |
-| 关联架构文档 | [`rbac-permission-model.md`](../architecture/rbac-permission-model.md)（WS 层角色语义）、[`api-conventions.md`](../architecture/api-conventions.md)（§4 信封 / §8 错误码 / §5 查询能力） |
+| 关联架构文档 | [`rbac-permission-model.md`](../architecture/rbac-permission-model.md)（WS 层角色语义、§3.4 Department 预留模型、§8.1 权限码注册表）、[`api-conventions.md`](../architecture/api-conventions.md)（§4 信封 / §6.3 分页 / §8 错误码） |
 | 对标基线 | Ones 组织架构（部门树 + 按部门授权） · 飞书/钉钉通讯录（部门-成员范式） · Plane（**无部门概念**——企业版差异化能力） |
 | 工作量估算 | 后端 3 人日 / 前端 3 人日 / 联调与测试 1.5 人日，合计 **7.5 人日** |
 
@@ -24,7 +24,7 @@
 标准版的成员体系是「平」的：一个 Workspace 里一份成员名单，授权以「人」为最小单位逐个点选。企业组织真实形态是「树」的：公司 → 研发中心 → 平台组 → 后端小组，授权、统计、汇报都以「部门」为天然单位。AUTH-007 交付 Workspace 内的部门层级组织架构：
 
 1. **部门树**：`Department` 自引用树，深度 ≤ 6，支持增删改、移动（换父级）、排序；
-2. **成员归属**：成员挂到部门（一人一部门），附带**岗位**（position）自由文本；
+2. **成员归属**：成员挂到部门（一人一部门），附带**岗位**（复用既有 `company_role` 展示字段，rbac §3.2）自由文本；
 3. **按部门批量授权**：把部门（含子部门）成员一次性展开写入项目成员或角色挂接——从「点人」升级为「点部门」；
 4. **按部门统计**：成员数、任务量、工时的部门聚合入口（本文档定义成员与任务量口径，工时聚合归 `RPT-004` 消费）。
 
@@ -85,7 +85,7 @@ flowchart TB
 | --- | --- | --- |
 | `TEAM-001/002` | `WorkspaceMember` 模型与成员管理 API | 部门归属字段挂在成员关系上 |
 | `PROJ-002` | `ProjectMember` 写入路径（角色校验、幂等加人） | 批量授权复用其逐人写入，不另造轮子 |
-| `rbac-permission-model.md` | WS 层角色语义（WS_ADMIN+ 管理权限） | 部门管理权限码 `org.manage` 的挂载层 |
+| `rbac-permission-model.md` | WS 层角色语义与权限码注册表（§8.1） | 部门管理权限码 `department.manage` 的挂载层 |
 | `TASK-010` | Activity 管道范式（event_key 幂等） | 部门变更事件与授权批次留痕复用 |
 
 ### 1.6 竞品参考
@@ -113,17 +113,17 @@ sequenceDiagram
 
     A->>API: POST …/departments/ {name, parent_id}
     API->>S: create(actor, ws, name, parent_id)
-    S->>DB: SELECT depth 校验（父链 CTE，深度+1 ≤ 6）
+    S->>DB: 深度校验（父 path 段数 + 1 ≤ 6）
     S->>DB: 同级唯一校验 (parent_id, name)
-    S->>DB: INSERT Department（sort_order = 同级 max + 65536）
-    S->>Q: on_commit → audit.record("org.department.create")
-    API-->>A: 201 {status:0, data:{department}}
-    Note over S: 移动/删除同构：一律先校验再写入，<br/>违规返回 VALIDATION_ 结构化错误
+    S->>DB: INSERT Department（path = 父.path + 自身 id + "/"，<br/>sort_order = 同级 max + 65536）
+    S->>Q: on_commit → audit.record("department.created")
+    API-->>A: 201 {status:"success", data:{department}}
+    Note over S: 移动/删除同构：一律先校验再写入，<br/>违规返回 §2.3 违规响应列的结构化错误（409/403 既有码）
 ```
 
 ### 2.2 成员归属与批量授权流程
 
-**挂部门**：`PATCH …/members/{member_id}/` 传 `department_id`（null=移入未分配）。成员列表支持 `?department=<id>` 与 `?department=<id>&with_descendants=true` 两种过滤。
+**挂部门**：`PATCH …/members/{member_id}/` 传 `department_id`（null=移入未分配）与 `company_role`（岗位，复用既有展示字段）。成员列表支持 `?department=<id>` 与 `?department=<id>&with_descendants=true` 两种过滤。
 
 **批量授权**（核心流程）：
 
@@ -134,52 +134,55 @@ sequenceDiagram
     participant S as GrantService
     participant DB as PostgreSQL
 
-    A->>API: POST …/departments/{id}/grants/<br/>{project_id, role, with_descendants}
+    A->>API: POST …/departments/{id}/grants/<br/>{project_id, role: 15, with_descendants}
     API->>S: expand_grant(actor, dept, project, role)
-    S->>DB: CTE 收集目标成员集（去重、排除已归档）
+    S->>DB: path 前缀圈定目标成员集（含停用——停用者进 skipped）
     S->>DB: 查该项目既有 ProjectMember
     S->>S: 差集 = 待新增；交集 = 待调角色（role 不同才调）
     S->>DB: INSERT GrantBatch（批次行，含成员清单快照）
-    S->>DB: 逐人 upsert ProjectMember（复用 PROJ-002 路径，<br/>冲突跳过）附 grant_batch_id
+    S->>DB: 新增复用 PROJ-002 add_members、调角色复用 change_role<br/>（逐人留痕）附 grant_batch_id
     Note over S,DB: 单事务：批次行与成员行同生共死
-    API-->>A: 201 {batch, added:12, role_changed:3, skipped:2}
+    API-->>A: 201 {status:"success", data:{batch, added:12,<br/>role_changed:3, unchanged:28, skipped:2}}
 ```
 
-**幂等重同步**：对同 `(department, project)` 重复 POST 不产生重复成员行——既有成员仅在 `role` 变更时更新并记新批次；无任何变化时返回 `added:0` 空批次（批次行仍记录，作为审计锚点）。
+**幂等重同步**：对同 `(department, project)` 重复 POST 不产生重复成员行——既有成员仅在 `role` 变更时更新并记新批次；无任何变化时返回 `added:0` 空批次（批次行仍记录，作为审计锚点）。响应计数恒等式：`added + role_changed + skipped + unchanged = 目标成员集总数`（IT-08 断言）。
 
 ### 2.3 业务规则汇总
 
 | 编号 | 规则 | 触发点 | 违规响应 |
 | --- | --- | --- | --- |
-| BR-01 | 部门深度 ≤ 6（根为 1） | 创建/移动 | `VALIDATION_ERROR` + `{"field":"parent_id","reason":"max_depth_exceeded","max":6}` |
-| BR-02 | 同级部门名唯一（不区分大小写） | 创建/改名/移动 | `VALIDATION_ERROR` + `{"field":"name","reason":"duplicate_in_siblings"}` |
-| BR-03 | 移动不得造成环（新父级不得是自身后代） | 移动 | `VALIDATION_ERROR` + `reason:"cycle_detected"` |
-| BR-04 | 仅空部门可删（无直属成员且无子部门） | 删除 | `VALIDATION_ERROR` + `{"reason":"not_empty","member_count":n,"child_count":m}` |
+| BR-01 | 部门深度 ≤ 6（根为 1，以 `path` 段数计） | 创建/移动 | `409 RESOURCE_LIMIT_EXCEEDED` + details `{"field":"parent_id","code":"TOO_LARGE"}` |
+| BR-02 | 同级部门名唯一（不区分大小写） | 创建/改名/移动 | `409 RESOURCE_ALREADY_EXISTS` + details `{"field":"name","code":"UNIQUE"}` |
+| BR-03 | 移动不得造成环（新父级 `path` 不得以自身 `path` 为前缀，含自身） | 移动 | `409 RESOURCE_CIRCULAR_DEPENDENCY` + details 给出环路径 |
+| BR-04 | 仅空部门可删（无直属成员且无子部门） | 删除 | `409 RESOURCE_IN_USE` + details 给出阻塞计数（直属 `member_count` / `child_count`） |
 | BR-05 | 一人一部门；`department_id=null` 表示未分配 | 挂接 | —（正常路径） |
-| BR-06 | 部门管理（增删改/移动/授权）需 `org.manage`（WS_ADMIN+）；读取全员 | 全部写端点 | `PERM_DENIED` |
-| BR-07 | 批量授权展开含子部门可选（`with_descendants`，默认 true） | 授权 | — |
-| BR-08 | 授权目标成员集排除已停用/已归档成员 | 授权 | 计入 `skipped` 并在响应列明 |
-| BR-09 | 已是项目成员者仅在角色不同的时候调角色（调角色产生独立批次明细） | 授权 | — |
-| BR-10 | 批量授权 `role` 仅接受 PROJ 层四角色；PROJ_ADMIN 授予需操作者本身是该项目 PROJ_ADMIN 或 WS_ADMIN | 授权 | `PERM_DENIED` |
-| BR-11 | 部门改名/移动/删除均入审计流（`AUTH-010`）与 Activity 管道 | 写操作 | — |
-| BR-12 | 归档成员保留部门归属（恢复后原样） | 成员归档 | — |
-| BR-13 | 岗位（position）为 ≤64 字符自由文本，不做枚举 | 挂接 | 超长 `VALIDATION_ERROR` |
+| BR-06 | 部门管理（增删改/移动/排序/授权/批量调部门）需 `department.manage`（rbac §8.1 注册表：WS_OWNER ✅ / WS_ADMIN ✅ / WS_MEMBER ❌ / WS_GUEST ❌）；读取借用 `workspace.member.read` 行口径（WS_GUEST ❌） | 全部写/读端点 | 写 `403 PERM_WORKSPACE_ADMIN_REQUIRED`；GUEST 读 `403 PERM_ROLE_INSUFFICIENT` |
+| BR-07 | 批量授权展开含子部门可选（`with_descendants`，默认 true，按 `path` 前缀圈定） | 授权 | — |
+| BR-08 | 授权目标集 = 部门下未软删成员全集（`deleted_at__isnull=true`）；停用成员（`is_active=false`）**不静默排除**，计入 `skipped`（`reason=member_inactive`）并在 `skipped_detail` 列明 | 授权 | —（正常路径内分态） |
+| BR-09 | 已是项目成员者仅在角色不同的时候调角色（复用 PROJ-002 `change_role`，调角色产生独立批次明细） | 授权 | — |
+| BR-10 | 批量授权 `role` 仅接受 ProjectRole 整数等级（20/15/10/5，rbac §3.1，与 PROJ-002 一致）；`role=20`（PROJ_ADMIN）授予需操作者本身是该项目 PROJ_ADMIN 或 WS_ADMIN+ | 授权 | 非法等级 `400 VALIDATION_ERROR` + `NOT_A_CHOICE`；越权 `403 PERM_PROJECT_ADMIN_REQUIRED` |
+| BR-11 | 部门改名/移动/删除/授权均入审计流（`AUTH-010`）与 Activity 管道（事件键 `department.created/moved/deleted/granted`） | 写操作 | — |
+| BR-12 | 停用成员保留部门归属（恢复后原样），不计入部门在职统计 | 成员停用 | — |
+| BR-13 | 岗位写入既有 `company_role` 字段（rbac §3.2「展示用职位，非权限字段」），应用层 ≤64 字符自由文本，不做枚举 | 挂接 | 超长 `400 VALIDATION_ERROR` + `TOO_LONG` |
 | BR-14 | 部门排序 `sort_order` 浮点插值（同级），重平衡阈值与 Issue 一致 | 排序 | — |
-| BR-15 | 树读取默认返回全部部门（平铺+parent_id），前端组树；`?include=member_count` 附直属/聚合计数 | 读取 | — |
+| BR-15 | 树读取为 api-conventions §6.3 游标分页平铺列表（`per_page` 默认/上限 100，前端逐页拉全后本地组树）；`?include=member_count` 附直属/聚合计数 | 读取 | 页大小静默截断经 `meta.degraded` 告知 |
+| BR-16 | 批量调部门 `member_ids` 上限 100，逐人一条审计留痕 | 批量调部门 | 超限 `400 VALIDATION_BULK_LIMIT_EXCEEDED` |
 
 ### 2.4 异常处理
 
 | 场景 | 处理 |
 | --- | --- |
-| 移动部门时目标父级被并发删除 | 行锁读父级 → 不存在则 `RESOURCE_NOT_FOUND`（404） |
-| 批量授权中项目被并发归档 | 事务内 `select_for_update` 项目行；已归档 → `VALIDATION_ERROR` `reason:"project_archived"`，整批回滚 |
-| 授权展开成员集为空（空部门） | 201 空批次，`added:0`，`warnings:["empty_department"]` |
-| 树读取超大（>500 部门） | 平铺响应 + cursor 分页；深度校验保证单行 JSON 可控 |
+| 移动部门时目标父级被并发删除 | 行锁读父级 → 不存在则 `404 RESOURCE_NOT_FOUND` |
+| 批量授权中项目被并发归档 | 事务内 `select_for_update` 项目行；`status=archived` → `403 PERM_PROJECT_ARCHIVED`，整批回滚 |
+| 授权展开成员集为空（空部门） | 201 空批次，`added:0`，`meta.warnings:["empty_department"]` |
+| 树读取超大（>500 部门） | 统一 §6.3 游标分页（前端逐页拉全）；`per_page` 静默截断经 `meta.degraded` 告知；深度 ≤6 保证单行可控 |
+| 批量调部门 `member_ids` 超 100 | `400 VALIDATION_BULK_LIMIT_EXCEEDED`（§8.4，BR-16） |
+| WS_GUEST 访问部门读端点 | `403 PERM_ROLE_INSUFFICIENT`（BR-06 读取口径） |
 
 ### 2.5 边界条件
 
 - **未分配恒等式**：`总成员数 = Σ各部门直属 + 未分配`，成员列表页以此做对账展示。
-- **删人 vs 调部门**：成员离职走 `TEAM-002` 停用流程，部门归属保留至停用；停用成员不计入部门统计但与授权展开（BR-08）。
+- **删人 vs 调部门**：成员离职走 `TEAM-002` 停用流程（`is_active=false`），部门归属保留至停用；停用成员不计入部门在职统计，授权展开时计入 `skipped`（`reason=member_inactive`，BR-08）而非静默排除。
 - **排序稳定性**：`sort_order` 同级插入取前后中点；间距 < 1e-6 触发同级重平衡（一次性 UPDATE 为等差序列）。
 
 ---
@@ -252,24 +255,27 @@ sequenceDiagram
 ### 4.1 数据模型
 
 ```python
-# apps/core/models/department.py
-class Department(models.Model):
-    id = models.ULIDField(primary_key=True)
-    workspace = models.ForeignKey("Workspace", on_delete=models.CASCADE,
+# apps/api/plane/db/models/department.py
+class Department(BaseModel):
+    """部门层级（P3）。实体对齐 rbac-permission-model.md §3.4 预留模型；
+    BaseModel 提供 UUID v4 主键 / created_by / updated_by / deleted_at（软删）。"""
+
+    workspace = models.ForeignKey("db.Workspace", on_delete=models.CASCADE,
                                   related_name="departments")
     parent = models.ForeignKey("self", null=True, blank=True,
                                on_delete=models.PROTECT, related_name="children")
-    name = models.CharField(max_length=64)
+    name = models.CharField(max_length=255)
+    # 物化路径（rbac §3.4 预留列）："/{dept_id}/{dept_id}/…/"，段为部门 UUID v4，
+    # 含自身 id。子树查询 = path 前缀匹配；深度 = 段数（≤6，BR-01）。
+    path = models.TextField(db_index=True, editable=False)
     sort_order = models.FloatField(default=65536.0)
-    created_by = models.ForeignKey("User", on_delete=models.PROTECT)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "department"
         constraints = [
             models.UniqueConstraint(
                 "workspace", "parent", models.functions.Lower("name"),
+                condition=models.Q(deleted_at__isnull=True),
                 name="uq_department_sibling_name"),
             models.CheckConstraint(check=models.Q(sort_order__gt=0),
                                    name="ck_department_sort_positive"),
@@ -279,21 +285,25 @@ class Department(models.Model):
                          name="idx_department_tree_read"),
         ]
 
-class DepartmentGrantBatch(models.Model):
-    """授权批次：快照展开的审计锚点（BR-09/重同步幂等）"""
-    id = models.ULIDField(primary_key=True)
-    workspace = models.ForeignKey("Workspace", on_delete=models.CASCADE)
+
+class DepartmentGrantBatch(BaseModel):
+    """授权批次：快照展开的审计锚点（BR-09/重同步幂等）。
+    注：AUTH-008 将经独立迁移为本表增补 target_type 判别列
+    （"project_membership" | "role"），本文不预建。"""
+
+    workspace = models.ForeignKey("db.Workspace", on_delete=models.CASCADE)
     department = models.ForeignKey(Department, on_delete=models.PROTECT,
                                    related_name="grant_batches")
-    project = models.ForeignKey("Project", on_delete=models.CASCADE)
-    role = models.CharField(max_length=20)  # PROJ 层四角色
+    project = models.ForeignKey("db.Project", on_delete=models.CASCADE)
+    role = models.IntegerField(choices=ProjectRole.choices,
+                               default=ProjectRole.CONTRIBUTOR)  # 整数等级（rbac §3.1）
     with_descendants = models.BooleanField(default=True)
     added_count = models.IntegerField(default=0)
     role_changed_count = models.IntegerField(default=0)
     skipped_count = models.IntegerField(default=0)
-    member_snapshot = models.JSONField(default=list)  # [{user_id, action}]
-    created_by = models.ForeignKey("User", on_delete=models.PROTECT)
-    created_at = models.DateTimeField(auto_now_add=True)
+    unchanged_count = models.IntegerField(default=0)
+    member_snapshot = models.JSONField(default=list)  # [{member_id, action}]
+    # created_by / updated_by / created_at / updated_at 由 BaseModel 提供
 
     class Meta:
         db_table = "department_grant_batch"
@@ -301,148 +311,219 @@ class DepartmentGrantBatch(models.Model):
                                 name="idx_grant_batch_project")]
 ```
 
-`WorkspaceMember` 增量字段（迁移：两列均 nullable，零回填）：
+`WorkspaceMember` 增量字段（迁移：仅一列 nullable，零回填）：
 
 ```python
 class WorkspaceMember(models.Model):
-    # …既有字段…
-    department = models.ForeignKey("Department", null=True, blank=True,
+    # …既有字段（rbac §3.2）：role / is_active / company_role（既有展示用职位列）…
+    department = models.ForeignKey("db.Department", null=True, blank=True,
                                    on_delete=models.SET_NULL,
                                    related_name="members")
-    position = models.CharField(max_length=64, blank=True, default="")
 ```
 
-迁移要点：`department` 删部门受限（BR-04）故 `SET_NULL` 仅兜底；`uq_department_sibling_name` 对 `parent IS NULL`（根部门）在 PG 中 NULL 不参与唯一——根部门重名改用**部分唯一索引**兜底：
+迁移要点：本迭代仅新增 `department` 一列；岗位复用既有 `company_role` 列（rbac §3.2「展示用职位，非权限字段」），**不新增 `position` 列**避免语义重复。`department` 删部门受限（BR-04）故 `SET_NULL` 仅兜底；`uq_department_sibling_name` 对 `parent IS NULL`（根部门）在 PG 中 NULL 不参与唯一——根部门重名改用**部分唯一索引**兜底：
 
 ```sql
 CREATE UNIQUE INDEX uq_department_root_name
-  ON department (workspace_id, lower(name)) WHERE parent_id IS NULL;
+  ON department (workspace_id, lower(name))
+  WHERE parent_id IS NULL AND deleted_at IS NULL;
 ```
 
 ### 4.2 API 定义
 
 | 方法 | 路径 | 说明 | 权限 |
 | --- | --- | --- | --- |
-| GET | `/api/v1/workspaces/{slug}/departments/` | 部门平铺列表（`?include=member_count`） | 成员 |
-| POST | `/api/v1/workspaces/{slug}/departments/` | 新建部门 | `org.manage` |
-| PATCH | `/api/v1/workspaces/{slug}/departments/{id}/` | 改名 / 排序（`sort_after`） | `org.manage` |
-| DELETE | `/api/v1/workspaces/{slug}/departments/{id}/` | 删除空部门 | `org.manage` |
-| POST | `/api/v1/workspaces/{slug}/departments/{id}/move/` | 移动（换父级） | `org.manage` |
-| PATCH | `/api/v1/workspaces/{slug}/members/{member_id}/` | 挂部门/岗位（扩展 TEAM-002 既有端点白名单字段） | `member.manage` |
-| POST | `/api/v1/workspaces/{slug}/departments/{id}/members:bulk-move/` | 批量调部门 `{member_ids[], department_id}` | `org.manage` |
-| POST | `/api/v1/workspaces/{slug}/departments/{id}/grants/preview/` | 授权预览（只读展开） | `org.manage` |
-| POST | `/api/v1/workspaces/{slug}/departments/{id}/grants/` | 执行批量授权 | `org.manage` + BR-10 |
-| GET | `/api/v1/workspaces/{slug}/departments/{id}/stats/` | 部门统计（成员/任务量） | 成员 |
+| GET | `/api/v1/workspaces/{slug}/departments/` | 部门平铺列表（`?include=member_count`；§6.3 分页） | `workspace.member.read` 口径（GUEST 403） |
+| POST | `/api/v1/workspaces/{slug}/departments/` | 新建部门 | `department.manage` |
+| PATCH | `/api/v1/workspaces/{slug}/departments/{id}/` | 改名 / 排序（`sort_after`） | `department.manage` |
+| DELETE | `/api/v1/workspaces/{slug}/departments/{id}/` | 删除空部门 | `department.manage` |
+| POST | `/api/v1/workspaces/{slug}/departments/{id}/move/` | 移动（换父级） | `department.manage` |
+| PATCH | `/api/v1/workspaces/{slug}/members/{member_id}/` | 挂部门/岗位（扩展 TEAM-002 既有端点白名单字段 `department`/`company_role`） | `workspace.member.manage` |
+| POST | `/api/v1/workspaces/{slug}/departments/{id}/members/bulk-move/` | 批量调部门 `{member_ids[], department_id}` | `department.manage` |
+| POST | `/api/v1/workspaces/{slug}/departments/{id}/grants/preview/` | 授权预览（只读展开） | `department.manage` |
+| POST | `/api/v1/workspaces/{slug}/departments/{id}/grants/` | 执行批量授权（201 带 `Location` 指向批次详情） | `department.manage` + BR-10 |
+| GET | `/api/v1/workspaces/{slug}/departments/{id}/grants/{batch_id}/` | 批次详情（成员清单快照，逐人溯源） | `workspace.member.read` 口径 |
+| GET | `/api/v1/workspaces/{slug}/departments/{id}/stats/` | 部门统计（成员/任务量） | `workspace.member.read` 口径 |
+
+> **读取口径说明**：权限注册表未为 Department 单列 read 码；部门树暴露成员归属信息，读取统一借用 `workspace.member.read` 行口径（rbac §8.1：WS_GUEST ❌ → `403 PERM_ROLE_INSUFFICIENT`），不新增权限码。若后续注册表为 Department 单列 read 码，按附录 B 登记后切换。
 
 **POST 创建部门 — 201**：
 
 ```json
 {
-  "status": 0,
+  "status": "success",
   "data": {
     "department": {
-      "id": "01J9XK3Q0W2E8R4T6Y7U9I0O1P",
-      "parent_id": "01J9XK2M0N1B2V3C4X5Z6A7S8D",
+      "id": "b4d7e3f1-2a5c-4e8b-9d6f-1c3e5a7b9d2f",
+      "parent_id": "8a1f9c2e-6b3d-4a7e-9f11-2c4d5e6f7a8c",
       "name": "后端小组",
+      "path": "/3f2c9a1e-6b3d-4a7e-9f11-2c4d5e6f7a8b/8a1f9c2e-6b3d-4a7e-9f11-2c4d5e6f7a8c/b4d7e3f1-2a5c-4e8b-9d6f-1c3e5a7b9d2f/",
       "sort_order": 131072.0,
       "member_count": 0,
-      "created_at": "2026-09-01T09:30:00.000000Z"
+      "created_at": "2026-09-01T09:30:00.000Z"
     }
-  },
-  "meta": {"request_id": "01J9XK3Q9F2G4H6J8K0M2N4P6R"}
+  }
 }
 ```
 
-**深度超限 — 400**：
+> **信封约定（api-conventions §4.1/§4.2，全文示例统一）**：成功为 `{"status":"success","data":…,"meta":…}`，错误为 `{"status":"error","error":{…}}`；`request_id` **仅出现在 `error` 对象内**，成功响应不携带 `meta.request_id`——全部响应（含成功）经 `X-Request-Id` 响应头回传；列表端点 `meta` 必填（§6.3 九字段），详情/动作端点 `meta` 可省略。实体主键一律 UUID v4 字符串（§4.5），`request_id` 为 ULID。
+
+**深度超限 — 409**（上限类冲突复用既有码，api-conventions §8.5）：
 
 ```json
 {
-  "status": 1,
+  "status": "error",
   "error": {
-    "code": "VALIDATION_ERROR",
+    "code": "RESOURCE_LIMIT_EXCEEDED",
     "message": "部门层级最多 6 层",
-    "details": [{"field": "parent_id", "reason": "max_depth_exceeded", "max": 6, "current": 6}]
-  },
-  "meta": {"request_id": "01J9XK3R2T4Y6U8I0O2P4A6S8D"}
-}
-```
-
-**POST grants/ 请求与 201 响应**：
-
-```json
-{"project_id": "01J9XK1A2B3C4D5E6F7G8H9J0K", "role": "PROJ_CONTRIBUTOR", "with_descendants": true}
-```
-
-```json
-{
-  "status": 0,
-  "data": {
-    "batch_id": "01J9XK4B1C2D3E4F5G6H7J8K9M",
-    "added": 32, "role_changed": 2, "skipped": 1,
-    "skipped_detail": [{"user_id": "01J9XJ…", "reason": "deactivated"}]
-  },
-  "meta": {"request_id": "01J9XK4C3D5F7H9J1K3M5N7P9R"}
-}
-```
-
-**移动成环 — 400**：
-
-```json
-{
-  "status": 1,
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "不能将部门移动到其自身或其子部门之下",
-    "details": [{"field": "parent_id", "reason": "cycle_detected"}]
-  },
-  "meta": {"request_id": "01J9XK5D4E6G8J0L2N4P6R8T0V"}
-}
-```
-
-**无管理权限 — 403**：`{"code":"PERM_DENIED","message":"需要工作空间管理员权限"}`；非成员访问 → 404（存在性隐藏，`api-conventions §8`）。
-
-**GET departments/?include=member_count — 200**：
-
-```json
-{
-  "status": 0,
-  "data": {
-    "departments": [
-      {"id": "01J9XK2M0N1B2V3C4X5Z6A7S8D", "parent_id": null, "name": "研发中心",
-       "sort_order": 65536.0, "member_count": 12, "descendant_member_count": 45},
-      {"id": "01J9XK2N8P7Q6R5S4T3U2V1W0X", "parent_id": "01J9XK2M0N1B2V3C4X5Z6A7S8D",
-       "name": "平台组", "sort_order": 65536.0, "member_count": 8, "descendant_member_count": 13}
+    "details": [
+      {"field": "parent_id", "code": "TOO_LARGE", "message": "父部门已位于第 6 层，无法在其下新建（max=6）"}
     ],
-    "unassigned_count": 3
-  },
-  "meta": {"request_id": "01J9XK6E5F7H9J1L3N5P7R9T1V3X"}
+    "request_id": "01J9XK3R2T4Y6U8I0O2P4A6S8D"
+  }
 }
 ```
 
-**GET departments/{id}/stats/ — 200**（任务量口径：部门直属成员在当前全部项目中的任务聚合）：
+**POST grants/ 请求与 201 响应**（`role` 为 ProjectRole 整数等级，15=CONTRIBUTOR，与 PROJ-002 一致）：
+
+```json
+{"project_id": "5e4f3a2b-1c9d-4e7f-a6b8-3d2c1e0f9a8b", "role": 15, "with_descendants": true}
+```
 
 ```json
 {
-  "status": 0,
+  "status": "success",
   "data": {
-    "department_id": "01J9XK2M0N1B2V3C4X5Z6A7S8D",
+    "batch_id": "9d8e7f6a-5b4c-4d3e-2f1a-0b9c8d7e6f5a",
+    "added": 32, "role_changed": 2, "skipped": 1, "unchanged": 10,
+    "skipped_detail": [
+      {"member_id": "6c7d8e2f-9a1b-4c3d-8e5f-7a9b1c2d3e4f", "reason": "member_inactive"}
+    ]
+  }
+}
+```
+
+`skipped_detail[].reason` 枚举：`member_inactive`（停用成员，BR-08）/ `guest_role_cap`（WS_GUEST 目标角色超 §7.3 上限）/ `not_workspace_member`（展开瞬间已非空间成员，继承 PROJ-002 逐人语义）。201 响应头带 `Location: /api/v1/workspaces/{slug}/departments/{id}/grants/{batch_id}/`（§4.3）。
+
+**GET grants/{batch_id}/ — 200**（批次详情，逐人溯源）：
+
+```json
+{
+  "status": "success",
+  "data": {
+    "id": "9d8e7f6a-5b4c-4d3e-2f1a-0b9c8d7e6f5a",
+    "department_id": "8a1f9c2e-6b3d-4a7e-9f11-2c4d5e6f7a8c",
+    "project_id": "5e4f3a2b-1c9d-4e7f-a6b8-3d2c1e0f9a8b",
+    "role": 15, "with_descendants": true,
+    "added_count": 32, "role_changed_count": 2, "skipped_count": 1, "unchanged_count": 10,
+    "member_snapshot": [
+      {"member_id": "6c7d8e2f-9a1b-4c3d-8e5f-7a9b1c2d3e4f", "action": "skipped:member_inactive"},
+      {"member_id": "7b8c9d0e-1a2b-4c3d-8e5f-0a1b2c3d4e5f", "action": "added"}
+    ],
+    "created_by": "2b3a4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+    "created_at": "2026-09-02T10:00:00.000Z"
+  }
+}
+```
+
+**POST grants/preview/ — 200**（与正式授权同一展开逻辑，只读、不落库）：
+
+```json
+{
+  "status": "success",
+  "data": {
+    "target_count": 45, "added": 32, "role_changed": 2,
+    "unchanged": 10, "skipped": 1,
+    "skipped_detail": [
+      {"member_id": "6c7d8e2f-9a1b-4c3d-8e5f-7a9b1c2d3e4f", "reason": "member_inactive"}
+    ]
+  }
+}
+```
+
+**移动成环 — 409**：
+
+```json
+{
+  "status": "error",
+  "error": {
+    "code": "RESOURCE_CIRCULAR_DEPENDENCY",
+    "message": "不能将部门移动到其自身或其子部门之下",
+    "details": [
+      {"field": "parent_id", "code": "INVALID", "message": "环路径：研发中心 → 平台组 → 后端小组"}
+    ],
+    "request_id": "01J9XK5D4E6G8J0L2N4P6R8T0V"
+  }
+}
+```
+
+**无管理权限 — 403**（`department.manage` 不足，码为注册表既有码）：
+
+```json
+{
+  "status": "error",
+  "error": {
+    "code": "PERM_WORKSPACE_ADMIN_REQUIRED",
+    "message": "需要工作空间管理员权限",
+    "request_id": "01J9XK9H8J2K4M6P8R0T2V4X6Z8B"
+  }
+}
+```
+
+非成员访问 → 404（存在性隐藏，`api-conventions §4.3`）；WS_GUEST 访问读端点 → `403 PERM_ROLE_INSUFFICIENT`（BR-06）。
+
+**GET departments/?include=member_count — 200**（列表端点：`data` 为数组、`meta` 必含 §6.3 九字段 + 本端点旁路统计；示例省略 2 行）：
+
+```json
+{
+  "status": "success",
+  "data": [
+    {"id": "3f2c9a1e-6b3d-4a7e-9f11-2c4d5e6f7a8b", "parent_id": null, "name": "研发中心",
+     "path": "/3f2c9a1e-6b3d-4a7e-9f11-2c4d5e6f7a8b/",
+     "sort_order": 65536.0, "member_count": 12, "descendant_member_count": 45},
+    {"id": "8a1f9c2e-6b3d-4a7e-9f11-2c4d5e6f7a8c", "parent_id": "3f2c9a1e-6b3d-4a7e-9f11-2c4d5e6f7a8b",
+     "name": "平台组", "path": "/3f2c9a1e-6b3d-4a7e-9f11-2c4d5e6f7a8b/8a1f9c2e-6b3d-4a7e-9f11-2c4d5e6f7a8c/",
+     "sort_order": 65536.0, "member_count": 8, "descendant_member_count": 13}
+  ],
+  "meta": {
+    "next_cursor": null, "prev_cursor": null,
+    "next_page_results": false, "prev_page_results": false,
+    "count": 4, "total_count": 4, "total_pages": 1, "page": 1, "per_page": 100,
+    "unassigned_count": 3
+  }
+}
+```
+
+`unassigned_count`（未分配桶成员数）为统计旁路信息，置于 `meta`（§4.1：meta 承载分页/统计/限流）——`data` 在列表端点恒为数组。
+
+**GET departments/{id}/stats/ — 200**（任务量口径：部门直属成员在当前全部项目中的任务聚合；详情端点 `meta` 省略）：
+
+```json
+{
+  "status": "success",
+  "data": {
+    "department_id": "3f2c9a1e-6b3d-4a7e-9f11-2c4d5e6f7a8b",
     "member_count": 12, "descendant_member_count": 45,
     "issues": {"total": 218, "completed": 96, "overdue": 7,
                "by_group": {"backlog": 20, "unstarted": 64, "started": 38, "completed": 96, "cancelled": 0}},
     "with_descendants": {"issues": {"total": 640, "completed": 301, "overdue": 22}}
-  },
-  "meta": {"request_id": "01J9XK7F6G8J0L2N4P6R8T0V2X4Z"}
+  }
 }
 ```
 
-**PATCH members/{id}/ 挂部门 — 400 示例（部门不存在于本工作空间）**：
+**PATCH members/{id}/ 挂部门 — 400 示例（部门不存在于本工作空间；引用对象不存在的字段级校验保持 400，`details[].code` 用 §8.8 注册子码 `DOES_NOT_EXIST`）**：
 
 ```json
 {
-  "status": 1,
-  "error": {"code": "VALIDATION_ERROR", "message": "部门不存在或不属于当前工作空间",
-    "details": [{"field": "department_id", "reason": "not_found_in_workspace"}]},
-  "meta": {"request_id": "01J9XK8G7H9K1M3P5R7T9V1X3Z5B"}
+  "status": "error",
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "部门不存在或不属于当前工作空间",
+    "details": [
+      {"field": "department_id", "code": "DOES_NOT_EXIST", "message": "部门不存在或不属于当前工作空间"}
+    ],
+    "request_id": "01J9XK8G7H9K1M3P5R7T9V1X3Z5B"
+  }
 }
 ```
 
@@ -450,29 +531,22 @@ CREATE UNIQUE INDEX uq_department_root_name
 ### 4.3 核心逻辑
 
 ```python
-# apps/core/services/department.py
+# apps/api/plane/db/services/department.py
 MAX_DEPTH = 6
 
-def _depth_of(department_id) -> int:
-    """父链深度（含自身）。递归 CTE 上溯，防环上限 100。"""
-    sql = """
-    WITH RECURSIVE chain AS (
-        SELECT id, parent_id, 1 AS lvl FROM department WHERE id = %s
-        UNION ALL
-        SELECT d.id, d.parent_id, c.lvl + 1
-        FROM department d JOIN chain c ON d.id = c.parent_id
-        WHERE c.lvl < 100
-    ) SELECT max(lvl) FROM chain;"""
-    return Department.objects.raw_scalar(sql, [department_id]) or 0
+def _depth_of(department) -> int:
+    """深度 = path 段数（根部门 "/{id}/" 为 1）。"""
+    return department.path.count("/")
 
-def _subtree_ids(root_id) -> list:
-    sql = """
-    WITH RECURSIVE sub AS (
-        SELECT id FROM department WHERE id = %s
-        UNION ALL
-        SELECT d.id FROM department d JOIN sub s ON d.parent_id = s.id
-    ) SELECT id FROM sub;"""
-    return Department.objects.raw_scalar_list(sql, [root_id])
+def _subtree(department):
+    """子树（含自身）：path 前缀匹配，走 path 索引（rbac §3.4 预留列）。"""
+    return Department.objects.filter(workspace=department.workspace,
+                                     path__startswith=department.path)
+
+def _subtree_height(department) -> int:
+    """子树最大深度差（自身为 0）。"""
+    base = _depth_of(department)
+    return max((_depth_of(d) - base for d in _subtree(department)), default=0)
 
 @transaction.atomic
 def create(*, actor, workspace, name, parent_id):
@@ -480,63 +554,112 @@ def create(*, actor, workspace, name, parent_id):
     if parent_id:
         parent = (Department.objects
                   .select_for_update()
-                  .get(pk=parent_id, workspace=workspace))      # 404 出域
-        if _depth_of(parent.id) + 1 > MAX_DEPTH:
-            raise ValidationErr("parent_id", "max_depth_exceeded", max=MAX_DEPTH)
-    dept = Department.objects.create(
-        workspace=workspace, parent=parent, name=name, created_by=actor,
-        sort_order=_next_sort(parent))                          # 浮点插值
-    on_commit(lambda: record_audit.delay("org.department.create",
+                  .get(pk=parent_id, workspace=workspace,
+                       deleted_at__isnull=True))                  # 404 出域
+        if _depth_of(parent) + 1 > MAX_DEPTH:                     # BR-01
+            raise LimitExceeded("parent_id", "TOO_LARGE", max=MAX_DEPTH)
+    dept = Department(workspace=workspace, parent=parent, name=name,
+                      sort_order=_next_sort(parent))              # 浮点插值
+    dept.path = (parent.path if parent else "/") + f"{dept.id}/"  # UUID v4 主键 init 即生成
+    dept.full_clean()
+    dept.save()
+    on_commit(lambda: record_audit.delay("department.created",
               actor_id=actor.id, object_id=dept.id))
     return dept
 
 @transaction.atomic
 def move(*, actor, department, new_parent_id):
+    new_parent = None
     if new_parent_id:
-        if new_parent_id in _subtree_ids(department.id):
-            raise ValidationErr("parent_id", "cycle_detected")
-        if _depth_of(new_parent_id) + _subtree_height(department.id) > MAX_DEPTH:
-            raise ValidationErr("parent_id", "max_depth_exceeded", max=MAX_DEPTH)
-    department.parent_id = new_parent_id
-    department.sort_order = _next_sort(new_parent_id)
-    department.save(update_fields=["parent_id", "sort_order", "updated_at"])
-    on_commit(lambda: record_audit.delay("org.department.move", ...))
+        new_parent = (Department.objects
+                      .select_for_update()
+                      .get(pk=new_parent_id, workspace=department.workspace,
+                           deleted_at__isnull=True))
+        if new_parent.path.startswith(department.path):           # BR-03（含自身）
+            raise CircularDependency("parent_id",
+                cycle_path=_path_names(department, new_parent))   # 409
+        if _depth_of(new_parent) + _subtree_height(department) + 1 > MAX_DEPTH:
+            raise LimitExceeded("parent_id", "TOO_LARGE", max=MAX_DEPTH)   # 409 BR-01
+    old_prefix, department.parent = department.path, new_parent
+    new_prefix = (new_parent.path if new_parent else "/") + f"{department.id}/"
+    department.sort_order = _next_sort(new_parent)
+    department.save(update_fields=["parent_id", "sort_order", "path", "updated_at"])
+    # 整子树 path 前缀重写：单条 UPDATE（BR-03 校验后执行，前缀互斥保证无误伤）
+    with connection.cursor() as cur:
+        cur.execute(
+            "UPDATE department SET path = %s || substring(path from %s) "
+            "WHERE workspace_id = %s AND path LIKE %s",
+            [new_prefix, len(old_prefix) + 1,
+             department.workspace_id, old_prefix + "%"])
+    on_commit(lambda: record_audit.delay("department.moved",
+              actor_id=actor.id, object_id=department.id))
 
 @transaction.atomic
 def expand_grant(*, actor, department, project, role, with_descendants):
-    if project.is_archived:
-        raise ValidationErr("project_id", "project_archived")
-    dept_ids = _subtree_ids(department.id) if with_descendants else [department.id]
-    targets = (WorkspaceMember.objects
-               .filter(workspace=department.workspace, department_id__in=dept_ids,
-                       is_active=True)
-               .values_list("user_id", flat=True).distinct())
-    added, changed, skipped = [], [], []
-    existing = {pm.user_id: pm for pm in
-                ProjectMember.objects.filter(project=project, user_id__in=targets)}
-    for uid in targets:
-        pm = existing.get(uid)
-        if pm is None:
-            ProjectMember.objects.create(project=project, user_id=uid, role=role,
-                                         added_by=actor)      # 复用 PROJ-002 校验
-            added.append(uid)
-        elif pm.role != role:
-            pm.role = role; pm.save(update_fields=["role", "updated_at"])
-            changed.append(uid)
+    if role not in ProjectRole.values:                            # BR-10
+        raise AppValidationError({"role": [("NOT_A_CHOICE", "非法的项目角色")]})   # 400
+    if project.status == Project.Status.ARCHIVED:
+        raise ProjectArchived()        # 403 PERM_PROJECT_ARCHIVED（§2.4 并发归档同码）
+    if role == ProjectRole.ADMIN and not (
+            actor.effective_project_role(project) >= ProjectRole.ADMIN
+            or actor.effective_ws_role(department.workspace) >= WorkspaceRole.ADMIN):
+        raise ProjectAdminRequired()   # 403 PERM_PROJECT_ADMIN_REQUIRED（BR-10）
+    dept_ids = ([department.id] if not with_descendants
+                else list(_subtree(department).values_list("id", flat=True)))
+    # BR-08：目标集 = 部门下未软删成员全集；停用成员不静默排除，进 skipped
+    members = list(WorkspaceMember.objects
+                   .filter(workspace=department.workspace,
+                           department_id__in=dept_ids, deleted_at__isnull=True)
+                   .values("member_id", "is_active", "role"))
+    added, changed, skipped, unchanged = [], [], [], []
+    to_add = []
+    for m in members:
+        if not m["is_active"]:
+            skipped.append({"member_id": m["member_id"],
+                            "reason": "member_inactive"})         # BR-08
+        elif m["role"] == WorkspaceRole.GUEST and role > ProjectRole.COMMENTER:
+            # 与 PROJ-002 BR-05「整单拒绝」的差异声明：展开集由系统圈定、用户不可预选，
+            # 单个 GUEST 不阻塞整批 → 逐人跳过（PROJ-002 逐人 skipped/failed 结构不变）
+            skipped.append({"member_id": m["member_id"], "reason": "guest_role_cap"})
+        else:
+            to_add.append(m["member_id"])
+    existing = {pm.member_id: pm for pm in ProjectMember.objects
+                .filter(project=project, member_id__in=to_add,
+                        deleted_at__isnull=True)}
+    svc = ProjectMemberService()      # 复用 PROJ-002 写入路径（created_by/updated_by 由其落）
+    for r in svc.add_members(project=project, actor=actor,
+                             member_ids=[t for t in to_add if t not in existing],
+                             role=role):
+        if r["status"] == "added":
+            added.append(r["member_id"])
+        else:                          # failed（not_workspace_member 等）逐条留痕不中断
+            skipped.append({"member_id": r["member_id"], "reason": r["reason"]})
+    for mid in [t for t in to_add if t in existing]:
+        pm = existing[mid]
+        if pm.role != role:                                       # BR-09
+            svc.change_role(project=project, member=pm, new_role=role, actor=actor)
+            changed.append(mid)
+        else:
+            unchanged.append(mid)
     batch = DepartmentGrantBatch.objects.create(
         workspace=department.workspace, department=department, project=project,
         role=role, with_descendants=with_descendants,
         added_count=len(added), role_changed_count=len(changed),
-        skipped_count=len(skipped),
-        member_snapshot=_snapshot(added, changed, skipped), created_by=actor)
-    on_commit(lambda: record_audit.delay("org.department.grant",
+        skipped_count=len(skipped), unchanged_count=len(unchanged),
+        member_snapshot=([{"member_id": m, "action": "added"} for m in added]
+                         + [{"member_id": m, "action": "role_changed"} for m in changed]
+                         + [{"member_id": s["member_id"],
+                             "action": f"skipped:{s['reason']}"} for s in skipped]
+                         + [{"member_id": m, "action": "unchanged"} for m in unchanged]),
+        created_by=actor, updated_by=actor)
+    on_commit(lambda: record_audit.delay("department.granted",
               actor_id=actor.id, object_id=batch.id))
     return batch
 ```
 
-**权限挂接**：`org.manage` 注册进权限码注册表（`rbac-permission-model.md` CI 校验），映射 WS_ADMIN / WS_OWNER；`departments` 读端点对所有 workspace 成员开放。
+**权限挂接**：`department.manage` 为权限码注册表既有码（`rbac-permission-model.md` §8.1 Department（P3）行：WS_OWNER ✅ / WS_ADMIN ✅ / WS_MEMBER ❌ / WS_GUEST ❌），本文**不新增码、无需附录 B 登记**；后端经 `@require_permission("department.manage")` 装饰器（rbac §5.4）二次鉴权，前端 `PermissionGate` 同 key（§4.2 单源矩阵，两处由 CI 校验一致）。挂部门/岗位走 TEAM-002 既有端点的 `workspace.member.manage`（WS_ADMIN ⚠️ 不可改 WS_OWNER 成员行，§8.1 受限项同口径）。读取口径见 §4.2 表注。
 
-**性能**：树读 = 单查询平铺（`idx_department_tree_read`）；授权展开 = 1 CTE + 1 既有成员查询 + 批量 INSERT（`bulk_create` 分批 500）；统计端点按部门聚合走 `Issue.assignees → WorkspaceMember.department` JOIN + 索引扫描，口径 SQL 固化在 `RPT-004` 复用的 `department_stats.sql`。
+**性能**：树读 = 单查询平铺分页（`idx_department_tree_read`，§6.3 游标）；子树圈定与深度/环校验走 `path` 前缀匹配（rbac §3.4 预留列的前缀索引扫描），替代递归 CTE；授权展开 = 1 path 前缀查询 + 1 既有成员查询 + 复用 PROJ-002 逐人写入（`bulk_create` 分批 500）；统计端点按部门聚合走 `Issue.assignees → WorkspaceMember.department` JOIN + 索引扫描，口径 SQL 固化在 `RPT-004` 复用的 `department_stats.sql`。
 
 ### 4.4 前端实现
 
@@ -545,16 +668,23 @@ def expand_grant(*, actor, department, project, role, with_descendants):
 class DepartmentStore {
   tree = observable<DepartmentNode[]>([]);
   flat = observable.map<string, Department>();
+  unassigned = observable<number>(0);
 
   async load(includeCounts = true) {
-    const { data } = await api.get(`/workspaces/${wsSlug}/departments/`,
-      { params: { include: includeCounts ? "member_count" : undefined } });
-    runInAction(() => this.rebuildTree(data.departments));
-  }
-
-  @computed get unassignedCount() {
-    return this.memberStore.total -
-      sumBy([...this.flat.values()], d => d.member_count);
+    // §6.3 游标分页：逐页拉全后本地组树（部门量 <500，至多 5 页）
+    const rows: Department[] = [];
+    let cursor: string | undefined;
+    do {
+      const envelope = await api.get(`/workspaces/${wsSlug}/departments/`, {
+        params: { include: includeCounts ? "member_count" : undefined,
+                  cursor, per_page: 100 },
+      });
+      rows.push(...envelope.data);      // 信封 data 为数组（api-conventions §4.1）
+      this.unassigned = envelope.meta.unassigned_count;   // 统计旁路在 meta
+      cursor = envelope.meta.next_page_results
+        ? envelope.meta.next_cursor : undefined;
+    } while (cursor);
+    runInAction(() => this.rebuildTree(rows));
   }
 
   async move(id: string, newParentId: string | null) {
@@ -563,12 +693,12 @@ class DepartmentStore {
     await this.load();              // 树结构小，全量重拉
   }
 
-  async grantPreview(deptId: string, projectId: string, role: string,
+  async grantPreview(deptId: string, projectId: string, role: number,
                      withDesc: boolean) {
-    const { data } = await api.post(
+    const envelope = await api.post(
       `/workspaces/${wsSlug}/departments/${deptId}/grants/preview/`,
       { project_id: projectId, role, with_descendants: withDesc });
-    return data;                    // 弹窗预览计数
+    return envelope.data;           // 弹窗预览计数（added/role_changed/unchanged/skipped）
   }
 }
 ```
@@ -584,31 +714,37 @@ class DepartmentStore {
 | 编号 | 用例 | 断言 |
 | --- | --- | --- |
 | UT-01 | 根部门创建 | depth=1，sort_order=65536 |
-| UT-02 | 第 6 层创建成功、第 7 层拒绝 | BR-01 错误结构 |
-| UT-03 | 同级重名（大小写不同）拒绝 | `duplicate_in_siblings` |
-| UT-04 | 根部门重名（部分唯一索引） | IntegrityError → 400 映射 |
-| UT-05 | 移动到自身/后代拒绝 | `cycle_detected` |
-| UT-06 | 移动后子树深度超 6 拒绝 | BR-01（`_subtree_height` 参与） |
-| UT-07 | 删除非空部门拒绝 | BR-04 计数明细 |
+| UT-02 | 第 6 层创建成功、第 7 层拒绝 | BR-01：`409 RESOURCE_LIMIT_EXCEEDED` + details `TOO_LARGE` |
+| UT-03 | 同级重名（大小写不同）拒绝 | `409 RESOURCE_ALREADY_EXISTS` + details.code=`UNIQUE` |
+| UT-04 | 根部门重名（部分唯一索引） | IntegrityError → `409 RESOURCE_ALREADY_EXISTS` 映射 |
+| UT-05 | 移动到自身/后代拒绝 | `409 RESOURCE_CIRCULAR_DEPENDENCY`（details 含环路径） |
+| UT-06 | 移动后子树深度超 6 拒绝 | BR-01（`_subtree_height` 参与计算） |
+| UT-07 | 删除非空部门拒绝 | BR-04：`409 RESOURCE_IN_USE`（details 含直属 n / 子部门 m） |
 | UT-08 | 挂部门/置 null 未分配 | 字段更新 + 审计事件 |
 | UT-09 | 授权展开：含/不含子部门成员集 | 集合精确相等 |
 | UT-10 | 授权幂等重同步：重复 POST | added=0，无重复 ProjectMember |
 | UT-11 | 授权角色调整仅对角色不同者 | changed 精确 |
-| UT-12 | 停用成员被排除进 skipped | BR-08 |
+| UT-12 | 停用成员进 skipped（`reason=member_inactive`），不进 added | BR-08 |
 | UT-13 | sort_order 重平衡触发 | 间距 <1e-6 后等差 |
-| UT-14 | 岗位超长 64 拒绝 | BR-13 |
+| UT-14 | 岗位（company_role）超长 64 拒绝 | `400 VALIDATION_ERROR` + `TOO_LONG` |
+| UT-15 | GUEST 成员授权 role=15（超 §7.3 上限） | skipped `guest_role_cap`，其余成员不被阻塞 |
+| UT-16 | 软删成员（`deleted_at` 非空）不进目标集 | 目标集合精确相等 |
+| UT-17 | 移动子树后 path 前缀整树重写 | 子树全部行新前缀；深度 = path 段数 |
+| UT-18 | 批次快照四态明细 | member_snapshot 与 added/role_changed/skipped/unchanged 计数一致 |
 
 ### 5.2 集成测试
 
 | 编号 | 用例 | 断言 |
 | --- | --- | --- |
-| IT-01 | 建 4 层树 + 20 成员挂接 + 树读取 | 平铺完整、计数 `直属/含子级` 正确 |
+| IT-01 | 建 4 层树 + 20 成员挂接 + 树读取 | 平铺完整、计数 `直属/含子级` 正确、`meta` 九字段齐全 |
 | IT-02 | 按部门授权到项目（含并发重复提交） | 成员落库一次；批次两行；响应计数一致 |
 | IT-03 | 授权后调离成员不影响既有权限（快照语义） | ProjectMember 保留 |
-| IT-04 | 并发移动两部門互为父子 | 其一 `cycle_detected`，无死锁 |
-| IT-05 | 项目归档中执行授权 | 整批回滚 + `project_archived` |
-| IT-06 | 未分配恒等式 | 总数 = Σ直属 + 未分配 |
-| IT-07 | 审计事件落库（create/move/grant/delete 四事件） | 事件字段完整 |
+| IT-04 | 并发移动两部门互为父子 | 其一 `409 RESOURCE_CIRCULAR_DEPENDENCY`，无死锁 |
+| IT-05 | 项目归档中执行授权 | 整批回滚 + `403 PERM_PROJECT_ARCHIVED` |
+| IT-06 | 未分配恒等式 | 总数 = Σ直属 + 未分配（`meta.unassigned_count` 对账） |
+| IT-07 | 审计事件落库（created/moved/granted/deleted 四事件） | 事件字段完整 |
+| IT-08 | 授权响应计数恒等式（含停用/GUEST 混合部门） | added+role_changed+skipped+unchanged = 目标集总数 |
+| IT-09 | 授权 201 `Location` → 批次详情 GET | 快照逐人可溯源（验收 2） |
 
 ### 5.3 E2E 测试
 
@@ -618,6 +754,29 @@ class DepartmentStore {
 | E2E-02 | 拖拽移动部门（含非法落点禁用提示）→ 键盘「移动到…」等价路径 |
 | E2E-03 | 按部门授权弹窗预览→确认→项目成员页可见新增 |
 | E2E-04 | 删除非空部门受阻 → 一键迁移到上级 → 删除成功 |
+
+### 5.4 权限矩阵测试（四主体 × 关键操作，范式对齐 `AUTH-006`）
+
+主体取 WS 层四角色（rbac §8.1 等级值：WS_OWNER=20 / WS_ADMIN=15 / WS_MEMBER=10 / WS_GUEST=5），逐格参数化（`@pytest.mark.parametrize`），断言 HTTP 状态码与 `error.code`。期望值来源：`department.manage` 与 `workspace.member.read`/`workspace.member.manage` 均为注册表 §8.1 行口径：
+
+| 操作（端点） | 判定 Key | WS_OWNER | WS_ADMIN | WS_MEMBER | WS_GUEST |
+| --- | --- | :-: | :-: | :-: | :-: |
+| 读部门树 / 统计 / 批次详情 | `workspace.member.read` 口径 | 200 | 200 | 200 | 403 `PERM_ROLE_INSUFFICIENT` |
+| 建 / 改名排序 / 移动 / 删除部门 | `department.manage` | 200/201 | 200/201 | 403 `PERM_WORKSPACE_ADMIN_REQUIRED` | 403 同左 |
+| 批量调部门 / 授权 / 预览 | `department.manage` | 200/201 | 200/201 | 403 `PERM_WORKSPACE_ADMIN_REQUIRED` | 403 同左 |
+| 挂部门/岗位（PATCH members/{id}） | `workspace.member.manage` | 200 | ⚠️ 200（目标为 WS_OWNER 行 → 403） | 403 `PERM_WORKSPACE_ADMIN_REQUIRED` | 403 同左 |
+| 授权目标 role=20（PROJ_ADMIN） | BR-10 叠加 | 201 | 201（BR-10：WS_ADMIN+ 即可） | 403（先命中 `department.manage`） | 403 同左 |
+| 非本空间成员访问任意端点 | 存在性隐藏 | 404 `RESOURCE_NOT_FOUND` | 404 同左 | 404 同左 | 404 同左 |
+
+矩阵测试用例：
+
+| 编号 | 用例 | 断言 |
+| --- | --- | --- |
+| PM-01 | 四主体 × 读端点（GET 树 / stats / 批次详情） | WS_GUEST 403 `PERM_ROLE_INSUFFICIENT`，其余 200 |
+| PM-02 | 四主体 × 写端点（建/改/移/删/授权/批量调部门） | WS_MEMBER / WS_GUEST 403 `PERM_WORKSPACE_ADMIN_REQUIRED`，且零副作用（部门与批次计数不变） |
+| PM-03 | WS_ADMIN 挂部门到 WS_OWNER 成员行 | 403（层级保护，§8.1 `workspace.member.manage` ⚠️ 同口径） |
+| PM-04 | WS_ADMIN 授权 role=20（自身非该项目显式成员） | 201（WS_ADMIN 按 rbac §7.4 隐式 PROJ_ADMIN，满足 BR-10）；WS_MEMBER 操作者同请求 → 403 `PERM_WORKSPACE_ADMIN_REQUIRED`（先命中 `department.manage`） |
+| PM-05 | 四主体 × 前端 `PermissionGate` 同 key 判定 | 与 API 层逐格一致（§4.2 单源矩阵；UI 不出现可点但 403 的入口） |
 
 ---
 
@@ -640,8 +799,9 @@ Plane 无部门（企业版差异点）；Jira 以 User Group 同时承担「组
 | 决策 | 取舍 |
 | --- | --- |
 | 快照展开 + 批次记录 + 幂等重同步 | 牺牲「自动同步」便利，换审计可点名 + 无感权限变更归零 |
-| 深度 6（vs 飞书 50） | 够用且防失控；CTE 深度有界 |
-| 平铺读取 + 前端组树 | 部门量小（<500），免去嵌套序列化与分页复杂度 |
+| 深度 6（vs 飞书 50） | 够用且防失控；`path` 段数即深度，天然有界 |
+| 平铺读取 + 前端组树 | 部门量小（<500）；分页遵 §6.3（前端逐页拉全），免嵌套序列化 |
+| 采用 `path` 物化路径（rbac §3.4 预留列） | 子树/深度/环 O(1) 前缀判定，替代递归 CTE；移动 = 整子树单条前缀重写 UPDATE |
 
 ---
 
@@ -651,10 +811,10 @@ Plane 无部门（企业版差异点）；Jira 以 User Group 同时承担「组
 
 | 类别 | 内容 |
 | --- | --- |
-| Model / Migration | `department`、`department_grant_batch` 表；`workspace_member` 增 `department_id/position` 两列 |
-| 后端 | Department CRUD/move 服务、授权展开服务（preview 与正式同逻辑）、统计端点、`org.manage` 权限码注册 |
+| Model / Migration | `department`（含 `path` 物化路径列，rbac §3.4 预留）、`department_grant_batch` 表；`workspace_member` 增 `department_id` 一列（岗位复用既有 `company_role`） |
+| 后端 | Department CRUD/move 服务（path 前缀子树）、授权展开服务（preview 与正式同逻辑）、批次详情端点、统计端点、`department.manage` 权限对接（注册表既有码，无新增登记） |
 | 前端 | 组织管理页（树+详情）、批量授权弹窗、成员列表部门/岗位列、批量调部门 |
-| 测试 | UT-01~14、IT-01~07、E2E-01~04 |
+| 测试 | UT-01~18、IT-01~09、E2E-01~04、§5.4 权限矩阵 PM-01~05 |
 
 ### 7.2 可操作演示的验收标准
 

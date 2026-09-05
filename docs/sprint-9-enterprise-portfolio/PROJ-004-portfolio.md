@@ -1,4 +1,4 @@
-# PROJ-004 项目集 / 项目组合与跨项目依赖
+# 项目集 / 项目组合与跨项目依赖
 
 | 元信息项 | 内容 |
 | --- | --- |
@@ -11,7 +11,7 @@
 | 上游依赖 | `PROJ-001/003`（项目生命周期）；`TASK-005`（IssueLink 成对存储与无环约束——**BR-02 同项目限制在本迭代放开为「同工作空间可跨项目」**）；`TASK-013`（工时台账——资源汇总数据源） |
 | 下游消费 | P4 资源统一调度、项目集级工作流；`RPT-004`（健康度可按项目集聚合） |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
+| 最后更新日期 | 2026-09-05（R2 修复：响应信封对齐 api-conventions §4、BLOCKER_SQL 按上游 TASK-005 语义重写、深度超限改 409、`Portfolio.manager` 数据模型落地 BR-03、blocked_external 方向与字段名修正、DELETE 去请求体、响应示例补齐、BR-10 用例与 P95 门槛、四主体越权用例） |
 
 ---
 
@@ -43,7 +43,7 @@
 
 | 术语 | 定义 |
 | --- | --- |
-| 项目集（Portfolio） | 一组项目的逻辑归集，树形结构；叶子挂载项目 |
+| 项目集（Portfolio） | 一组项目的逻辑归集，树形结构；叶子挂载项目。注：api-conventions §2.5 端点清单将 Module 注为「模块 / 项目集」，与本术语冲突（架构文档待回改：以 docs/README.md §4 索引为准，Portfolio = 项目集、Module = 模块） |
 | 里程碑（Milestone） | 项目集级时间点目标，关联多个项目的任务集合作为「贡献项」 |
 | 跨项目依赖 | 两端任务分属不同项目的 IssueLink（本迭代放开后合法） |
 | 贡献项 | 挂载到里程碑下的任务（任意项目），完成度 = 贡献项加权完成比例 |
@@ -92,16 +92,16 @@ flowchart TB
 
 | 编号 | 规则 | 强制层 | 违约响应 |
 | --- | --- | --- | --- |
-| BR-01 | `Portfolio` 树深度 ≤3（组合 L1 → 项目集 L2 → 子项目集 L3）；禁止成环（parent 链检查同 TASK-004 `_is_descendant` CTE） | Service + CTE | `400 VALIDATION_ERROR` / `409 RESOURCE_CIRCULAR_DEPENDENCY` |
+| BR-01 | `Portfolio` 树深度 ≤3（组合 L1 → 项目集 L2 → 子项目集 L3）；禁止成环（parent 链检查同 TASK-004 `_is_descendant` CTE） | Service + CTE | `409 RESOURCE_LIMIT_EXCEEDED`（超深，details 子码 `TOO_LARGE`）/ `409 RESOURCE_CIRCULAR_DEPENDENCY`（成环） |
 | BR-02 | 一个项目至多挂一个项目集节点；迁移挂载需原目标双权限 | DB 唯一约束（project_id 部分唯一） | `409 RESOURCE_ALREADY_EXISTS` |
-| BR-03 | 项目集/里程碑管理需 WS 级权限（WS_ADMIN+）或项目集 `manager` 成员；只读对全部 WS 成员开放 | Permission | `403 PERM_ROLE_INSUFFICIENT` |
-| BR-04 | 里程碑 `due_date` 必填；贡献项任务须属于项目集下任一项目（直接/间接子节点） | Serializer | `400 VALIDATION_ERROR` + `DOES_NOT_EXIST` |
+| BR-03 | 项目集/里程碑管理需 WS 级权限（WS_ADMIN+）**或**项目集 `manager`（数据支撑：`Portfolio.manager` 外键，§4.2；节点祖先链上的 manager 同样放行——深度 ≤3 至多回溯 2 跳）；只读对全部 WS 成员开放 | Permission（对象级旁路，同 rbac §5.3 `has_object_permission` 模式） | `403 PERM_ROLE_INSUFFICIENT` |
+| BR-04 | 里程碑 `target_date` 必填；贡献项任务须属于项目集下任一项目（直接/间接子节点） | Serializer | `400 VALIDATION_ERROR` + `DOES_NOT_EXIST` |
 | BR-05 | 里程碑完成度 = 贡献项中 `state.group ∈ {completed}` 的加权比例（权重 = 任务 `estimate_minutes`，无预估按 1 计） | 聚合服务 | — |
-| BR-06 | 里程碑延期预警：`due_date` 前 7 天完成度 <100% → 每日一条预警至项目集 manager 收件箱（幂等键含日期）；逾期后转「已延期」红标 | Celery beat + SETNX | — |
+| BR-06 | 里程碑延期预警：`target_date` 前 7 天完成度 <100% → 每日一条预警至项目集 `manager` 收件箱（`manager` 为空回退通知 WS_ADMIN+，幂等键含日期）；逾期后转「已延期」红标 | Celery beat + SETNX | — |
 | BR-07 | **跨项目依赖不参与流转拦截**：`TASK-005` 完成守卫仅统计**同项目** blocks 边；跨项目边在任务详情/依赖图展示「外部依赖」标记并计入风险统计 | 引擎守卫 SQL 加项目过滤 | — |
 | BR-08 | 跨项目关联放开范围 = 同工作空间；两端项目均须对操作者可见；跨项目边创建需**源项目** `issue.update` | Permission + Service | `404 RESOURCE_NOT_FOUND`（存在性隐藏）/ `403 PERM_DENIED` |
 | BR-09 | 跨项目边的无环检测范围扩展到同工作空间全图（CTE 沿 blocks 边，深度守卫 `CTE_GUARD_DEPTH=100` 不变） | Service | `409 RESOURCE_CIRCULAR_DEPENDENCY` |
-| BR-10 | 归档项目在组合树中保留只读；项目归档不影响项目集统计（历史数据照常聚合） | Service | — |
+| BR-10 | 归档项目在组合树中保留只读（写保护复用 PROJ-003 `PERM_PROJECT_ARCHIVED` 守卫，组合树不绕过）；项目归档不影响项目集统计（历史数据照常聚合） | Service | 写归档项目内资源 `403 PERM_PROJECT_ARCHIVED` |
 | BR-11 | 删除非空项目集（下挂项目或子节点）须先迁移内容 | Service | `409 RESOURCE_IN_USE` + `details` 计数 |
 | BR-12 | 资源汇总卡数据源 = `TASK-013` `WorkLogSummary`（按项目集下项目集合过滤，人×周聚合为「人×项目」矩阵）；不另建聚合表 | 聚合服务 | — |
 | BR-13 | 项目集级进度 = 下挂项目进度加权平均（权重 = 项目未取消任务数）；项目进度 = 任务 state.group 完成比例（承 TASK-004 上卷语义） | 聚合服务 | — |
@@ -125,7 +125,7 @@ flowchart LR
 
 | 兼容点 | 说明 |
 | --- | --- |
-| API 契约不变 | `relations/` 端点与响应结构零变化；跨项目边在 `details` 中追加 `target_project` 摘要 |
+| API 契约不变 | `relations/` 端点与响应结构零变化；跨项目边在 `related_issue` 内联对象中追加 `target_project` 摘要（TASK-005 冻结条款「加字段可以，改语义不可以」明确允许） |
 | 既有数据零迁移 | 同项目边天然满足新校验 |
 | GANTT-001 冻结契约 | relations/ 载荷结构不变，甘特连线渲染跨项目边时加虚线样式（GANTT-003 关键路径仅计算同项目子图） |
 
@@ -197,6 +197,7 @@ erDiagram
         uuid id PK
         uuid workspace_id FK
         uuid parent_id FK "NULL=根组合"
+        uuid manager_id FK "NULL=仅 WS_ADMIN+ 可管（BR-03）"
         string name
         int depth "1/2/3 冗余列，校验辅助"
     }
@@ -204,7 +205,7 @@ erDiagram
         uuid id PK
         uuid portfolio_id FK
         string name
-        date due_date
+        date target_date "截止日期"
         string status "open/completed/overdue 派生"
     }
     MILESTONE_ITEM {
@@ -231,6 +232,11 @@ class Portfolio(BaseModel):
     )
     name = models.CharField(max_length=128, verbose_name="名称")
     description = models.TextField(blank=True, verbose_name="说明")
+    manager = models.ForeignKey(
+        "db.User", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="managed_portfolios", verbose_name="项目集负责人",
+        help_text="BR-03 数据支撑：manager（含祖先节点 manager）与 WS_ADMIN+ 共同持有管理权；NULL 时仅 WS_ADMIN+"
+    )
     depth = models.PositiveSmallIntegerField(default=1, verbose_name="层级（冗余）")
     sort_order = models.FloatField(default=65535.0, verbose_name="排序值")
 
@@ -270,12 +276,12 @@ class PortfolioMilestone(BaseModel):
     )
     name = models.CharField(max_length=128, verbose_name="里程碑名称")
     description = models.TextField(blank=True, verbose_name="说明")
-    due_date = models.DateField(db_index=True, verbose_name="截止日期")          # BR-04
+    target_date = models.DateField(db_index=True, verbose_name="截止日期")       # BR-04（截止字段统一 target_date，api-conventions §4.5）
     completed_at = models.DateTimeField(null=True, blank=True, verbose_name="完成时间")
 
     class Meta(BaseModel.Meta):
         db_table = "portfolio_milestones"
-        indexes = [models.Index(fields=["portfolio", "due_date"], name="idx_pm_portfolio_due")]
+        indexes = [models.Index(fields=["portfolio", "target_date"], name="idx_pm_portfolio_target")]
 
 
 class MilestoneItem(BaseModel):
@@ -338,41 +344,55 @@ class PortfolioService:
         )
 
     def risk_list(self, portfolio_id) -> list[Risk]:
-        """风险三源：逾期任务、被外部依赖阻塞任务、里程碑偏差（BR-06 判定同源）"""
+        """风险三源：逾期任务、被外部依赖阻塞任务、里程碑偏差（BR-06 判定同源）。
+        「外部依赖」= 阻塞源任务属另一项目（同项目集内跨项目也算，与 BR-07「跨项目边」同义）"""
         projects = self.descendant_projects(portfolio_id)
-        overdue = Issue.objects.filter(project_id__in=projects, due_date__lt=timezone.today(),
+        overdue = Issue.objects.filter(project_id__in=projects, target_date__lt=timezone.localdate(),
                                        deleted_at__isnull=True).exclude(
             state__group__in=["completed", "cancelled"])
-        blocked_external = IssueLink.objects.filter(
-            link_type="blocks", issue__project_id__in=projects,
-        ).exclude(related_issue__project_id__in=projects)  # 跨项目边（BR-07 展示源）
+        # 被外部项目任务阻塞（BR-07 统计源）——TASK-005 成对存储的镜像行语义：
+        # relation_type='is_blocked_by' 行中 issue=被阻塞任务、related_issue=阻塞源（字段名为 relation_type）
+        blocked_external = (IssueLink.objects
+            .filter(relation_type="is_blocked_by", issue__project_id__in=projects,
+                    issue__deleted_at__isnull=True)
+            .exclude(related_issue__project_id=F("issue__project_id"))              # 阻塞源在另一项目 = 跨项目边
+            .exclude(related_issue__state__group__in=["completed", "cancelled"])    # 已完成/取消的源不再是风险（TASK-005 BR-07 同源）
+            .exclude(issue__state__group__in=["completed", "cancelled"]))
         ...
 ```
 
 ### 4.4 跨项目依赖放开（对 TASK-005 Service 的增量 diff）
 
 ```python
-# TASK-005 IssueLinkService.create 的校验 diff：
-- if link.issue.project_id != link.related_issue.project_id:
--     raise ApiError("VALIDATION_ERROR", 400, code="DOES_NOT_EXIST")   # 原 BR-02 同项目
-+ if link.issue.workspace_id != link.related_issue.workspace_id:       # BR-08：放开到同工作空间
-+     raise ApiError("VALIDATION_ERROR", 400, details={
-+         "related_issue": [{"code": "DOES_NOT_EXIST", "message": "仅支持同工作空间内关联"}]})
-+ # 双项目可见性（存在性隐藏语义，api-conventions §3.4）
-+ if not PermissionResolver.can_view(actor, link.related_issue.project):
-+     raise ApiError("RESOURCE_NOT_FOUND", 404)
+# TASK-005 create_relation（§4.3.1 唯一写入口）的 BR-02 校验 diff（放开为 BR-08）：
+-    if issue.project_id != related.project_id:                          # 原 BR-02：两端必须同项目
+-        raise ValidationError({"related_issue_id": "关联双方必须属于同一项目"})
++    if issue.workspace_id != related.workspace_id:                      # BR-08：放开为同工作空间
++        raise ValidationError({"related_issue_id": "仅支持同工作空间内建立关联"})
++        # → 400 VALIDATION_ERROR + details=[{field: "related_issue_id",
++        #    code: "DOES_NOT_EXIST", message: "仅支持同工作空间内建立关联"}]（api-conventions §4.2）
++    # 双项目可见性（存在性隐藏，api-conventions §4.3「404 vs 403」一致性策略；
++    # actor 由服务层按 actor_id 装配，rbac 行级 Manager 收口）
++    if not Project.objects.accessible_by(actor).filter(id=related.project_id).exists():
++        raise NotFound()                                                # → 404 RESOURCE_NOT_FOUND
 
-# TASK-005 assert_completable 的 BLOCKER_SQL diff（BR-07 软策略）：
-  WITH RECURSIVE blockers AS (
-      SELECT il.related_issue_id FROM issue_links il
-      WHERE il.issue_id = %(issue_id)s AND il.link_type = 'blocks'
-+       AND il.related_issue_id IN (SELECT id FROM issues WHERE project_id = %(project_id)s)
-      -- 仅同项目边参与硬拦截；跨项目边仅展示与统计
-      ...
-  )
+# TASK-005 assert_completable 的 BLOCKER_SQL diff（BR-07 软策略）——在上游 SQL 基础上仅加一行项目过滤：
+  SELECT i.id, i.sequence_id, i.name, s."group"
+    FROM issue_links il
+    JOIN issues i ON i.id = il.related_issue_id    -- related_issue_id = 阻塞我的任务（镜像行语义）
+    LEFT JOIN states s ON s.id = i.state_id
+   WHERE il.issue_id = %(me)s
+     AND il.relation_type = 'is_blocked_by'        -- 我持有的镜像行（字段名为 relation_type，非 link_type）
+     AND il.deleted_at IS NULL
+     AND i.deleted_at IS NULL
++    AND i.project_id = %(project_id)s             -- BR-07：仅同项目边参与硬拦截；跨项目边仅展示与统计
+     AND COALESCE(s."group", 'unstarted') NOT IN ('completed', 'cancelled')
+-- 调用侧传参：{"me": issue.id, "project_id": issue.project_id}
 
 # 无环检测 _reaches 不加项目过滤（BR-09：环就是环，跨项目同样禁止）
 ```
+
+> **对上游 SQL 的三点核对（修正 R1 稿偏差）**：① 上游 `BLOCKER_SQL` 本就是**非递归**单层点查——完成守卫只看直接前置（走 `idx_link_issue_type` 索引，<1ms），递归 CTE 只用于无环检测 `_reaches`（§4.3.2），R1 稿的 `WITH RECURSIVE` 无递归成员、属误加；② 上游字段名为 `relation_type`（`IssueLink` 模型定义），R1 稿误写 `link_type`；③ 上游以 `issue_id = 我 AND relation_type='is_blocked_by'` 取「阻塞我的边」，R1 稿 `link_type='blocks'` + `issue_id=我` 取到的是「我阻塞他」的**反向**边，与行内项目过滤叠加后拦截近乎空转——本稿按上游语义重写，语义真实可运行。
 
 ### 4.5 里程碑预警任务
 
@@ -382,42 +402,77 @@ def milestone_due_alerts():
     """Celery beat 每日 09:00：BR-06 前 7 天每日一条（幂等键含日期），逾期转红标"""
     today = timezone.localdate()
     for ms in PortfolioMilestone.objects.filter(
-            completed_at__isnull=True, due_date__gte=today - timedelta(days=30),
+            completed_at__isnull=True, target_date__gte=today - timedelta(days=30),
             deleted_at__isnull=True).select_related("portfolio"):
         progress = PortfolioService().milestone_progress(ms.id)
         if progress >= 1.0:
             continue
-        days_left = (ms.due_date - today).days
+        days_left = (ms.target_date - today).days
         if days_left <= 7:
             key = f"ms:alert:{ms.id}:{today}"
             if cache.set(key, "1", timeout=86400, nx=True):
-                notify_milestone_risk.delay(str(ms.id), days_left, progress)  # manager 收件箱
+                notify_milestone_risk.delay(str(ms.id), days_left, progress)  # manager 收件箱（manager 为空回退 WS_ADMIN+，BR-06）
 ```
 
 ### 4.6 API 端点
 
 | 方法 | 路径 | 说明 | 权限 |
 | --- | --- | --- | --- |
-| GET/POST | `/api/v1/workspaces/{slug}/portfolios/` | 组合树列表（嵌套）/ 新建节点 | 读：WS 成员；写：WS_ADMIN+ 或项目集 manager |
-| GET/PATCH/DELETE | `…/portfolios/{id}/` | 详情/改/删（BR-11 非空阻断） | 同上 |
-| POST/DELETE | `…/portfolios/{id}/projects/` | 挂载/卸载项目 `{project_id}`（BR-02） | 双端权限 |
+| GET/POST | `/api/v1/workspaces/{slug}/portfolios/` | 组合树列表（嵌套）/ 新建节点 | 读：WS 成员；写：WS_ADMIN+ 或项目集 manager（BR-03） |
+| GET/PATCH/DELETE | `…/portfolios/{id}/` | 详情/改/删（BR-11 非空阻断；DELETE 不带请求体，api-conventions §3.1） | 同上 |
+| POST | `…/portfolios/{id}/projects/` | 挂载项目（请求体 `{project_id}`，BR-02） | 双端权限 |
+| DELETE | `…/portfolios/{id}/projects/{project_id}/` | 卸载项目（无请求体，删除目标由路径承载） | 双端权限 |
 | GET | `…/portfolios/{id}/summary/` | 汇总面板（进度+资源+风险三卡一次返回） | WS 成员 |
-| GET/POST | `…/portfolios/{id}/milestones/` | 里程碑列表（含完成度）/ 新建 | 读：WS 成员；写：manager+ |
-| POST/DELETE | `…/milestones/{id}/items/` | 增删贡献项 `{issue_id}`（BR-04） | manager+ |
+| GET/POST | `…/portfolios/{id}/milestones/` | 里程碑列表（含完成度）/ 新建 | 读：WS 成员；写：BR-03 同上 |
+| POST | `…/portfolios/{pid}/milestones/{milestone_id}/items/` | 增贡献项（请求体 `{issue_id}`，BR-04） | BR-03 同上 |
+| DELETE | `…/portfolios/{pid}/milestones/{milestone_id}/items/{item_id}/` | 删贡献项（无请求体） | BR-03 同上 |
 | GET | `…/portfolios/{id}/dependency-graph/` | 依赖图载荷（节点+边，跨项目边标记） | WS 成员 |
 
-**① `GET …/summary/` 响应（200）**：
+> 分页与排序遵循 api-conventions §5.4/§6.3：里程碑等列表端点接入游标分页（`per_page` 默认/上限 100），排序用 `?ordering=`（白名单 `name` / `target_date` / `created_at`，默认 `-created_at,-id`）；组合树端点整树返回（深度 ≤3、节点有界，游标分页显式豁免，同 TASK-005 `relations/` 模式），`meta.count` 为根节点数。
+
+**① `GET …/portfolios/` 组合树列表响应（200，整树返回）**：
 
 ```json
 {
-  "status": 0,
+  "status": "success",
+  "data": [
+    {
+      "id": "0d5c2f6a-9b1e-4c8d-a3f7-2e4b6d8f0a1c",
+      "name": "2026 战略研发",
+      "parent_id": null,
+      "depth": 1,
+      "manager_id": null,
+      "project_count": 0,
+      "children": [
+        {
+          "id": "3a9e1f4b-7c2d-4a6e-b8f0-5d1c3e7a9b2d",
+          "name": "电商平台 2.0",
+          "parent_id": "0d5c2f6a-9b1e-4c8d-a3f7-2e4b6d8f0a1c",
+          "depth": 2,
+          "manager_id": "9c8b7a6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d",
+          "project_count": 3,
+          "children": []
+        }
+      ]
+    }
+  ],
+  "meta": { "count": 1 }
+}
+```
+
+**② `GET …/portfolios/{id}/summary/` 响应（200，详情端点省略 meta）**：
+
+```json
+{
+  "status": "success",
   "data": {
-    "portfolio": { "id": "01J9XQK7M3N4P5R6S7T8V9W1A1", "name": "电商平台 2.0" },
+    "portfolio": { "id": "3a9e1f4b-7c2d-4a6e-b8f0-5d1c3e7a9b2d", "name": "电商平台 2.0",
+                    "manager_id": "9c8b7a6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d" },
     "progress": {
       "overall": 0.62,
       "by_project": [
-        { "project_id": "01J9XQK7M3N4P5R6S7T8V9W1B2", "identifier": "APP", "ratio": 0.71 },
-        { "project_id": "01J9XQK7M3N4P5R6S7T8V9W1C3", "identifier": "GW", "ratio": 0.48 }
+        { "project_id": "1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e", "identifier": "APP", "ratio": 0.71 },
+        { "project_id": "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f", "identifier": "GW", "ratio": 0.48 }
       ]
     },
     "resource": {
@@ -431,22 +486,40 @@ def milestone_due_alerts():
       { "type": "milestone_slip", "milestone": "全量联调", "progress": 0.55, "days_left": 7 },
       { "type": "external_blocked", "issue": "APP-102", "blocked_by": ["GW-41", "GW-52"] }
     ]
-  },
-  "meta": { "request_id": "01J9XQK7M3N4P5R6S7T8V9W1D4" }
+  }
 }
 ```
 
-**② 错误响应矩阵**：
+**③ `DELETE …/portfolios/{id}/` 失败响应（409，非空项目集，BR-11）**：
+
+```json
+{
+  "status": "error",
+  "error": {
+    "code": "RESOURCE_IN_USE",
+    "message": "项目集下仍有挂载内容，请先迁移后再删除",
+    "details": [
+      { "field": "children", "code": "IN_USE", "message": "子节点 1 个" },
+      { "field": "projects", "code": "IN_USE", "message": "挂载项目 3 个" }
+    ],
+    "request_id": "01JCB5T9N3YR8O0Q6W4X7Z9A2E"
+  }
+}
+```
+
+> 信封契约（api-conventions §4）：`status` 恒为 `"success"` / `"error"` 字符串；`request_id` 只出现在 error 对象内（禁止放 meta）；`details` 恒为 `[{field, code, message}]` 数组。示例中子码 `IN_USE` 未在 api-conventions §8.8 注册，交付时补登条目（架构文档待回改登记，同 TASK-005 §2.5 补登模式）。
+
+**④ 错误响应矩阵**（`details` 均为 `[{field, code, message}]` 数组形态）：
 
 | 场景 | HTTP | code | details |
 | --- | --- | --- | --- |
-| 树深度 >3 | 400 | `VALIDATION_ERROR` | 子码 `TOO_LARGE` |
-| 父链成环 | 409 | `RESOURCE_CIRCULAR_DEPENDENCY` | 环路径 |
-| 项目重复挂载 | 409 | `RESOURCE_ALREADY_EXISTS` | 当前挂载点 |
-| 删除非空项目集 | 409 | `RESOURCE_IN_USE` | `children`/`projects` 计数 |
-| 跨工作空间关联 | 400 | `VALIDATION_ERROR` | 子码 `DOES_NOT_EXIST` |
-| 不可见目标项目 | 404 | `RESOURCE_NOT_FOUND` | 存在性隐藏 |
-| 贡献项非项目集内任务 | 400 | `VALIDATION_ERROR` | 子码 `DOES_NOT_EXIST` |
+| 树深度 >3 | 409 | `RESOURCE_LIMIT_EXCEEDED` | `[{"field": "parent_id", "code": "TOO_LARGE", "message": "组合树深度上限 3"}]` |
+| 父链成环 | 409 | `RESOURCE_CIRCULAR_DEPENDENCY` | `parent_id` / 子码 `CYCLE` / 环路径（`CYCLE` 同 TASK-005 §2.5 待登记，架构文档待回改） |
+| 项目重复挂载 | 409 | `RESOURCE_ALREADY_EXISTS` | `project_id` / 子码 `UNIQUE` / 当前挂载点 |
+| 删除非空项目集 | 409 | `RESOURCE_IN_USE` | `children`/`projects` / 子码 `IN_USE` / 计数（见 ③ 示例） |
+| 跨工作空间关联 | 400 | `VALIDATION_ERROR` | `related_issue_id` / 子码 `DOES_NOT_EXIST` |
+| 不可见目标项目 | 404 | `RESOURCE_NOT_FOUND` | 存在性隐藏（无 details） |
+| 贡献项非项目集内任务 | 400 | `VALIDATION_ERROR` | `issue_id` / 子码 `DOES_NOT_EXIST` |
 | 权限不足 | 403 | `PERM_ROLE_INSUFFICIENT` | — |
 
 ### 4.7 前端实现
@@ -458,7 +531,7 @@ class PortfolioStore {
   @observable milestones: MilestoneVM[] = [];
 
   async fetchSummary(portfolioId: string) {
-    // SWR 30s：三卡一次载荷（§4.6 ①），里程碑流转/任务完成后 mutate
+    // SWR 30s：三卡一次载荷（§4.6 ②），里程碑流转/任务完成后 mutate
     const res = await api.get(`…/portfolios/${portfolioId}/summary/`);
     runInAction(() => { this.summary = res.data.data; });
   }
@@ -474,7 +547,7 @@ class PortfolioStore {
 | --- | --- |
 | 依赖图 | ELK.js 分层布局；跨项目边虚线 + 「外部」徽标；>100 节点提示过滤 |
 | 面板三卡 | 单次 `summary/` 载荷渲染；风险卡可点击直达任务/里程碑 |
-| 外部依赖分组 | 任务详情 `relations` 按 `target_project` 是否同项目分桶渲染 |
+| 外部依赖分组 | 任务详情 `relations` 按内联 `related_issue.target_project` 是否为本项目分桶渲染（跨项目边虚线，§2.3） |
 
 ---
 

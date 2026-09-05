@@ -1,4 +1,4 @@
-# RPT-003 燃尽图 / 迭代速率 / 累积流图
+# 燃尽图 / 迭代速率 / 累积流图
 
 | 元信息项 | 内容 |
 | --- | --- |
@@ -7,11 +7,11 @@
 | 模块 | M10-RPT 数据报表 |
 | 优先级 | P3（企业版核心 · 企业版 V1.0 组成部分） |
 | 工作量估算 | 后端 4.0 人日（Cycle 模型 1 + 快照管道 1.5 + 三图表服务 1.5）｜前端 3.5 人日（三图表 2 + 迭代管理 1 + 导出 0.5）｜测试 2.0 人日 |
-| 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md)（**§7.2 Plane Cycle 设计——CycleIssue OneToOne / scope change / 时间盒**，本文档直接落地该节）、[`api-conventions.md`](../architecture/api-conventions.md) |
+| 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md)（**§7.4 本项目 Cycle 处置——任务归属用 `Issue.cycle_id` 直接外键，零中间表**；§7.2 Plane Cycle 原型——时间盒 / `field='cycles'` scope change 语义，本文档落地两节）、[`api-conventions.md`](../architecture/api-conventions.md) |
 | 上游依赖 | `TASK-010`（IssueActivity 事件管道——`field='state'` 与 `field='cycles'` 事件是三图表的回算数据源）；`TASK-006`（estimate_minutes 作为燃尽度量之一）；`GANTT-002`（PNG 导出管线复用） |
 | 下游消费 | `RPT-004`（健康度消费速率与燃尽趋势）；P4 `RPT-005`（大屏数据源） |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
+| 最后更新日期 | 2026-09-05 |
 
 ---
 
@@ -21,15 +21,15 @@
 
 敏捷团队的管理三问：「这个迭代能按时交付吗（燃尽）、我们团队稳定产能是多少（速率）、工作流哪里在积压（累积流）」。三张图是敏捷报表的最小完备集，也是企业版相对标准版（仅有 `RPT-001` 个人统计与 `RPT-002` 项目统计）在**过程管理**上的分水岭。
 
-数据基础已全部就绪：`TASK-010` 的 IssueActivity 事件流记录了每一次状态变更（`field='state'`），架构文档 §7.2 预留的 Cycle 迭代模型定义了时间盒容器与 scope change 语义。本文档把二者拼成报表体系——**核心纪律：报表消费事件流与快照，不实时扫业务表**（迭代概览 §5「数据可信」约束）。
+数据基础已全部就绪：`TASK-010` 的 IssueActivity 事件流记录了每一次状态变更（`field='state'`），架构文档 §7.4 预留的 `Issue.cycle_id` 关联位与 §7.2 对标的 Cycle 时间盒 / scope change 语义定义了迭代容器。本文档把二者拼成报表体系——**核心纪律：报表消费事件流与快照，不实时扫业务表**（迭代概览 §5「数据可信」约束）。
 
 ### 1.2 目标
 
-1. **Cycle 迭代模型落地**：按架构 §7.2 建 `Cycle`（时间盒）+ `CycleIssue`（OneToOne，一任务同时只属于一个迭代）；`field='cycles'` Activity 事件记录加入/移出（scope change）。
+1. **Cycle 迭代模型落地**：按架构 §7.4 处置建 `Cycle`（时间盒），任务归属直接用 `Issue.cycle_id` 外键（P0 已预留列，本 sprint 零中间表、零 issues 表 DDL）；`field='cycles'` Activity 事件记录加入/移出（scope change）。
 2. **燃尽图**：迭代内每日剩余工作量曲线 vs 理想线；度量可切任务数/预估工时/故事点（自定义数字字段）。
 3. **迭代速率**：近 N 个已完成迭代的完成量柱状 + 均值线，为下一迭代规划提供产能基线。
 4. **累积流图（CFD）**：按 `state.group` 五组堆叠的时序面积图，积压段一眼可见。
-5. **快照不可篡改**：迭代结束即落 `CycleSnapshot` 日报快照，**结束后修改历史任务不改变已归档报表**（迭代概览验收第 3 条）。
+5. **快照不可篡改**：迭代期间每日落 `CycleSnapshot` 日报快照，结束时**落终版快照（`is_final` 唯一锚）并冻结全部快照**，**结束后修改历史任务不改变已归档报表**（迭代概览验收第 3 条）。
 
 ### 1.3 范围与边界
 
@@ -46,15 +46,16 @@
 | 术语 | 定义 |
 | --- | --- |
 | 时间盒（Time-box） | Cycle 的 `start_date`/`end_date` 闭区间；项目内时间不重叠（BR-03） |
-| scope change | 迭代开始后加入/移出的任务变更——燃尽图台阶与 CFD 的口径修正依据 |
-| 剩余量 | 迭代内未达 `completed` 组任务的度量总和（任务数/工时/点数） |
-| 快照 | `CycleSnapshot`：迭代期间每日一行（剩余量按组分解），结束后只读 |
+| scope change | 迭代开始后加入/移出的任务变更——燃尽图台阶与 CFD 的口径修正依据；**只计入 `scope_delta`，不混入完成量**（BR-10/§4.3） |
+| 剩余量 | 迭代内未达 `completed` 且未 `cancelled` 组任务的度量总和（任务数/工时/点数）——与 §4.3 口径函数一致，`cancelled` 不计剩余 |
+| 计划量（planned） | 首日快照（`start_date` 当日）的 `scope_total`：迭代开始时刻范围内全部任务度量合计（不含 `cancelled`）；速率图的「计划」柱即此值（BR-10） |
+| 快照 | `CycleSnapshot`：迭代期间每日一行（剩余量按组分解），结束时另落终版快照（`is_final=true`），之后只读 |
 
 ### 1.5 前置依赖
 
 | 依赖 | 内容 | 阻塞原因 |
 | --- | --- | --- |
-| `unified-issue-model.md` §7.2 | Cycle/CycleIssue 模型定义、OneToOne 语义、`field='cycles'` scope change 事件 | 模型照此落地，零设计分歧 |
+| `unified-issue-model.md` §7.4/§7.2 | `Issue.cycle_id` 直接外键处置（P0 已预留列）、Cycle 时间盒模型、`field='cycles'` scope change 事件 | 模型照此落地，零设计分歧 |
 | `TASK-010` | IssueActivity 管道 + `idx_activity_field` 索引 | 快照回填与历史回算数据源；`field='cycles'` 事件挂点 |
 | `TASK-006` | `estimate_minutes` | 工时度量燃尽 |
 | `TASK-008` | 自定义数字字段 | 故事点度量（`cf_*` 数字字段可选为度量） |
@@ -65,7 +66,7 @@
 | 竞品 | 参考点 | 处置 |
 | --- | --- | --- |
 | Jira | Sprint Report（燃尽 + scope change 标记）、Velocity Chart、CFD | 三图语义全对齐；scope change 的「加入/移出」事件标注方式采纳 |
-| Plane | Cycle + `field='cycles'` Activity + burn-down（架构 §7.2 已逆向） | 模型对齐（CycleIssue OneToOne 直接源自 Plane）；**快照不可篡改为我方强化**（Plane 实时回算，历史可被修改污染） |
+| Plane | Cycle + `field='cycles'` Activity + burn-down（架构 §7.2 已逆向） | 模型对齐（Cycle 源自 Plane）；归属关系按架构 §7.4 处置改用 `Issue.cycle_id` 直接外键（一对一语义下省掉 CycleIssue 中间表的 JOIN）；**快照不可篡改为我方强化**（Plane 实时回算，历史可被修改污染） |
 | Azure DevOps | CFD 按看板列堆叠 | 我方按 `state.group` 五组（跨项目语义稳定，BR 冻结口径） |
 
 ---
@@ -82,7 +83,7 @@ flowchart TB
     end
     subgraph CYCLE["迭代生命周期"]
         C1["planned<br/>规划期可加任务"] --> C2["active<br/>开始：每日快照启动"]
-        C2 --> C3["completed<br/>结束：快照冻结"]
+        C2 --> C3["completed<br/>结束：落终版快照 + 冻结全部快照"]
     end
     subgraph SNAP["快照管道"]
         D1["Celery beat 每日 00:10<br/>cycle_daily_snapshot"] --> D2["CycleSnapshot<br/>按 group 分解剩余量"]
@@ -100,19 +101,19 @@ flowchart TB
 
 | 编号 | 规则 | 强制层 | 违约响应 |
 | --- | --- | --- | --- |
-| BR-01 | `CycleIssue.issue` OneToOne：一任务同时只属于一个迭代；加入新迭代 = 先移出旧迭代（同事务，产生两条 `cycles` Activity） | DB 唯一约束 + Service | `409 RESOURCE_ALREADY_EXISTS` |
+| BR-01 | 一任务同时只属于一个迭代：归属即 `Issue.cycle_id` 单值外键（架构 §7.4，不建 CycleIssue 中间表）；`PUT …/issues/` 整批换绑同事务完成「旧迭代移出 + 新迭代加入」（两条 `cycles` Activity）；单任务快捷加入遇已归属其他迭代时拒绝，须走整批换绑 | Service（单值外键天然唯一） | `409 RESOURCE_ALREADY_EXISTS` |
 | BR-02 | Cycle 状态机：`planned → active → completed`；`active → planned` 仅当无快照产生；`completed` 终态不可重开 | Service | `409 RESOURCE_STATE_INVALID` |
 | BR-03 | 项目内 `active` 迭代至多一个；`planned` 迭代时间盒不得与 `active` 重叠 | Service + 约束 | `409 RESOURCE_STATE_INVALID` |
-| BR-04 | 迭代结束（`complete`）：① 快照冻结（`CycleSnapshot.frozen=true`）② 未完成任务给出「结转到下一迭代 / 移回待规划」二选一（默认移回，不自动结转） | Service | — |
+| BR-04 | 迭代结束（`complete`）：① **落终版快照**（`CycleSnapshot(is_final=true, frozen=true, snapshot_date=完成日)`，含终版按组剩余与完成度量合计——速率统计锚点，防日快照漏跑导致速率偏低）② 冻结全部历史快照（`frozen=true`）③ 未完成任务给出「结转到下一迭代 / 移回待规划」二选一（默认移回，不自动结转） | Service | — |
 | BR-05 | 快照口径：每日 00:10（项目时区）按当时数据落上一自然日快照；**当日中途变更不改写已落快照**，仅在当天快照落定时反映 | 快照任务 | — |
 | BR-06 | 已结束迭代的报表**只读快照**：历史任务的状态/归属变更不影响已归档图表（验收硬指标） | 查询层（冻结快照直查） | — |
 | BR-07 | 度量三选一（项目级配置，默认任务数）：`count` / `estimate_minutes` / 指定数字自定义字段（故事点）；同一项目全部图表同度量 | 项目配置 + Serializer | `400 VALIDATION_ERROR`（字段非数字类型时） |
 | BR-08 | 燃尽理想线 = 起始剩余量 → 0 的直线（按自然日，含周末——可配排除周末）；实际线 = 每日快照剩余量 | 图表服务 | — |
 | BR-09 | scope change 标注：`active` 期间 `cycles` 事件的加入/移出在燃尽图上渲染 ▲/▼ 标记，并在 tooltip 列出任务 | 图表服务 | — |
-| BR-10 | 速率 = `completed` 迭代各自「完成度量」（结束时 `completed` 组任务度量合计）的柱状 + 近 5 个移动均值线 | 图表服务 | — |
+| BR-10 | 速率 = `completed` 迭代各自**终版快照**（`is_final=true` 唯一锚，非 `last()` 排序取值）中 `completed` 组度量合计的柱状 + 近 5 移动均值线；`planned` = 首日快照 `scope_total`（见 §4.3 口径），**完成量与 scope change 严格分列**（§4.3 恒等式） | 图表服务 | — |
 | BR-11 | CFD 口径：项目级（不限迭代），每日各 `state.group` 任务数（或度量）堆叠；时间轴由调用方给 `from/to`（默认近 30 天） | 图表服务 | — |
 | BR-12 | CFD 数据源：`DailyGroupSnapshot`（项目级每日五组快照，与 Cycle 快照同管道落）——不逐日回放 Activity（百万事件级回放不可行，迭代概览性能约束） | 快照任务 | — |
-| BR-13 | 报表权限：`report.read`（项目成员默认可读）；导出 `report.export`（COMMENTER+）；导出入审计（Sprint 8 `AUTH-010` 挂接点） | Permission | `403 PERM_DENIED` |
+| BR-13 | 报表权限：`report.read` 项目成员四角色均可（rbac §8.2 项目级）；导出 `report.export` 仅 **PROJ_ADMIN ✅ / PROJ_CONTRIBUTOR（⚠️ R5 项目「成员可导出」开关，默认开）**，COMMENTER/VIEWER 拒绝——与 rbac §8.2 矩阵逐格一致；迭代管理另需 `cycle.manage`；导出入审计（Sprint 8 `AUTH-010` 挂接点） | Permission | `403 PERM_DENIED` |
 | BR-14 | 归档项目迭代只读；不可新建/开始迭代 | Service | `403 PERM_PROJECT_ARCHIVED` |
 
 ### 2.3 快照与回算的边界（数据可信设计）
@@ -120,7 +121,7 @@ flowchart TB
 | 场景 | 处理 |
 | --- | --- |
 | 迭代进行中查询燃尽 | 已落快照 + **当日实时段**（当日 Activity 增量计算，标注「进行中」虚线段） |
-| 快照任务漏跑（宕机） | 补跑机制：从 `IssueActivity`（`field='state'`/`cycles'`，`idx_activity_field` 索引）回算缺日快照；回算结果与实时一致（同一口径函数） |
+| 快照任务漏跑（宕机） | 补跑机制：从 `IssueActivity`（`field='state'`/`field='cycles'`，`idx_activity_field` 索引）回算缺日快照；回算结果与实时一致（同一口径函数）。终版快照在 `complete` 时同步落库（BR-04），不依赖 beat 补跑 |
 | 任务被删除 | 删除当日快照起不再计入；历史快照**不回改**（BR-05/06） |
 | 度量配置变更 | 仅影响变更后落的快照；历史快照保留原度量（图表按快照自带度量单位渲染） |
 
@@ -202,9 +203,9 @@ flowchart TB
 ```mermaid
 erDiagram
     PROJECT ||--o{ CYCLE : has
-    CYCLE ||--o{ CYCLE_ISSUE : contains
-    ISSUE ||--o| CYCLE_ISSUE : "OneToOne（架构 §7.2）"
-    CYCLE ||--o{ CYCLE_SNAPSHOT : "daily"
+    ISSUE }o--o| CYCLE : "cycle_id 直接外键（架构 §7.4，零中间表）"
+    CYCLE ||--o{ CYCLE_SNAPSHOT : "daily + 终版（is_final）"
+    PROJECT ||--o| PROJECT_REPORT_CONFIG : "OneToOne（BR-07 度量配置）"
     PROJECT ||--o{ DAILY_GROUP_SNAPSHOT : "daily（CFD 源）"
     CYCLE {
         uuid id PK
@@ -218,10 +219,13 @@ erDiagram
         uuid cycle_id FK
         date snapshot_date
         jsonb remaining_by_group "五组剩余度量"
-        float remaining_total
-        float completed_delta "当日完成"
+        float remaining_total "不含 completed/cancelled"
+        float completed_delta "当日新完成量（不含 scope change）"
+        float scope_delta "当日加入(+)/移出(-) 度量净额"
+        float scope_total "迭代范围总量（不含 cancelled）"
         string measure "count/estimate/cf_xx（BR-07 快照自带口径）"
         bool frozen
+        bool is_final "终版快照唯一锚（BR-04）"
     }
 ```
 
@@ -229,7 +233,7 @@ erDiagram
 
 ```python
 class Cycle(BaseModel):
-    """时间盒迭代 —— 落地架构文档 §7.2（Plane 对标）"""
+    """时间盒迭代 —— 落地架构文档 §7.4 处置（Plane 对标见 §7.2）"""
 
     class Status(models.TextChoices):
         PLANNED = "planned", "规划中"
@@ -260,17 +264,14 @@ class Cycle(BaseModel):
         indexes = [models.Index(fields=["project", "status"], name="idx_cycle_project_status")]
 
 
-class CycleIssue(BaseModel):
-    """OneToOne：一任务同时只属于一个迭代（架构 §7.2 / BR-01）"""
-
-    issue = models.OneToOneField(Issue, on_delete=models.CASCADE,
-                                 related_name="issue_cycle", verbose_name="工作项")
-    cycle = models.ForeignKey(Cycle, on_delete=models.CASCADE,
-                              related_name="issue_cycle", verbose_name="迭代")
-
-    class Meta(BaseModel.Meta):
-        db_table = "cycle_issues"
-        indexes = [models.Index(fields=["cycle"], name="idx_cycle_issue_cycle")]
+# 任务归属：不建 CycleIssue 中间表——直接用 Issue 上的单值外键（架构 §7.4 处置，
+# 「一个工作项同时只属于一个迭代」由单值列天然保证，省掉 Plane CycleIssue 的一层 JOIN）。
+# 该列 P0 建 Issue 表时已随 migration 预留，本 sprint 零 issues 表 DDL：
+#
+#   # apps/api/plane/db/models/issue.py（已有列，此处仅引用）
+#   cycle = models.ForeignKey("db.Cycle", on_delete=models.SET_NULL,
+#                             null=True, blank=True, related_name="issues",
+#                             verbose_name="所属迭代")
 
 
 class CycleSnapshot(BaseModel):
@@ -280,17 +281,40 @@ class CycleSnapshot(BaseModel):
                               related_name="snapshots", verbose_name="迭代")
     snapshot_date = models.DateField(verbose_name="快照日期")
     measure = models.CharField(max_length=32, verbose_name="度量口径", help_text="count/estimate_minutes/cf_<uuid>")
-    remaining_total = models.FloatField(verbose_name="剩余总量")
+    remaining_total = models.FloatField(verbose_name="剩余总量",
+        help_text="未达 completed 且未 cancelled 组的度量总和（cancelled 不计剩余）")
     remaining_by_group = models.JSONField(verbose_name="按组分解",
         help_text='{"backlog": 0, "unstarted": 12, "started": 8.5, "completed": 30, "cancelled": 0}')
-    completed_delta = models.FloatField(default=0, verbose_name="当日完成量")
+    completed_delta = models.FloatField(default=0, verbose_name="当日新完成量",
+        help_text="只统计当日进入 completed 组的度量，不含 scope change（§4.3 恒等式）")
+    scope_delta = models.FloatField(default=0, verbose_name="当日 scope change 净额",
+        help_text="cycles 事件：加入 +x / 移出 -x 的度量净额，与完成量严格分列（BR-10）")
+    scope_total = models.FloatField(default=0, verbose_name="迭代范围总量",
+        help_text="迭代内全部任务度量合计（不含 cancelled）；首日快照本字段即速率图的 planned（BR-10）")
     frozen = models.BooleanField(default=False, verbose_name="是否冻结（迭代结束）")
+    is_final = models.BooleanField(default=False, verbose_name="终版快照",
+        help_text="complete 时落一行 is_final=true（BR-04），作为速率统计唯一锚，替代任何 last() 排序取值")
 
     class Meta(BaseModel.Meta):
         db_table = "cycle_snapshots"
-        constraints = [models.UniqueConstraint(fields=["cycle", "snapshot_date"],
-                                               name="uniq_cycle_snapshot_day")]
+        constraints = [
+            models.UniqueConstraint(fields=["cycle", "snapshot_date"], name="uniq_cycle_snapshot_day"),
+            models.UniqueConstraint(fields=["cycle"], condition=models.Q(is_final=True),
+                                    name="uniq_cycle_final_snapshot"),             # BR-04 终版唯一锚
+        ]
         indexes = [models.Index(fields=["cycle", "snapshot_date"], name="idx_cs_cycle_day")]
+
+
+class ProjectReportConfig(BaseModel):
+    """BR-07 度量口径的项目级单例配置（report_measure 的存储与读写端点见 §4.5）"""
+
+    project = models.OneToOneField(Project, on_delete=models.CASCADE,
+                                   related_name="report_config", verbose_name="项目")
+    report_measure = models.CharField(max_length=32, default="count", verbose_name="报表度量口径",
+        help_text="count / estimate_minutes / cf_<uuid>（数字类型自定义字段，BR-07）")
+
+    class Meta(BaseModel.Meta):
+        db_table = "project_report_configs"
 
 
 class DailyGroupSnapshot(BaseModel):
@@ -317,7 +341,7 @@ class DailyGroupSnapshot(BaseModel):
 def cycle_daily_snapshot():
     """Celery beat 每日 00:10（项目时区逐个）：BR-05 落昨日快照 + 缺日补跑（§2.3）"""
     for project in Project.objects.filter(status="active", deleted_at__isnull=True):
-        measure = ProjectConfig.objects.get(project=project).report_measure  # BR-07
+        measure = ProjectReportConfig.objects.get(project=project).report_measure  # BR-07（§4.2）
         yesterday = timezone.localdate() - timedelta(days=1)
         # ① 项目级五组快照（CFD 源，BR-12）
         DailyGroupSnapshot.objects.update_or_create(
@@ -335,24 +359,37 @@ def cycle_daily_snapshot():
 def compute_cycle_snapshot(cycle, day, measure) -> dict:
     """口径单源：当日迭代内任务按 state.group 分解剩余量。
     进行中日 = 直查当前表；历史日（补跑）= 以 IssueActivity 回放至当日 24:00 的状态
-    （field='state'/'cycles' 事件，命中 idx_activity_field）。"""
+    （field='state' / field='cycles' 事件，命中 idx_activity_field）。"""
     issues = issues_in_cycle_at(cycle, day)                    # cycles 事件回放
     by_group = {g: 0.0 for g in State.Group.values}
     for issue in issues:
         group = state_group_at(issue, day)                     # state 事件回放
         by_group[group] += measure_of(issue, measure)          # count=1 / estimate / cf_*
     remaining = sum(v for g, v in by_group.items()
-                    if g not in (State.Group.COMPLETED, State.Group.CANCELLED))
+                    if g not in (State.Group.COMPLETED, State.Group.CANCELLED))  # cancelled 不计剩余
     prev = CycleSnapshot.objects.filter(cycle=cycle, snapshot_date=day - timedelta(days=1)).first()
+    # 完成量与 scope change 严格分列（BR-10）——中途移出的任务不再冒充「完成」：
+    completed_delta = sum(measure_of(i, measure)
+                          for i in issues_entered_completed_at(cycle, day))   # 仅当日新进入 completed 组
+    scope_delta = scope_change_net_at(cycle, day, measure)     # cycles 事件：加入 +x / 移出 -x 的净额
+    # 恒等式（补跑自校验）：remaining_total == prev.remaining_total - completed_delta + scope_delta
     return {"measure": measure, "remaining_by_group": by_group, "remaining_total": remaining,
-            "completed_delta": (prev.remaining_total - remaining) if prev else 0}
+            "completed_delta": completed_delta, "scope_delta": scope_delta,
+            "scope_total": sum(v for g, v in by_group.items() if g != State.Group.CANCELLED)}
 
 
 @receiver(post_save, sender=Cycle)
 def on_cycle_completed(sender, instance, **kwargs):
-    """BR-04/06：迭代结束 → 快照冻结"""
+    """BR-04：迭代结束 → 落终版快照 + 冻结全部快照。
+    终版行与日快照共用 (cycle, snapshot_date) 唯一键（幂等合并）并打 is_final=true——
+    速率统计只认该唯一锚：即使 beat 漏跑最后数日，完成量也不会系统性偏低。"""
     if instance.status == Cycle.Status.COMPLETED:
-        CycleSnapshot.objects.filter(cycle=instance, frozen=False).update(frozen=True)
+        measure = ProjectReportConfig.objects.get(project=instance.project).report_measure  # BR-07
+        today = timezone.localdate()
+        CycleSnapshot.objects.update_or_create(
+            cycle=instance, snapshot_date=today,
+            defaults={**compute_cycle_snapshot(instance, today, measure), "is_final": True})
+        CycleSnapshot.objects.filter(cycle=instance).update(frozen=True)
 ```
 
 ### 4.4 图表查询服务
@@ -366,19 +403,20 @@ class AgileReportService:
             snaps.append(self._realtime_point(cycle))
         ideal = ideal_line(cycle, snaps)                        # BR-08（可配排除周末）
         scope_events = IssueActivity.objects.filter(
-            field="cycles", issue__issue_cycle__cycle=cycle,
-            created_at__gte=cycle.start_date)                   # BR-09 ▲▼ 标注
+            field="cycles", created_at__gte=cycle.start_date,
+        ).filter(Q(new_identifier=cycle.pk) | Q(old_identifier=cycle.pk))  # BR-09 ▲▼ 标注
         return BurndownPayload(points=snaps, ideal=ideal, scope_events=scope_events,
                                frozen=cycle.status == Cycle.Status.COMPLETED)  # BR-06
 
     def velocity(self, project_id, limit=6) -> VelocityPayload:
-        """BR-10：completed 迭代完成度量 + 近 5 移动均值"""
+        """BR-10：completed 迭代终版快照（is_final 唯一锚）完成度量 + 近 5 移动均值；
+        planned = 首日快照 scope_total——两处均为唯一键直取，无任何 last() 排序依赖"""
         cycles = Cycle.objects.filter(project_id=project_id, status="completed") \
-                              .order_by("-end_date")[:limit]
+                              .prefetch_related("snapshots").order_by("-end_date")[:limit]
         bars = [{"cycle": c.name,
-                 "completed": c.snapshots.filter(frozen=True).last().remaining_by_group["completed"]
-                            if c.snapshots.exists() else 0,
-                 "planned": planned_of(c)} for c in reversed(cycles)]
+                 "completed": c.snapshots.get(is_final=True).remaining_by_group["completed"],
+                 "planned": c.snapshots.get(snapshot_date=c.start_date).scope_total,  # BR-10 planned 口径
+                } for c in reversed(cycles)]
         return VelocityPayload(bars=bars, moving_avg=moving_average([b["completed"] for b in bars], 5))
 
     def cumulative_flow(self, project_id, frm, to, measure) -> CFDPayload:
@@ -389,7 +427,9 @@ class AgileReportService:
         return CFDPayload(series=rows)
 ```
 
-**性能核算**（迭代概览约束：百万事件级 P95 < 500ms）：三图全部直查快照表（行数 = 迭代天数/项目天数级，≤数百行），零 Activity 回放——回放仅发生在补跑任务（离线）。`velocity` 的 `snapshots.last()` 走 `idx_cs_cycle_day` 主键序，无 N+1（`prefetch_related`）。
+**planned 口径定义**（贯穿 §3.2 / BR-10 / velocity 载荷）：`planned = 首日快照（snapshot_date = start_date，唯一键直取）的 scope_total` = 迭代开始时刻范围内全部任务度量合计（不含 `cancelled`），按任务数/工时/点数随 BR-07 度量切换。首日快照若因宕机缺失，由补跑机制（§2.3）在 velocity 查询前回填，保证「计划」柱可复现且不受迭代结束后任务结转/删除影响。
+
+**性能核算**（迭代概览约束：百万事件级 P95 < 500ms）：三图全部直查快照表（行数 = 迭代天数/项目天数级，≤数百行），零 Activity 回放——回放仅发生在补跑任务（离线）。`velocity` 的终版快照经 `uniq_cycle_final_snapshot` 唯一锚直取（`is_final=true` 每迭代至多一行），**无排序依赖、无 N+1**（`prefetch_related`）。
 
 ### 4.5 API 端点
 

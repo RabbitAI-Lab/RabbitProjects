@@ -1,4 +1,4 @@
-# GANTT-003 关键路径计算与延期预警
+# 关键路径计算与延期预警
 
 | 元信息项 | 内容 |
 | --- | --- |
@@ -11,7 +11,7 @@
 | 上游依赖 | `GANTT-001`（甘特视口查询与渲染基座）；`GANTT-002`（拖拽改期管线——CPM 重算挂点）；`TASK-005`（blocks 依赖图无环约束——CPM 的前提）；`PROJ-004`（跨项目边**不参与** CPM 的边界） |
 | 下游消费 | P4 关键路径锁定、P4 `AI-001`（自动调优建议数据源）；`RPT-004`（阻塞率维度可消费关键链统计） |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
+| 最后更新日期 | 2026-09-05 |
 
 ---
 
@@ -43,11 +43,12 @@
 
 | 术语 | 定义 |
 | --- | --- |
-| ES/EF | 最早开始/完成（正推：`ES = max(前置 EF)`，`EF = ES + duration`） |
-| LS/LF | 最晚开始/完成（逆推：`LF = min(后继 LS)`，`LS = LF - duration`） |
-| 浮动时间（float） | `LS - ES`：任务可滑期而不影响项目完工的天数 |
-| 关键任务 | `float = 0` 的任务；关键链 = 关键任务构成的最长路径 |
-| duration | 任务工期 = `due_date - start_date`（无日期任务不参与 CPM，BR-04） |
+| ES/EF | 最早开始/完成（正推：`ES = max(前置 EF)`，`EF = ES + duration`；**仅对未完成任务成立**——已完成任务的 EF 取实际完成日，见 BR-12 分档规则） |
+| LS/LF | 最晚开始/完成（逆推：`LF = min(后继 LS, 项目目标完工日)`，`LS = LF - duration`） |
+| 浮动时间（float） | `LS - ES`：任务可滑期而不影响项目完工的天数，**可为负** |
+| 负浮动（negative float） | `float < 0`（即 `LS < ES`）：项目目标完工日（或后继约束）早于正推最早完成——任务已无法在目标日内完成，**必然逾期**；`float = 0` 是关键的边界、`float < 0` 属于「浮动已击穿」 |
+| 关键任务 | `float ≤ 0` 的未完成任务（含负浮动——负浮动比零浮动更紧急，必须同标关键）；关键链 = 关键任务构成的最长路径 |
+| duration | 任务工期（天）= `target_date - start_date`（无日期任务不参与 CPM，BR-04） |
 
 ### 1.5 前置依赖
 
@@ -76,13 +77,13 @@
 ```mermaid
 flowchart TB
     subgraph IN["输入（项目内 DAG）"]
-        T["任务集：有 start_date+due_date<br/>且非 completed/cancelled 组"]
+        T["任务集：有 start_date+target_date<br/>且非 completed/cancelled 组"]
         E["blocks 边集（仅同项目，BR-03）"]
     end
     subgraph CPM["CPM 引擎（拓扑序两遍）"]
-        F["① 正推（拓扑序）<br/>ES = max(前置 EF, 今日)<br/>EF = ES + duration"]
+        F["① 正推（拓扑序）<br/>未开始 ES = max(前置 EF, 今日)（BR-05）<br/>未完成 EF = ES + duration；完成者 EF=实际完成日（BR-12）"]
         B["② 逆推（逆拓扑序）<br/>LF = min(后继 LS, 项目目标日)<br/>LS = LF - duration"]
-        D["③ 派生<br/>float = LS - ES<br/>float=0 → 关键任务"]
+        D["③ 派生<br/>float = LS - ES<br/>float ≤ 0（含负浮动）→ 关键任务"]
     end
     subgraph OUT["输出"]
         K["关键链高亮数据"]
@@ -95,19 +96,20 @@ flowchart TB
 
 | 编号 | 规则 | 强制层 | 违约响应 |
 | --- | --- | --- | --- |
-| BR-01 | 计算范围 = 项目内**全部**有完整日期（`start_date` + `due_date`）且未完成任务；`blocks` 边仅取同项目（`PROJ-004` 边界） | CPM 服务 | — |
+| BR-01 | 计算范围 = 项目内**全部**有完整日期（`start_date` + `target_date`）且未完成任务；`blocks` 边仅取同项目（`PROJ-004` 边界） | CPM 服务 | — |
 | BR-02 | 无环前提：`TASK-005` 建边时已保证 DAG；CPM 拓扑排序仍做防御性环检测（发现环 → 500 日志告警 + 跳过该项目计算，不阻断用户） | CPM 服务 | — |
 | BR-03 | 跨项目边不进 CPM；任务存在跨项目入边时在甘特条上渲染「⚓ 外部约束」徽标（tooltip 列出外部前置） | 渲染层 | — |
-| BR-04 | 缺日期任务（无 start 或 due）不参与 CPM，不计关键；在甘特「未排期」区既有展示不变 | CPM 服务 | — |
-| BR-05 | 正推锚点：`ES = max(全部前置 EF, 今日)`——已过计划开始但未开始的任务从今日起算（反映真实剩余工期，不美化） | CPM 服务 | — |
-| BR-06 | 逆推锚点：叶子任务 `LF = min(后继 LS, 项目目标完工日)`；项目无目标日时取 `max(due_date)` | CPM 服务 | — |
-| BR-07 | 计算结果不落业务表：`IssueCPMCache`（项目 × 任务 → ES/EF/LS/LF/float/is_critical + `computed_at` + `input_hash`）；`input_hash` = 任务日期+边集指纹，命中即复用 | CPM 服务 + 缓存表 | — |
-| BR-08 | 预警一（关键逾期）：关键任务 `due_date < 今日` 且未完成 → 每日一条至负责人+项目经理（幂等键含日期） | beat + SETNX | — |
-| BR-09 | 预警二（浮动耗尽）：重算后任务由非关键转关键（float >0 → =0）→ 即时一条至负责人+项目经理（幂等键含 input_hash） | 重算钩子 + SETNX | — |
-| BR-10 | 重算触发：改期（GANTT-002 拖拽）、日期/依赖变更、任务完成/新建 → `on_commit` 增量重算；**批量操作合并为一次**（debounce 60s 窗口内同项目合并） | Celery | — |
+| BR-04 | 缺日期任务（无 start 或 target）不参与 CPM，不计关键；在甘特「未排期」区既有展示不变 | CPM 服务 | — |
+| BR-05 | 正推锚点：未开始任务 `ES = max(全部前置 EF, 今日)`——已过计划开始但未开始的任务从今日起算（反映真实剩余工期，不美化）；今日锚点仅是**下限**，计划开始晚于今日的未来任务仍从计划开始起算。已开始未完成任务不叠加今日锚点（`ES = max(前置 EF, start_date)`） | CPM 服务 | — |
+| BR-06 | 逆推锚点：`LF = min(后继 LS, 项目目标完工日)`；项目目标完工日存于预警配置（BR-14），未设时取 `max(target_date)` | CPM 服务 | — |
+| BR-07 | 计算结果不落业务表：`IssueCPMCache`（项目 × 任务 → ES/EF/LS/LF/float/is_critical + `computed_at` + `input_hash`）；`input_hash` = SHA-256(任务日期集 `start_date/target_date/completed_at` ∪ blocks 边集 ∪ 项目目标完工日 ∪ **`anchor_today`**) 取前 32 位 hex——**预警锚点日入指纹**，跨日必失配；每日 beat 重算（§4.3，WF-003 §4.4 beat 扫描同范式）兜底无触发日，指纹命中即复用、不跨日漂移 | CPM 服务 + 缓存表 | — |
+| BR-08 | 预警一（关键逾期）：关键任务（`float ≤ 0`，含负浮动）`target_date < 今日` 且未完成 → 每日一条至负责人+项目经理（幂等键含日期）。负浮动任务（目标日击穿）必然满足本条件，保证预警真实可触发 | beat + SETNX | — |
+| BR-09 | 预警二（浮动耗尽）：重算后任务由非关键转关键（`float > 0` → `≤ 0`，含转负浮动）→ 即时一条至负责人+项目经理（幂等键含 input_hash） | 重算钩子 + SETNX | — |
+| BR-10 | 重算触发：改期（GANTT-002 拖拽）、日期/依赖变更、任务完成/新建 → `on_commit` 增量重算；**批量操作合并为一次**（debounce 60s 窗口内同项目合并）；每日 beat 重算见 BR-07 | Celery | — |
 | BR-11 | 1 万节点 < 300ms：拓扑排序 Kahn 算法 O(V+E)，纯内存计算；超限项目（>2 万节点）降级为「仅关键链近似」（最长路启发式）并在响应标注 `approximate: true` | CPM 服务 | — |
-| BR-12 | 已完成任务保留在图中作为历史锚点（其 EF = 实际完成日）但不参与关键链标注；取消任务剔除 | CPM 服务 | — |
-| BR-13 | 权限：CPM 数据随甘特可读（项目成员）；预警配置 `report.configure`（PROJ_ADMIN+） | Permission | `403 PERM_DENIED` |
+| BR-12 | 已完成任务按状态分档：作为历史锚点保留在图中——`ES` 取计划 `start_date`、`EF` 取**实际完成日**（`completed_at` 折算项目时区日期；`completed_at` 仅首次完成时写入，保留首次完成时间，unified-issue-model §2.8），作为后继正推的输入；**不做 `EF = ES + duration` 递推**；不参与关键链标注（`is_critical` 恒 false）与预警；取消任务剔除 | CPM 服务 | — |
+| BR-13 | 权限：CPM 数据随甘特可读（`gantt.read`，VIEWER+，rbac §8.2）；预警配置写 `project.setting.manage`（PROJ_ADMIN+，rbac §8.2 已注册码） | Permission | `403 PERM_ROLE_INSUFFICIENT` |
+| BR-14 | 预警配置持久化于 `CPMAlertConfig`（项目域，每项目一行：逾期/浮动耗尽开关 + 项目目标完工日，§4.2 模型）；未建配置时全部取默认值（§3.3） | CPM 服务 | — |
 
 ### 2.3 重算触发时序
 
@@ -168,11 +170,13 @@ sequenceDiagram
 
 ### 3.3 预警配置（项目设置）
 
+配置持久化于 `CPMAlertConfig`（BR-14，模型见 §4.2），读写端点见 §4.4 `cpm-config/`（写权限 `project.setting.manage`，BR-13）：
+
 | 配置项 | 默认 | 说明 |
 | --- | --- | --- |
-| 关键任务逾期预警 | 开 | 每日一条至负责人+项目经理（BR-08） |
-| 浮动耗尽预警 | 开 | 转关键即时一条（BR-09） |
-| 项目目标完工日 | 空 | 逆推锚点（BR-06），可设 |
+| 关键任务逾期预警 | 开 | 每日一条至负责人+项目经理（BR-08）；字段 `overdue_alert_enabled` |
+| 浮动耗尽预警 | 开 | 转关键即时一条（BR-09）；字段 `float_consumed_alert_enabled` |
+| 项目目标完工日 | 空 | 逆推锚点（BR-06），可设；字段 `target_completion_date` |
 
 ---
 
@@ -182,44 +186,80 @@ sequenceDiagram
 
 ```python
 class CPMEngine:
-    """Kahn 拓扑 + 两遍扫描；O(V+E) 纯内存（BR-11）"""
+    """Kahn 拓扑 + 两遍扫描；O(V+E) 纯内存（BR-11）。
+    tasks: 按状态分档的任务对象列表（BR-01/04/12）；节点标识统一用 issue_id（UUID）"""
 
     def compute(self, project_id, anchor_today, project_deadline=None) -> CPMResult:
-        tasks = self._load_tasks(project_id)          # BR-01/04/12：有日期未完成 + 已完成锚点
+        tasks = self._load_tasks(project_id)          # BR-01/04/12：未完成 + 已完成锚点；取消剔除
         edges = self._load_same_project_blocks(project_id)  # BR-03
-        order = self._topo_sort(tasks, edges)         # Kahn；残余节点=环（BR-02 防御）
+        order = self._topo_sort(tasks, edges)         # Kahn；环 → None（BR-02 防御）
+        if order is None:
+            return CPMResult(rows=[], input_hash=None)     # 跳过该项目计算，不阻断用户
         es, ef = {}, {}
-        for t in order:                               # ① 正推（BR-05 锚点）
-            preds_ef = [ef[p] for p in edges.preds(t.id)] or [anchor_today]
-            es[t.id] = max(preds_ef + [anchor_today if not t.started else date.min])
-            ef[t.id] = es[t.id] + t.duration
+        for t in order:                               # ① 正推（BR-05 锚点 + BR-12 分档）
+            if t.completed_date is not None:          # 已完成档：历史锚点（BR-12）
+                es[t.id], ef[t.id] = t.start_date, t.completed_date
+                continue                              # EF = 实际完成日，不做工期递推
+            preds_ef = [ef[p] for p in edges.preds(t.id)]
+            if t.started:                             # 已开始未完成：不叠加今日锚点
+                base = preds_ef + [t.start_date]
+            else:                                     # 未开始：今日下限，未来计划开始照旧（BR-05）
+                base = preds_ef + [max(t.start_date, anchor_today)]
+            es[t.id] = max(base)
+            ef[t.id] = es[t.id] + t.duration          # 未完成档：EF = ES + duration（天）
         lf, ls = {}, {}
-        deadline = project_deadline or max(t.due_date for t in tasks)
+        deadline = project_deadline or max(t.target_date for t in tasks)   # BR-06（BR-01 保证非空）
         for t in reversed(order):                     # ② 逆推（BR-06 锚点）
             succs_ls = [ls[s] for s in edges.succs(t.id)]
-            lf[t.id] = min(succs_ls) if succs_ls else min(t.due_date, deadline)
+            lf[t.id] = min(succs_ls + [deadline])
             ls[t.id] = lf[t.id] - t.duration
-        rows = [CPMRow(issue_id=t.id, es=es[t.id], ef=ef[t.id], ls=ls[t.id], lf=lf[t.id],
-                       float_days=(ls[t.id] - es[t.id]).days,
-                       is_critical=(ls[t.id] - es[t.id]).days == 0 and not t.done)
-                for t in order if not t.done]          # BR-12 完成者不标关键
-        return CPMResult(rows=rows, input_hash=self._fingerprint(tasks, edges))
+        rows = []
+        for t in order:                               # ③ 派生：float ≤ 0 = 关键（§1.4，含负浮动）
+            if t.completed_date is not None:
+                continue                              # BR-12：完成者不进 rows、不标关键
+            float_days = (ls[t.id] - es[t.id]).days   # 可为负 = 负浮动
+            rows.append(CPMRow(issue_id=t.id, es=es[t.id], ef=ef[t.id], ls=ls[t.id], lf=lf[t.id],
+                               float_days=float_days, is_critical=(float_days <= 0)))
+        # 序列化下发字段对齐 GANTT-001 行契约：id（UUID v4 主键）+ issue_key（服务端拼接）
+        return CPMResult(rows=rows, input_hash=self._fingerprint(tasks, edges,
+                                                                deadline, anchor_today))
 
     def _topo_sort(self, tasks, edges):
         indeg = {t.id: len(edges.preds(t.id)) for t in tasks}
-        queue, order = deque(i for i, d in indeg.items() if d == 0), []
+        queue, order = deque(tid for tid, d in indeg.items() if d == 0), []
         while queue:
-            n = queue.popleft(); order.append(node_by_id[n])
-            for s in edges.succs(n):
+            tid = queue.popleft(); order.append(tid)
+            for s in edges.succs(tid):
                 indeg[s] -= 1
                 if indeg[s] == 0: queue.append(s)
-        if len(order) < len(tasks):
-            logger.error("CPM cycle detected", project=…)   # BR-02 防御：跳过不阻断
-            raise CPMCycleError()
+        if len(order) < len(tasks):                   # 残余节点 = 环（BR-02 防御）
+            logger.error("CPM cycle detected", project=…)   # 日志告警
+            return None                               # 跳过本项目计算，不抛错不阻断用户
         return order
 ```
 
 ### 4.2 缓存与增量重算
+
+**预警配置模型（`CPMAlertConfig`，BR-14）**——挂在 Project 域（`apps/api/plane/`），每项目一行，承载 §3.3 三个配置项：
+
+```python
+class CPMAlertConfig(BaseModel):
+    """项目级 CPM 预警配置（BR-06/08/09/13）"""
+
+    project = models.OneToOneField(Project, on_delete=models.CASCADE,
+                                   related_name="cpm_alert_config", verbose_name="项目")
+    overdue_alert_enabled = models.BooleanField(default=True, verbose_name="关键逾期预警（BR-08）")
+    float_consumed_alert_enabled = models.BooleanField(default=True, verbose_name="浮动耗尽预警（BR-09）")
+    target_completion_date = models.DateField(null=True, blank=True,
+                                              verbose_name="项目目标完工日（BR-06 逆推锚点）")
+
+    class Meta(BaseModel.Meta):
+        db_table = "cpm_alert_config"
+        constraints = [models.UniqueConstraint(fields=["project"],
+                                               name="uniq_cpm_alert_config_project")]
+```
+
+`IssueCPMCache`（BR-07）——非业务事实表，可整体重建：
 
 ```python
 class IssueCPMCache(BaseModel):
@@ -251,13 +291,21 @@ def cpm_recompute(project_id: str):
     """BR-10：改期/依赖/完成触发，on_commit 调用；同项目 60s debounce 合并"""
     if not cache.set(f"cpm:run:{project_id}", "1", timeout=60, nx=True):
         return cpm_recompute.apply_async(args=[project_id], countdown=60)   # 合并到窗口后
-    engine, old = CPMEngine(), {r.issue_id: r for r in IssueCPMCache.objects.filter(project_id=project_id)}
-    result = engine.compute(project_id, anchor_today=timezone.localdate())
-    if old and old[next(iter(old))].input_hash == result.input_hash:
-        return                                                # BR-07：指纹命中零写
+    engine = CPMEngine()
+    today = timezone.localdate()
+    config = CPMAlertConfig.objects.filter(project_id=project_id).first()   # BR-14（缺省取默认值）
+    old = {r.issue_id: r for r in IssueCPMCache.objects.filter(project_id=project_id)}
+    old_hash = next(iter(old.values())).input_hash if old else None    # 同次计算各行共用一个指纹
+    result = engine.compute(project_id, anchor_today=today,             # anchor_today 入指纹（BR-07）
+                            project_deadline=(config.target_completion_date
+                                              if config else None))     # BR-06
+    if old_hash == result.input_hash:
+        return                                                # BR-07：指纹命中零写（含同日重入）
     newly_critical = [r for r in result.rows
-                      if r.is_critical and not old.get(r.issue_id, _sentinel).is_critical]
+                      if r.is_critical and not ((o := old.get(r.issue_id)) and o.is_critical)]
     bulk_upsert_cpm_rows(project_id, result)                  # delete+insert 同事务
+    if config and not config.float_consumed_alert_enabled:    # BR-09/14：开关关闭不预警
+        return
     for row in newly_critical:                                # BR-09 浮动耗尽预警
         key = f"cpm:alert:{row.issue_id}:{result.input_hash}"
         if cache.set(key, "1", timeout=86400, nx=True):
@@ -266,77 +314,99 @@ def cpm_recompute(project_id: str):
 
 **性能核算**（迭代概览：1 万节点 < 300ms）：Kahn + 两遍扫描 O(V+E)，Python 纯内存实测 1 万节点/2 万边 ≈ 80ms；加载 SQL 两次索引扫描（`idx_issue_gantt_viewport` 变体 + `issue_links` 项目过滤）≈ 40ms；合计 < 150ms，余量充足。>2 万节点走 BR-11 降级。
 
-### 4.3 预警任务（关键逾期每日）
+### 4.3 预警任务（每日重算 + 关键逾期扫描）
 
 ```python
 @shared_task(queue="reports")
-def cpm_overdue_alerts():
-    """Celery beat 每日 09:30：BR-08 关键任务逾期 → 负责人+项目经理（幂等含日期）"""
+def cpm_daily_maintenance():
+    """Celery beat 每日 09:30（WF-003 §4.4 beat 扫描同范式）：
+    ① 每项目按新 anchor_today 同步重算——跨日指纹必失配 → 真算（BR-07 防跨日漂移，
+       兜底无用户触发日）；② BR-08 关键逾期预警 → 负责人+项目经理（幂等含日期）"""
     today = timezone.localdate()
-    rows = IssueCPMCache.objects.filter(
-        is_critical=True, issue__due_date__lt=today,
-    ).exclude(issue__state__group__in=["completed", "cancelled"]).select_related("issue__project")
-    for row in rows:
-        key = f"cpm:overdue:{row.issue_id}:{today}"
-        if cache.set(key, "1", timeout=86400, nx=True):
-            notify_critical_overdue.delay(str(row.issue_id))   # COLLAB-001 收件箱
+    for project_id in projects_with_schedulable_tasks():      # 有完整日期任务且未归档的项目
+        cpm_recompute(str(project_id))                        # 同步执行（隔日锁已过期，debounce 直通）
+        config = CPMAlertConfig.objects.filter(project_id=project_id).first()
+        if config and not config.overdue_alert_enabled:       # BR-14：开关关闭不预警
+            continue
+        rows = (IssueCPMCache.objects
+                .filter(project_id=project_id, is_critical=True,
+                        issue__target_date__lt=today)         # float ≤ 0 关键 + 已逾期（BR-08）
+                .exclude(issue__state__group__in=["completed", "cancelled"]))
+        for row in rows:
+            key = f"cpm:overdue:{row.issue_id}:{today}"
+            if cache.set(key, "1", timeout=86400, nx=True):
+                notify_critical_overdue.delay(str(row.issue_id))   # COLLAB-001 收件箱
 ```
 
 ### 4.4 API 端点
 
 | 方法 | 路径 | 说明 | 权限 |
 | --- | --- | --- | --- |
-| GET | `…/projects/{id}/gantt/critical-path/?viewport_from=&viewport_to=` | CPM 数据（随视口过滤；含 float/critical/external 标记） | 项目成员 |
-| POST | `…/projects/{id}/gantt/critical-path/recompute/` | 手动触发重算（返回 202；幂等 debounce） | 项目成员 |
-| GET/PATCH | `…/projects/{id}/gantt/cpm-config/` | 预警开关 + 项目目标完工日（BR-06/13） | 读：成员；写：`report.configure` |
+| GET | `…/projects/{project_id}/gantt/critical-path/?viewport_start=&viewport_end=` | CPM 数据（视口参数与 GANTT-001 冻结契约同名同语义；含 float/critical/external 标记） | `gantt.read`（项目成员，rbac §8.2） |
+| POST | `…/projects/{project_id}/gantt/critical-path/recompute/` | 手动触发重算（返回 202；幂等 debounce） | `gantt.read`（项目成员） |
+| GET/PATCH | `…/projects/{project_id}/gantt/cpm-config/` | 预警开关 + 项目目标完工日（BR-06/13/14，模型 §4.2 `CPMAlertConfig`） | 读：`gantt.read`；写：`project.setting.manage`（PROJ_ADMIN+，rbac §8.2 已注册码） |
 
-**① `GET …/critical-path/` 响应（200）**：
+**端点级限流**：`critical-path/`（GET）与 `recompute/`（POST）为高 CPU 端点，自带 DRF throttle **10 请求/分钟/用户**（api-conventions §7.1 L3 端点限流 + §7.2「报表聚合端点」行；GANTT-002 `overdue-summary` §4.2.1 契约要点 4 同款「本文自带端点级 throttle」范式），超限 `429 RATE_LIMIT_EXCEEDED` + `Retry-After`。限流与 debounce（BR-10）正交：debounce 是触发窗口内的透明合并（用户无感），限流是对客户端请求频率的硬约束。
+
+**① `GET …/critical-path/` 请求与响应（200）**：
+
+```http
+GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/gantt/critical-path/?viewport_start=2026-09-01&viewport_end=2026-09-30 HTTP/1.1
+```
 
 ```json
 {
-  "status": 0,
+  "status": "success",
   "data": {
     "computed_at": "2026-09-01T01:00:12.330Z",
     "approximate": false,
     "rows": [
-      { "issue_id": "01J9XQK7M3N4P5R6S7T8V9W5P1", "sequence": "RBT-141",
+      { "id": "8a1f9c2e-6b3d-4a7e-9f11-2c4d5e6f7a8b", "issue_key": "RBT-141",
         "es": "2026-09-01", "ef": "2026-09-06", "ls": "2026-09-01", "lf": "2026-09-06",
         "float_days": 0, "is_critical": true, "has_external_preds": false },
-      { "issue_id": "01J9XQK7M3N4P5R6S7T8V9W5Q2", "sequence": "RBT-150",
+      { "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e", "issue_key": "RBT-150",
         "es": "2026-09-03", "ef": "2026-09-08", "ls": "2026-09-06", "lf": "2026-09-11",
         "float_days": 3, "is_critical": false, "has_external_preds": false },
-      { "issue_id": "01J9XQK7M3N4P5R6S7T8V9W5R3", "sequence": "RBT-155",
-        "es": "2026-09-07", "ef": "2026-09-13", "ls": "2026-09-07", "lf": "2026-09-13",
-        "float_days": 0, "is_critical": true, "has_external_preds": true }
+      { "id": "c3d4e5f6-a7b8-4c9d-8e0f-1a2b3c4d5e6f", "issue_key": "RBT-155",
+        "es": "2026-09-07", "ef": "2026-09-13", "ls": "2026-09-04", "lf": "2026-09-10",
+        "float_days": -3, "is_critical": true, "has_external_preds": true }
     ]
   },
-  "meta": { "request_id": "01J9XQK7M3N4P5R6S7T8V9W5S4" }
+  "meta": { "anchor_today": "2026-09-01", "viewport": { "start": "2026-09-01", "end": "2026-09-30" } }
 }
 ```
 
-**② 错误响应矩阵**：
+**契约要点**：
+
+1. 行字段对齐 GANTT-001 §4.2.1 行契约：`id` 为任务主键（UUID v4）、`issue_key` 为服务端拼接编号（`{project.identifier}-{sequence_id}`，unified-issue-model §2.8）——不下发 `issue_id`/`sequence` 裸列；
+2. `float_days` 可为负（负浮动定义见 §1.4）：示例 RBT-155 目标完工日早于正推最早完成 3 天，`float_days = -3` 且 `is_critical = true`——`is_critical` 判定恒为 `float_days ≤ 0`；
+3. `meta` 只承载业务旁路信息（`anchor_today`/`viewport`）；`request_id` 仅出现在错误对象的 `error.request_id` 内（api-conventions §4），成功信封不携带。
+
+**② 错误响应矩阵**（信封与 `details: [{field, code, message}]` 结构遵循 api-conventions §4.2）：
 
 | 场景 | HTTP | code | details |
 | --- | --- | --- | --- |
 | 超限降级（>2 万节点） | 200 | — | `approximate: true` 标注（BR-11） |
-| 无配置权限写 cpm-config | 403 | `PERM_DENIED` | `report.configure` |
-| 目标完工日非法（早于今日） | 400 | `VALIDATION_INVALID_DATE_RANGE` | — |
-| 手动重算过于频繁 | 429 | `RATE_LIMIT_EXCEEDED` | 60s debounce 说明 |
+| 视窗参数非法（viewport_start > viewport_end） | 400 | `VALIDATION_INVALID_PARAM` | `[{field: "viewport_start", code: "INVALID_DATE_RANGE", message: "视窗起始晚于结束"}]`（GANTT-001 §2.4 同源） |
+| 目标完工日非法（早于今日） | 400 | `VALIDATION_INVALID_DATE_RANGE` | `[{field: "target_completion_date", code: "INVALID_DATE_RANGE", message: "目标完工日不能早于今日"}]` |
+| 非项目成员访问 | 404 | `RESOURCE_NOT_FOUND` | —（存在性隐藏，api-conventions §4.3） |
+| 低角色写 cpm-config（CONTRIBUTOR 及以下） | 403 | `PERM_ROLE_INSUFFICIENT` | —（所需权限码 `project.setting.manage`，BR-13/rbac §8.2） |
+| 限流（critical-path / recompute 10/min·user） | 429 | `RATE_LIMIT_EXCEEDED` | `[{field: "retry_after", code: "RETRY_AFTER", message: "23"}]` + `Retry-After` 头（api-conventions §7.3） |
 
 ### 4.5 前端实现
 
 ```typescript
 class CriticalPathStore {
-  @observable rows = observable.map<string, CPMRow>();    // issue_id → CPMRow
+  @observable rows = observable.map<string, CPMRow>();    // id → CPMRow
   @observable showCritical = true;                        // 图层开关（§3.1）
   @observable showFloat = false;
 
   async fetch(projectId: string, from: string, to: string) {
-    // 随甘特视口联动（GANTT-001 视口查询同一 from/to）；WS 推送/轮询触发 refetch
+    // 随甘特视口联动（GANTT-001 视窗取数同一 viewport_start/viewport_end）；WS 推送/轮询触发 refetch
     const res = await api.get(`…/projects/${projectId}/gantt/critical-path/`,
-                              { params: { viewport_from: from, viewport_to: to } });
+                              { params: { viewport_start: from, viewport_end: to } });
     runInAction(() => {
-      this.rows.replace(res.data.data.rows.map((r: CPMRow) => [r.issue_id, r]));
+      this.rows.replace(res.data.data.rows.map((r: CPMRow) => [r.id, r]));
     });
   }
 
@@ -374,11 +444,16 @@ class CriticalPathStore {
 | UT-05 | 缺日期任务剔除；已完成任务作历史锚点不参与关键标注 | BR-04/12 |
 | UT-06 | 跨项目边不进计算 + `has_external_preds` 标记 | BR-03 |
 | UT-07 | 防御性环检测：构造环 → 抛错记日志不阻断 | BR-02 |
-| UT-08 | `input_hash` 稳定性：同输入同指纹；日期/边变更指纹变 | BR-07 |
+| UT-08 | `input_hash` 稳定性：同输入同指纹；日期/边/项目目标日变更指纹变；**跨日 anchor_today 变更指纹必变** | BR-07 |
 | UT-09 | debounce 合并：60s 内 5 次触发仅 1 次真算 | 计数正确 |
-| UT-10 | 浮动耗尽预警：重算后 float→0 任务触发且幂等 | BR-09 |
+| UT-10 | 浮动耗尽预警：重算后 float→≤0 任务触发且幂等 | BR-09 |
 | UT-11 | 关键逾期预警每日一条 | BR-08 |
 | UT-12 | 1 万节点性能基准 < 300ms（CI 基准测试） | BR-11 |
+| UT-13 | 负浮动：项目目标完工日早于正推最早完成 → `float_days < 0`、`is_critical = true`、且该任务 `target_date < 今日` 时 BR-08 扫描命中（§1.4 定义） | BR-08 可触发 |
+| UT-14 | 每日重算：跨日无任何用户操作，beat 后 `computed_at` 更新且浮动随新今日收敛（anchor_today 入指纹必失配） | BR-07 |
+| UT-15 | 参数非法：`viewport_start > viewport_end` → 400 `VALIDATION_INVALID_PARAM` + `details` 指向 `viewport_start` | api-conventions §8.4 |
+| UT-16 | cpm-config 权限矩阵：PROJ_ADMIN 写 200；PROJ_CONTRIBUTOR / COMMENTER / VIEWER 写 403 `PERM_ROLE_INSUFFICIENT`；非成员 404 | BR-13 |
+| UT-17 | 端点限流：同一用户 60s 内第 11 次请求 `critical-path/` → 429 `RATE_LIMIT_EXCEEDED` + `Retry-After`（10/min·user；GANTT-002 UT-17 范式） | api-conventions §7.2 |
 
 ### 5.2 集成测试（IT）
 

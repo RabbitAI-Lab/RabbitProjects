@@ -77,10 +77,12 @@ Sprint 0 的任务是「标题 + 描述 + 状态 + 负责人 + 截止时间」�
 # cancelled 不计入分子分母（BR-11 / SUB-04：2 完成 1 取消 → total=2, completed=2）
 qs.annotate(
     sub_issues_count=Count("sub_issues",
-        filter=Q(sub_issues__deleted_at__isnull=True)
+        filter=Q(sub_issues__deleted_at__isnull=True,
+                 sub_issues__archived_at__isnull=True)      # Sprint-2 TASK-004 §4.3.5 回改
               & ~Q(sub_issues__state__group="cancelled"), distinct=True),
     completed_sub_issues_count=Count("sub_issues",
         filter=Q(sub_issues__deleted_at__isnull=True,
+                 sub_issues__archived_at__isnull=True,      # Sprint-2 TASK-004 §4.3.5 回改
                  sub_issues__state__group="completed"), distinct=True),
 )
 ```
@@ -682,7 +684,7 @@ EXPOSE_ISSUE_TYPE_SELECTOR: bool = True               # P0 为 False
 | 8 | `PUT` | `…/projects/{project_id}/issues/{issue_id}/labels/` | 全量替换任务标签集合（**PUT 白名单场景**，§2.3） | `PROJ_CONTRIBUTOR`(15)+ | `200` |
 | 9 | `GET` | `…/projects/{project_id}/issues/{issue_id}/sub-issues/` | 子任务列表（annotate 计数内含） | `PROJ_VIEWER`(5)+ | `200` |
 | 10 | `POST` | `…/projects/{project_id}/issues/{issue_id}/sub-issues/` | 挂载创建子任务 | `PROJ_CONTRIBUTOR`(15)+ | `201` |
-| 11 | `DELETE` | `…/projects/{project_id}/issues/{sub_id}/` | 删除子任务（软删，复用 `TASK-001` §4.2.6 端点；P1 无摘除，见 §2.2） | `PROJ_ADMIN`(20) 或子任务创建者 | `204` |
+| 11 | `DELETE` | `…/projects/{project_id}/issues/{sub_id}/` | 删除子任务（软删，复用 `TASK-001` §4.2.6 端点；P1 无摘除，见 §2.2） | `PROJ_ADMIN`(20) 或子任务创建者 | `200`（Sprint-2 TASK-004 §4.2.5 回改：`+deleted_count/descendant_ids`） |
 | 12 | `GET` | `…/projects/{project_id}/issues/{issue_id}/activities/` | 操作日志（游标 30/页） | `PROJ_VIEWER`(5)+ | `200` |
 
 #### 4.3.1 标签与类型管理端点（Labels & Issue-Types Endpoints）

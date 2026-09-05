@@ -765,6 +765,7 @@ GET .../issues/?ordering=-priority,target_date,-created_at
 | `READ_ONLY` | 试图写入只读字段 |
 | `INVALID_DATE_RANGE` | 日期区间逻辑错误 |
 | `RETRY_AFTER` | 限流场景下承载等待秒数 |
+| `DEPTH` | 层级深度越限（Sprint-2 TASK-004 §4.2.1 登记：`RESOURCE_LIMIT_EXCEEDED` 的字段级子码，创建与移动子树共用） |
 
 ### 8.9 前端消费范式
 

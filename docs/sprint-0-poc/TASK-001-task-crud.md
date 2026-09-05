@@ -687,7 +687,7 @@ class IssueActivity(BaseModel):
 | 2 | `GET` | `/api/v1/workspaces/{slug}/projects/{project_id}/issues/` | 任务列表 | `PROJ_VIEWER`(5)+ | `200` |
 | 3 | `GET` | `/api/v1/workspaces/{slug}/projects/{project_id}/issues/{issue_id}/` | 任务详情 | `PROJ_VIEWER`(5)+ | `200` |
 | 4 | `PATCH` | `/api/v1/workspaces/{slug}/projects/{project_id}/issues/{issue_id}/` | 更新任务 | `PROJ_CONTRIBUTOR`(15)+ | `200` |
-| 5 | `DELETE` | `/api/v1/workspaces/{slug}/projects/{project_id}/issues/{issue_id}/` | 删除任务（软删除） | `PROJ_ADMIN`(20) 或创建者本人 | `204` |
+| 5 | `DELETE` | `/api/v1/workspaces/{slug}/projects/{project_id}/issues/{issue_id}/` | 删除任务（整树级联软删） | `PROJ_ADMIN`(20) 或创建者本人 | `200` |
 
 嵌套深度为 3 层资源（`workspaces` → `projects` → `issues`），恰好触及 [`api-conventions.md`](../architecture/api-conventions.md) §2.4 的上限。
 
@@ -1936,7 +1936,7 @@ export const useIssues = (workspaceSlug?: string, projectId?: string) => {
 | BE-66 | ETag 匹配则成功 | `If-Match` 用最新 ETag | `200` |
 | BE-67 | ETag 不匹配则 409 | `If-Match` 用过期 ETag | `409`；`RESOURCE_CONFLICT` |
 | BE-68 | 不带 If-Match 则不校验 | — | `200`（后写胜出） |
-| BE-69 | DELETE 返回 204 空体 | — | `204`；`content == b""` |
+| BE-69 | DELETE 返回受影响数（Sprint-2 TASK-004 §4.2.5 回改：级联删除需回传） | — | `200`；`data.deleted_count ≥ 1`、`data.descendant_ids[]` |
 | BE-70 | **软删除后列表不显示** | 删除后 `GET` 列表 | 不含该任务；`all_objects` 仍可查到，`deleted_at` 非空 |
 | BE-71 | 删除级联清理 M2M（物理删除） | 有负责人的任务被删 | 该 `(issue, assignee)` 行在 `issue_assignees` 表中**不复存在**（`SELECT COUNT(*) FROM issue_assignees WHERE issue_id = ...` = 0）；`Issue.deleted_at` 仍非空，`all_objects` 可查到软删记录；中间表不留任何软删痕迹（§4.1.2 物理删除语义） |
 | BE-72 | 重复 DELETE 404 | — | `404` |

@@ -11,20 +11,20 @@
   GET    /workspaces/{slug}/projects/{pid}/issues/{iid}/labels/    （预留 P2，本迭代不需要）
   PUT    /workspaces/{slug}/projects/{pid}/issues/{iid}/labels/    集合替换
   GET    /workspaces/{slug}/projects/{pid}/issues/{iid}/sub-issues/  子任务列表
-  POST   /workspaces/{slug}/projects/{pid}/issues/{iid}/sub-issues/  挂载子任务（严格一层）
+  POST   /workspaces/{slug}/projects/{pid}/issues/{iid}/sub-issues/  挂载子任务（深度 ≤5，TASK-004）
+  GET    /workspaces/{slug}/projects/{pid}/issues/{iid}/subtree/     整棵子树（CTE，TASK-004）
   GET    /workspaces/{slug}/projects/{pid}/issues/{iid}/activities/ 操作日志
 """
+
 from __future__ import annotations
 
 import base64
 import time
 
 from django.db import transaction
-from django.db.models import Count, Max, Q
-from rest_framework import status
+from django.db.models import Count, Max
 from rest_framework.exceptions import NotFound
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
-from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from plane.app.permissions import IsAuthenticated
@@ -41,19 +41,44 @@ from plane.base.exception import AppException
 from plane.base.response import created_response, success_response
 from plane.db.models import Issue, IssueActivity, IssueType, Label, State
 from plane.db.models.roles import ProjectRole
+from plane.db.services.issue_hierarchy import (
+    CircularDependencyError,
+    DepthLimitExceeded,
+    StateInvalidError,
+    SubtreeDepthGuardError,
+    check_move,
+    delete_subtree,
+    depth_of,
+    fetch_subtree,
+    issue_count_annotations,
+)
 from plane.db.services.issue_query import IssueFilterSet
 from plane.db.services.issue_sequence import create_issue as create_issue_svc
+from plane.settings.features import (
+    MAX_ISSUE_DEPTH,
+    MAX_SUB_ISSUES_PER_PARENT,
+    SUBTREE_NODE_LIMIT,
+)
 
-# ── sub-issue / activity 端点的最大子任务数（BR-07 / TASK-002 §2.7）──
-MAX_SUB_ISSUES_PER_PARENT = 100
+# ── sub-issue / activity 端点的最大子任务数（BR-07 / TASK-002 §2.7，Sprint-2 起集中于 settings/features）──
 
 
 # ─────────────────────────────────────────────────────────────────────
 # 工具：activity 记录、completed_at 派生
 # ─────────────────────────────────────────────────────────────────────
-def _record_activity(issue, actor, *, verb, field=None, old=None, new=None,
-                     old_identifier=None, new_identifier=None, comment="",
-                     epoch: float | None = None):
+def _record_activity(
+    issue,
+    actor,
+    *,
+    verb,
+    field=None,
+    old=None,
+    new=None,
+    old_identifier=None,
+    new_identifier=None,
+    comment="",
+    epoch: float | None = None,
+):
     return IssueActivity.objects.create(
         issue=issue,
         actor=actor,
@@ -79,8 +104,7 @@ def _resolve_state(state_id, project):
         raise AppException(
             "VALIDATION_ERROR",
             message="状态不存在",
-            details=[{"field": "state_id", "code": "DOES_NOT_EXIST",
-                      "message": "状态不属于当前项目"}],
+            details=[{"field": "state_id", "code": "DOES_NOT_EXIST", "message": "状态不属于当前项目"}],
         )
     return state
 
@@ -94,8 +118,7 @@ class IssueListCreateView(ListCreateAPIView):
 
     def _base_queryset(self, project):
         return (
-            Issue.objects
-            .filter(project=project, deleted_at__isnull=True)
+            Issue.objects.filter(project=project, deleted_at__isnull=True)
             .select_related("project", "state", "issue_type")
             .prefetch_related("issue_assignees", "issue_labels")
         )
@@ -113,21 +136,10 @@ class IssueListCreateView(ListCreateAPIView):
             self._base_queryset(project)
             .annotate(
                 # 计数 annotate —— 列表与卡片渲染消费
-                sub_issues_count=Count(
-                    "sub_issues",
-                    filter=Q(sub_issues__deleted_at__isnull=True)
-                          & ~Q(sub_issues__state__group="cancelled"),
-                    distinct=True,
-                ),
-                completed_sub_issues_count=Count(
-                    "sub_issues",
-                    filter=Q(sub_issues__deleted_at__isnull=True,
-                             sub_issues__state__group="completed"),
-                    distinct=True,
-                ),
+                **issue_count_annotations(),
             )
             .filter(q_obj)
-            .distinct()   # M2M 筛选避免重复行（FLT-12 守护）
+            .distinct()  # M2M 筛选避免重复行（FLT-12 守护）
         )
 
         # ── 排序（含 priority 语义权重，BR-05）──
@@ -144,7 +156,7 @@ class IssueListCreateView(ListCreateAPIView):
         per_page = self._parse_per_page()
         offset = self._parse_cursor_offset()
         total = qs.count()
-        rows = qs[offset: offset + per_page]
+        rows = qs[offset : offset + per_page]
         next_cursor = self._encode_cursor(offset + per_page) if offset + per_page < total else None
         prev_cursor = self._encode_cursor(max(offset - per_page, 0)) if offset > 0 else None
         meta = {
@@ -168,30 +180,22 @@ class IssueListCreateView(ListCreateAPIView):
     def _kanban_grouped_response(self, request, project, base_qs, filterset, warning):
         """看板分组：每 State 一键覆盖全量 State（含 cancelled 第 4 列）；组内 25 条。"""
         per_group = self._parse_group_per_page()
-        states = (
-            State.objects.filter(project=project, deleted_at__isnull=True)
-            .order_by("sort_order")
-        )
+        states = State.objects.filter(project=project, deleted_at__isnull=True).order_by("sort_order")
         # 用单条 GROUP BY 一次性取每组 count（避免 N+1）
         # order_by() 清空排序是必须的：base_qs 已经过 apply_order()，Django 会把排序列
         # 一并塞进 GROUP BY，于是每行自成一组、n 恒为 1，dict() 再把同 state 的组覆盖成
         # 最后一条 —— 各组 total_results 之和会远小于真实总数（BRD-04 守护）。
         # distinct=True 与上游 .distinct()（M2M 筛选去重）保持同口径。
-        counts_by_state = dict(
-            base_qs.order_by().values_list("state_id").annotate(n=Count("id", distinct=True))
-        )
+        counts_by_state = dict(base_qs.order_by().values_list("state_id").annotate(n=Count("id", distinct=True)))
         grouped: dict[str, dict] = {}
         group_cursors: dict[str, dict] = {}
         for st in states:
             group_qs = base_qs.filter(state_id=st.id)
             offset = self._parse_cursor_offset()
             total = counts_by_state.get(st.id, 0)
-            rows = list(
-                group_qs.order_by("sort_order", "-created_at", "-id")[offset: offset + per_group]
-            )
+            rows = list(group_qs.order_by("sort_order", "-created_at", "-id")[offset : offset + per_group])
             next_cursor = (
-                self._encode_cursor(offset + per_group, group_id=str(st.id))
-                if offset + per_group < total else None
+                self._encode_cursor(offset + per_group, group_id=str(st.id)) if offset + per_group < total else None
             )
             grouped[str(st.id)] = {
                 "results": IssueSerializer(rows, many=True).data,
@@ -263,14 +267,10 @@ class IssueListCreateView(ListCreateAPIView):
         label_ids = s.validated_data.get("label_ids", []) or []
         state_id = s.validated_data.get("state_id")
         if state_id is None:
-            default_state = State.objects.filter(
-                project=project, is_default=True, deleted_at__isnull=True
-            ).first()
+            default_state = State.objects.filter(project=project, is_default=True, deleted_at__isnull=True).first()
             state_id = default_state.id if default_state else None
 
-        max_order = Issue.objects.filter(
-            project=project, deleted_at__isnull=True
-        ).aggregate(m=Max("sort_order"))["m"]
+        max_order = Issue.objects.filter(project=project, deleted_at__isnull=True).aggregate(m=Max("sort_order"))["m"]
         epoch = _current_epoch()
 
         with transaction.atomic():
@@ -296,7 +296,8 @@ class IssueListCreateView(ListCreateAPIView):
                 sync_labels(issue, label_ids, request.user.id)
             transaction.on_commit(
                 lambda: _record_activity(
-                    issue, request.user,
+                    issue,
+                    request.user,
                     verb="created",
                     field="issue_type",
                     new=issue.issue_type.name if issue.issue_type_id else None,
@@ -306,22 +307,14 @@ class IssueListCreateView(ListCreateAPIView):
                 )
             )
         # 重新查询以带 annotate 计数（Serializer 一次取数）
-        issue = Issue.objects.select_related("project", "state", "issue_type").prefetch_related(
-            "issue_assignees", "issue_labels"
-        ).annotate(
-            sub_issues_count=Count(
-                "sub_issues",
-                filter=Q(sub_issues__deleted_at__isnull=True)
-                      & ~Q(sub_issues__state__group="cancelled"),
-                distinct=True,
-            ),
-            completed_sub_issues_count=Count(
-                "sub_issues",
-                filter=Q(sub_issues__deleted_at__isnull=True,
-                         sub_issues__state__group="completed"),
-                distinct=True,
-            ),
-        ).get(pk=issue.pk)
+        issue = (
+            Issue.objects.select_related("project", "state", "issue_type")
+            .prefetch_related("issue_assignees", "issue_labels")
+            .annotate(
+                **issue_count_annotations(),
+            )
+            .get(pk=issue.pk)
+        )
         return created_response(
             IssueSerializer(issue).data,
             location=request.build_absolute_uri(
@@ -341,22 +334,10 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
         project, _, _ = get_project_or_404(self.kwargs["slug"], self.kwargs["project_id"], self.request.user)
         try:
             issue = (
-                Issue.objects
-                .select_related("project", "state", "issue_type")
+                Issue.objects.select_related("project", "state", "issue_type")
                 .prefetch_related("issue_assignees", "issue_labels")
                 .annotate(
-                    sub_issues_count=Count(
-                        "sub_issues",
-                        filter=Q(sub_issues__deleted_at__isnull=True)
-                              & ~Q(sub_issues__state__group="cancelled"),
-                        distinct=True,
-                    ),
-                    completed_sub_issues_count=Count(
-                        "sub_issues",
-                        filter=Q(sub_issues__deleted_at__isnull=True,
-                                 sub_issues__state__group="completed"),
-                        distinct=True,
-                    ),
+                    **issue_count_annotations(),
                 )
                 .get(id=self.kwargs["issue_id"], project_id=project.id, deleted_at__isnull=True)
             )
@@ -377,15 +358,18 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
                 "PERM_ROLE_INSUFFICIENT",
                 message="只能删除自己创建的任务",
             )
-        issue.soft_delete(actor_id=request.user.id)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        # TASK-004 §4.2.5：级联软删整树必须回传受影响数（弃用 204——上游
+        # TASK-001 BE-69 / TASK-002 §4.3 已同步回改为 200）
+        result = delete_subtree(issue.id, request.user.id)
+        return success_response(result)
 
     def update(self, request, *args, **kwargs):
         project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         if project.current_user_role < ProjectRole.CONTRIBUTOR:
             raise AppException("PERM_ROLE_INSUFFICIENT")
         s = IssueWriteSerializer(
-            data=request.data, partial=True,
+            data=request.data,
+            partial=True,
             context={"project": project, "is_create": False},
         )
         s.is_valid(raise_exception=True)
@@ -399,20 +383,26 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
 
         # ---- 标题 ----
         if "name" in data and data["name"] != issue.name:
-            activities.append({
-                "field": "name", "old": issue.name, "new": data["name"],
-                "comment": "更新了 标题",
-            })
+            activities.append(
+                {
+                    "field": "name",
+                    "old": issue.name,
+                    "new": data["name"],
+                    "comment": "更新了 标题",
+                }
+            )
             issue.name = data["name"]
 
         # ---- 描述 ----
         if "description_html" in data and data["description_html"] != issue.description_html:
-            activities.append({
-                "field": "description_html",
-                "old": issue.description_html[:120] if issue.description_html else "",
-                "new": data["description_html"][:120],
-                "comment": "更新了 描述",
-            })
+            activities.append(
+                {
+                    "field": "description_html",
+                    "old": issue.description_html[:120] if issue.description_html else "",
+                    "new": data["description_html"][:120],
+                    "comment": "更新了 描述",
+                }
+            )
             issue.description_html = data["description_html"]
 
         # ---- 类型 ----
@@ -420,71 +410,135 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
             old_name = issue.issue_type.name if issue.issue_type else None
             old_id = issue.issue_type_id
             new_type_obj = IssueType.objects.filter(
-                pk=data["type_id"], workspace_id=project.workspace_id,
-                is_active=True, deleted_at__isnull=True,
+                pk=data["type_id"],
+                workspace_id=project.workspace_id,
+                is_active=True,
+                deleted_at__isnull=True,
             ).first()
             new_name = new_type_obj.name if new_type_obj else None
-            activities.append({
-                "field": "issue_type",
-                "old": old_name, "new": new_name,
-                "old_identifier": old_id, "new_identifier": data["type_id"],
-                "comment": "更新了 任务类型",
-            })
+            activities.append(
+                {
+                    "field": "issue_type",
+                    "old": old_name,
+                    "new": new_name,
+                    "old_identifier": old_id,
+                    "new_identifier": data["type_id"],
+                    "comment": "更新了 任务类型",
+                }
+            )
             issue.issue_type_id = data["type_id"]
 
         # ---- 优先级 ----
         if "priority" in data and data["priority"] != issue.priority:
-            activities.append({
-                "field": "priority",
-                "old": issue.priority, "new": data["priority"],
-                "comment": "更新了 优先级",
-            })
+            activities.append(
+                {
+                    "field": "priority",
+                    "old": issue.priority,
+                    "new": data["priority"],
+                    "comment": "更新了 优先级",
+                }
+            )
             issue.priority = data["priority"]
 
         # ---- 状态 ----
         if "state_id" in data and str(data["state_id"] or "") != str(issue.state_id or ""):
             new_state = _resolve_state(data["state_id"], project)
-            activities.append({
-                "field": "state",
-                "old": issue.state.name if issue.state else None,
-                "new": new_state.name,
-                "old_identifier": issue.state_id, "new_identifier": new_state.id,
-                "comment": "更新了 状态",
-            })
+            activities.append(
+                {
+                    "field": "state",
+                    "old": issue.state.name if issue.state else None,
+                    "new": new_state.name,
+                    "old_identifier": issue.state_id,
+                    "new_identifier": new_state.id,
+                    "comment": "更新了 状态",
+                }
+            )
             issue.state = new_state
 
         # ---- 起止日期 ----
         if "start_date" in data and data["start_date"] != issue.start_date:
-            activities.append({
-                "field": "start_date",
-                "old": str(issue.start_date), "new": str(data["start_date"]),
-                "comment": "更新了 开始时间",
-            })
+            activities.append(
+                {
+                    "field": "start_date",
+                    "old": str(issue.start_date),
+                    "new": str(data["start_date"]),
+                    "comment": "更新了 开始时间",
+                }
+            )
             issue.start_date = data["start_date"]
         if "target_date" in data and data["target_date"] != issue.target_date:
-            activities.append({
-                "field": "target_date",
-                "old": str(issue.target_date), "new": str(data["target_date"]),
-                "comment": "更新了 截止时间",
-            })
+            activities.append(
+                {
+                    "field": "target_date",
+                    "old": str(issue.target_date),
+                    "new": str(data["target_date"]),
+                    "comment": "更新了 截止时间",
+                }
+            )
             issue.target_date = data["target_date"]
 
-        # ---- parent（sub-issue mount 校验已在 Serializer 走通）----
-        if "parent_id" in data and data["parent_id"] != issue.parent_id:
-            activities.append({
-                "field": "parent",
-                "old": str(issue.parent_id), "new": str(data["parent_id"]),
-                "comment": "更新了 父工作项",
-            })
+        # ---- parent（移动子树：行锁内全校验 BR-01/02/03/13，TASK-004 §4.3.2）----
+        if "parent_id" in data and str(data["parent_id"] or "") != str(issue.parent_id or ""):
+            try:
+                with transaction.atomic():
+                    locked = (
+                        Issue.objects.select_for_update()
+                        .select_related("project")
+                        .only("id", "parent_id", "project_id")
+                        .get(pk=issue.pk)
+                    )
+                    check_move(locked, data["parent_id"])
+            except CircularDependencyError as e:
+                raise AppException(
+                    "RESOURCE_CIRCULAR_DEPENDENCY",
+                    message="不能将该工作项移动到它自己的子级之下",
+                    details=[{"field": "parent_id", "code": "CYCLE", "message": e.path}],
+                ) from None
+            except DepthLimitExceeded as e:
+                raise AppException(
+                    "RESOURCE_LIMIT_EXCEEDED",
+                    message="层级已达 5 层上限，无法移动",
+                    details=[
+                        {
+                            "field": "parent_id",
+                            "code": "DEPTH",
+                            "message": f"移动后最深节点将位于第 {e.current_depth} 层",
+                        }
+                    ],
+                ) from None
+            except StateInvalidError:
+                raise AppException(
+                    "RESOURCE_STATE_INVALID",
+                    message="目标任务已归档，恢复后才能挂子任务",
+                    details=[{"field": "parent_id", "code": "STATE", "message": "新父任务已归档"}],
+                ) from None
+            except SubtreeDepthGuardError:
+                raise AppException(
+                    "SERVER_ERROR",
+                    message="层级数据异常，已记录告警，请稍后重试",
+                ) from None
+            activities.append(
+                {
+                    "field": "parent",
+                    "old": str(issue.parent_id),
+                    "new": str(data["parent_id"]),
+                    "old_identifier": issue.parent_id,
+                    "new_identifier": data["parent_id"],
+                    "comment": "移动了子树" if data["parent_id"] else "摘出为顶层",
+                }
+            )
             issue.parent_id = data["parent_id"]
 
         # ---- sort_order（看板拖拽）----
         if "sort_order" in data and data["sort_order"] != issue.sort_order:
-            activities.append({
-                "field": "sort_order",
-                "old": str(issue.sort_order), "new": str(data["sort_order"]),
-                "comment": "更新了 排序",
-            })
+            activities.append(
+                {
+                    "field": "sort_order",
+                    "old": str(issue.sort_order),
+                    "new": str(data["sort_order"]),
+                    "comment": "更新了 排序",
+                }
+            )
             issue.sort_order = data["sort_order"]
 
         # ---- 负责人 ----
@@ -493,12 +547,14 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
             old_ids = sorted(str(ia.assignee_id) for ia in issue.issue_assignees.all())
             new_ids_str = sorted(str(x) for x in new_ids)
             if old_ids != new_ids_str:
-                activities.append({
-                    "field": "assignees",
-                    "old": ",".join(old_ids) or "previous",
-                    "new": ",".join(new_ids_str),
-                    "comment": "更新了 负责人",
-                })
+                activities.append(
+                    {
+                        "field": "assignees",
+                        "old": ",".join(old_ids) or "previous",
+                        "new": ",".join(new_ids_str),
+                        "comment": "更新了 负责人",
+                    }
+                )
                 validate_assignees(project.id, new_ids)
                 sync_assignees(issue, new_ids, request.user.id)
 
@@ -506,7 +562,8 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
             issue.save()
             for a in activities:
                 _record_activity(
-                    issue, request.user,
+                    issue,
+                    request.user,
                     verb="updated",
                     field=a["field"],
                     old=a.get("old"),
@@ -537,8 +594,10 @@ class IssueLabelsView(APIView):
         if project.current_user_role < ProjectRole.CONTRIBUTOR:
             raise AppException("PERM_ROLE_INSUFFICIENT")
         try:
-            issue = Issue.objects.select_related("project").prefetch_related("issue_labels").get(
-                id=kwargs["issue_id"], project_id=project.id, deleted_at__isnull=True
+            issue = (
+                Issue.objects.select_related("project")
+                .prefetch_related("issue_labels")
+                .get(id=kwargs["issue_id"], project_id=project.id, deleted_at__isnull=True)
             )
         except Issue.DoesNotExist:
             raise NotFound("RESOURCE_NOT_FOUND") from None
@@ -548,8 +607,7 @@ class IssueLabelsView(APIView):
         if not isinstance(new_ids, list):
             raise AppException(
                 "VALIDATION_ERROR",
-                details=[{"field": "label_ids", "code": "INVALID",
-                          "message": "label_ids 必须为列表"}],
+                details=[{"field": "label_ids", "code": "INVALID", "message": "label_ids 必须为列表"}],
             )
         # 校验（项目 active 标签 + ≤ 10）—— 复用 IssueWriteSerializer 校验口径
         IssueWriteSerializer(  # 仅触发校验逻辑
@@ -564,15 +622,16 @@ class IssueLabelsView(APIView):
 
         with transaction.atomic():
             sync_labels(issue, new_ids, request.user.id)
-            label_name_map = dict(
-                Label.objects.filter(pk__in=new_ids_set | old_ids).values_list("id", "name")
-            )
+            label_name_map = dict(Label.objects.filter(pk__in=new_ids_set | old_ids).values_list("id", "name"))
             for lid in added:
                 transaction.on_commit(
                     lambda lid=lid: _record_activity(
-                        issue, request.user,
-                        verb="updated", field="labels",
-                        new_identifier=lid, new=label_name_map.get(lid),
+                        issue,
+                        request.user,
+                        verb="updated",
+                        field="labels",
+                        new_identifier=lid,
+                        new=label_name_map.get(lid),
                         comment=f"添加了 标签 {label_name_map.get(lid, '')}",
                         epoch=epoch,
                     )
@@ -580,9 +639,12 @@ class IssueLabelsView(APIView):
             for lid in removed:
                 transaction.on_commit(
                     lambda lid=lid: _record_activity(
-                        issue, request.user,
-                        verb="updated", field="labels",
-                        old_identifier=lid, old=label_name_map.get(lid),
+                        issue,
+                        request.user,
+                        verb="updated",
+                        field="labels",
+                        old_identifier=lid,
+                        old=label_name_map.get(lid),
                         comment=f"移除了 标签 {label_name_map.get(lid, '')}",
                         epoch=epoch,
                     )
@@ -593,6 +655,29 @@ class IssueLabelsView(APIView):
 # ─────────────────────────────────────────────────────────────────────
 # 子任务
 # ─────────────────────────────────────────────────────────────────────
+class IssueSubtreeView(APIView):
+    """GET /workspaces/{slug}/projects/{pid}/issues/{iid}/subtree/（TASK-004 §4.2.2）。
+
+    一次 CTE 整树：root 单列 + nodes 平铺（相对根 depth，根=0）+ stats（含根口径）。
+    归档根 404（BR-09 归档树整体不可见，UT-07）；truncated=true 不装配 stats。
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
+        exists = Issue.objects.filter(
+            id=kwargs["issue_id"], project_id=project.id, deleted_at__isnull=True, archived_at__isnull=True
+        ).exists()
+        if not exists:
+            raise NotFound("RESOURCE_NOT_FOUND") from None
+        data = fetch_subtree(kwargs["issue_id"])
+        return success_response(
+            data,
+            meta={"truncated": "stats" not in data, "node_limit": SUBTREE_NODE_LIMIT},
+        )
+
+
 class IssueSubIssueListCreateView(APIView):
     """GET/POST /workspaces/{slug}/projects/{pid}/issues/{iid}/sub-issues/"""
 
@@ -601,14 +686,11 @@ class IssueSubIssueListCreateView(APIView):
     def get(self, request, *args, **kwargs):
         project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         try:
-            issue = Issue.objects.get(
-                id=kwargs["issue_id"], project_id=project.id, deleted_at__isnull=True
-            )
+            issue = Issue.objects.get(id=kwargs["issue_id"], project_id=project.id, deleted_at__isnull=True)
         except Issue.DoesNotExist:
             raise NotFound("RESOURCE_NOT_FOUND") from None
         subs = (
-            Issue.objects
-            .filter(parent_id=issue.id, deleted_at__isnull=True)
+            Issue.objects.filter(parent_id=issue.id, deleted_at__isnull=True)
             .select_related("state", "issue_type")
             .prefetch_related("issue_assignees")
             .order_by("sort_order", "-created_at")
@@ -634,24 +716,34 @@ class IssueSubIssueListCreateView(APIView):
         except Issue.DoesNotExist:
             raise NotFound("RESOURCE_NOT_FOUND") from None
 
-        # BR-07：严格一层
-        if parent.parent_id is not None:
+        # BR-13：挂到已归档父 = 对其写入（归档写保护，TASK-009 §4.3.3 收口的补位）
+        if parent.archived_at is not None:
+            raise AppException(
+                "RESOURCE_STATE_INVALID",
+                message="目标任务已归档，恢复后才能挂子任务",
+                details=[{"field": "parent_id", "code": "STATE", "message": "父任务已归档"}],
+            )
+        # BR-02：业务深度 ≤5（写入层唯一防线；CTE_GUARD_DEPTH 是查询侧保险丝，不在此用）
+        parent_depth = depth_of(parent.id)
+        if parent_depth + 1 > MAX_ISSUE_DEPTH:
             raise AppException(
                 "RESOURCE_LIMIT_EXCEEDED",
-                message="MVP 阶段子任务仅支持一层",
-                details=[{"field": "parent_id", "code": "NESTING",
-                          "message": "层级上限 1（P2 开放多层）"}],
+                message="层级已达 5 层上限，无法再创建子任务",
+                details=[{"field": "parent_id", "code": "DEPTH", "message": f"当前父任务位于第 {parent_depth} 层"}],
             )
         # 边界：单父 100 上限
-        existing = Issue.objects.filter(
-            parent_id=parent.id, deleted_at__isnull=True
-        ).count()
+        existing = Issue.objects.filter(parent_id=parent.id, deleted_at__isnull=True).count()
         if existing >= MAX_SUB_ISSUES_PER_PARENT:
             raise AppException(
                 "RESOURCE_LIMIT_EXCEEDED",
-                details=[{"field": "parent_id", "code": "TOO_LARGE",
-                          "message": f"单个任务最多 {MAX_SUB_ISSUES_PER_PARENT} 个子任务",
-                          "limit": MAX_SUB_ISSUES_PER_PARENT}],
+                details=[
+                    {
+                        "field": "parent_id",
+                        "code": "TOO_LARGE",
+                        "message": f"单个任务最多 {MAX_SUB_ISSUES_PER_PARENT} 个子任务",
+                        "limit": MAX_SUB_ISSUES_PER_PARENT,
+                    }
+                ],
             )
 
         # 用 IssueWriteSerializer 走完整校验（type / priority / label_ids 等）
@@ -666,13 +758,9 @@ class IssueSubIssueListCreateView(APIView):
         # 缺省 state 取项目默认
         state_id = s.validated_data.get("state_id")
         if state_id is None:
-            default_state = State.objects.filter(
-                project=project, is_default=True, deleted_at__isnull=True
-            ).first()
+            default_state = State.objects.filter(project=project, is_default=True, deleted_at__isnull=True).first()
             state_id = default_state.id if default_state else None
-        max_order = Issue.objects.filter(
-            project=project, deleted_at__isnull=True
-        ).aggregate(m=Max("sort_order"))["m"]
+        max_order = Issue.objects.filter(project=project, deleted_at__isnull=True).aggregate(m=Max("sort_order"))["m"]
         epoch = _current_epoch()
 
         with transaction.atomic():
@@ -699,7 +787,8 @@ class IssueSubIssueListCreateView(APIView):
                 sync_labels(sub, label_ids, request.user.id)
             transaction.on_commit(
                 lambda: _record_activity(
-                    sub, request.user,
+                    sub,
+                    request.user,
                     verb="created",
                     field="parent",
                     new_identifier=str(parent.id),
@@ -708,22 +797,14 @@ class IssueSubIssueListCreateView(APIView):
                     epoch=epoch,
                 )
             )
-        sub = Issue.objects.select_related("project", "state", "issue_type").prefetch_related(
-            "issue_assignees", "issue_labels"
-        ).annotate(
-            sub_issues_count=Count(
-                "sub_issues",
-                filter=Q(sub_issues__deleted_at__isnull=True)
-                      & ~Q(sub_issues__state__group="cancelled"),
-                distinct=True,
-            ),
-            completed_sub_issues_count=Count(
-                "sub_issues",
-                filter=Q(sub_issues__deleted_at__isnull=True,
-                         sub_issues__state__group="completed"),
-                distinct=True,
-            ),
-        ).get(pk=sub.pk)
+        sub = (
+            Issue.objects.select_related("project", "state", "issue_type")
+            .prefetch_related("issue_assignees", "issue_labels")
+            .annotate(
+                **issue_count_annotations(),
+            )
+            .get(pk=sub.pk)
+        )
         return created_response(
             IssueSerializer(sub).data,
             location=request.build_absolute_uri(
@@ -744,25 +825,18 @@ class IssueActivityListView(APIView):
     def get(self, request, *args, **kwargs):
         project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         try:
-            issue = Issue.objects.get(
-                id=kwargs["issue_id"], project_id=project.id, deleted_at__isnull=True
-            )
+            issue = Issue.objects.get(id=kwargs["issue_id"], project_id=project.id, deleted_at__isnull=True)
         except Issue.DoesNotExist:
             raise NotFound("RESOURCE_NOT_FOUND") from None
 
-        qs = (
-            IssueActivity.objects
-            .filter(issue=issue)
-            .select_related("actor")
-            .order_by("-created_at", "-id")
-        )
+        qs = IssueActivity.objects.filter(issue=issue).select_related("actor").order_by("-created_at", "-id")
         try:
             per_page = min(int(request.query_params.get("per_page", self.PER_PAGE)), 100)
         except (TypeError, ValueError):
             per_page = self.PER_PAGE
         offset = self._parse_cursor(request.query_params.get("cursor"))
         total = qs.count()
-        rows = list(qs[offset: offset + per_page])
+        rows = list(qs[offset : offset + per_page])
         next_cursor = self._encode_cursor(offset + per_page) if offset + per_page < total else None
         data = [
             {
@@ -781,17 +855,20 @@ class IssueActivityListView(APIView):
             }
             for r in rows
         ]
-        return success_response(data, meta={
-            "next_cursor": next_cursor,
-            "prev_cursor": None,
-            "next_page_results": (offset + per_page) < total,
-            "prev_page_results": offset > 0,
-            "count": len(rows),
-            "total_count": total,
-            "total_pages": (total + per_page - 1) // per_page,
-            "page": (offset // per_page) + 1,
-            "per_page": per_page,
-        })
+        return success_response(
+            data,
+            meta={
+                "next_cursor": next_cursor,
+                "prev_cursor": None,
+                "next_page_results": (offset + per_page) < total,
+                "prev_page_results": offset > 0,
+                "count": len(rows),
+                "total_count": total,
+                "total_pages": (total + per_page - 1) // per_page,
+                "page": (offset // per_page) + 1,
+                "per_page": per_page,
+            },
+        )
 
     @staticmethod
     def _encode_cursor(offset: int) -> str:
@@ -818,8 +895,8 @@ class IssueTypeListView(APIView):
     def get(self, request, *args, **kwargs):
         project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         types = (
-            Issue.objects.model._meta.get_field("issue_type").related_model.objects
-            .filter(workspace_id=project.workspace_id, is_active=True, deleted_at__isnull=True)
+            Issue.objects.model._meta.get_field("issue_type")
+            .related_model.objects.filter(workspace_id=project.workspace_id, is_active=True, deleted_at__isnull=True)
             .order_by("sort_order", "created_at")
         )
         data = [

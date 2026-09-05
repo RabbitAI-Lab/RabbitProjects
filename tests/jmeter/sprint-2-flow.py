@@ -89,14 +89,106 @@ proj = make_project(admin, ws, "S2F")
 outsider = Client(BASE)
 _out_email, _out_ws = signup(outsider, "s2out-")
 
-# ═══ 1. TASK-004 多层级子任务（随阶段 1 落地） ═══
-# 计划锚点（docs/sprint-2-task-full/test-cases.md IT-004 段）：
-#   - sub-issues/ 挂载到第 5 层 → 409 RESOURCE_LIMIT_EXCEEDED（details sub_code=DEPTH）
-#   - PATCH parent_id 移动子树成环 → 409 RESOURCE_CIRCULAR_DEPENDENCY（details 含环路径）
-#   - 移动子树高度越限（4 层子树挂到第 3 层）→ 409 DEPTH
-#   - GET subtree/ 整树 stats（含根口径）+ ?parent_id= 懒加载
-#   - DELETE 级联软删 → 200 + {deleted_count, descendant_ids}（Sprint-0 的 204 契约被本迭代变更）
-#   - 跨项目 parent → 400；越权 outsider 访问 → 404
+# ═══ 1. TASK-004 多层级子任务（IT-004：深度/防环/子树/级联） ═══
+section("TASK-004 多层级子任务")
+
+def _sub(c, ws, proj, parent_id, name):
+    code, body = c.req(
+        "POST", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{parent_id}/sub-issues/",
+        {"name": name}, {"X-CSRFToken": c.csrf()})
+    return code, body
+
+# 五层链 R1>R2>R3>R4>R5（IT-01/02：第 5 层可建、第 6 层 409 DEPTH）
+b1 = make_issue(admin, ws, proj, "T4-根")
+r1 = b1["id"]
+prev = r1
+ok_codes = []
+for i in range(4):  # 挂到第 2/3/4/5 层
+    code, body = _sub(admin, ws, proj, prev, f"T4-L{i+2}")
+    ok_codes.append(code)
+    prev = body["data"]["id"] if code == HTTP["CREATED"] else prev
+ck("T4-01", "2~5 层挂载全部 201", ok_codes == [HTTP["CREATED"]] * 4, f"got {ok_codes}")
+code, body = _sub(admin, ws, proj, prev, "T4-第六层")
+ck("T4-02", "第 5 层再挂 → 409 LIMIT(DEPTH)", code == HTTP["CONFLICT"]
+   and error_code(body) == CODES["limitExceeded"], f"got {code} {body}")
+
+# subtree/ 整树（IT-04：含根口径 stats；root/nodes 平铺；相对 depth 根=0）
+code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{r1}/subtree/")
+d = (body or {}).get("data") or {}
+ck("T4-03", "subtree → 200", code == HTTP["OK"])
+ck("T4-04", "root 单列 + nodes 平铺 4 条", d.get("root", {}).get("id") == r1
+   and len(d.get("nodes") or []) == 4)
+ck("T4-05", "stats 含根口径 total=5 / max_depth=4",
+   (d.get("stats") or {}).get("total") == 5 and d.get("stats", {}).get("max_depth") == 4,
+   f"stats={d.get('stats')}")
+ck("T4-06", "root.sub_issues_count=1（直接子级口径）",
+   d.get("root", {}).get("sub_issues_count") == 1)
+ck("T4-07", "meta.truncated=false", ((body or {}).get("meta") or {}).get("truncated") is False)
+
+# ?parent_id= 懒加载（IT：列表树行级入口，TASK-003 白名单）
+code, body = admin.req(
+    "GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/?parent_id={r1}&order_by=sort_order")
+ck("T4-08", "?parent_id 懒加载 → 200 且恰 1 条",
+   code == HTTP["OK"] and len((body or {}).get("data") or []) == 1)
+
+# PATCH parent_id 成环（IT-02：把根挂到自己后代 → 409 CYCLE + 环路径）
+code, body = admin.req(
+    "PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{r1}/",
+    {"parent_id": prev}, {"X-CSRFToken": admin.csrf()})
+ck("T4-09", "根挂到自身后代 → 409 CIRCULAR(CYCLE)", code == HTTP["CONFLICT"]
+   and error_code(body) == CODES["circular"], f"got {code} {body}")
+det = ((body or {}).get("error") or {}).get("details") or []
+ck("T4-10", "details 含 CYCLE 环路径", any(
+    x.get("code") == "CYCLE" and "环路径" in (x.get("message") or "") for x in det))
+
+# 移动子树高度整体校验（UT-16：4 层子树挂到第 4 层 → 最深 4+4=8 >5 → 409 DEPTH）
+bA = make_issue(admin, ws, proj, "T4-高度A")
+a1 = bA["id"]
+pA = a1
+for i in range(3):
+    code, body = _sub(admin, ws, proj, pA, f"T4-A-sub{i+1}")
+    pA = body["data"]["id"]
+code, body = admin.req(
+    "PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{a1}/",
+    {"parent_id": prev}, {"X-CSRFToken": admin.csrf()})  # prev=第 5 层节点
+ck("T4-11", "4 层子树挂第 5 层 → 409 LIMIT(DEPTH)", code == HTTP["CONFLICT"]
+   and error_code(body) == CODES["limitExceeded"], f"got {code} {body}")
+
+# 合法移动 + 摘出（IT：BR-07 编号/排序不变）
+r2_id = ((admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{r1}/subtree/")[1]
+          or {}).get("data") or {}).get("nodes", [{}])[0].get("id")
+code, body = admin.req(
+    "PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{prev}/",
+    {"parent_id": r2_id}, {"X-CSRFToken": admin.csrf()})
+ck("T4-12", "第 5 层节点合法移动到第 2 层 → 200",
+   code == HTTP["OK"] and (body or {}).get("data", {}).get("parent_id") == r2_id)
+code, body = admin.req(
+    "PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{prev}/",
+    {"parent_id": None}, {"X-CSRFToken": admin.csrf()})
+ck("T4-13", "摘出为顶层 → 200", code == HTTP["OK"]
+   and (body or {}).get("data", {}).get("parent_id") is None)
+
+# DELETE 级联软删（IT-05：200 + deleted_count + descendant_ids；Sprint-0 的 204 已变更）
+code, body = admin.req(
+    "DELETE", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{a1}/",
+    None, {"X-CSRFToken": admin.csrf()})
+dd = (body or {}).get("data") or {}
+ck("T4-14", "DELETE 整树 → 200 + deleted_count=4", code == HTTP["OK"]
+   and dd.get("deleted_count") == 4 and len(dd.get("descendant_ids") or []) == 3,
+   f"got {code} {body}")
+code, _ = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{a1}/")
+ck("T4-15", "删后根 GET → 404", code == HTTP["NOT_FOUND"])
+
+# 越权（AUTH-003 基线口径：不可见资源 404）
+code, _ = outsider.req(
+    "GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{r1}/subtree/")
+ck("T4-16", "外部用户 subtree → 404", code == HTTP["NOT_FOUND"], f"got {code}")
+
+# 跨项目 parent（BR-01 → 409 CYCLE 前置拦截为 400 校验路径）
+code, body = admin.req(
+    "PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{prev}/",
+    {"parent_id": proj}, {"X-CSRFToken": admin.csrf()})
+ck("T4-17", "parent_id 非任务 → 400 校验失败", code == HTTP["BAD_REQUEST"], f"got {code}")
 
 # ═══ 2. TASK-005 任务依赖（随阶段 2 落地） ═══
 # 计划锚点：

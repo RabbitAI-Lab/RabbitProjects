@@ -218,7 +218,11 @@ _, b = req("GET", f"/api/v1/workspaces/{ws}/projects/{proj}/issues/{i1}/")
 case("ID-5", "改名已落库", ((b or {}).get("data") or {}).get("name") == "Renamed Issue")
 case("ID-6", "sort_order 已落库", ((b or {}).get("data") or {}).get("sort_order") == 131070.0)
 expect("ID-7", "不存在任务 → 404", "GET", f"/api/v1/workspaces/{ws}/projects/{proj}/issues/00000000-0000-0000-0000-000000000000/", HTTP["NOT_FOUND"])
-expect("ID-8", "软删除 → 204", "DELETE", f"/api/v1/workspaces/{ws}/projects/{proj}/issues/{i2}/", HTTP["NO_CONTENT"], None, {"X-CSRFToken": csrf()})
+_, b = expect("ID-8", "级联软删 → 200+deleted_count（TASK-004 §4.2.5 起）", "DELETE",
+       f"/api/v1/workspaces/{ws}/projects/{proj}/issues/{i2}/", HTTP["OK"], None, {"X-CSRFToken": csrf()})
+case("ID-8b", "deleted_count == 1 且 descendant_ids 空",
+     ((b or {}).get("data") or {}).get("deleted_count") == 1
+     and ((b or {}).get("data") or {}).get("descendant_ids") == [])
 expect("ID-9", "删除后 GET → 404", "GET", f"/api/v1/workspaces/{ws}/projects/{proj}/issues/{i2}/", HTTP["NOT_FOUND"])
 _, b = req("GET", f"/api/v1/workspaces/{ws}/projects/{proj}/issues/")
 case("ID-10", "删除后列表少一条", len((b or {}).get("data", [])) == 1)

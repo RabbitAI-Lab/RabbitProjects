@@ -2,6 +2,7 @@
 
 敏感与环境差异项由 dev / prod 覆盖；本文件禁止出现 `if DEBUG` 类的环境判断。
 """
+
 from __future__ import annotations
 
 import os
@@ -36,7 +37,7 @@ def _parse_db_url(url: str) -> dict:
     }
 
 
-SECRET_KEY = env("SECRET_KEY", "dev-insecure-key")     # prod 强制覆盖（§ prod.py BR-13）
+SECRET_KEY = env("SECRET_KEY", "dev-insecure-key")  # prod 强制覆盖（§ prod.py BR-13）
 DEBUG = env_bool("DEBUG", False)
 ALLOWED_HOSTS = [h.strip() for h in env("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if h.strip()]
 
@@ -55,12 +56,12 @@ INSTALLED_APPS = [
 
 # ── 中间件：六件套顺序即 §4.6 编号（顺序敏感，禁止重排）────
 MIDDLEWARE = [
-    "plane.base.middleware.RequestIDMiddleware",             # ①
-    "plane.base.middleware.StructuredLoggingMiddleware",     # ②
-    "plane.base.middleware.RateLimitHeaderMiddleware",       # ③
-    "plane.base.middleware.AuditContextMiddleware",          # ④
-    "plane.base.middleware.ResponseEnvelopeMiddleware",      # ⑤
-    "plane.base.middleware.MaintenanceModeMiddleware",       # ⑥
+    "plane.base.middleware.RequestIDMiddleware",  # ①
+    "plane.base.middleware.StructuredLoggingMiddleware",  # ②
+    "plane.base.middleware.RateLimitHeaderMiddleware",  # ③
+    "plane.base.middleware.AuditContextMiddleware",  # ④
+    "plane.base.middleware.ResponseEnvelopeMiddleware",  # ⑤
+    "plane.base.middleware.MaintenanceModeMiddleware",  # ⑥
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -119,25 +120,27 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
-    "ATOMIC_REQUESTS": True,                       # §10.5：单资源写操作默认事务包裹
-    "DEFAULT_THROTTLE_CLASSES": [],                 # INFRA-005 填充
+    "ATOMIC_REQUESTS": True,  # §10.5：单资源写操作默认事务包裹
+    "DEFAULT_THROTTLE_CLASSES": [],  # INFRA-005 填充
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
 SPECTACULAR_SETTINGS = {"TITLE": "RabbitProjects API", "VERSION": "0.1.0"}
 
 # ── CORS：精确白名单，禁止 "*"（§13.4）────────────────────
-CORS_ALLOWED_ORIGINS = [
-    o.strip()
-    for o in env("CORS_ALLOWED_ORIGINS", "http://localhost:3000").split(",")
-    if o.strip()
-]
-CORS_ALLOW_CREDENTIALS = True                     # Session 认证需要
+CORS_ALLOWED_ORIGINS = [o.strip() for o in env("CORS_ALLOWED_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
+CORS_ALLOW_CREDENTIALS = True  # Session 认证需要
 CORS_ALLOW_METHODS = ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"]
-CORS_ALLOW_HEADERS = ["Content-Type", "X-CSRFToken", "X-API-Key",
-                      "Authorization", "If-Match", "Idempotency-Key"]
-CORS_EXPOSE_HEADERS = ["X-Request-Id", "X-RateLimit-Limit", "X-RateLimit-Remaining",
-                       "X-RateLimit-Reset", "ETag", "Location", "Retry-After"]
+CORS_ALLOW_HEADERS = ["Content-Type", "X-CSRFToken", "X-API-Key", "Authorization", "If-Match", "Idempotency-Key"]
+CORS_EXPOSE_HEADERS = [
+    "X-Request-Id",
+    "X-RateLimit-Limit",
+    "X-RateLimit-Remaining",
+    "X-RateLimit-Reset",
+    "ETag",
+    "Location",
+    "Retry-After",
+]
 
 # ── 数据层 / 队列 / 对象存储（变量名与 INFRA-002 compose 对齐）──
 REDIS_URL = env("REDIS_URL", "redis://localhost:6379/0")
@@ -147,6 +150,14 @@ AWS_S3_ENDPOINT_URL = env("AWS_S3_ENDPOINT_URL", "http://localhost:9000")
 AWS_ACCESS_KEY_ID = env("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY", "")
 AWS_S3_BUCKET_NAME = env("AWS_S3_BUCKET_NAME", "rp-uploads")
+
+# ── 功能常量（Sprint-2 TASK-004 §4.1：层级三层防线 + 子树上限）──
+from plane.settings.features import (  # noqa: E402,F401
+    CTE_GUARD_DEPTH,
+    MAX_ISSUE_DEPTH,
+    MAX_SUB_ISSUES_PER_PARENT,
+    SUBTREE_NODE_LIMIT,
+)
 
 # ── SMTP：P1 可空 = 邮件降级为日志投递（BR-14，IT-05）──────
 SMTP_HOST = env("SMTP_HOST", "")

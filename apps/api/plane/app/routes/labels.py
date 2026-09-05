@@ -2,12 +2,14 @@
 
 urls.py 通过 import_module 把本模块的 urlpatterns 自动追加（FEATURE_MODULES = (..., "labels", ...)）。
 """
+
 from django.urls import path
 
 from plane.app.views.issues import (
     IssueActivityListView,
     IssueLabelsView,
     IssueSubIssueListCreateView,
+    IssueSubtreeView,
     IssueTypeListView,
 )
 from plane.app.views.labels import LabelDetailView, LabelListCreateView
@@ -42,6 +44,12 @@ urlpatterns = [
         "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/sub-issues/",
         IssueSubIssueListCreateView.as_view(),
         name="issue-sub-issues",
+    ),
+    # 工作项整棵子树（TASK-004 §4.2.2：一次 CTE，root+nodes+stats）
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/subtree/",
+        IssueSubtreeView.as_view(),
+        name="issue-subtree",
     ),
     # 工作项操作日志（TASK-002 §4.3.6）
     path(

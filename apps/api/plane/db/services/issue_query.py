@@ -11,6 +11,7 @@
 - q 的多列 OR 自成括号组后与外部 AND（防 OR 短路）；
 - 游标由分页器负责；本模块只造 Q。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -23,8 +24,12 @@ from plane.utils.exceptions import AppValidationError, field_error
 PRIORITY_CHOICES = ("none", "low", "medium", "high", "urgent")
 PRIORITY_WEIGHT = {"urgent": 5, "high": 4, "medium": 3, "low": 2, "none": 1}
 ORDER_BY_WHITELIST = (
-    "created_at", "updated_at", "sequence_id",
-    "priority", "target_date", "sort_order",
+    "created_at",
+    "updated_at",
+    "sequence_id",
+    "priority",
+    "target_date",
+    "sort_order",
 )
 MAX_VALUES_PER_PARAM = 20
 MAX_Q_LENGTH = 64
@@ -67,9 +72,7 @@ class IssueFilterSet:
         if "assignee_ids" not in self.drop_keys:
             # 同时认 ?assignee_ids= 和 ?assignee_id=（BOARD-002 单数历史参数；TASK-003 用复数）
             raw = params.get("assignee_ids") or params.get("assignee_id")
-            assignees = self._parse_uuid_list(
-                raw, field_name="assignee_ids", alias_me=True
-            )
+            assignees = self._parse_uuid_list(raw, field_name="assignee_ids", alias_me=True)
             if assignees:
                 q &= Q(assignees__id__in=assignees)
                 self.applied["assignee_ids"] = [str(v) for v in assignees]
@@ -91,15 +94,19 @@ class IssueFilterSet:
                 else:
                     invalid = set(parts) - set(PRIORITY_CHOICES)
                     if invalid:
-                        raise AppValidationError([
-                            field_error("priority", "NOT_A_CHOICE",
-                                        f"priority 取值非法：{','.join(sorted(invalid))}"),
-                        ])
+                        raise AppValidationError(
+                            [
+                                field_error(
+                                    "priority", "NOT_A_CHOICE", f"priority 取值非法：{','.join(sorted(invalid))}"
+                                ),
+                            ]
+                        )
                     if len(parts) > MAX_VALUES_PER_PARAM:
-                        raise AppValidationError([
-                            field_error("priority", "TOO_LARGE",
-                                        f"单参数最多 {MAX_VALUES_PER_PARAM} 个值"),
-                        ])
+                        raise AppValidationError(
+                            [
+                                field_error("priority", "TOO_LARGE", f"单参数最多 {MAX_VALUES_PER_PARAM} 个值"),
+                            ]
+                        )
                     q &= Q(priority__in=parts)
                     self.applied["priority"] = parts
 
@@ -111,6 +118,14 @@ class IssueFilterSet:
                     q &= parsed
                     self.applied["target_date"] = raw_date
 
+        # ---- parent_id（TASK-004 §4.2.3：列表页树形行级懒加载入口）----
+        if "parent_id" not in self.drop_keys:
+            if (raw_parent := params.get("parent_id")) is not None:
+                parent_id = self._parse_uuid_list(raw_parent, field_name="parent_id")
+                if parent_id:
+                    q &= Q(parent_id__in=parent_id)
+                    self.applied["parent_id"] = [str(v) for v in parent_id]
+
         # ---- 关键词搜索 q ----
         if "q" not in self.drop_keys:
             if (raw_q := params.get("q")) is not None:
@@ -121,10 +136,23 @@ class IssueFilterSet:
 
         # ---- 记录忽略的未知参数（不回显在 applied 中）----
         known = {
-            "q", "state_id", "type_id", "priority", "label_id", "label_ids",
-            "assignee_ids", "assignee_id", "created_by", "target_date",
-            "order_by", "cursor", "per_page",
-            "group_by", "group_id", "group_per_page",
+            "q",
+            "state_id",
+            "type_id",
+            "priority",
+            "label_id",
+            "label_ids",
+            "assignee_ids",
+            "assignee_id",
+            "created_by",
+            "target_date",
+            "parent_id",
+            "order_by",
+            "cursor",
+            "per_page",
+            "group_by",
+            "group_id",
+            "group_per_page",
         }
         for key in params:
             if key in known:
@@ -153,8 +181,7 @@ class IssueFilterSet:
             prefix = "-" if desc else ""
             if field in NULLS_LAST_FIELDS:
                 qs = qs.order_by(
-                    F(field).asc(nulls_last=True) if not desc
-                    else F(field).desc(nulls_last=True),
+                    F(field).asc(nulls_last=True) if not desc else F(field).desc(nulls_last=True),
                     "-id",
                 )
             else:
@@ -166,32 +193,36 @@ class IssueFilterSet:
     # -----------------------------------------------------------------
     # 内部工具
     # -----------------------------------------------------------------
-    def _parse_uuid_list(
-        self, raw: str | None, *, field_name: str, alias_me: bool = False
-    ) -> list[uuid.UUID]:
+    def _parse_uuid_list(self, raw: str | None, *, field_name: str, alias_me: bool = False) -> list[uuid.UUID]:
         if not raw:
             return []
         parts = [p.strip() for p in raw.split(",") if p.strip()]
         if len(parts) > MAX_VALUES_PER_PARAM:
-            raise AppValidationError([
-                field_error(field_name, "TOO_LARGE", f"单参数最多 {MAX_VALUES_PER_PARAM} 个值"),
-            ])
+            raise AppValidationError(
+                [
+                    field_error(field_name, "TOO_LARGE", f"单参数最多 {MAX_VALUES_PER_PARAM} 个值"),
+                ]
+            )
         result: list[uuid.UUID] = []
         for p in parts:
             if alias_me and p == "me":
                 if not self.request.user or not self.request.user.is_authenticated:
                     # 业务层在认证后才有意义；抛 INVALID 让前端知道
-                    raise AppValidationError([
-                        field_error(field_name, "INVALID", "me 仅对登录用户有效"),
-                    ])
+                    raise AppValidationError(
+                        [
+                            field_error(field_name, "INVALID", "me 仅对登录用户有效"),
+                        ]
+                    )
                 result.append(self.request.user.id)
                 continue
             try:
                 result.append(uuid.UUID(p))
             except ValueError as err:
-                raise AppValidationError([
-                    field_error(field_name, "INVALID_UUID", f"UUID 格式非法：{p}"),
-                ]) from err
+                raise AppValidationError(
+                    [
+                        field_error(field_name, "INVALID_UUID", f"UUID 格式非法：{p}"),
+                    ]
+                ) from err
         return result
 
     @staticmethod
@@ -201,10 +232,11 @@ class IssueFilterSet:
         try:
             day = date.fromisoformat(value.strip())
         except ValueError as err:
-            raise AppValidationError([
-                field_error("target_date", "INVALID_DATE",
-                            "格式应为 YYYY-MM-DD;before|after|on"),
-            ]) from err
+            raise AppValidationError(
+                [
+                    field_error("target_date", "INVALID_DATE", "格式应为 YYYY-MM-DD;before|after|on"),
+                ]
+            ) from err
         return {
             "before": Q(target_date__lt=day),
             "after": Q(target_date__gt=day),
@@ -216,9 +248,11 @@ class IssueFilterSet:
         if not keyword:
             return None
         if len(keyword) > MAX_Q_LENGTH:
-            raise AppValidationError([
-                field_error("q", "TOO_LONG", f"关键词最长 {MAX_Q_LENGTH} 字符"),
-            ])
+            raise AppValidationError(
+                [
+                    field_error("q", "TOO_LONG", f"关键词最长 {MAX_Q_LENGTH} 字符"),
+                ]
+            )
 
         # 序列号匹配（'128' 或 'RBT-128'）
         seq_match = None
@@ -229,9 +263,7 @@ class IssueFilterSet:
 
         esc = self._escape_like(keyword)
         if len(esc) >= 3:
-            text_match = (
-                Q(name__icontains=esc) | Q(description_stripped__icontains=esc)
-            )
+            text_match = Q(name__icontains=esc) | Q(description_stripped__icontains=esc)
         else:
             # 短词仅标题前缀（trigram 对 <3 字符无效）
             text_match = Q(name__istartswith=esc)

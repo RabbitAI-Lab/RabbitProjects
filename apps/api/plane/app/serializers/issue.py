@@ -3,6 +3,7 @@
 CLAUDE.md 教训 #3：所有 SerializerMethodField 必须挂在 Meta.fields，否则 PATCH/POST 路径 500。
 本模块所有 getter 字段均已在 fields 列表中。
 """
+
 from __future__ import annotations
 
 from rest_framework import serializers
@@ -148,7 +149,7 @@ class IssueSerializer(serializers.ModelSerializer):
 # ─────────────────────────────────────────────────────────────────────
 # 写侧（create / patch payload）
 # ─────────────────────────────────────────────────────────────────────
-MAX_LABELS_PER_ISSUE = 10       # TASK-002 §2.7 边界
+MAX_LABELS_PER_ISSUE = 10  # TASK-002 §2.7 边界
 
 
 class IssueWriteSerializer(serializers.Serializer):
@@ -164,12 +165,8 @@ class IssueWriteSerializer(serializers.Serializer):
     state_id = serializers.UUIDField(required=False, allow_null=True)
     type_id = serializers.UUIDField(required=False, allow_null=True)
     priority = serializers.CharField(required=False, allow_blank=False)
-    assignee_ids = serializers.ListField(
-        child=serializers.UUIDField(), required=False, default=list
-    )
-    label_ids = serializers.ListField(
-        child=serializers.UUIDField(), required=False, default=list
-    )
+    assignee_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
+    label_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
     parent_id = serializers.UUIDField(required=False, allow_null=True)
     start_date = serializers.DateField(required=False, allow_null=True)
     target_date = serializers.DateField(required=False, allow_null=True)
@@ -199,8 +196,7 @@ class IssueWriteSerializer(serializers.Serializer):
                 pk=type_id, workspace_id=project.workspace_id, is_active=True, deleted_at__isnull=True
             ).exists()
             if not valid_type:
-                errors.append(field_error(
-                    "type_id", "DOES_NOT_EXIST", "任务类型不属于当前工作空间或已停用"))
+                errors.append(field_error("type_id", "DOES_NOT_EXIST", "任务类型不属于当前工作空间或已停用"))
 
         # ---- BR-03 优先级枚举 ----
         priority = attrs.get("priority", "__absent__")
@@ -220,52 +216,32 @@ class IssueWriteSerializer(serializers.Serializer):
                 )
                 invalid = {str(x) for x in label_ids} - {str(v) for v in valid}
                 if invalid:
-                    errors.append(field_error(
-                        "label_ids", "DOES_NOT_EXIST",
-                        "包含不属于当前项目或已停用的标签"))
+                    errors.append(field_error("label_ids", "DOES_NOT_EXIST", "包含不属于当前项目或已停用的标签"))
                 if len(label_ids) > MAX_LABELS_PER_ISSUE:
-                    errors.append(field_error(
-                        "label_ids", "TOO_LARGE",
-                        f"单个任务最多 {MAX_LABELS_PER_ISSUE} 个标签"))
+                    errors.append(field_error("label_ids", "TOO_LARGE", f"单个任务最多 {MAX_LABELS_PER_ISSUE} 个标签"))
 
         # ---- BR-06 日期联合：start ≤ target ----
         new_start = attrs.get("start_date", "__absent__")
         new_target = attrs.get("target_date", "__absent__")
-        start = (
-            attrs["start_date"] if new_start != "__absent__"
-            else (instance.start_date if instance else None)
-        )
-        target = (
-            attrs["target_date"] if new_target != "__absent__"
-            else (instance.target_date if instance else None)
-        )
+        start = attrs["start_date"] if new_start != "__absent__" else (instance.start_date if instance else None)
+        target = attrs["target_date"] if new_target != "__absent__" else (instance.target_date if instance else None)
         if start and target and start > target:
-            errors.append(field_error(
-                "target_date", "INVALID_DATE_RANGE", "截止时间不能早于开始时间"))
+            errors.append(field_error("target_date", "INVALID_DATE_RANGE", "截止时间不能早于开始时间"))
 
         # ---- state 校验（项目内存在）----
         if "state_id" in attrs and attrs["state_id"] is not None:
             state_id = attrs["state_id"]
-            state_ok = State.objects.filter(
-                pk=state_id, project=project, deleted_at__isnull=True
-            ).exists()
+            state_ok = State.objects.filter(pk=state_id, project=project, deleted_at__isnull=True).exists()
             if not state_ok:
-                errors.append(field_error(
-                    "state_id", "DOES_NOT_EXIST", "状态不属于当前项目"))
+                errors.append(field_error("state_id", "DOES_NOT_EXIST", "状态不属于当前项目"))
 
-        # ---- parent 校验（SUB-02 / SUB-03 一层 + 同项目）----
+        # ---- parent 校验（同项目 + 存在性；TASK-004 起解除一层限制，深度 ≤5 与
+        # 防环在视图/服务层校验——Serializer 无被挂父的祖先链上下文）----
         if "parent_id" in attrs and attrs["parent_id"] is not None:
             parent_id = attrs["parent_id"]
-            parent = Issue.objects.filter(
-                pk=parent_id, project=project, deleted_at__isnull=True
-            ).first()
+            parent = Issue.objects.filter(pk=parent_id, project=project, deleted_at__isnull=True).first()
             if parent is None:
-                errors.append(field_error(
-                    "parent_id", "DOES_NOT_EXIST", "父任务不存在或不属于当前项目"))
-            elif parent.parent_id is not None:
-                # SUB-02：严格一层
-                errors.append(field_error(
-                    "parent_id", "NESTING", "MVP 阶段子任务仅支持一层"))
+                errors.append(field_error("parent_id", "DOES_NOT_EXIST", "父任务不存在或不属于当前项目"))
 
         # ---- BR-08 子任务与父同项目 + 一层：本身已是 Issue，不在此校验；sub-issues endpoint 走 Service ----
 
@@ -281,9 +257,7 @@ def sync_assignees(issue, assignee_ids, actor_id) -> None:
     """替换式同步：清旧 + bulk_create；中间表无软删除，物理删除。"""
     IssueAssignee.objects.filter(issue=issue).delete()
     for uid in assignee_ids:
-        IssueAssignee.objects.create(
-            issue=issue, assignee_id=uid, assigned_by_id=actor_id
-        )
+        IssueAssignee.objects.create(issue=issue, assignee_id=uid, assigned_by_id=actor_id)
 
 
 def sync_labels(issue, label_ids, actor_id) -> None:
@@ -294,10 +268,9 @@ def sync_labels(issue, label_ids, actor_id) -> None:
     """
     issue_id = issue.id
     IssueLabel.objects.filter(issue_id=issue_id).delete()
-    IssueLabel.objects.bulk_create([
-        IssueLabel(issue_id=issue_id, label_id=lid, created_by_id=actor_id)
-        for lid in label_ids
-    ])
+    IssueLabel.objects.bulk_create(
+        [IssueLabel(issue_id=issue_id, label_id=lid, created_by_id=actor_id) for lid in label_ids]
+    )
 
 
 def validate_assignees(project_id, assignee_ids) -> None:
@@ -305,15 +278,13 @@ def validate_assignees(project_id, assignee_ids) -> None:
     if not assignee_ids:
         return
     valid_members = set(
-        ProjectMember.objects.filter(
-            project_id=project_id, member_id__in=assignee_ids, is_active=True
-        ).values_list("member_id", flat=True)
+        ProjectMember.objects.filter(project_id=project_id, member_id__in=assignee_ids, is_active=True).values_list(
+            "member_id", flat=True
+        )
     )
     invalid = {str(u) for u in assignee_ids} - {str(v) for v in valid_members}
     if invalid:
-        raise AppValidationError([
-            field_error("assignee_ids", "DOES_NOT_EXIST", "包含不属于当前项目的成员")
-        ])
+        raise AppValidationError([field_error("assignee_ids", "DOES_NOT_EXIST", "包含不属于当前项目的成员")])
 
 
 def diff_labels(old_ids: set[str], new_ids: set[str]) -> tuple[list[str], list[str]]:

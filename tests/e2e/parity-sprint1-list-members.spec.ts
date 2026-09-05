@@ -126,11 +126,24 @@ test.describe("Sprint-1 list/members UI parity（C.18/C.19/C.21）", () => {
     await expect.soft(page.getByText("RabbitProjects").first()).toBeVisible({ timeout: 5000 });
   });
 
-  // C.18 转让所有权弹窗路由可达
-  test("C.18 转让所有权弹窗 路由可达（团队成员页 DangerZone 触发）", async ({ page }) => {
-    test.setTimeout(15_000);
-    await page.goto("/__no_such_ws__/settings/members");
-    await expect.soft(page.getByText("RabbitProjects").first()).toBeVisible({ timeout: 5000 });
+  // C.18 团队成员页（行为级：OWNER 必须能进——PermissionRouteGuard 双 bug 回归锚点）
+  // 原版是 goto("/__no_such_ws__/settings/members") + Logo 可见——空转断言：
+  // ① 不存在的 ws 让被测 guard 路径根本不执行；② 403 页同样渲染 Logo，测试照样绿。
+  // 验收缺陷：guard 漏传 :workspaceSlug ctx + team-members 漏传 scope="workspace"，
+  // OWNER 被 403「没有访问该页面的权限」。
+  test("C.18 团队成员页：OWNER 可进且渲染成员表（非 403）", async ({ page }) => {
+    test.setTimeout(20_000);
+    const ws = await loginDemo(page);
+    await page.goto(`/${ws}/settings/members`);
+    await page.waitForTimeout(1500);
+    const body = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    // 守卫判定失败会整页换成 403 文案——这是最硬的负向锚点
+    expect.soft(body.includes("没有访问该页面的权限"), "OWNER 不应看到 403").toBe(false);
+    // 成员表五列表头 + 邀请入口 + DangerZone（C.15/C.18 清单行）
+    await expect.soft(page.getByRole("columnheader", { name: "成员" })).toBeVisible({ timeout: 5_000 });
+    await expect.soft(page.getByRole("columnheader", { name: "邮箱" })).toBeVisible();
+    await expect.soft(page.getByRole("button", { name: /邀请成员/ })).toBeVisible();
+    await expect.soft(page.getByRole("button", { name: /转让所有权/ })).toBeVisible();
   });
 
   /* ════════════════════════════════════════════════════════════════════════════

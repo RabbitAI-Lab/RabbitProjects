@@ -41,7 +41,7 @@ type LoadState = "loading" | "ready" | "error" | "empty";
 
 export default function TeamMembersPage() {
   return (
-    <PermissionRouteGuard permission="workspace.member.read">
+    <PermissionRouteGuard permission="workspace.member.read" scope="workspace">
       <TeamMembersInner />
     </PermissionRouteGuard>
   );

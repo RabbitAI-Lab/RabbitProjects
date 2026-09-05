@@ -265,7 +265,10 @@ def fetch_subtree(root_id: uuid.UUID) -> dict:
     truncated = len(rows) > limit
     rows = rows[:limit]
 
+    # issue_key 批量装配（N+1 消除：同项目 identifier 常量 + 各行 sequence_id 已在 CTE 结果）
     key = _issue_key_of(root_id)
+    prefix = key.rsplit("-", 1)[0] + "-" if key else None
+    seq_by_id = {r[0]: r[2] for r in rows}
     direct = [r for r in rows[1:] if r[1] == root_id]
     direct_done = [r for r in direct if r[4] == "completed" or r[4] == "cancelled"]
 
@@ -273,7 +276,7 @@ def fetch_subtree(root_id: uuid.UUID) -> dict:
         out = {
             "id": str(row[0]),
             "parent_id": str(row[1]) if row[1] else None,
-            "issue_key": key if is_root else _issue_key_of(row[0]),
+            "issue_key": key if is_root else (f"{prefix}{seq_by_id.get(row[0])}" if prefix else None),
             "sequence_id": row[2],
             "name": row[3],
             "state_group": row[4],

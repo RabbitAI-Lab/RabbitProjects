@@ -89,7 +89,7 @@ services:
     env_file:
       - ../../.env
     environment:
-      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-plane.settings.local}
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-plane.settings.dev}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@mq:5672//
@@ -132,7 +132,7 @@ services:
     env_file:
       - ../../.env
     environment:
-      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-plane.settings.local}
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-plane.settings.dev}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@mq:5672//
@@ -167,7 +167,7 @@ services:
     env_file:
       - ../../.env
     environment:
-      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-plane.settings.local}
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-plane.settings.dev}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@mq:5672//
@@ -201,7 +201,7 @@ services:
     env_file:
       - ../../.env
     environment:
-      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-plane.settings.local}
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-plane.settings.dev}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@mq:5672//
@@ -322,6 +322,8 @@ services:
       SPACE_UPSTREAM: space:3003
       API_UPSTREAM: api:8000
       LIVE_UPSTREAM: live:3000
+      # FILE-001 §4.7：/uploads/ 直传反代到 MinIO（附件 / 头像直传）
+      MINIO_UPSTREAM: minio:9000
       CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-100M}
     ports:
       - "${NGINX_PORT:-80}:80"

@@ -6,7 +6,7 @@
 | 所属迭代 | Sprint 1：MVP 能力补齐（第 3 周） |
 | 优先级 | P1（MVP 必备级） |
 | 所属模块 | M1-AUTH 账号与权限 |
-| 文档状态 | 待评审（Draft） |
+| 文档状态 | **已实现**（2026-09-04 · Sprint 1 后端实现落地 · 见 ADR-0012） |
 | 最后更新日期 | 2026-09-01 |
 | 上游依据 | `docs/需求文档.md` §3.1（前端按钮级权限控制 + 后端接口二次鉴权 + 数据库行级过滤三重防护）、§五（接口层、数据层、UI 层三重权限校验，杜绝越权）、§8.2 账号权限 P1 列 |
 | 前置依赖 | `AUTH-001`（会话体系、`/users/me/` 契约）、`AUTH-002`（路由拦截骨架与 `ProtectedRoute`）、`AUTH-003`（角色整数枚举 / `accessible_by()` / 三层防护骨架与 404 隐藏策略）、`INFRA-004`（错误信封）、`INFRA-001`（CI 管线挂载点） |
@@ -217,7 +217,10 @@ stateDiagram-v2
 | `project.read` | `PROJ_VIEWER`(5) | `ProjectPermission`（read_role） | 项目页基底 |
 | `project.update` | `PROJ_ADMIN`(20) | `ProjectPermission`（write_role） | `PROJ-002` 项目设置入口（hide） |
 | `project.delete` | `PROJ_ADMIN`(20) | 同上 + 业务层末位校验 | 删除项目（**disable**，危险操作示范位） |
+| `project.member.read` | `PROJ_VIEWER`(5) | `ProjectPermission`（read_role） | `PROJ-002` 成员列表（基底读取） |
 | `project.member.manage` | `PROJ_ADMIN`(20) + 层级保护 R2 | `@require_permission` | `PROJ-002` 成员管理抽屉（fallback → 只读名单） |
+| `project.favorite` | `PROJ_VIEWER`(5) | `@require_permission` | `PROJ-002` 收藏按钮（hide） |
+| `project.archive` | `PROJ_ADMIN`(20) | `@require_permission` | `PROJ-002` 归档 / 恢复切换（hide） |
 | `project.label.manage` | `PROJ_ADMIN`(20) | `@require_permission` | `TASK-002` 标签管理入口（hide；`project.setting.manage` 的 P1 细分键） |
 | `issue.create` | `PROJ_CONTRIBUTOR`(15) | `IssuePermission`（write_role） | 新建任务按钮 + 快速创建行（hide） |
 | `issue.update` | `PROJ_CONTRIBUTOR`(15) | 同上 | 编辑任务 / 列表行内编辑（hide） |
@@ -294,7 +297,7 @@ export const useCanDeleteIssue = (issue: TIssueRow): boolean => {
 | EC-04 | Gate 在权限数据未加载时渲染 | 骨架占位，不闪现按钮再消失（防「能力闪烁」） |
 | EC-05 | 降权后 5 分钟窗口内用户仍见旧按钮 | 点击得 403 → 自动重拉 → 按钮收敛（§2.2 被动路径；P2 推送化） |
 | EC-06 | `resourceId` 拼写错误 / 项目已删除 | Store 无该键 → fail-closed 判否（BR-10） |
-| EC-07 | 矩阵权限点数量增长（P1 约 22 个） | 每新增一个 Sprint 由 CI 统计并回写架构文档 §8 附录（防矩阵无限膨胀无人知晓） |
+| EC-07 | 矩阵权限点数量增长（P1 约 25 个） | 每新增一个 Sprint 由 CI 统计并回写架构文档 §8 附录（防矩阵无限膨胀无人知晓） |
 | EC-08 | `SYSTEM_ADMIN` 访问普通成员视角 | 快照 `is_system_admin=true` → 全部 Gate 放行（BR-09）；与后端第二层短路一致 |
 
 ---
@@ -340,38 +343,37 @@ export const useCanDeleteIssue = (issue: TIssueRow): boolean => {
 路由入口 → 一律 PermissionRouteGuard（直达 URL 必须有终点，不能白屏）
 ```
 
-### 3.2 同一页面的两种渲染（项目头部的角色差异）
+### 3.2 同一项目壳的两种渲染（项目侧栏 + 视图条的角色差异）
+
+项目壳维持 sprint-0 冻结形态（[`test-cases.md`](../sprint-0-poc/test-cases.md) 附录 C.4）：**220px 项目侧栏**（身份区 / 「视图」组：任务列表 · 看板 / 「管理」组：项目设置 / 底部「返回项目列表」）+ **视图条**（视图名 + 「＋ 创建任务」）。权限按钮全部映射到该壳的真实位置。
 
 **`PROJ_ADMIN` 视角：**
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│ ● RabbitProjects 研发                    [★收藏] [成员 8] [⚙ 设置] ⋯ │
-│   RBT · 进行中 · 张三/李四 负责                                        │
-│   [概览] [任务] [看板] [文件(P2)]                                     │
-└────────────────────────────────────────────────────────────────────┘
-                                                     ⋯ 菜单展开：
-                                             ┌──────────────────────┐
-                                             │ 复制项目链接           │
-                                             │ ──────────────────  │
-                                             │ 🗑 删除项目            │ ← 可点击，红色
-                                             └──────────────────────┘
+┌───────────────┬──────────────────────────────────────────────┐
+│ 兔子核心系统    │  任务列表 · 12 个任务          [＋ 创建任务]    │ ← 视图条
+│ ─ RBT         ├──────────────────────────────────────────────┤
+│ 视图          │                                              │
+│  ● 任务列表    │         （视图内容区：列表 / 看板）              │
+│  ○ 看板       │                                              │
+│ 管理          │                                              │
+│  ⚙ 项目设置    │                                              │
+│ ──────────────│                                              │
+│ ← 返回项目列表 │                                              │
+└───────────────┴──────────────────────────────────────────────┘
+      ⚙ 项目设置 → 设置页「危险区域」（PROJ-001 §3.3）：
+      ┌──────────────────────────────────────────────┐
+      │  危险区域（红框说明 + [🗑 删除项目]）           │ ← 可点击，红色
+      └──────────────────────────────────────────────┘
 ```
 
 **`PROJ_CONTRIBUTOR` 视角（同一路由）：**
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│ ● RabbitProjects 研发                    [★收藏] [成员 8]           │
-│   RBT · 进行中 · 张三/李四 负责                                        │
-│   [概览] [任务] [看板] [文件(P2)]                                     │
-└────────────────────────────────────────────────────────────────────┘
-  · [⚙ 设置] 与 ⋯ 菜单整体不渲染（hide——设置入口对贡献者无认知价值）
-  · 任务页内「新建任务」「快速创建行」正常出现（issue.create ≥ 15 通过）
-  · 任务行删除图标：本人创建的任务显示，他人的不显示（useCanDeleteIssue 组合判定）
-```
+  · 侧栏「管理」组的「项目设置」入口整体不渲染（hide——设置入口对贡献者无认知价值，`project.update` ≥ 20 不通过）
+  · 视图条「＋ 创建任务」与列表快速创建行正常出现（`issue.create` ≥ 15 通过）
+  · 删除任务维持任务详情抽屉 ⋯ 菜单唯一入口（`useCanDeleteIssue` 组合判定，本人创建可删，见 `TASK-001` §3.3）——列表行与看板卡不设行级删除图标
 
-**`PROJ_VIEWER` 视角**：新建 / 拖拽全部消失；看板卡片 `isDragDisabled`；评论区替换为「你以查看者身份访问此项目」占位条（`comment.create` fallback）。
+**`PROJ_VIEWER` 视角**：新建 / 拖拽全部消失（视图条「＋ 创建任务」不渲染、看板卡片 `isDragDisabled`）；评论区替换为「你以查看者身份访问此项目」占位条（`comment.create` fallback）。
 
 ### 3.3 403 路由页（`/403`）
 
@@ -392,6 +394,7 @@ export const useCanDeleteIssue = (issue: TIssueRow): boolean => {
 
 - `required` 权限点经 URL 参数带入，页面将其渲染为权限点的**中文名**（`@rp/constants` 同源生成的 `PERMISSION_LABELS` 映射），不裸露英文 key。
 - 「返回工作台」永远可用（工作台本身无权限门槛）；不提供「申请权限」动线（P1 无申请审批流）。
+- 403 两套落点分工：**直达无权 URL → 本路由守卫页**（`PermissionRouteGuard` 重定向落点，保留具体缺哪个权限的展示）；**页内请求失败的 403 → `INFRA-004` §3.4 请求级空态**（业务页请求失败空态，按 `error.code` 分支渲染）。
 
 ### 3.4 交互细节表
 
@@ -408,8 +411,8 @@ export const useCanDeleteIssue = (issue: TIssueRow): boolean => {
 
 | 断点 | 影响 |
 | --- | --- |
-| ≥ 1280px | 项目头操作按钮全量平铺 |
-| 768 ~ 1279px | 「设置 / 成员」收入 ⋯ 菜单（Gate 仍在菜单项级生效） |
+| ≥ 1280px | 项目侧栏（「视图」组 + 「管理」组）全量平铺 |
+| 768 ~ 1279px | 侧栏「管理」组（项目设置）收入折叠菜单（Gate 仍在菜单项级生效） |
 | < 768px | 403 页与设置页单栏；Gate 形态不变（逻辑与断点正交） |
 
 ### 3.6 无障碍要求（WCAG 2.1 AA）
@@ -797,7 +800,10 @@ PERMISSION_MATRIX: dict[str, dict[str, int]] = {
         "project.read":             ProjectRole.VIEWER,
         "project.update":           ProjectRole.ADMIN,
         "project.delete":           ProjectRole.ADMIN,
+        "project.member.read":      ProjectRole.VIEWER,      # PROJ-002 §4.2.3 成员列表
         "project.member.manage":    ProjectRole.ADMIN,       # + R2
+        "project.favorite":         ProjectRole.VIEWER,      # PROJ-002 §4.2.6 个人态收藏
+        "project.archive":          ProjectRole.ADMIN,       # PROJ-002 §4.2.7 active↔archived
         "project.label.manage":     ProjectRole.ADMIN,
         "issue.create":             ProjectRole.CONTRIBUTOR,
         "issue.update":             ProjectRole.CONTRIBUTOR,
@@ -814,7 +820,9 @@ PERMISSION_LABELS: dict[str, str] = {
     "workspace.member.invite": "邀请成员", "workspace.member.manage": "管理成员角色",
     "workspace.member.remove": "移除成员", "workspace.transfer": "转让所有权",
     "project.update": "编辑项目设置", "project.delete": "删除项目",
-    "project.member.manage": "管理项目成员", "project.label.manage": "管理项目标签",
+    "project.member.read": "查看项目成员", "project.member.manage": "管理项目成员",
+    "project.favorite": "收藏项目", "project.archive": "归档或恢复项目",
+    "project.label.manage": "管理项目标签",
     "issue.create": "创建任务", "issue.update": "编辑任务",
     "issue.delete": "删除任务", "issue.delete.own": "删除自己创建的任务",
     "comment.create": "发表评论", "file.upload": "上传文件",
@@ -1006,8 +1014,8 @@ export const PermissionRouteGuard: React.FC<
 
 | 编号 | 场景 | 步骤与断言 |
 | --- | --- | --- |
-| E2E-01 | 普通成员无管理入口 | MEMBER 登录 → 项目页 | 「设置 / 成员 / ⋯ 菜单」不可见；新建任务按钮**可见**（issue.create ≥ 15 通过） |
-| E2E-02 | 危险按钮禁用有因 | CONTRIBUTOR 打开项目头 | 「删除项目」灰置、可聚焦、悬浮 Tooltip 出现原因文案 |
+| E2E-01 | 普通成员无管理入口 | MEMBER 登录 → 项目页 | 侧栏「项目设置」入口不可见；视图条「＋ 创建任务」按钮**可见**（issue.create ≥ 15 通过） |
+| E2E-02 | 危险按钮禁用有因 | CONTRIBUTOR 打开项目设置 → 「危险区域」 | 「删除项目」灰置、可聚焦、悬浮 Tooltip 出现原因文案 |
 | E2E-03 | 直达路由拦截 | MEMBER 访问 `/:ws/settings/members` | 重定向 `/403?required=workspace.member.manage`；页面显示中文名「管理成员角色」 |
 | E2E-04 | 越权请求被拦（接口侧） | 用 MEMBER storageState 直接 fetch 删除项目 | 403 信封（非浏览器 UI 路径） |
 | E2E-05 | 隐式管理员视角 | WS_ADMIN（非项目成员）打开项目页 | 全部管理入口可见且操作成功（隐式提升三层一致） |
@@ -1075,7 +1083,7 @@ Ones 的权限治理是「配置中心」形态：管理员在界面按角色**�
 | AC-05 | 隐式提升三层一致 | WS_ADMIN（非项目成员）项目页全功能可用；接口侧同样放行；快照中无该项目行（推导路径生效） |
 | AC-06 | 一致性守护可演示 | 人为制造前后端矩阵差异（改常量不重新生成）→ CI 立即失败并列出差异点；删掉某 key 的守护引用 → 成对扫描失败 |
 | AC-07 | fail-closed 可验证 | 断网模拟快照失败 → 界面按无权渲染（无管理入口闪现）→ 恢复后重试自动收敛 |
-| AC-08 | 契约合规 | 全部 403 用 §8.3 已登记码（`PERM_ROLE_INSUFFICIENT` / `PERM_DENIED`）；矩阵 22 个 key 的 PT 参数化测试全绿（C4） |
+| AC-08 | 契约合规 | 全部 403 用 §8.3 已登记码（`PERM_ROLE_INSUFFICIENT` / `PERM_DENIED`）；矩阵 25 个 key 的 PT 参数化测试全绿（C4） |
 
 ---
 

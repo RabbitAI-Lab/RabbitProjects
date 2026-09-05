@@ -56,7 +56,9 @@ uv run --project apps/api python apps/api/manage.py runserver 0.0.0.0:8000
 健康检查：
 ```bash
 curl -s http://localhost:8000/api/v1/health/ | python3 -m json.tool
-# 期望：{"status": "ok", "checks": {"db": "ok"}}
+# 期望（Sprint-1 INFRA-004 后统一信封）：
+# {"status": "success", "data": {"checks": {"db": "ok"}}, "meta": null}
+# compose 探针只判 HTTP 200；data.checks.db 是给人类排障用的。
 ```
 
 ## 4. 启动 Web dev server（e2e 才会自动起，可手动起做调试）

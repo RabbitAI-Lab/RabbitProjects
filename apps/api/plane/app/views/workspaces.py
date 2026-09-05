@@ -1,24 +1,16 @@
 from django.db.models import Count, Q
-from rest_framework.exceptions import NotFound
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateAPIView
 
 from plane.app.permissions import IsAuthenticated
 from plane.app.serializers.auth import WorkspaceSerializer
-from plane.app.serializers.common import envelope
+from plane.app.views._access import get_workspace_or_404
+from plane.base.exception import AppException
+from plane.base.response import created_response, success_response
 from plane.db.models import Workspace, WorkspaceMember
 from plane.db.models.roles import WorkspaceRole
 
-
-def _get_workspace_or_404(slug, user):
-    """三防护（rbac §5）：UI 隐藏 / API 403-NotFound / DB 层 404。"""
-    try:
-        ws = Workspace.objects.get(slug=slug, deleted_at__isnull=True)
-    except Workspace.DoesNotExist:
-        raise NotFound("RESOURCE_NOT_FOUND")
-    member = WorkspaceMember.objects.filter(workspace=ws, member=user, is_active=True).first()
-    if member is None:
-        raise NotFound("RESOURCE_NOT_FOUND")
-    return ws, member
+#: 兼容既有 import 路径；唯一定义在 plane.app.views._access
+_get_workspace_or_404 = get_workspace_or_404
 
 
 class WorkspaceListCreateView(ListCreateAPIView):
@@ -50,7 +42,7 @@ class WorkspaceListCreateView(ListCreateAPIView):
                     "total_projects": w.total_projects,
                 }
             )
-        return envelope(True, data)
+        return success_response(data)
 
     def create(self, request, *args, **kwargs):
         s = self.get_serializer(data=request.data)
@@ -72,7 +64,10 @@ class WorkspaceListCreateView(ListCreateAPIView):
         WorkspaceMember.objects.create(
             workspace=ws, member=request.user, role=WorkspaceRole.OWNER, created_by=request.user
         )
-        return envelope(True, WorkspaceSerializer(ws).data, http_status=201)
+        return created_response(
+            WorkspaceSerializer(ws).data,
+            location=request.build_absolute_uri(f"/api/v1/workspaces/{ws.slug}/"),
+        )
 
 
 class WorkspaceDetailView(RetrieveUpdateAPIView):
@@ -88,14 +83,13 @@ class WorkspaceDetailView(RetrieveUpdateAPIView):
 
     def retrieve(self, request, *args, **kwargs):
         """GET 详情 —— 统一信封（api-conventions §4；与 Project retrieve 同款修复）。"""
-        return envelope(True, self.get_serializer(self.get_object()).data)
-        return ws
+        return success_response(self.get_serializer(self.get_object()).data)
 
     def update(self, request, *args, **kwargs):
         ws, member = _get_workspace_or_404(kwargs["slug"], request.user)
         if member.role < WorkspaceRole.ADMIN:
-            return envelope(False, None, {"code": "PERM_WORKSPACE_ADMIN_REQUIRED"}, http_status=403)
+            raise AppException("PERM_WORKSPACE_ADMIN_REQUIRED")
         s = self.get_serializer(ws, data=request.data, partial=True)
         s.is_valid(raise_exception=True)
         s.save()
-        return envelope(True, s.data)
+        return success_response(s.data)

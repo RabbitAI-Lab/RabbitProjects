@@ -3,43 +3,53 @@ import { useParams, useSearchParams } from "react-router";
 import { Topbar } from "../components/Topbar";
 import { ProjectSidebar } from "../components/ProjectSidebar";
 import { IssueDrawer as SharedDrawer } from "../components/IssueDrawer";
+import { PeekPopover, usePeekHover, type PeekIssue } from "../components/PeekPopover";
 import { NewTaskModal } from "../components/NewTaskModal";
-import { StateBadge } from "../components/StateBadge";
 import { IssueAPI, ProjectAPI } from "../services/api";
 import { toast } from "../components/Toast";
+import { LabelsAdminModal } from "./labels-admin";
 import type { Issue } from "@rp/types";
 
 interface Col { id: string | null; name: string; group: string; issues: Issue[]; }
 
+/** C.29 第四列「已取消」：BOARD-002 §3.1 起四态全开（取消列固定 280px）。 */
 const COL_NAMES = [
   { group: "unstarted", label: "待办" },
   { group: "started", label: "进行中" },
   { group: "completed", label: "已完成" },
+  { group: "cancelled", label: "已取消" },
 ];
 
 export default function Board() {
   const { workspaceSlug, projectId } = useParams<{ workspaceSlug: string; projectId: string }>();
   const [cols, setCols] = useState<Col[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
   const [dragId, setDragId] = useState<string | null>(null);
-  const [openIssueId, setOpenIssueId] = useState<string | null>(null);
+  // C.30 Hover Peek：hover ≥400ms 触发，拖拽/触摸不弹
+  const { peek, bind, close: closeHoverPeek } = usePeekHover();
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [quickCol, setQuickCol] = useState<string | null>(null);
   const [projName, setProjName] = useState("…");
   const [projIdentifier, setProjIdentifier] = useState("");
+  const [search, setSearch] = useState("");
+  const [showLabelsAdmin, setShowLabelsAdmin] = useState(false);
 
   async function load() {
     setLoading(true);
     try {
       const [sRes, iRes, pRes] = await Promise.all([
-        ProjectAPI.states(workspaceSlug!, projectId!),
+        // ★ 必须带 include_cancelled=1：states 端点默认 exclude(group=cancelled)，
+        // 不传则「已取消」列拿不到 state id → move() 在 `if (!col?.id) return` 处静默空转，
+        // 表现为「拖过去没反应 / 回弹」（sprint-1 验收缺陷）。
+        ProjectAPI.states(workspaceSlug!, projectId!, { include_cancelled: "1" }),
         IssueAPI.list(workspaceSlug!, projectId!, { ordering: "sort_order", per_page: 100 }),
         ProjectAPI.detail(workspaceSlug!, projectId!),
       ]);
-      setProjName((pRes as any).data?.name ?? "…");
-      setProjIdentifier((pRes as any).data?.identifier ?? "");
-      const states = (sRes as any).data as Array<{ id: string; name: string; group: string }>;
-      const issues = (iRes as any).data as Issue[];
+      const projData = (pRes as unknown as { data: { name?: string; identifier?: string } | null }).data;
+      setProjName(projData?.name ?? "…");
+      setProjIdentifier(projData?.identifier ?? "");
+      const states = (sRes as unknown as { data: Array<{ id: string; name: string; group: string; is_default?: boolean }> }).data;
+      const issues = (iRes as unknown as { data: Issue[] }).data;
       const map = new Map<string | null, Col>();
       for (const n of COL_NAMES) map.set(n.label, { id: null, name: n.label, group: n.group, issues: [] });
       // 占位状态：使用服务端返回的第一个匹配 group 的 state id
@@ -57,7 +67,11 @@ export default function Board() {
     } catch { /* 鉴权失败由拦截器统一处理 */ } finally { setLoading(false); }
   }
 
-  useEffect(() => { load(); }, [workspaceSlug, projectId]);
+  useEffect(() => {
+    const handle = setTimeout(() => { void load(); }, 0);
+    return () => clearTimeout(handle);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceSlug, projectId]);
   // ?peekIssue URL 同步（TASK-001 §3.3）：卡片/行点击 push 参数；关闭/back 移除即关抽屉
   const [sp, setSp] = useSearchParams();
   const peekId = sp.get("peekIssue");
@@ -66,13 +80,19 @@ export default function Board() {
 
   async function move(id: string, targetGroup: string) {
     const col = cols.find((c) => c.group === targetGroup);
-    if (!col?.id) return;
+    if (!col?.id) {
+      // 静默 return 会让「拖不进去」看起来像被后端拒绝；显式告知缺状态（BOARD-002 §3.3）
+      toast(`「${col?.name ?? targetGroup}」列缺少可用状态，请联系项目管理员创建`, "error");
+      return;
+    }
     const last = col.issues[col.issues.length - 1];
     const sort = last ? last.sort_order + 65535 : 65535;
     // 记录源列（拖拽失败时红环反馈，BOARD-001 §3.3）
     const srcCol = cols.find((c) => c.issues.some((x) => x.id === id));
     try {
       await IssueAPI.patch(workspaceSlug!, projectId!, id, { state_id: col.id, sort_order: sort });
+      // BOARD-002 §3.3 / E2E-3：拖入已取消必须给「可拖回恢复」的可见反馈
+      if (targetGroup === "cancelled") toast("已取消，可拖回其他列恢复");
       await load();
     } catch {
       if (srcCol) {
@@ -91,21 +111,46 @@ export default function Board() {
       <div className="flex flex-1 min-h-0">
         <ProjectSidebar projectName={projName} identifier={projIdentifier} />
         <main className="flex-1 min-w-0 flex flex-col">
+          {/* 视图条（C.29 视图名 + 创建任务按钮） */}
           <div className="h-[56px] border-b border-neutral-200 flex items-center gap-2 px-5 bg-white">
             <span className="text-[15px] font-semibold">看板</span>
+            <span className="text-[12px] text-neutral-500 ml-1">{projIdentifier}</span>
             <button onClick={() => setShowTaskModal(true)} className="ml-auto inline-flex h-[34px] items-center gap-1.5 px-3.5 bg-brand-500 text-white rounded-md font-medium">+ 创建任务</button>
+          </div>
+          {/* 筛选工具条（C.29 §3.1：sticky 52px + 搜索框 + 管理标签入口） */}
+          <div className="h-[52px] border-b border-neutral-200 sticky top-0 z-20 bg-white/95 backdrop-blur flex items-center gap-3 px-5">
+            <div className="flex items-center gap-1.5 h-8 border border-neutral-300 rounded-md px-2.5 bg-white focus-within:border-brand-500 w-[240px]">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-neutral-400"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input
+                aria-label="搜索任务"
+                placeholder="搜索任务…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="flex-1 h-7 outline-none text-[13px] bg-transparent"
+              />
+            </div>
+            <button
+              onClick={() => setShowLabelsAdmin(true)}
+              data-sb-scope="board-open-labels"
+              className="h-8 px-2.5 inline-flex items-center gap-1.5 border border-neutral-300 rounded-md text-[13px] hover:bg-neutral-50"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.59 13.41 13.41 20.59a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><path d="M7 7h.01"/></svg>
+              管理标签
+            </button>
+            <div className="ml-auto text-[12px] text-neutral-400">四列固定 · 280px</div>
           </div>
           <div className="flex-1 flex gap-4 overflow-x-auto p-4 min-h-0">
             {COL_NAMES.map((n) => {
               const col = cols.find((c) => c.group === n.group);
+              const visibleIssues = col?.issues.filter((i) => !search.trim() || i.name.toLowerCase().includes(search.trim().toLowerCase()) || i.issue_key.toLowerCase().includes(search.trim().toLowerCase())) ?? [];
               return (
-                <section key={n.group} className={`w-[280px] shrink-0 flex flex-col bg-neutral-100 rounded-lg max-h-full transition ${dragId && col?.issues.some((i) => i.id === dragId) ? "" : ""}`}
+                <section key={n.group} data-col={n.group} aria-label={`${n.label}列`} className={`w-[280px] shrink-0 flex flex-col bg-neutral-100 rounded-lg max-h-full transition ${dragId && col?.issues.some((i) => i.id === dragId) ? "" : ""}`}
                   onDragOver={(e) => { e.preventDefault(); }}
                   onDrop={async (e) => { e.preventDefault(); if (dragId) { await move(dragId, n.group); setDragId(null); } }}>
                   <div className="h-11 flex items-center gap-2 px-3 shrink-0">
-                    <span className="dot w-1.5 h-1.5 rounded-full" style={{ background: { unstarted: "#9ca3af", started: "#3b82f6", completed: "#10b981" }[n.group] }} />
+                    <span className="dot w-1.5 h-1.5 rounded-full" style={{ background: { unstarted: "#9ca3af", started: "#3b82f6", completed: "#10b981", cancelled: "#f87171" }[n.group] }} />
                     <span className="text-[13px] font-medium">{n.label}</span>
-                    <span className="ml-auto font-mono text-xs text-neutral-400">{col?.issues.length ?? 0}</span>
+                    <span className="ml-auto font-mono text-xs text-neutral-400">{visibleIssues.length}</span>
                   </div>
                   <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-2 min-h-[56px]">
                     {quickCol === n.group && (
@@ -117,7 +162,10 @@ export default function Board() {
                               const v = (e.target as HTMLInputElement).value.trim();
                               if (!v) return;
                               setQuickCol(null);
-                              if (col?.id) { await IssueAPI.create(workspaceSlug!, projectId!, { name: v, state_id: col.id }); load(); }
+                              if (col?.id) { await IssueAPI.create(workspaceSlug!, projectId!, { name: v, state_id: col.id }); await load(); }
+                              // 与 move() 同款静默失败：列还没拿到 state id（states 未回来）时
+                              // 什么都不做，用户以为回车没生效。给出可见反馈。
+                              else toast("该列状态尚未就绪，请稍后重试", "error");
                             }
                             if (e.key === "Escape") setQuickCol(null);
                           }}
@@ -125,11 +173,12 @@ export default function Board() {
                         <div className="text-[11px] text-neutral-400 px-1">回车创建 · Esc 取消</div>
                       </div>
                     )}
-                    {col?.issues.length ? col.issues.map((it) => (
-                      <article key={it.id} draggable tabIndex={0} className={`bg-white border border-neutral-200 rounded-md p-2.5 pl-3.5 shadow-sm cursor-grab relative hover:shadow-md hover:border-neutral-300 transition ${dragId === it.id ? "opacity-40 scale-[0.98]" : ""}`}
+                    {visibleIssues.length ? visibleIssues.map((it) => (
+                      <article key={it.id} draggable tabIndex={0} className={`bg-white border border-neutral-200 rounded-md p-2.5 pl-3.5 shadow-sm cursor-grab relative hover:shadow-md hover:border-neutral-300 transition ${dragId === it.id ? "opacity-40 scale-[0.98]" : ""} ${it.state_group === "cancelled" ? "opacity-60" : ""}`}
+                        onClick={() => openPeek(it.id)}
+                        {...bind(it as unknown as PeekIssue)}
                         onDragStart={(e) => { setDragId(it.id); e.dataTransfer.setData("text/plain", it.id); }}
-                        onDragEnd={() => setDragId(null)}
-                        onClick={() => openPeek(it.id)}>
+                        onDragEnd={() => setDragId(null)}>
                         <div className="absolute left-0 top-2 bottom-2 w-[3px] rounded" style={{ background: { backlog: "#a1a1aa", unstarted: "#9ca3af", started: "#3b82f6", completed: "#10b981", cancelled: "#f87171" }[it.state_group] }} />
                         <div className="text-[13px] text-neutral-900 line-clamp-3">{it.name}</div>
                         <div className="flex items-center justify-between mt-2 text-xs">
@@ -142,46 +191,26 @@ export default function Board() {
                       </article>
                     )) : <div className="border-2 border-dashed border-neutral-300 rounded-md py-4 text-center text-xs text-neutral-400">将任务拖拽到这里</div>}
                   </div>
-                  <button onClick={() => setQuickCol(n.group)} className="h-8 mt-1.5 flex items-center gap-1.5 px-2.5 rounded-md text-[13px] text-neutral-400 hover:bg-neutral-200/60 w-full shrink-0">
+                  {/* 列还没拿到 state id（states 未回来）时禁用：否则填完标题回车会命中
+                      `if (col?.id)` 的空分支，用户输入无声丢失 —— 列内快速创建的静默失败。
+                      禁用后 Playwright 的 click 会自动等到可用，测试也不必与首屏加载赛跑。 */}
+                  <button onClick={() => setQuickCol(n.group)} disabled={!col?.id}
+                    title={col?.id ? undefined : "该列状态尚未就绪"}
+                    className="h-8 mt-1.5 flex items-center gap-1.5 px-2.5 rounded-md text-[13px] text-neutral-400 hover:bg-neutral-200/60 disabled:opacity-40 disabled:cursor-not-allowed w-full shrink-0">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>添加任务
                   </button>
                 </section>
               );
             })}
           </div>
+          <PeekPopover peek={peek} onClose={closeHoverPeek} />
           {peekId && <SharedDrawer issueId={peekId} slug={workspaceSlug!} projectId={projectId!} onClose={() => { closePeek(); load(); }} onChanged={() => load()} />}
           {showTaskModal && <NewTaskModal slug={workspaceSlug!} projectId={projectId!} projectName={projName} onClose={() => setShowTaskModal(false)} onCreated={() => load()} />}
+          {showLabelsAdmin && workspaceSlug && projectId && (
+            <LabelsAdminModal workspaceSlug={workspaceSlug} projectId={projectId} onClose={() => setShowLabelsAdmin(false)} />
+          )}
         </main>
       </div>
-    </div>
-  );
-}
-
-function IssueDrawer({ issueId, slug, projectId, onClose }: { issueId: string; slug: string; projectId: string; onClose: () => void }) {
-  const [issue, setIssue] = useState<Issue | null>(null);
-  useEffect(() => { IssueAPI.detail(slug, projectId, issueId).then((r) => setIssue((r as any).data)); }, [issueId]);
-  if (!issue) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-black/25" onClick={onClose} />
-      <aside className="relative w-[720px] max-w-[calc(100vw-64px)] bg-white border-l border-neutral-200 shadow-lg flex flex-col">
-        <div className="flex items-center gap-2 px-5 py-3 border-b border-neutral-200">
-          <button className="font-mono text-[13px] text-neutral-500 hover:text-brand-600" onClick={() => navigator.clipboard?.writeText(issue.issue_key)}>{issue.issue_key}</button>
-          <button onClick={onClose} className="ml-auto w-7 h-7 flex items-center justify-center text-neutral-500 hover:text-neutral-900 ml-auto">✕</button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-5">
-          <h2 className="text-lg font-semibold mb-3">{issue.name}</h2>
-          <div className="border border-neutral-200 rounded-lg">
-            <div className="flex gap-0.5 px-2 py-1.5 border-b border-neutral-200 bg-neutral-50 rounded-t-lg text-[13px] text-neutral-500">B I U ≡ ☰ ⌗ &lt;/&gt; 🔗</div>
-            <div className="min-h-[110px] p-2.5 text-[13px] leading-relaxed" dangerouslySetInnerHTML={{ __html: issue.description_html || "<p class='text-neutral-400'>添加描述…</p>" }} />
-          </div>
-          <div className="mt-4 border-t border-neutral-200 pt-4 grid grid-cols-[76px_1fr] gap-x-3.5 gap-y-4 items-center">
-            <label className="text-[13px] text-neutral-500">状态</label><div><StateBadge group={issue.state_group ?? "unstarted"} name={issue.state_name ?? "—"} /></div>
-            <label className="text-[13px] text-neutral-500">负责人</label><div className="text-[13px]">{issue.assignee?.name ?? "—"}</div>
-            <label className="text-[13px] text-neutral-500">截止时间</label><div className="text-[13px]">{issue.target_date || "—"}</div>
-          </div>
-        </div>
-      </aside>
     </div>
   );
 }

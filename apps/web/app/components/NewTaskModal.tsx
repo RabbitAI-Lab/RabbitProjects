@@ -74,8 +74,12 @@ export function NewTaskModal({ slug, projectId, projectName, onClose, onCreated 
         </div>
         {err && <div className="mb-3.5 px-3 py-2 bg-red-50 text-red-700 rounded-md text-[13px]">{err}</div>}
         <input
-          className="w-full h-10 text-[17px] font-medium border-0 border-b-2 border-transparent focus:border-brand-500 focus:outline-none bg-transparent px-0 mb-3"
+          className="w-full h-10 text-[17px] font-medium border-0 border-b-2 border-transparent focus:border-brand-500 focus:outline-none bg-transparent px-0 mb-3 disabled:opacity-50"
           placeholder="任务标题" autoFocus value={name} onChange={(e) => setName(e.target.value)}
+          // 续创建模式下，请求返回后 submit() 会 setName("") 清空标题。若在请求飞行期间
+          // 允许输入，用户刚敲进去的下一个标题会被静默清掉（表现：按钮变灰、点了没反应）。
+          // 与提交按钮一致地在发送期间禁用，语义才可预测。
+          disabled={loading}
         />
         <div className="border border-neutral-200 rounded-lg">
           <div className="flex gap-0.5 px-2 py-1.5 border-b border-neutral-200 bg-neutral-50 rounded-t-lg text-[13px] text-neutral-500 select-none" aria-hidden>
@@ -142,7 +146,7 @@ export function NewTaskModal({ slug, projectId, projectName, onClose, onCreated 
 
         <div className="flex justify-end gap-2.5 mt-5">
           <button type="button" onClick={onClose} className="h-[34px] px-3.5 bg-white border border-neutral-300 rounded-md text-neutral-700 hover:bg-neutral-50">取消</button>
-          <button type="button" onClick={submit} disabled={loading || !name.trim()}
+          <button type="button" onClick={submit} disabled={loading || !name.trim()} data-testid="create-task-submit"
             className="h-[34px] px-3.5 bg-brand-500 text-white rounded-md hover:bg-brand-600 disabled:opacity-50 inline-flex items-center gap-2">
             {loading ? "创建中…" : <>创建任务 <span className="opacity-70 text-[11px]">⌘↵</span></>}
           </button>

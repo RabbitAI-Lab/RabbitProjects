@@ -8,6 +8,7 @@ class ProjectSerializer(serializers.ModelSerializer):
     total_members = serializers.IntegerField(read_only=True, default=0)
     total_issues = serializers.IntegerField(read_only=True, default=0)
     default_state_id = serializers.UUIDField(read_only=True, default=None)
+    is_favorite = serializers.BooleanField(read_only=True, default=False)
 
     class Meta:
         model = Project
@@ -23,6 +24,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             "total_members",
             "total_issues",
             "default_state_id",
+            "is_favorite",
         )
         read_only_fields = ("id", "identifier", "status", "created_at", "updated_at")
 

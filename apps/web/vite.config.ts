@@ -22,6 +22,18 @@ export default defineConfig({
         changeOrigin: false,
         secure: false,
       },
+      // FILE-001 §4.7：附件/头像直传走同源 /uploads/ 前缀（presign 返回的就是这个形态），
+      // 由网关反代到 MinIO，浏览器零跨域。缺这条 dev 代理 → PUT /uploads/... 落到 Vite 自身
+      // 返回 404/首页 HTML，表现为「上传按钮点了没反应」。
+      "/uploads": {
+        target: "http://localhost:9000",
+        // 必须 changeOrigin：S3 SigV4 把 host 纳入签名，presign 是按
+        // AWS_S3_ENDPOINT_URL(=http://localhost:9000) 签的，透传浏览器侧的
+        // Host: localhost:3001 会让 MinIO 判签名不匹配 → 403。
+        changeOrigin: true,
+        secure: false,
+        rewrite: (p) => p.replace(/^\/uploads/, ""),
+      },
     },
   },
 });

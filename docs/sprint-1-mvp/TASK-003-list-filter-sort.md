@@ -6,7 +6,7 @@
 | 所属迭代 | Sprint 1：MVP 能力补齐（第 3 周） |
 | 优先级 | P1（MVP 必备级） |
 | 所属模块 | M4-TASK 任务核心 |
-| 文档状态 | 待评审（Draft） |
+| 文档状态 | **已实现**（2026-09-04 · Sprint 1 后端实现落地 · 见 ADR-0012） |
 | 最后更新日期 | 2026-09-01 |
 | 上游依据 | `docs/需求文档.md` §3.4（全局任务搜索、多条件筛选、排序）、§3.4.2(3)（P1：内置固定字段的基础筛选、关键词搜索、简单排序）、§8.2 任务核心 P1 列 |
 | 前置依赖 | `TASK-001`（列表端点 / 游标分页 / `?fields=` / `?expand=`）、`TASK-002`（类型 / 优先级 / 标签值域与取数端点）、`INFRA-003`（`pg_trgm` 扩展 + `idx_issue_desc_trgm` 索引 P0 已建）、`INFRA-004`（错误信封） |
@@ -27,7 +27,7 @@ P0 的列表是「全量倒序翻页」，30 条任务以上就不可用。P1 �
 
 | 交付项 | 说明 |
 | --- | --- |
-| 关键词搜索 `?search=` | 标题（`name`）/ `sequence_id`（项目内数字编号，支持 `RBT-128` 与 `128` 两种格式）/ `description_stripped` 三列 trigram 匹配（`idx_issue_desc_trgm` P0 已建，本迭代点亮）；两阶段策略见 §2.2 |
+| 关键词搜索 `?q=` | 标题（`name`）/ `sequence_id`（项目内数字编号，支持 `RBT-128` 与 `128` 两种格式）/ `description_stripped` 三列 trigram 匹配（`idx_issue_desc_trgm` P0 已建，本迭代点亮）；两阶段策略见 §2.2 |
 | 七维筛选 | `state_id` / `type_id` / `priority` / `label_id` / `assignee_ids` / `created_by` / `target_date`（`;before` / `;after` / `;on` 区间语法） |
 | 排序 `?order_by=` | 单字段 ± 升降序：`created_at / updated_at / sequence_id / priority / target_date / sort_order`；优先级按**语义权重**排序 |
 | 组合语义 | 同参数多值 = OR；不同参数 = AND（[`api-conventions.md`](../architecture/api-conventions.md) §5.3 语法子集） |
@@ -41,7 +41,7 @@ P0 的列表是「全量倒序翻页」，30 条任务以上就不可用。P1 �
 
 | 参数 | 类型 / 语法 | 操作符 | SQL 路径与索引 | P2 演进位 |
 | --- | --- | --- | --- | --- |
-| `search` | string ≤ 64 | 模糊（`name` / `sequence_id` / `description_stripped` 三列） | `name ILIKE` ∪ `sequence_id =` ∪ `description_stripped ILIKE`（GIN trgm） | `TASK-011` 接入 `search_vector` 全文 + `TASK-008` 自定义文本字段 |
+| `q` | string ≤ 64 | 模糊（`name` / `sequence_id` / `description_stripped` 三列） | `name ILIKE` ∪ `sequence_id =` ∪ `description_stripped ILIKE`（GIN trgm） | `TASK-011` 接入 `search_vector` 全文 + `TASK-008` 自定义文本字段 |
 | `state_id` | UUID 列表（逗号） | in（OR） | `state_id__in`（`idx_issue_proj_state_sort` 前缀） | + `not_in` / `is_empty` |
 | `type_id` | UUID 列表 | in | `issue_type_id__in`（`idx_issue_proj_type`） | + `not_in` |
 | `priority` | enum 列表 | in | `priority__in`（单列 B-Tree） | + `gt/lt` 权重比较 |
@@ -86,7 +86,7 @@ P2 的「视图保存」（`IssueView`，[`dynamic-fields-design.md`](../archite
 | --- | --- | --- |
 | `TASK-001` | 列表端点骨架、游标分页器、`?fields=` / `?expand=`、`assertNumQueries` 基线 | 查询能力挂载点 |
 | `TASK-002` | 类型 / 优先级 / 标签的值域与取数端点（`issue-types/` / `labels/`） | 筛选器数据源 |
-| `INFRA-003` | `pg_trgm` 扩展 + `idx_issue_desc_trgm` GIN 索引（P0 migration 已含 `TrigramExtension`） | 缺失则 `search` 全表扫描 |
+| `INFRA-003` | `pg_trgm` 扩展 + `idx_issue_desc_trgm` GIN 索引（P0 migration 已含 `TrigramExtension`） | 缺失则 `q` 全表扫描 |
 | `INFRA-004` | 统一错误信封与 `details[]` 结构 | 400 响应格式 |
 
 ### 1.6 竞品参考
@@ -105,11 +105,11 @@ P2 的「视图保存」（`IssueView`，[`dynamic-fields-design.md`](../archite
 
 ```mermaid
 flowchart TD
-    A["GET …/issues/?search=500&type_id=9d1e…&priority=high,urgent<br/>&assignee_ids=me&target_date=2026-09-07;before&order_by=-priority"] --> B["IssueFilterSet 逐参数白名单校验"]
+    A["GET …/issues/?q=500&type_id=9d1e…&priority=high,urgent<br/>&assignee_ids=me&target_date=2026-09-07;before&order_by=-priority"] --> B["IssueFilterSet 逐参数白名单校验"]
     B -- "未知参数（?foo=1）" --> B1["忽略，不报错<br/>（前向兼容）"]
     B -- "语法非法（priority=abc / 日期格式错）" --> B2["400 VALIDATION_ERROR + INVALID"]
     B -- "合法" --> C["Q 对象组装：<br/>跨参 AND · 同参 OR（__in）"]
-    C --> D{"含 search ?"}
+    C --> D{"含 q ?"}
     D -- 是 --> E["(name ILIKE %kw% OR description_stripped ILIKE %kw%)<br/>括号内 OR 再与外部 AND<br/>两列均走 GIN trgm"]
     D -- 否 --> F["跳过"]
     E --> G["叠加作用域过滤：<br/>project_id（URL）∧ accessible_by(user)<br/>∧ archived_at IS NULL ∧ deleted_at IS NULL"]
@@ -157,10 +157,10 @@ sequenceDiagram
 
     U->>FE: 搜索框输入「500」
     FE->>FE: 300ms 防抖（SearchInput）
-    FE->>URL: replaceState 更新 ?search=500（归一化参数顺序）
+    FE->>URL: replaceState 更新 ?q=500（归一化参数顺序）
     URL-->>FE: Store 从 URL 派生（单向数据流）
     FE->>SWR: key = 序列化(归一化 query)
-    SWR->>API: GET …/issues/?search=500&…（key 命中则不发请求）
+    SWR->>API: GET …/issues/?q=500&…（key 命中则不发请求）
     API-->>SWR: 200 data + meta.applied
     SWR-->>FE: 结果渲染；Chip 用 applied 精确回显
     Note over FE,URL: 任何筛选/排序变更重复 ②~④；<br/>刷新/分享时 loader 从 URL 反向初始化
@@ -191,7 +191,7 @@ stateDiagram-v2
 
 | 参数 | 类型 | 语法 / 取值 | 语义 |
 | --- | --- | --- | --- |
-| `search` | string ≤ 64 | 任意词（`%` `_` 转义） | 标题（`name`）/ 编号（`sequence_id` 支持 `RBT-128` 与 `128`）/ 描述 stripped 三列模糊；两阶段（§2.2） |
+| `q` | string ≤ 64 | 任意词（`%` `_` 转义） | 标题（`name`）/ 编号（`sequence_id` 支持 `RBT-128` 与 `128`）/ 描述 stripped 三列模糊；两阶段（§2.2） |
 | `state_id` | UUID 列表 | 逗号分隔 | OR：命中任一状态 |
 | `type_id` | UUID 列表 | 逗号分隔 | OR |
 | `priority` | enum 列表 | `none,low,medium,high,urgent` | OR |
@@ -202,7 +202,7 @@ stateDiagram-v2
 | `order_by` | 单字段 | `±{created_at,updated_at,sequence_id,priority,target_date,sort_order}` | 前缀 `-` 降序；默认 `-created_at` |
 | `per_page` / `cursor` | int ≤ 100 / 游标串 | — | 分页（[`api-conventions.md`](../architecture/api-conventions.md) §6） |
 
-**组合语义**：不同参数之间恒为 AND；同参数多值恒为 OR。`search` 的多列 OR 在括号内自成一组后再与外部 AND（§4.3 实现中的括号是常见缺陷点，FLT-11 守护）。
+**组合语义**：不同参数之间恒为 AND；同参数多值恒为 OR。`q` 的多列 OR 在括号内自成一组后再与外部 AND（§4.3 实现中的括号是常见缺陷点，FLT-11 守护）。
 
 ### 2.6 业务规则表
 
@@ -211,7 +211,7 @@ stateDiagram-v2
 | BR-01 | 未知查询参数忽略不报错；已知参数**语法**非法返回 400 | FilterSet | 400 + 子码 `INVALID` |
 | BR-02 | 全部查询在 `accessible_by(user)` + `project_id` 作用域之上叠加（行级过滤先于业务过滤） | ViewSet `get_queryset` | — |
 | BR-03 | 默认排除 `archived_at IS NOT NULL`（P1 无归档功能，防御式）与软删除 | QuerySet | — |
-| BR-04 | `search` 长度 ≤ 64；内部 `%` `_` 转义；不使用正则（杜绝 ReDoS 与通配注入） | Serializer | 400 + 子码 `TOO_LONG` |
+| BR-04 | `q` 长度 ≤ 64；内部 `%` `_` 转义；不使用正则（杜绝 ReDoS 与通配注入） | Serializer | 400 + 子码 `TOO_LONG` |
 | BR-05 | `priority` 排序权重 `urgent(5) > high(4) > medium(3) > low(2) > none(1)`，`Case/When` 注解实现，禁字典序 | ORM | — |
 | BR-06 | `order_by` 仅白名单字段；非法值**回退默认** `-created_at` 并在 `meta.warning` 提示（静默忽略排序会让用户看到错误顺序却无提示——与未知筛选参数的忽略策略刻意不同） | FilterSet | 200 + warning |
 
@@ -231,7 +231,7 @@ stateDiagram-v2
 | 枚举值非法 | `priority=abc` | 400 `VALIDATION_ERROR` + `INVALID` | 筛选器红框（仅直连场景；UI 下拉不可能产出） | — |
 | 日期语法错 | `target_date=2026/09/01;before` | 400 + `INVALID_DATE` | 同上 | — |
 | UUID 语法错 | `state_id=xyz` | 400 + `INVALID_UUID` | 同上 | — |
-| 搜索超长 | `search` > 64 | 400 + `TOO_LONG` | 输入框计数红字 | — |
+| 搜索超长 | `q` > 64 | 400 + `TOO_LONG` | 输入框计数红字 | — |
 | 多值超限 | 21 个 id | 400 + `TOO_LARGE` | 多选器上限拦截 | — |
 | 游标损坏 | `cursor` 乱码 | 400 `VALIDATION_INVALID_CURSOR` | 静默回第一页 | 解码失败统一该码 |
 | 排序字段非法 | `order_by=secret` | 200 + `meta.warning` | Toast「已按默认排序」 | 回退默认（BR-06） |
@@ -243,8 +243,8 @@ stateDiagram-v2
 | 边界场景 | 限制值 | 超出处理方式 |
 | --- | --- | --- |
 | 单参数多值数 | 20 | 400 + `TOO_LARGE` |
-| `search` 长度 | 64 | 400 + `TOO_LONG` |
-| `search` 为纯通配符 `%` | — | 转义后按字面量匹配（等价空条件） |
+| `q` 长度 | 64 | 400 + `TOO_LONG` |
+| `q` 为纯通配符 `%` | — | 转义后按字面量匹配（等价空条件） |
 | 结果集 | 游标不跳页 | 只能顺序「加载更多」 |
 | 短词搜索 | 1~2 字符 | 仅标题前缀匹配（§2.2 两阶段） |
 | `me` 展开 | 未登录调用 | 401（登录域拦截，业务层不触达） |
@@ -302,12 +302,14 @@ stateDiagram-v2
 │ ☑ 紧急  ⚑ #EF4444   │
 │ ☑ 高    ⚑ #F59E0B   │
 │ ☐ 中    ⚑ #3B82F6   │
-│ ☐ 低    ⚑ #9CA3AF   │
-│ ☐ 无              │
+│ ☐ 低    ⚑ #10B981   │
+│ ☐ 无    ⚑ #9CA3AF   │
 ├─────────────────────┤
 │ 仅看我的任务          │ ← assignee_ids=me 快捷
 └─────────────────────┘
 ```
+
+五档色值注册表以 `BOARD-002` §3.2 为准（urgent `#EF4444` / high `#F59E0B` / medium `#3B82F6` / low `#10B981` / none `#9CA3AF`）。
 
 选项数据源：类型 / 状态 / 标签来自 `TASK-002` 端点（SWR 缓存）；负责人来自 `PROJ-002` 成员列表。多选确认即生效（无「应用」按钮——离散值语义）。
 
@@ -315,7 +317,7 @@ stateDiagram-v2
 
 | 交互动作 | 触发方式 | 反馈效果 | 加载态 / 空态 |
 | --- | --- | ---| --- |
-| 搜索 | 输入防抖 300ms | URL `?search=` 更新；结果骨架 300ms | 无结果空态 + 清除建议 |
+| 搜索 | 输入防抖 300ms | URL `?q=` 更新；结果骨架 300ms | 无结果空态 + 清除建议 |
 | 筛选选择 | 下拉勾选 | Chip 划入工具条；结果即时刷新（SWR key = URL） | — |
 | Chip 移除 | 点 ✕ | 单条件反查（其余条件保留） | — |
 | 清空全部 | 链接按钮 | 回默认列表；URL 参数清空 | — |
@@ -366,14 +368,14 @@ stateDiagram-v2
 | `state_id` 筛选 | `state_id IN (…)` | `idx_issue_proj_state_sort` 前缀 | P0 已建 |
 | `type_id` 筛选 | `issue_type_id IN (…)` | `idx_issue_proj_type` | P0 已建 |
 | `priority` 筛选 | `priority IN (…)` | `priority` 单列 B-Tree | P0 已建 |
-| `search` 搜索（≥3 字符） | `name ILIKE OR description_stripped ILIKE`（含 `sequence_id` 精确匹配） | `idx_issue_name_trgm` ∪ `idx_issue_desc_trgm`（GIN trgm 双列） | `idx_issue_desc_trgm` P0 已建；`idx_issue_name_trgm` **P1 新建**（见下） |
-| `search` 搜索（1~2 字符） | `name ILIKE 'x%'` | `name` 前缀（B-Tree 可用） | P0 已建 |
+| `q` 搜索（≥3 字符） | `name ILIKE OR description_stripped ILIKE`（含 `sequence_id` 精确匹配） | `idx_issue_name_trgm` ∪ `idx_issue_desc_trgm`（GIN trgm 双列） | `idx_issue_desc_trgm` P0 已建；`idx_issue_name_trgm` **P1 新建**（见下） |
+| `q` 搜索（1~2 字符） | `name ILIKE 'x%'` | `name` 前缀（B-Tree 可用） | P0 已建 |
 | `label_id` 筛选 | `labels__id__in`（join `issue_labels`） | `uniq_issue_label`（issue 前缀）+ label 侧 PK | P0 已建 |
 | `assignee_ids` 筛选 | `assignees__id__in`（join `issue_assignees`） | `idx_assignee_issue` | P0 已建 |
 | `target_date` 比较 | `target_date < / > / =` | `target_date` 单列索引 | P0 已建 |
 | 计数 annotate | `Count("sub_issues", distinct=True)` | `idx_issue_parent` | P0 已建 |
 
-**P1 新增 DDL：`idx_issue_name_trgm`**（架构 `unified-issue-model.md` §2.8 未声明，P1 首次点亮 `search` 标题列覆盖能力）：
+**P1 新增 DDL：`idx_issue_name_trgm`**（架构 `unified-issue-model.md` §2.8 未声明，P1 首次点亮 `q` 标题列覆盖能力）：
 
 ```sql
 -- apps/api/plane/db/migrations/0003_issue_name_trgm.py
@@ -409,7 +411,7 @@ class Migration(migrations.Migration):
 #### 4.2.1 组合查询（典型请求）
 
 ```http
-GET /api/v1/workspaces/acme/projects/9d8e…/issues/?search=登录&type_id=9d1e…&priority=high,urgent&assignee_ids=me&target_date=2026-09-07;before&order_by=-priority&per_page=100 HTTP/1.1
+GET /api/v1/workspaces/acme/projects/9d8e…/issues/?q=登录&type_id=9d1e…&priority=high,urgent&assignee_ids=me&target_date=2026-09-07;before&order_by=-priority&per_page=100 HTTP/1.1
 ```
 
 **成功响应 `200`**
@@ -429,7 +431,7 @@ GET /api/v1/workspaces/acme/projects/9d8e…/issues/?search=登录&type_id=9d1e�
     "next_page_results": true, "prev_page_results": false,
     "count": 100, "total_count": 187, "total_pages": 2, "page": 1, "per_page": 100,
     "applied": {
-      "search": "登录", "type_id": ["9d1e…"], "priority": ["high", "urgent"],
+      "q": "登录", "type_id": ["9d1e…"], "priority": ["high", "urgent"],
       "assignee_ids": ["6c7d…"], "target_date": "2026-09-07;before",
       "order_by": "-priority"
     },
@@ -480,7 +482,7 @@ GET /api/v1/workspaces/acme/projects/9d8e…/issues/?search=登录&type_id=9d1e�
 #### 4.2.3 翻页（第二页）
 
 ```http
-GET …/issues/?search=登录&…&cursor=100:1:0&per_page=100 HTTP/1.1
+GET …/issues/?q=登录&…&cursor=100:1:0&per_page=100 HTTP/1.1
 ```
 
 `meta.next_cursor = "50:2:0"`；`total_count` 恒可复用（同 key 结果集未变时 SWR 缓存计数）。
@@ -513,7 +515,7 @@ class IssueFilterSet(BaseFilterSet):
     组装原则：
       - 跨参数 AND（&= 逐条叠加）
       - 同参数多值 OR（__in）
-      - search 的多列 OR 自成括号组（防 OR 短路其他条件 —— FLT-11）
+      - q 的多列 OR 自成括号组（防 OR 短路其他条件 —— FLT-11）
     """
 
     def build_query(self, params: dict) -> tuple[Q, dict]:
@@ -562,9 +564,9 @@ class IssueFilterSet(BaseFilterSet):
             applied["target_date"] = raw_date
 
         # ---- 关键词（两阶段 + 转义，§2.2 / BR-04）----
-        if (keyword := (params.get("search") or "").strip()):
+        if (keyword := (params.get("q") or "").strip()):
             if len(keyword) > MAX_Q_LENGTH:
-                raise field_error("search", "TOO_LONG", f"关键词最长 {MAX_Q_LENGTH} 字符")
+                raise field_error("q", "TOO_LONG", f"关键词最长 {MAX_Q_LENGTH} 字符")
             esc = self.escape_like(keyword)
             # 搜索覆盖 name / sequence_id / description_stripped 三列（架构 §5.5）
             seq_match = None
@@ -579,7 +581,7 @@ class IssueFilterSet(BaseFilterSet):
                 text_match = Q(name__istartswith=esc)   # 短词：仅标题前缀
             match = text_match | seq_match if seq_match is not None else text_match
             q &= match
-            applied["search"] = keyword
+            applied["q"] = keyword
 
         return q, applied
 
@@ -640,7 +642,7 @@ class IssueFilterSet(BaseFilterSet):
 
     @staticmethod
     def escape_like(s: str) -> str:
-        """转义 LIKE 通配符（BR-04：search 永远是字面量，杜绝 % 注入与 ReDoS）。"""
+        """转义 LIKE 通配符（BR-04：q 永远是字面量，杜绝 % 注入与 ReDoS）。"""
         return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 ```
 
@@ -668,9 +670,9 @@ def list(self, request, *args, **kwargs):
     return success_response(data, meta=meta)
 ```
 
-### 4.4 执行计划详解（`search` 搜索的索引验证）
+### 4.4 执行计划详解（`q` 搜索的索引验证）
 
-PERF-06 的判定基准。以「`search=登录` + `priority=high` + 项目作用域」为例：
+PERF-06 的判定基准。以「`q=登录` + `priority=high` + 项目作用域」为例：
 
 ```sql
 EXPLAIN (ANALYZE, BUFFERS)
@@ -718,7 +720,7 @@ import { action, computed, makeObservable, observable } from "mobx";
 
 /** URL query ↔ Store 双向绑定；Store 是 URL 的派生物（§1.3 决策 1）。 */
 export class IssueListViewStore {
-  search = "";                                  // 对应 URL 参数 ?search=
+  search = "";                                  // 对应 URL 参数 ?q=
   filters: Record<string, string[]> = {};   // state_id / type_id / priority / label_id / assignee_ids / created_by
   targetDate = "";                          // "2026-09-07;before"
   orderBy = "-created_at";
@@ -737,7 +739,7 @@ export class IssueListViewStore {
   /** 归一化参数顺序 → query 串（同状态必同串 → SWR 缓存命中稳定） */
   get queryKey(): string {
     const params = new URLSearchParams();
-    if (this.search) params.set("search", this.search);
+    if (this.search) params.set("q", this.search);
     for (const key of Object.keys(this.filters).sort()) {
       if (this.filters[key].length) params.set(key, this.filters[key].join(","));
     }
@@ -850,7 +852,7 @@ export const useIssueList = (ws?: string, pid?: string) => {
 | FLT-08 | 多值超限 | 21 个 id | 400 + `TOO_LARGE` |
 | FLT-09 | 未知参数 | `?foo=1` | 200；`meta.ignored_params=["foo"]` |
 | FLT-10 | 作用域优先 | 非成员带任意筛选 | 404（BR-02 先于业务筛选） |
-| FLT-11 | **search 括号语义** | `search=500&priority=high` | 仅返回「(标题或描述含 500) 且 优先级高」——OR 不短路其他条件 |
+| FLT-11 | **q 括号语义** | `q=500&priority=high` | 仅返回「(标题或描述含 500) 且 优先级高」——OR 不短路其他条件 |
 | FLT-12 | M2M join 去重 | 任务挂 2 标签且同时筛 label+assignee | 无重复行（`.distinct()`） |
 | FLT-13 | 软删除排除 | 删 1 条后筛选 | 不出现 |
 | FLT-14 | 归档防御 | 手工置 `archived_at` | 不出现（BR-03） |
@@ -859,15 +861,15 @@ export const useIssueList = (ws?: string, pid?: string) => {
 
 | # | 用例 | 输入 | 预期 |
 | --- | --- | --- | --- |
-| SRCH-01 | 标题命中 | `search=登录` | 标题含词任务返回 |
+| SRCH-01 | 标题命中 | `q=登录` | 标题含词任务返回 |
 | SRCH-02 | **描述命中** | 标题无「413」描述有 | 命中（≥3 字符两列搜索） |
-| SRCH-03 | 短词仅标题前缀 | `search=50`（2 字符） | 仅标题 `50` 开头命中；描述不参与 |
-| SRCH-04 | LIKE 注入 | `search=%'; DROP TABLE issues--` | 字面量匹配 0 行；库完好（BR-04） |
-| SRCH-05 | 纯通配符 | `search=%` | 转义后按字面量，等价空条件 |
+| SRCH-03 | 短词仅标题前缀 | `q=50`（2 字符） | 仅标题 `50` 开头命中；描述不参与 |
+| SRCH-04 | LIKE 注入 | `q=%'; DROP TABLE issues--` | 字面量匹配 0 行；库完好（BR-04） |
+| SRCH-05 | 纯通配符 | `q=%` | 转义后按字面量，等价空条件 |
 | SRCH-06 | 超长 | 65 字符 | 400 + `TOO_LONG` |
-| SRCH-07 | 与筛选组合 | `search=500&priority=high` | AND（同 FLT-11） |
-| SRCH-08 | 大小写 | `search=Docker` / `search=docker` | 均命中（ILIKE） |
-| SRCH-09 | 中文关键词 | `search=导出` | trigram 命中 |
+| SRCH-07 | 与筛选组合 | `q=500&priority=high` | AND（同 FLT-11） |
+| SRCH-08 | 大小写 | `q=Docker` / `q=docker` | 均命中（ILIKE） |
+| SRCH-09 | 中文关键词 | `q=导出` | trigram 命中 |
 
 ### 5.3 排序（ORD-*）
 
@@ -897,10 +899,10 @@ export const useIssueList = (ws?: string, pid?: string) => {
 | --- | --- | --- | --- |
 | PERF-01 | 单维筛选 | 单项目 1 万任务、描述均值 2KB | 任一单筛选 P95 < 120ms（50 次采样） |
 | PERF-02 | 组合筛选 | 同上 + 六维组合 | P95 < 200ms |
-| PERF-03 | `search` 搜索（≥3 字符） | 同上 | P95 < 300ms（trigram 命中） |
+| PERF-03 | `q` 搜索（≥3 字符） | 同上 | P95 < 300ms（trigram 命中） |
 | PERF-04 | 短词前缀 | 同上 | P95 < 120ms |
 | PERF-05 | 查询数 | `assertNumQueries` | ≤ 5 且与结果数无关（含 annotate 计数） |
-| PERF-06 | 执行计划 | `EXPLAIN (ANALYZE, BUFFERS)` `search` 查询 | `idx_issue_desc_trgm` Bitmap Index Scan 出现（非 Seq Scan） |
+| PERF-06 | 执行计划 | `EXPLAIN (ANALYZE, BUFFERS)` `q` 查询 | `idx_issue_desc_trgm` Bitmap Index Scan 出现（非 Seq Scan） |
 
 ### 5.6 性能数据集种子（PERF 前置）
 
@@ -1039,7 +1041,7 @@ Ones 的筛选是可视化组合面板：AND/OR 条件树 + 条件分组嵌套 +
 | `ruff` / `mypy` | 零 error；`filters/issue.py` 全量注解 |
 | `oxlint` / `tsc --noEmit` | 零 error；Store 无 `any` |
 | 覆盖率 | §5.9 |
-| Code Review 必查 | ① `search` 的 OR 括号独立成组（FLT-11）；② M2M 筛选后 `.distinct()`；③ 排序链尾 `-id`；④ `escape_like` 应用于所有 ILIKE 输入；⑤ 未知参数不报错但进 `ignored_params`；⑥ 白名单与索引清单同步（新增可筛字段必须先有索引——[`api-conventions.md`](../architecture/api-conventions.md) §5.3 规则） |
+| Code Review 必查 | ① `q` 的 OR 括号独立成组（FLT-11）；② M2M 筛选后 `.distinct()`；③ 排序链尾 `-id`；④ `escape_like` 应用于所有 ILIKE 输入；⑤ 未知参数不报错但进 `ignored_params`；⑥ 白名单与索引清单同步（新增可筛字段必须先有索引——[`api-conventions.md`](../architecture/api-conventions.md) §5.3 规则） |
 
 ### 7.4 交付物清单
 

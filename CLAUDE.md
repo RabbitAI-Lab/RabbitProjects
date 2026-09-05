@@ -30,23 +30,27 @@ API 启动需要环境变量：`DATABASE_URL=postgresql://rp:rp@localhost:5432/r
 ## 测试（本地全部跑通后才入库）
 
 ```bash
-# 1) 接口端到端（10a 删除 + 10b 越权，覆盖 TC-PROJ1-007/AUTH3-001）
-python3 tests/jmeter/sprint-0-flow.py [http://localhost:8000]
+# 1) 接口端到端 —— 两条流程并列，都是 CI gate
+python3 tests/jmeter/sprint-0-flow.py [http://localhost:8000]   # 10 步（10a 删除 + 10b 越权）
+python3 tests/jmeter/sprint-1-flow.py [http://localhost:8000]   # 信封 C1 / 权限快照 / sort_order / 搜索收藏归档 / 隔离
+python3 tests/jmeter/api-full-coverage.py                       # 端点 × 方法 × 正负例 契约矩阵
 
-# 2) L1/L2 静态检查（36 条命令断言：INFRA/AUTH3/TASK/BOARD）
+# 2) L1/L2 静态检查（45 条命令断言：INFRA/AUTH3/TASK/BOARD + sprint-1 的信封/权限矩阵集合断言）
 bash tests/run-ci-checks.sh
 
 # 3) Playwright e2e（web dev server 需已在 3001；API 在 8000）
-E2E_NO_SERVER=1 pnpm exec playwright test   # auth.spec.ts(3) + coverage.spec.ts(4)
+E2E_NO_SERVER=1 pnpm exec playwright test   # auth.spec.ts + coverage.spec.ts + interactions.spec.ts + parity.spec.ts
 
 # 4) JMeter 性能压测
 export JAVA_HOME=~/.sdkman/candidates/java/17.0.20-kona
 jmeter -n -t tests/jmeter/sprint-0-flow.jmx -l result.jtl -e -o report
 ```
 
+**契约常量唯一定义点：`tests/jmeter/_contract.py`**（HTTP 状态码表 / 错误码 / 信封字段路径 / `Client` / 断言辅助）。sprint-0 把状态码表写在 `sprint-0-flow.py` 顶部，但该脚本无 `__main__` 守卫、一 import 就跑完整条流程，导致「唯一真相源」实际无法复用；新脚本一律 import `_contract`，禁止各自硬编码（ADR-0012 E4）。
+
 PG schema 准备（Django migrate 在 PG 上有已知问题，见下面"坑"）：按 `tests/e2e/PG_README.md` 走 sqlmigrate + 手工建扩展/索引 + `migrate --fake`。
 
-测试用例文档：`docs/sprint-0-poc/test-cases.md`（114 条用例，5 轮评分 ≥9.5 收口）。
+测试用例文档：`docs/sprint-0-poc/test-cases.md`（114 条用例 + **附录 C UI 表面清单 C.1~C.36**，全迭代共用）｜`docs/sprint-1-mvp/test-cases.md`（sprint-1 用例，含回归锚点附录）。
 
 ## 已知坑（踩过的，别再踩）
 
@@ -60,13 +64,19 @@ PG schema 准备（Django migrate 在 PG 上有已知问题，见下面"坑"）�
 8. **tsup**：必须显式入口 `tsup src/index.ts --dts --format esm`（默认 cjs 与 exports 不符）。
 9. **advisory lock**：`acquire_project_lock` 在非 PG 后端（SQLite dev）直接跳过；CI/生产走 PG 不受影响。
 10. **GateGuard hook**：本仓库 Bash/Edit/Write 首次调用会要求陈述事实，按提示输出后重试即可。
+11. **禁止用 `document.cookie` 嗅探 `sessionid`**：Django 默认 `SESSION_COOKIE_HTTPONLY=True`，前端 JS **恒读不到**，判据永远为 false —— 曾让 `labels-admin` 的 `load()` 直接短路（标签列表永远空、新建后也不刷新）。要判断「有无会话」请用 `apps/web/app/services/session-probe.ts` 的 `rp_session` 探针 cookie（SessionStore 在登录/bootstrap 成功时写、登出或 bootstrap 失败时清）。
+12. **Django `reverse()` 必须带 `app:` 命名空间**：`plane/urls.py` 是 `include((..., "app"), namespace="app")`，裸名 reverse 必抛 `NoReverseMatch`；一旦外层有 `except Exception: return ""`，错误就被吞成静默空串（附件 `download_url` 曾因此为空 → 下载按钮跳 `/undefined`）。捕获要收窄到 `NoReverseMatch`。
+13. **网关 `/uploads/` 反代是附件直传的必经环节**：presign 返回的是同源 `/uploads/<bucket>/<key>?X-Amz-…`，缺 Nginx `location ^~ /uploads/`（生产）或 Vite `/uploads` proxy（dev）就会静默 404；且必须 `Host $proxy_host` / `changeOrigin: true`，因为 SigV4 把 host 纳入签名，透传浏览器 Host 会让 MinIO 判签名不匹配。
 
 ## 文档体系（改代码前先读对应文档）
 
 - `docs/architecture/`（7 份）：技术栈/目录/API 规范/数据模型/权限——全局约束
 - `docs/sprint-N-*/`：每个功能一份规格文档（含 §3 UI 规格、§4 API 契约）；sprint-0 有 `test-cases.md`
-- `docs/adr/`：实现偏差登记（ADR-0001，8 项）——实现与文档不一致时**先登记再继续**
-- `docs/design/sprint-0-hifi-prototype.html`：冻结的高保真原型，前端实现的视觉/交互验收基准
+- `docs/adr/`：实现偏差登记——实现与文档不一致时**先登记再继续**
+  - ADR-0001（Sprint 0 偏差，8 项）｜ADR-0010（UI parity 五步纪律）
+  - ADR-0011（Sprint 1 跨文档 UI 矛盾裁决，20 项定稿）｜ADR-0012（Sprint 1 实现偏差，A~E 五类）
+- `docs/design/sprint-0-hifi-prototype.html`：Sprint 0 冻结原型
+- `docs/design/sprint-1-hifi-prototype.html`：**Sprint 1 冻结原型（FROZEN 2026-09-04）**，前端实现的视觉/交互验收基准；头部含冻结记录（审计范围 / 误报复核 / 实补 8 项缺口）
 - `docs/plan/文档质量评审状态.md`：文档评审 master 记录
 - 文档质量门槛：5 维度（完整性/一致性/可实施性/可测性/清晰度）全部 ≥9.5
 
@@ -79,10 +89,13 @@ PG schema 准备（Django migrate 在 PG 上有已知问题，见下面"坑"）�
 
 ### 测试脚本规范（写 e2e/接口/静态检查时强制）
 
-- **API 真相源唯一**：`tests/jmeter/sprint-0-flow.py` 是后端契约的事实来源；`tests/e2e/no-console-errors.ts` 的 `API_TRUTH` 镜像同一份契约（status 码 + 字段名 + 错误码常量）。**所有 e2e 与静态断言必须 import 这两份，禁止各自硬编码**——双源必漂
+- **API 真相源唯一**：`tests/jmeter/_contract.py` 是后端契约的事实来源（HTTP 状态码 + 错误码 + 信封字段路径）；`tests/e2e/no-console-errors.ts` 的 `API_TRUTH` 镜像同一份契约。**所有接口脚本、e2e 与静态断言必须 import 这两份，禁止各自硬编码**——双源必漂。（sprint-0 曾把该表放在 `sprint-0-flow.py` 顶部，但那个脚本没有 `__main__` 守卫、一 import 就跑完整条流程，实际无法被复用，见 ADR-0012 E4）
 - **Playwright spec 必装 console guard**：`attachConsoleGuard(page)` + `expect.soft(errors).toEqual([])`（见 `no-console-errors.ts` 白名单示例：vite HMR / DevTools 下载提示）
 - **跨 test 状态边界**：每个 `test.describe` 必须自带 `beforeEach`/`afterEach`——`signOut/clearCookies/重置 store` 显式调用，**禁止依赖 Worker 复用 page 自动清理**（实测根因：跨 spec 缓存 `isBootstrapped=true`，下一个 spec 守卫直接 return 不重检）
 - **Playwright ≥ 1.62 + reporter = line**：1.54/1.56 的 list reporter 在 `expect.soft` 失败时 NPE（`base.js:320 undefined.startsWith`），CI/本地都改用 line 避开；CI 环境 reporter 切 `github`
 - **性能压测 vs 端到端分清**：`tests/jmeter/sprint-0-flow.py` 是 CI gate（10 步单线程）；`tests/jmeter/sprint-0-flow.jmx` 是性能压测（多线程 / 持续时间 / 报告），不要混用
 - **加/移 SerializerMethodField 必加 Meta.fields**：GET 路径不触发 `get_field_names` assert，PATCH/POST 路径触发 500（教训 #3）
 - **dropdown 全局点击监听禁 document click**：改 `mousedown` 阶段 + `target.closest('[data-sb-scope="..."]')` 判范围，破坏性操作（登出/删账户）继续用 `location.href` 全量重载（教训 #4）
+- **行为断言三件套（sprint-1 验收教训）**：`toBeVisible` 只证明渲染、不证明接线。任何交互控件的测试覆盖 = ①点击/输入 → ②`waitForResponse` 断言对应 PATCH/POST 发出且 2xx → ③UI 回读确认新值（重开抽屉/刷新后仍在更好）。存在性断言只能算 parity，不算行为测试。
+- **禁止空转（vacuous）断言**：不得用不存在的资源做被测路径的断言（如 `goto("/__no_such_ws__/")` 后断 URL 不变——真实代码路径根本没执行）；需要登录态的页面必须显式登录（先 `clearCookies`），禁止依赖前序 spec 泄漏的会话。CI 用 grep 扫 `__no_such` / `__bogus` 类资源在**非错误分支测试**里的使用（TC-INF4-016）。
+- **演示数据健康检查**：演示账号是验收环境也是测试环境。`scripts/seed_demo_history.py` 保证 stats 非零 + 趋势非平；C.35 golden-path spec 断言真实数据非空。改演示数据结构时两者必须同步。

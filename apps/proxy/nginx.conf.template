@@ -67,8 +67,24 @@ http {
             proxy_buffering off;
         }
 
+        # FILE-001 §4.7 / AUTH-004 §4.2.2：对象存储直传（附件 / 头像）。
+        # presign 返回的是同源 /uploads/<bucket>/<key>?X-Amz-…，
+        # 缺这段会落到 `location /` 被 web_upstream 吃掉 → 上传静默失败。
+        # Host 必须透传上游主机名：SigV4 把 host 纳入签名，改写成 $host 会 403。
+        location ^~ /uploads/ {
+            client_max_body_size ${CLIENT_MAX_BODY_SIZE};
+            proxy_set_header Host $proxy_host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_pass http://minio_upstream/;
+            proxy_redirect off;
+            proxy_buffering off;
+            proxy_request_buffering off;
+        }
+
         location ^~ /god-mode { proxy_pass http://admin_upstream; include /etc/nginx/snippets/common.conf; }
-        location ^^ /spaces   { proxy_pass http://space_upstream; include /etc/nginx/snippets/common.conf; }
+        location ^~ /spaces   { proxy_pass http://space_upstream; include /etc/nginx/snippets/common.conf; }
         location /            { proxy_pass http://web_upstream; include /etc/nginx/snippets/common.conf; }
     }
 }

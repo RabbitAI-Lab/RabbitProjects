@@ -53,6 +53,13 @@ class Issue(BaseModel):
     sequence_id = models.IntegerField(default=1, verbose_name="项目内序列号")
     sort_order = models.FloatField(default=65535.0, verbose_name="排序值")
 
+    # P1 新增（FILE-001 §7.1）：多态 FileAsset 方案的卡片计数冗余列；F()+1 / F()-1 维护。
+    attachment_count = models.IntegerField(
+        default=0,
+        verbose_name="附件计数",
+        help_text="F() 维护，列表 / 看板卡片徽标消费（FILE-001 §4.1 §2.3 BR-09）",
+    )
+
     labels = models.ManyToManyField(
         "db.Label",
         through="IssueLabel",

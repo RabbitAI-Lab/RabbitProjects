@@ -34,6 +34,12 @@ def create_issue(*, project_id: uuid.UUID, actor_id: uuid.UUID, payload: dict):
         project_id=project_id,
         created_by_id=actor_id,
         sequence_id=next_sequence_id(project_id),
-        sort_order=calculate_sort_order(prev_order=None, next_order=payload.pop("next_sort_order", None)),
+        # 列尾追加需要 prev_order（= 当前最大 sort_order）；只传 next_order 时
+        # calculate_sort_order 两参皆 None，会让每个任务都拿到常量 65535，
+        # BR-8「末任务追加 = 列尾」失效（sort_order 排序退化为任意序）。
+        sort_order=calculate_sort_order(
+            prev_order=payload.pop("prev_sort_order", None),
+            next_order=payload.pop("next_sort_order", None),
+        ),
         **payload,
     )

@@ -1,11 +1,12 @@
+#!/usr/bin/env python3
 # API 真相源（与 tests/e2e/no-console-errors.ts 的 API_TRUTH 镜像——跨语言同源 grep 锁定）
 # 状态码变更必须同步：TS 端的 API_TRUTH + 本表 + 后端契约
 HTTP = {
   "OK":          200,   # GET 资源正常
   "CREATED":     201,   # POST 建资源
   "NO_CONTENT":  204,   # DELETE / sign-out 无 body
-  "FORBIDDEN":   401,   # DRF 未认证 401（CSRF/未登录）
-  "UNAUTHORIZED": 403,   # 越权 403（DRF SessionAuth 拒绝）
+  "UNAUTHORIZED": 401,  # DRF 未认证（CSRF/未登录）
+  "FORBIDDEN":   403,   # 越权（角色不足）
   "NOT_FOUND":   404,   # 越权 404（AUTH-003 防 ID 枚举）
   "CONFLICT":    409,   # identifier 重复
   "TOO_MANY":    429,   # 限流
@@ -17,7 +18,12 @@ HTTP = {
 前置：API 已启动并连接真实 PG；JMeter jmx 在 tests/jmeter/sprint-0-flow.jmx（结构已校验）。
 设计原因：JMeter 5.6 + CSRF/cookie 在跨 sampler 时流转有边界，Python 等价脚本可获得
 100% 一致的业务断言，同时 jmx 保留供后续性能压测复用。"""
-import sys, json, time, urllib.request, urllib.parse, http.cookiejar
+import http.cookiejar
+import json
+import sys
+import time
+import urllib.parse
+import urllib.request
 
 BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000").rstrip("/")
 cj = http.cookiejar.CookieJar()
@@ -44,7 +50,7 @@ def step(label, fn):
     if not (HTTP["OK"] <= code < 300):
         print(f"  ✗ FAIL: {body}")
         raise SystemExit(1)
-    print(f"  ✓ ok")
+    print("  ✓ ok")
     return body
 
 
@@ -79,6 +85,7 @@ step("04 me", lambda: req("GET", "/api/v1/users/me/"))
 # 5) 建项目（identifier 唯一化避免同工作区重复 PYT 撞 409；新建账户无项目也走此步）
 csrf = fresh_csrf()
 import time
+
 proj_id = f"PYT{int(time.time()) % 10000:04d}"[:5]
 proj = step("05 create-project", lambda: req(
     "POST", f"/api/v1/workspaces/{ws}/projects/",

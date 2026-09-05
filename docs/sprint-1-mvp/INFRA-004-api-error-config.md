@@ -6,7 +6,7 @@
 | 所属迭代 | Sprint 1：MVP 能力补齐（第 3 周） |
 | 优先级 | P1（MVP 必备级 · **本迭代全部功能文档的公共工程底座**） |
 | 所属模块 | M9-INFRA 基础设施与部署运维 |
-| 文档状态 | 待评审（Draft） |
+| 文档状态 | **已实现**（2026-09-04 · Sprint 1 后端实现落地 · 见 ADR-0012） |
 | 最后更新日期 | 2026-09-01 |
 | 上游依据 | `docs/需求文档.md` §8.2 部署运维 P1 列（统一接口返回格式、全局错误捕获、环境变量配置、基础运行日志）、§五核心技术约束（统一返回格式 + 全局异常捕获） |
 | 前置依赖 | `INFRA-001`（工程骨架与 `packages/types` 生成链路）、`INFRA-002`（Docker Compose 全套服务与 Nginx `apps/proxy`）、`INFRA-003`（Django App 划分与 settings 骨架） |
@@ -310,6 +310,16 @@ sequenceDiagram
 | 反馈按钮 | 仅 500 类错误显示；点击打开反馈 Modal 并预填追踪号（P2 接 Sentry 后附 issue 链接） |
 | 关闭 | 点 ✕ 立即关闭；hover 暂停自动消失计时 |
 
+**反馈 Modal（`FeedbackModal`）最小规格**（反馈按钮的落地件；480px 弹窗）：
+
+| 元素 | 规格 |
+| --- | --- |
+| 标题 | 「问题反馈」 |
+| 只读追踪号 | request_id 前 8 位 `font-mono` 展示 + 📋 复制完整 ULID（预填自触发 Toast / 空态页） |
+| 描述 | `textarea` ≤ 500 字（空文案禁用提交） |
+| 操作 | 「取消」/「提交」 |
+| 提交行为 | 仅前端打一条结构化日志（`plane.app.feedback` channel：追踪号 / 描述 / 页面路由）并 Toast「已记录，感谢反馈」——**无后端端点**，P2 接入 Sentry 时再定上报通道 |
+
 ### 3.3 表单字段错误映射（`useApiFieldErrors`）
 
 ```
@@ -377,7 +387,7 @@ export function useApiFieldErrors(form: UseFormReturn) {
 | `PERM_DENIED` / `PERM_ROLE_INSUFFICIENT` | `lock` | 没有访问权限 | 联系项目管理员为你开通权限后再试 |
 | `SERVER_*` | `server-crash` | 服务暂时不可用 | 请稍后重试；若持续出现，请凭追踪号反馈 |
 
-**路由级与请求级共用**：React Router 的 `ErrorBoundary`（路由级）与业务页面的请求失败空态（请求级）渲染同一组件，仅数据来源不同。
+**路由级与请求级共用**：React Router 的 `ErrorBoundary`（路由级）与业务页面的请求失败空态（请求级）渲染同一组件，仅数据来源不同。与 `AUTH-005` §3.3 路由守卫页（`/403`）的分工：**直达无权 URL → 路由守卫页**（守卫重定向落点，展示具体缺少的权限点）；**页内请求失败的 403 → 本节请求级空态**。
 
 ### 3.5 429 退避提示
 

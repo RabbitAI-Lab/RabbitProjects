@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { useStores } from "../stores";
 import { WorkspaceAPI } from "../services/api";
 import { toast } from "./Toast";
+import { NotificationBell, NotificationDrawer } from "./NotificationDrawer";
 
 const ROLE_LABEL: Record<number, string> = { 20: "所有者", 15: "管理员", 10: "成员", 5: "访客" };
 const hashColor = (id: string) =>
@@ -14,6 +15,9 @@ export function Topbar() {
   const nav = useNavigate();
   const [menu, setMenu] = useState<"switcher" | "avatar" | null>(null);
   const [showTeamModal, setShowTeamModal] = useState(false);
+  // C.34 通知抽屉（COLLAB-001）：铃铛常驻顶栏，未读数经 NotificationDrawer 回写
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [unread, setUnread] = useState(0);
   const cur = session.workspaces.find((x) => x.slug === session.currentWsSlug);
 
   // 点击外部 / Esc 关闭下拉：mousedown 阶段判 target.closest，含下拉容器/触发按钮时保留
@@ -76,6 +80,8 @@ export function Topbar() {
         <span className="h-7 px-2 border border-neutral-200 rounded-md text-xs text-neutral-400 bg-white flex items-center gap-1" title="全局搜索 · Sprint 1+ 交付">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>⌘K
         </span>
+        {/* C.34 铃铛（ADR-0011 #16：工作台与项目内顶栏一致常驻） */}
+        <NotificationBell unread={unread} onOpen={() => setNotifOpen(true)} />
         <div className="relative">
           <button data-sb-scope="topbar-menu" onClick={(e) => { e.stopPropagation(); setMenu(menu === "avatar" ? null : "avatar"); }}
             aria-haspopup="menu" aria-expanded={menu === "avatar"} aria-label="账号菜单"
@@ -105,6 +111,13 @@ export function Topbar() {
       </div>
 
       {showTeamModal && <CreateTeamModal onClose={() => setShowTeamModal(false)} />}
+      {/* C.34 通知抽屉：全局顶栏常驻（ADR-0011 #16），未读数回写铃铛徽标 */}
+      <NotificationDrawer
+        open={notifOpen}
+        onClose={() => setNotifOpen(false)}
+        workspaceSlug={session.currentWsSlug ?? ""}
+        onUnreadChange={setUnread}
+      />
     </header>
   );
 }

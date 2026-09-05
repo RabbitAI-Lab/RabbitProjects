@@ -31,6 +31,14 @@ class User(AbstractUser):
     is_active = models.BooleanField(default=True, db_index=True, verbose_name="是否启用")
     last_login_at = models.DateTimeField(null=True, blank=True, verbose_name="最近登录时间")
     last_workspace_id = models.UUIDField(null=True, blank=True, verbose_name="最近访问的工作空间")
+    # P1 新增（AUTH-004 §4.1.2）：≤500 字符；纯文本（无富文本），列表/提及浮层可截断展示
+    intro = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+        verbose_name="个人简介",
+        help_text="≤500 字符；纯文本（无富文本），列表/提及浮层可截断展示",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     deleted_at = models.DateTimeField(null=True, blank=True, db_index=True)

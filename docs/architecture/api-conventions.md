@@ -642,7 +642,7 @@ GET .../issues/?ordering=-priority,target_date,-created_at
 | 命名格式 | `<分类前缀>_<具体语义>`，全大写 + 下划线 |
 | 稳定性 | 错误码一经发布**永不修改语义、永不复用**；废弃码保留在表中标记 `DEPRECATED` |
 | 唯一性 | 全局唯一，不按端点区分（同一语义在任何端点使用同一码） |
-| 定义位置 | 后端 `plane/utils/error_codes.py`（Python Enum）；前端 `packages/types/src/api/error-codes.ts`（联合类型）。**两者由脚本校验一致性**，不一致则 CI 失败 |
+| 定义位置 | 后端 `plane/base/error_codes.py`（Python Enum）；前端 `packages/types/src/api/error-codes.ts`（联合类型）。**两者由脚本校验一致性**，不一致则 CI 失败 |
 | 客户端契约 | 前端只允许对 `error.code` 做分支；出现 `message` 字符串匹配即视为 Bug |
 
 ### 8.2 认证错误（AUTH_*）→ 401
@@ -1084,7 +1084,7 @@ class FieldLevelPermission(BasePermission):
 ### 10.4 全局异常处理
 
 ```python
-# plane/utils/exception_handler.py
+# plane/base/handlers.py
 def custom_exception_handler(exc: Exception, context: dict) -> Response | None:
     """
     注册为 REST_FRAMEWORK["EXCEPTION_HANDLER"]。

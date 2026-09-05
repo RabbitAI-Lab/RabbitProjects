@@ -127,8 +127,9 @@ project-root/
 │   │   │   ├── workflow/             # 工作流引擎与审批（状态机、条件规则、流转校验）
 │   │   │   ├── analytics/            # 报表聚合查询与缓存
 │   │   │   ├── license/              # 企业版许可校验（P3）
-│   │   │   ├── middleware/           # 请求 ID、审计上下文、异常处理、限流
-│   │   │   ├── utils/                # 分页器、异常处理器、字段选择/展开 mixin
+│   │   │   ├── middleware/           # 请求 ID、审计上下文、限流（INFRA-001 §4.11）
+│   │   │   ├── utils/                # 字段选择/展开 mixin（INFRA-001 §4.11）—— 异常处理/分页器见 base/
+│   │   │   ├── base/                 # 框架层：error_codes 注册表 / handlers（异常处理）/ response / middleware（六件套）/ request_context（INFRA-004 §1.3，sprint-1 命名收口；详见 ADR-0012 A2）
 │   │   │   ├── celery.py             # Celery app 定义（含队列与路由）
 │   │   │   ├── asgi.py
 │   │   │   ├── wsgi.py

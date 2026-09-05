@@ -1,13 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { Topbar } from "../components/Topbar";
 import { ProjectSidebar } from "../components/ProjectSidebar";
 import { ProjectAPI } from "../services/api";
+import { LabelsAdminModal } from "./labels-admin";
 
 export default function ProjectSettings() {
   const { workspaceSlug, projectId } = useParams<{ workspaceSlug: string; projectId: string }>();
   const nav = useNavigate();
   const [loaded, setLoaded] = useState(false);
+  const [showLabels, setShowLabels] = useState(false);
   const [name, setName] = useState("");
   const [identifier, setIdentifier] = useState("");
   const [description, setDescription] = useState("");
@@ -15,13 +17,25 @@ export default function ProjectSettings() {
   const [deleting, setDeleting] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  /** 用户已改动过表单 —— 异步回写不得再覆盖。 */
+  const dirtyRef = useRef(false);
+
   // 加载项目详情回显（修复：原版不拉数据，空字段 + PATCH 空 name 会清空项目名）
   useEffect(() => {
-    ProjectAPI.detail(workspaceSlug!, projectId!).then((r) => {
-      const p = (r as any).data;
-      setName(p.name ?? ""); setIdentifier(p.identifier ?? ""); setDescription(p.description ?? "");
-      setLoaded(true);
-    });
+    let cancelled = false;
+    ProjectAPI.detail(workspaceSlug!, projectId!)
+      .then((r) => {
+        if (cancelled) return;
+        setLoaded(true);
+        // 竞态防护（INT-D2 实测）：详情响应可能晚于用户首次输入到达，
+        // 无条件 setName 会把刚改好的项目名悄悄回滚成服务端旧值 ——
+        // 结果「保存」提交的是旧名字，删除确认框也永远匹配不上。
+        if (dirtyRef.current) return;
+        const p = (r as any).data;
+        setName(p.name ?? ""); setIdentifier(p.identifier ?? ""); setDescription(p.description ?? "");
+      })
+      .catch(() => { if (!cancelled) setLoaded(true); });
+    return () => { cancelled = true; };
   }, [workspaceSlug, projectId]);
 
   async function save() {
@@ -46,7 +60,7 @@ export default function ProjectSettings() {
               <div className="text-[15px] font-semibold mb-3.5">基本信息</div>
               <div className="flex items-center gap-3 mb-3.5">
                 <label htmlFor="st-name" className="w-20 text-[13px] text-neutral-500 shrink-0">项目名称</label>
-                <input id="st-name" className="flex-1 h-9 border border-neutral-300 rounded-md px-2.5" value={name} onChange={(e) => setName(e.target.value)} />
+                <input id="st-name" className="flex-1 h-9 border border-neutral-300 rounded-md px-2.5" value={name} onChange={(e) => { dirtyRef.current = true; setName(e.target.value); }} />
               </div>
               <div className="flex items-center gap-3 mb-3.5">
                 <label htmlFor="st-id" className="w-20 text-[13px] text-neutral-500 shrink-0">项目标识符</label>
@@ -55,13 +69,32 @@ export default function ProjectSettings() {
               </div>
               <div className="flex items-center gap-3 mb-3.5">
                 <label htmlFor="st-desc" className="w-20 text-[13px] text-neutral-500 shrink-0">项目描述</label>
-                <textarea id="st-desc" className="flex-1 border border-neutral-300 rounded-md p-2 text-sm" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
+                <textarea id="st-desc" className="flex-1 border border-neutral-300 rounded-md p-2 text-sm" rows={3} value={description} onChange={(e) => { dirtyRef.current = true; setDescription(e.target.value); }} />
               </div>
               <div className="text-right flex items-center justify-end gap-2">
                 {saved && <span className="text-xs text-emerald-600 inline-flex items-center gap-1">✓ 已保存</span>}
                 <button onClick={save} disabled={!name.trim()} className="h-[34px] px-3.5 bg-brand-500 text-white rounded-md hover:bg-brand-600 disabled:opacity-50">保存更改</button>
               </div>
             </div>
+
+            {/* C.26 标签管理入口（ADR-0011 #13：项目设置页入口之一） */}
+            <div className="bg-white border border-neutral-200 rounded-lg p-5 mb-4">
+              <div className="flex items-center justify-between mb-1.5">
+                <div>
+                  <div className="text-[15px] font-semibold">项目标签</div>
+                  <div className="text-[12px] text-neutral-500 mt-0.5">为该项目配置任务可用的标签集合（如 紧急 / 阻塞 / 后端）。</div>
+                </div>
+                {/* ADR-0011 #13：标签管理是 modal，不单独成页。
+                    原实现 Link 到未注册的 `settings/labels` 路由 → 点进去 404。 */}
+                <button type="button" onClick={() => setShowLabels(true)}
+                        data-sb-scope="settings-open-labels"
+                        className="h-[30px] px-3 bg-brand-500 text-white rounded-md text-[13px] inline-flex items-center hover:bg-brand-600">
+                  管理标签
+                </button>
+              </div>
+              <div className="text-[12px] text-neutral-400 mt-2">点上方「管理标签」打开 720px 弹窗（颜色 / 名称 / 停用 / 引用计数）。</div>
+            </div>
+
             <div className="bg-white border border-red-300 rounded-lg p-5">
               <div className="text-[15px] font-semibold mb-3.5 text-red-700">⚠️ 危险区域</div>
               <div className="text-xs text-neutral-500 mb-3">删除项目将同时删除其下全部任务，此操作不可在界面恢复。</div>
@@ -84,6 +117,9 @@ export default function ProjectSettings() {
           )}
         </main>
       </div>
+      {showLabels && workspaceSlug && projectId && (
+        <LabelsAdminModal workspaceSlug={workspaceSlug} projectId={projectId} onClose={() => setShowLabels(false)} />
+      )}
     </div>
   );
 }

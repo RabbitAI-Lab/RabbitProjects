@@ -2,7 +2,9 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router";
 import { RootStore, StoreProvider } from "./stores";
 import { Toaster } from "./components/Toast";
+import { GlobalErrorBoundary } from "./components/GlobalErrorBoundary";
 import { LoaderFullscreen, ProbeFailed } from "./components/ErrorStates";
+import { hasSessionProbe } from "./services/session-probe";
 import "./styles/app.css";
 
 const root = new RootStore();
@@ -16,11 +18,29 @@ function Guard({ children }: { children?: ReactNode }) {
   const loc = useLocation();
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
-  const allowedPublic = loc.pathname === "/login" || loc.pathname === "/register";
+  // 受保护路由白名单：登录 / 注册 / 403 公共提示页（任何权限上下文都能渲染）
+  // /invite/:token 单独白名单？当前 invite-accept 走 401 时 axios 拦截器跳 /login?next=
+  // 已足够覆盖；把它也加入 allowedPublic 以保证「未登录直达 /invite/bogus」能展示提示。
+  const allowedPublic =
+    loc.pathname === "/login" ||
+    loc.pathname === "/register" ||
+    loc.pathname === "/403" ||
+    loc.pathname === "/labels-admin" ||
+    loc.pathname.startsWith("/invite/");
   useEffect(() => {
     if (allowedPublic) { setReady(true); return; }
-    // 注意：context.clearCookies() 之后 isBootstrapped 仍为 true（不同 test 间复用 store 状态）。
-    // 这里用 user 的存在性做隐式判断：clearCookies 后 isLoggedIn 应为 false。
+    // 规范 ③ 实测根因：内存态 isBootstrapped/isLoggedIn 跨 page 复用，而会话 cookie
+    // 可能已被清（e2e beforeEach / 用户在他标签页退出）。此时旧逻辑直接放行 → 后续请求
+    // 全部 401 → axios 拦截器整页跳 /login，页面表现为「闪 blank 再跳登录」。
+    // 修复：内存态显示已登录但探针 cookie 缺失 → 视为会话失效，重置 store 重走 bootstrap。
+    // 注意：不能嗅探 `sessionid`——它是 HttpOnly，document.cookie 恒读不到（见 session-probe.ts）。
+    const hasSessionCookie = hasSessionProbe();
+    if (root.session.isBootstrapped && root.session.isLoggedIn && !hasSessionCookie) {
+      root.session.isBootstrapped = false;
+      root.session.user = null;
+      root.session.workspaces = [];
+      root.session.currentWsSlug = null;
+    }
     if (root.session.isBootstrapped && root.session.isLoggedIn) return;
     // isBootstrapped=true 但用户不存在（之前 bootstrap 后 signOut / clearCookies）→ 重置
     if (root.session.isBootstrapped && !root.session.user) {
@@ -60,7 +80,10 @@ export default function AppLayout({ children }: { children?: ReactNode }) {
       </head>
       <body className="min-h-screen bg-neutral-50 text-neutral-900 antialiased">
         <StoreProvider value={root}>
-          <Guard>{children ?? <Outlet />}</Guard>
+          {/* C.36 路由级错误兜底（INFRA-004 §3.4）：渲染异常统一走错误空态页 */}
+          <GlobalErrorBoundary>
+            <Guard>{children ?? <Outlet />}</Guard>
+          </GlobalErrorBoundary>
           <Toaster />
         </StoreProvider>
       </body>

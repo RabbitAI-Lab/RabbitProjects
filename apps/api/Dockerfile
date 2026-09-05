@@ -11,7 +11,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH" \
-    DJANGO_SETTINGS_MODULE=plane.settings.production
+    DJANGO_SETTINGS_MODULE=plane.settings.prod
 RUN apt-get update && apt-get install -y --no-install-recommends libpq5 curl \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r rp && useradd -r -g rp -u 10001 rp

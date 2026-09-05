@@ -123,7 +123,8 @@ test("C.1-C.8 全屏字段级 parity 扫描", async ({ page }) => {
   await expect.soft(page.locator("aside").getByText(/PRT-\d+/)).toBeVisible();
   await expect.soft(page.getByText("状态", { exact: true })).toBeVisible();
   await expect.soft(page.getByText("负责人", { exact: true })).toBeVisible();
-  await expect.soft(page.getByText("截止时间", { exact: true })).toBeVisible();
+  // C.23（TASK-002 §3.3）：七项属性将「截止时间」拆为 开始/截止 双字段
+  await expect.soft(page.getByText("截止", { exact: true })).toBeVisible();
   await page.locator("aside").getByRole("button", { name: "关闭" }).click();
 
   /* ── C.5 任务列表 ── */

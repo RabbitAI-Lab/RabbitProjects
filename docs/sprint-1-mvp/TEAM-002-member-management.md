@@ -6,7 +6,7 @@
 | 所属迭代 | Sprint 1：MVP 能力补齐（第 3 周） |
 | 优先级 | P1（MVP 必备级 · **本迭代协作能力的第一前置**） |
 | 所属模块 | M2-TEAM｜团队管理 |
-| 文档状态 | 待评审（Draft） |
+| 文档状态 | **已实现**（2026-09-04 · Sprint 1 后端实现落地 · 见 ADR-0012） |
 | 最后更新日期 | 2026-09-01 |
 | 上游依据 | `docs/需求文档.md` §3.2（批量添加成员、移除成员、退出团队、团队内角色分配）、§8.2 团队管理 P1 列 |
 | 前置依赖 | `TEAM-001`（Workspace 模型 / slug / 默认团队 / `WorkspaceMember` 基线）、`AUTH-001`（注册登录 / 注册钩子）、`AUTH-003`（`accessible_by()` 行级过滤）、`AUTH-004`（Celery 邮件通道与 SMTP 降级）、`AUTH-005`（权限矩阵与按钮守护）、`INFRA-004`（错误信封 / 全局异常） |
@@ -333,7 +333,7 @@ sequenceDiagram
 
 ### 3.1 成员设置页
 
-路由 `/:workspaceSlug/settings/members`。`<PermissionRouteGate permission="workspace.member.read">` 守护；无 `invite/manage` 权限的用户降级为只读列表（操作列隐藏）。
+路由 `/:workspaceSlug/settings/members`。`<PermissionRouteGate permission="workspace.member.read">` 守护；无 `invite/manage` 权限的用户降级为只读列表（操作列隐藏）。工作区侧栏「团队设置」由置灰点亮为成员管理入口（sprint-0 冻结侧栏形态见 [`test-cases.md`](../sprint-0-poc/test-cases.md) 附录 C.3）。
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
@@ -453,7 +453,7 @@ Headless UI `Dialog`，宽 560px。
 | --- | --- |
 | 预检 | 进入页面 `GET /api/v1/invitations/{token}/` 渲染脱敏信息；预检失败直接渲染失效态（不发 accept） |
 | 接受 | `POST /api/v1/invitations/{token}/accept/` → 成功后 `AuthStore` mutate 工作空间列表 → `navigate('/{slug}/projects')` → toast「已加入 RabbitProjects」 |
-| 未登录 | 跳 `/sign-in?next=/invite/{token}`；无账号者从登录页切到注册；注册成功由服务端钩子自动接受（§2.2 路径 A），前端读 `default_workspace_slug` 直达 |
+| 未登录 | 跳 `/login?next=/invite/{token}`（sprint-0 冻结登录路由）；无账号者从登录页切到注册；注册成功由服务端钩子自动接受（§2.2 路径 A），前端读 `default_workspace_slug` 直达 |
 | 邮箱脱敏 | `li***@ex.com`（保留首字符与域名），防止链接被转发时的信息泄露 |
 
 ### 3.4 移除确认与转让弹窗

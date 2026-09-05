@@ -7,7 +7,7 @@
 | 周期 | 第 3 周（5 个工作日，固定预留 20% 缓冲） |
 | 覆盖优先级 | **P1 全量**（P2 及以上一律不进入本迭代） |
 | 文档数 | 11 份（1 份 INFRA + 2 份 AUTH + 1 份 TEAM + 1 份 PROJ + 2 份 TASK + 1 份 BOARD + 1 份 FILE + 1 份 COLLAB + 1 份 RPT） |
-| 文档状态 | 待评审（Draft） |
+| 文档状态 | **已实现**（2026-09-04 · Sprint 1 全部落地，11 份 + test-cases，73 项端到端断言全过） |
 | 最后更新日期 | 2026-09-01 |
 | 上游依据 | `docs/需求文档.md` §8.2 分模块优先级全景表（P1 列）、§9.1 排期里程碑表 |
 | 前置迭代 | Sprint 0（POC 技术验证）验收通过 |
@@ -57,7 +57,7 @@ POC（单人单团队）                    MVP（小团队协作）
 | 5 | **项目成员管理与搜索收藏** | 项目成员添加 / 移除（含项目子角色）；项目关键词搜索（名称 + identifier）；项目收藏 / 取消收藏与收藏置顶 | `PROJ-002` |
 | 6 | **任务扩展属性与一级子任务** | `issue_type` 转必填（5 种内置类型开放）；`priority` 启用；项目级标签 CRUD 与挂载；`start_date`；一级子任务挂载与计数；基础操作日志只读时间线 | `TASK-002` |
 | 7 | **任务列表筛选 / 搜索 / 排序** | 列表端点 `?q= / ?priority= / ?type= / ?label= / ?assignee= / ?order_by=`；`description_stripped` trigram 全文搜索启用；前端列表页筛选条与排序 | `TASK-003` |
-| 8 | **看板筛选与卡片悬浮预览** | 看板筛选条（负责人 / 优先级 / 标签，URL 参数同步）；卡片悬浮预览（描述摘要 / 标签 / 子任务进度 / 附件数）；「已取消」第四列开放 | `BOARD-002` |
+| 8 | **看板筛选与卡片悬浮预览** | 看板筛选条（负责人 / 优先级 / 标签 / 截止，URL 参数同步）；卡片悬浮预览（描述摘要 / 标签 / 子任务进度 / 附件数）；「已取消」第四列开放 | `BOARD-002` |
 | 9 | **任务级附件上传下载** | `FileAsset` 模型；MinIO 预签名直传三步流；下载 / 删除；大小与类型限制；任务详情附件区 | `FILE-001` |
 | 10 | **任务评论 / @提醒 / 通知中心** | `IssueComment` + `Notification` 模型；评论 CRUD 与编辑窗口；`@提及` 解析与去重；通知异步生成；通知中心（未读数 / 已读 / 全部已读） | `COLLAB-001` |
 | 11 | **个人待办与已完成统计** | `/users/me/stats/` 跨项目聚合（待办 / 今日到期 / 已逾期 / 本周完成）；「我的待办」工作台页；recharts 趋势图 | `RPT-001` |
@@ -93,7 +93,7 @@ POC（单人单团队）                    MVP（小团队协作）
 | MinIO 容器 + Celery 编排（`INFRA-002`） | 附件直传与邮件异步发送直接复用 | `FILE-001` `AUTH-004` `COLLAB-001` |
 | `Manager.accessible_by()`（`AUTH-003`） | `IssueComment` / `FileAsset` / `Notification` 等派生资源沿用「委托上游」隔离模式 | 全部 |
 
-**本迭代新增模型**（均在对应文档定义）：`WorkspaceInvitation`、`ProjectFavorite`、`Label`（P0 已建，P1 启用）、`FileAsset`、`IssueComment`、`Notification`。
+**本迭代新增模型**（均在对应文档定义）：`WorkspaceMemberInvite`、`ProjectFavorite`、`Label`（P0 已建，P1 启用）、`FileAsset`、`IssueComment`、`Notification`。
 
 ---
 

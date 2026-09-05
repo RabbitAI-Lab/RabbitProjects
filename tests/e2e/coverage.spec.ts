@@ -1,7 +1,7 @@
 /** E2E 补全 spec：承接 test-cases.md 中原标 Nightly/占位的用例。
  *  TC-AUTH2-007  401 拦截 → 自动跳登录页（axios 拦截器，page.on('response') 断言）
  *  TC-AUTH2-008  withCredentials：/users/me/ 请求头携带 sessionid cookie
- *  TC-AUTH2-009  响应信封解包：status=false → 前端渲染 meta.message 错误提示
+ *  TC-AUTH2-009  响应信封解包：status="error" → 前端渲染 error.message 错误提示
  *  TC-PROJ1-007a 项目删除：confirm != name → 删除按钮 disabled（DOM 断言）
  *  运行前 API(8000) + Web(3001) 就绪：E2E_NO_SERVER=1 pnpm exec playwright test tests/e2e/coverage.spec.ts */
 import { test, expect, type Page } from "@playwright/test";
@@ -44,7 +44,9 @@ test.describe("覆盖补全（原 Nightly / 占位用例）", () => {
     );
     await page.goto(url);
     await sawAuthFail;
-    await page.waitForURL(/\/login/, { timeout: 5_000 });
+    // 稳定替代 waitForURL（同 auth.spec.ts）：Guard 跳转是 pushState，无 load 事件，
+    // waitForURL 默认等 "load" 会在导航竞态下报 ERR_ABORTED / frame detached。
+    await page.waitForFunction(() => location.pathname === "/login", null, { timeout: 6_000 });
     await expect(page.getByRole("heading", { name: /登录 RabbitProjects/ })).toBeVisible();
   });
 
@@ -62,16 +64,19 @@ test.describe("覆盖补全（原 Nightly / 占位用例）", () => {
     await expect(page.getByRole("heading", { name: /登录/ })).not.toBeVisible();
   });
 
-  test("TC-AUTH2-009：响应信封解包 — status=false 渲染 meta.message", async ({ page }) => {
-    // mock 登录端点：HTTP 200 + 信封 status=false → axios 拦截器抛 Error(message) → 页面渲染错误提示
+  test("TC-AUTH2-009：响应信封解包 — status=error 渲染 error.message", async ({ page }) => {
+    // Sprint-1 INFRA-004：信封字段 status="error" + nested error.{code,message,details,request_id}
     await page.route("**/api/v1/auth/sign-in/", (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          status: false,
-          data: null,
-          meta: { code: "AUTH_INVALID_CREDENTIALS", message: "邮箱或密码错误" },
+          status: "error",
+          error: {
+            code: "AUTH_INVALID_CREDENTIALS",
+            message: "邮箱或密码错误",
+            request_id: "01J00000000000000000000000",
+          },
         }),
       }),
     );
@@ -79,7 +84,7 @@ test.describe("覆盖补全（原 Nightly / 占位用例）", () => {
     await page.getByLabel("邮箱").fill(freshEmail("mock"));
     await page.getByLabel("密码", { exact: true }).fill("Whatever123");
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    // 登录页错误提示（信封 meta.message 被解包渲染）
+    // 登录页错误提示（error.message 被 axios 拦截器解包渲染）
     await expect(page.getByText("邮箱或密码错误").first()).toBeVisible({ timeout: 5_000 });
   });
 

@@ -15,10 +15,16 @@ async function expectLoggedIn(page: Page) {
   await page.waitForURL(/\/[^/]+\/projects/, { timeout: 8_000 });
 }
 
-/** 项目页主标题是非语义 div（设计稿样式规范）；用文本选择器。 */
+/** 项目页主标题是非语义 div（设计稿样式规范）；用文本选择器。
+ *  三分支：空态「还没有项目」/ 卡片统计「N 个任务」/ 页头统计「N 个项目」——
+ *  演示账号经多轮 e2e 后会累积项目，只认前两支会假失败。 */
 async function expectProjectsPage(page: Page) {
   await expectLoggedIn(page);
-  await expect(page.getByText("还没有项目").or(page.getByText("个任务").first())).toBeVisible({ timeout: 5_000 });
+  await expect(
+    page.getByText("还没有项目")
+      .or(page.getByText(/\d+ 个任务/).first())
+      .or(page.getByText(/\d+ 个项目/).first()),
+  ).toBeVisible({ timeout: 5_000 });
 }
 
 test.describe("Sprint 0 E2E", () => {
@@ -98,7 +104,9 @@ test.describe("Sprint 0 E2E", () => {
     await page.goto("/any-workspace/projects");
     const resp = await meResp;
     expect([401, 403]).toContain(resp.status()); // 期望无认证的拒绝码
-    await page.waitForURL(/\/login/, { timeout: 5_000 });
+    // 稳定替代 waitForURL：Guard 的跳转是 react-router 的 pushState（无 load 事件），
+    // waitForURL 默认等 "load"，在有导航竞态时会报 ERR_ABORTED / frame detached。
+    await page.waitForFunction(() => location.pathname === "/login", null, { timeout: 6_000 });
     await expect(page.getByRole("heading", { name: /登录 RabbitProjects/ })).toBeVisible();
     expect(page.getByRole("button", { name: /一键进入演示账号/ })).toBeVisible();
   });

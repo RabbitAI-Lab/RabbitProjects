@@ -30,7 +30,11 @@ export default function Register() {
       await session.signUp(email, pw, undefined, true); // 第 4 参 justRegistered → 欢迎条（第 3 参是 displayName）
       nav(`/${session.currentWsSlug}/projects`);
     } catch (e: any) {
-      if (e?.code === "AUTH_EMAIL_EXISTS") {
+      // INFRA-004 §4.2 收口后邮箱重复已从 ad-hoc 码 AUTH_EMAIL_EXISTS 统一到
+      // RESOURCE_ALREADY_EXISTS（见 plane/app/views/auth.py）。这里仍判旧码 → 分支永不命中，
+      // 用户只看到光秃秃的「该邮箱已注册」文案、拿不到「直接登录」入口。
+      // 旧码保留兼容：灰度期间两端可能短暂不一致。
+      if (e?.code === "RESOURCE_ALREADY_EXISTS" || e?.code === "AUTH_EMAIL_EXISTS") {
         setErr(<span>该邮箱已注册，<Link className="underline" to={`/login?email=${encodeURIComponent(email)}`}>直接登录</Link> →</span>);
       } else {
         setErr(e?.message ?? "注册失败");

@@ -14,13 +14,18 @@ const rid = (n = 5) => Array.from({ length: n }, () => String.fromCharCode(65 + 
 const uname = (pfx: string) => `${pfx} ${Date.now() % 100000}`;
 
 async function loginDemo(page: Page) {
+  // 规范 ③：先显式清 cookies，防跨 spec 登录态残留（已登录时 /login 会被 Guard 跳走）
+  await page.context().clearCookies();
   await page.goto("/login");
   await page.getByRole("button", { name: /一键进入演示账号/ }).click();
   await page.waitForURL(/\/workspace\/projects/, { timeout: 8000 });
 }
 
 async function createProject(page: Page, name: string, id: string) {
-  await page.getByRole("button", { name: /创建项目/ }).first().click();
+  // 演示账号经多轮 e2e 累积大量项目，列表渲染变慢：显式等按钮可见再点（actionability 只保证可点不保证出现）
+  const btn = page.getByRole("button", { name: /创建项目/ }).first();
+  await btn.waitFor({ state: "visible", timeout: 20_000 });
+  await btn.click();
   await page.getByLabel("项目名称 *").fill(name);
   await page.getByLabel("项目标识符 *").fill(id);
   await page.getByRole("button", { name: "创建项目", exact: true }).click();
@@ -29,7 +34,11 @@ async function createProject(page: Page, name: string, id: string) {
 
 test.describe("交互元素全覆盖", () => {
   let getErrs: () => string[] = () => [];
-  test.beforeEach(async ({ page }) => { getErrs = attachConsoleGuard(page); });
+  test.beforeEach(async ({ page }) => {
+    // 规范 ③：跨 test 状态边界——显式清 cookies，禁止依赖 Worker 复用自动清理
+    await page.context().clearCookies();
+    getErrs = attachConsoleGuard(page);
+  });
   test.afterEach(async () => { expect(getErrs(), "console errors").toEqual([]); });
 
   /* ── 登录页 ── */
@@ -91,7 +100,7 @@ test.describe("交互元素全覆盖", () => {
     await page.getByLabel("确认密码").fill("Rabbit123");
     await page.getByRole("button", { name: "创建账号" }).click();
     await expect(page.getByText("该邮箱已注册").first()).toBeVisible({ timeout: 5000 });
-    await expect(page.getByRole("link", { name: "直接登录" })).toBeVisible();
+    await expect(page.getByRole("link", { name: /直接登录/ })).toBeVisible();
   });
 
   test("INT-B4 登录→注册邮箱携带", async ({ page }) => {
@@ -189,6 +198,7 @@ test.describe("交互元素全覆盖", () => {
   });
 
   test("INT-E2 续创建 checkbox 连续 2 条", async ({ page }) => {
+  test.setTimeout(30_000);
     await loginDemo(page);
     await createProject(page, uname("Keep Open"), rid());
     await page.getByRole("button", { name: /\+ 创建任务/ }).click();
@@ -199,12 +209,25 @@ test.describe("交互元素全覆盖", () => {
     await page.getByPlaceholder("任务标题").fill("Keep Two");
     await page.locator('[data-testid="create-task-submit"]').click();
     await expect(page.getByPlaceholder("任务标题")).toBeVisible();
-    await expect(page.getByText("2 个任务")).toBeVisible({ timeout: 5000 });
+    // 原断言 `2 个任务` 是任务列表页的文案（issues-list.tsx），看板上不存在——
+    // 改为直接断言两张卡片都落到了看板（续创建的价值就在「连开两条」）。
+    await expect(page.locator("article").filter({ hasText: "Keep One" })).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("article").filter({ hasText: "Keep Two" })).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("article")).toHaveCount(2);
   });
 
   /* ── 看板 ── */
   test("INT-F1 列内快速创建落该列", async ({ page }) => {
+  test.setTimeout(30_000);
+    // 与 INT-F3 / INT-G1 同因：原写法依赖跨 test 登录态泄漏，Guard 会话失效修复后暴露
+    await loginDemo(page);
     await createProject(page, uname("F1"), rid());
+    // 看板列要等 states 回来才有 state id，否则列内快速创建会命中 `if (col?.id)` 的空分支
+    // （原写法直接点「添加任务」，与 boards 首屏加载赛跑 —— 时快时慢）。
+    await page.waitForResponse(
+      (r) => r.url().includes("/states/") && r.url().includes("include_cancelled=1") && r.ok(),
+      { timeout: 10_000 },
+    );
     await page.getByRole("button", { name: /添加任务/ }).nth(1).click();
     const input = page.locator("input[id^='qi-started']");
     await expect(input).toBeVisible();
@@ -216,6 +239,9 @@ test.describe("交互元素全覆盖", () => {
   });
 
   test("INT-F2 卡片→抽屉 peekIssue + 标题编辑保存", async ({ page }) => {
+  test.setTimeout(30_000);
+    // 与 INT-F3 / INT-G1 同因：原写法依赖跨 test 登录态泄漏，Guard 会话失效修复后暴露
+    await loginDemo(page);
     await createProject(page, uname("F2"), rid());
     await page.getByRole("button", { name: /\+ 创建任务/ }).click();
     await page.getByPlaceholder("任务标题").fill("Peek Task");
@@ -224,7 +250,9 @@ test.describe("交互元素全覆盖", () => {
     await expect(page.locator("aside")).toBeVisible();
     await expect(page.url()).toContain("peekIssue=");
     await page.locator("aside h2").click();
-    const editor = page.locator("aside input").last();
+    // 原写法 `aside input` 的 .last() 命中的是「添加子任务」输入框（DOM 里排在标题之后），
+    // 于是改标题变成了建子任务。改用抽屉标题输入自己的 aria-label 定位。
+    const editor = page.locator('[data-sb-scope="drawer-title-input"]');
     await editor.fill("Peek Task Edited");
     await editor.press("Enter");
     await expect(page.getByText("已保存").first()).toBeVisible({ timeout: 5000 });
@@ -232,6 +260,9 @@ test.describe("交互元素全覆盖", () => {
   });
 
   test("INT-F3 抽屉 ⋯ 菜单删除任务 → 卡片消失", async ({ page }) => {
+  test.setTimeout(30_000);
+    // 显式登录（原写法依赖跨 test 登录态泄漏，Guard 会话失效修复后暴露）
+    await loginDemo(page);
     await createProject(page, uname("F3"), rid());
     await page.getByRole("button", { name: /\+ 创建任务/ }).click();
     await page.getByPlaceholder("任务标题").fill("Doomed Task");
@@ -247,8 +278,9 @@ test.describe("交互元素全覆盖", () => {
   /* ── 列表 ── */
   test("INT-G1 列表：快速建+焦点保持 / 行点抽屉 / 编号复制", async ({ page }) => {
     const lid = rid();
-    await createProject(page, uname("G1"), lid);
+    // 顺序修正：先登录再建项目（原写法依赖跨 test 登录态泄漏，Guard 会话失效修复后暴露）
     await loginDemo(page);
+    await createProject(page, uname("G1"), lid);
     await page.getByRole("navigation").getByRole("link", { name: "任务列表" }).click();
     await page.waitForURL(/\/issues/);
     const quick = page.getByPlaceholder(/按回车快速创建/);

@@ -9,9 +9,11 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "celery[rabbitmq]>=5.4",
     "argon2-cffi>=23.1",
-    "django-environ>=0.11",
     "django-filter>=24.3",
     "drf-spectacular>=0.28",
+    "structlog>=24.1,<25",
+    "python-ulid>=3,<5",
+    "boto3>=1.43.87",
 ]
 
 [dependency-groups]
@@ -37,7 +39,7 @@ ignore_missing_imports = true
 exclude = ["**/migrations/*"]
 
 [tool.django-stubs]
-django_settings_module = "plane.settings.local"
+django_settings_module = "plane.settings.dev"
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "plane.settings.test"

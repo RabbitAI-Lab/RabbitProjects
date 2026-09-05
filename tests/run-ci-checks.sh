@@ -56,7 +56,7 @@ check TC-INF2-015 "web Dockerfile 带 VITE args" \
 check TC-INF3-001 "User 手工对齐 BaseModel 三项" \
   "grep -q 'id = models.UUIDField' apps/api/plane/db/models/user.py && grep -q 'deleted_at' apps/api/plane/db/models/user.py"
 check TC-INF3-002 "AUTH_USER_MODEL=db.User" \
-  "grep -q 'AUTH_USER_MODEL = \"db.User\"' apps/api/plane/settings/common.py"
+  "grep -q 'AUTH_USER_MODEL = \"db.User\"' apps/api/plane/settings/base.py"
 check TC-INF3-003 "User swappable" \
   "grep -q 'swappable' apps/api/plane/db/models/user.py"
 check TC-INF3-004 "BaseModel 软删除 Manager" \
@@ -90,7 +90,7 @@ fi
 check TC-AUTH3-004 "整数角色等级" \
   "grep -q 'OWNER = 20' apps/api/plane/db/models/roles.py && grep -q 'GUEST = 5' apps/api/plane/db/models/roles.py"
 check TC-AUTH3-005 "越权 404 而非 403" \
-  "grep -q 'RESOURCE_NOT_FOUND' apps/api/plane/app/views/projects.py"
+  "grep -q 'RESOURCE_NOT_FOUND' apps/api/plane/app/views/_access.py"
 check TC-AUTH3-006 "actor FK SET_NULL" \
   "grep -A2 'actor = models.ForeignKey' apps/api/plane/db/models/issue.py | grep -q 'SET_NULL'"
 
@@ -100,6 +100,52 @@ check TC-TASK1-008 "sequence 唯一约束" \
 check TC-BOARD1-007 "DEFAULT_GAP=65535" \
   "grep -q 'DEFAULT_GAP = 65535' apps/api/plane/db/services/sort_order.py"
 
+# ── Sprint 1 · INFRA-004 信封与错误码注册表（L1）──
+# 这几条走 Django shell 做集合断言：注册表 / 文案 / 权限矩阵是「双源一致」的守护点，
+# 光靠 grep 断言不了集合相等（CLAUDE.md 测试脚本规范 ①）。
+S1_PY_ENV="DATABASE_URL=postgresql://rp:rp@localhost:5432/rabbit_projects SECRET_KEY=dev DJANGO_SETTINGS_MODULE=plane.settings.dev"
+s1py() {  # s1py <python 表达式，需 print 出 OK 才算通过>
+  cd apps/api && env $S1_PY_ENV uv run --project . python -c "
+import django; django.setup()
+$1
+" 2>/dev/null | grep -q OK
+  local rc=$?; cd - >/dev/null; return $rc
+}
+
+check TC-INF4-006 "错误码注册表规模 = 75" \
+  "s1py \"from plane.base.error_codes import ErrorCodes
+print('OK' if len(ErrorCodes.all())==75 else 'NG')\""
+check TC-INF4-007 "默认文案覆盖全部注册码（双向差集为空）" \
+  "s1py \"from plane.base.error_codes import ErrorCodes, DEFAULT_MESSAGES
+print('OK' if set(ErrorCodes.all())==set(DEFAULT_MESSAGES) else 'NG')\""
+check TC-INF4-008 "未注册错误码构造即 KeyError" \
+  "s1py \"from plane.base.exception import AppException
+try: AppException('NOT_EXIST'); print('NG')
+except KeyError: print('OK')\""
+check TC-INF4-012 "异常处理器覆盖 DRF NotFound（ADR-0012 D5 回归）" \
+  "grep -q 'isinstance(exc, (NotFound, Http404, ObjectDoesNotExist))' apps/api/plane/base/handlers.py"
+check TC-INF4-013 "EXCEPTION_HANDLER 指向信封处理器" \
+  "grep -q 'plane.base.handlers.envelope_exception_handler' apps/api/plane/settings/base.py"
+
+# ── Sprint 1 · AUTH-005 权限矩阵单一数据源（L1）──
+check TC-AUTH5-006 "权限点与中文标签集合相等" \
+  "s1py \"from plane.constants.permissions import all_permission_keys, PERMISSION_LABELS
+print('OK' if all_permission_keys()==set(PERMISSION_LABELS) else 'NG')\""
+check TC-AUTH5-007 "未注册权限点 threshold_of 抛 KeyError" \
+  "s1py \"from plane.constants.permissions import threshold_of
+try: threshold_of('nope.nope'); print('NG')
+except KeyError: print('OK')\""
+
+# ── Sprint 1 · TASK-001 BR-8 列尾追加（L1，ADR-0012 D1 回归）──
+check TC-TASK1-022 "create_issue 接收 prev_sort_order（列尾追加语义）" \
+  "grep -q 'prev_order=payload.pop(\"prev_sort_order\", None)' apps/api/plane/db/services/issue_sequence.py"
+
+# ── Sprint 1 · 测试脚本规范 ①：契约常量唯一定义点（L1）──
+check TC-INF4-014 "sprint-1-flow 从 _contract 取契约常量，未各自硬编码" \
+  "grep -q 'from _contract import' tests/jmeter/sprint-1-flow.py"
+check TC-INF4-015 "Python/TS 两侧 API 真相源状态码逐键一致（跨语言比对）" \
+  "python3 scripts/check-api-truth.py"
+
 echo ""
 echo "════════════════════════════════════"
 echo "静态检查：$PASS 通过 / $FAIL 失败"
@@ -108,3 +154,24 @@ if [ ${#FAILED_IDS[@]} -gt 0 ]; then
   exit 1
 fi
 echo "全部通过 ✓"
+
+# ── Sprint 1 · 空转断言扫描（TC-INF4-016，sprint-1 验收教训）──
+# __no_such / __bogus 只允许出现在「错误分支」测试里（测试名含 错误/失效/invalid/错误分支）；
+# 用在正常路径断言上 = 被测代码根本没执行（C.35 漏网缺陷的直接根因）。
+check TC-INF4-016 "e2e 无空转断言（__no_such/__bogus 仅限错误分支测试）" \
+  "python3 - <<'SCAN'
+import pathlib, re, sys
+bad = []
+for f in pathlib.Path('tests/e2e').glob('*.spec.ts'):
+    text = f.read_text(encoding='utf-8')
+    for m in re.finditer(r'test\((\"|\\')(.*?)(\"|\\')[^)]*?\\{', text, re.S):
+        start = m.end(); depth = 1; i = start
+        while i < len(text) and depth:
+            if text[i] == '{': depth += 1
+            elif text[i] == '}': depth -= 1
+            i += 1
+        body = text[start:i]; title = m.group(2)
+        if ('__no_such' in body or '__bogus' in body) and not re.search(r'错误|失效|invalid|不白屏', title):
+            bad.append(f'{f.name}: {title[:40]}')
+sys.exit(1 if bad else 0)
+SCAN"

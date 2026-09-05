@@ -14,6 +14,8 @@ export default defineConfig({
   reporter: process.env.CI ? "github" : "list",
 
   use: {
+    // INT-G1 编号复制：headless 默认无剪贴板权限，writeText 会 reject
+    permissions: ["clipboard-read", "clipboard-write"],
     baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3001",
     trace: "on-first-retry",
     screenshot: "only-on-failure",

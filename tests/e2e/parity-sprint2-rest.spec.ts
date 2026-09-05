@@ -992,10 +992,10 @@ test.describe("Sprint-2 前端批量（TASK-005~010 / C.42~C.62）", () => {
     test.setTimeout(90_000);
     await loginDemo(page);
     const proj = await createProject(page);
-    // 真实链路：GET /api/v1/activity-dead-letters/ 200（信封 data 数组；本地无死信 → 空态）
+    // 真实链路（收紧后 2026-09-05：仅 SystemAdmin——演示账号非成员 → 403 负向锚定；
+    // 授权路径的正向链路由 sprint-2-flow T10-12 承载）
     const real = await apiCall(page, "GET", `/api/v1/activity-dead-letters/`);
-    expect(real.status, "死信列表 200").toBe(HTTP.OK);
-    expect(Array.isArray(real.body?.data)).toBe(true);
+    expect(real.status, "非 SystemAdmin → 403").toBe(HTTP.FORBIDDEN);
 
     // 用户入口：项目侧栏「死信补偿（admin）」导航到达
     await page.getByRole("navigation").getByRole("link", { name: "死信补偿（admin）" }).click();
@@ -1045,4 +1045,15 @@ test.describe("Sprint-2 前端批量（TASK-005~010 / C.42~C.62）", () => {
     await page.unroute("**/api/v1/activity-dead-letters**");
     void proj;
   });
+});
+
+test("T010-3 C.62 死信页 403 分支：非 SystemAdmin 访问显示权限提示（非空态）", async ({ page }) => {
+  test.setTimeout(60_000);
+  await loginDemo(page);
+  await page.goto(`${WS}/admin/dead-letters`);
+  const tip = page.locator('[data-sb-scope="dlq-forbidden"]');
+  await expect(tip, "权限空态可见（含权限码提示，非误导性「没有死信」）").toBeVisible({ timeout: 10_000 });
+  await expect(tip).toContainText("system.audit.read");
+  await expect(page.locator("table")).toHaveCount(0); // 不渲染表格
+  await expectNoConsoleErrors(page);
 });

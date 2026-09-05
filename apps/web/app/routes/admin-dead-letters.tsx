@@ -12,12 +12,14 @@ export default function AdminDeadLetters() {
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  const [forbidden, setForbidden] = useState(false);
   async function load() {
     try {
       const r = await DeadLetterAPI.list({ per_page: 100 });
       setRows(unwrap<DeadLetterRow[]>(r) ?? []);
     } catch (e: unknown) {
       const err = e as ApiError;
+      if (err?.code === "PERM_DENIED") { setForbidden(true); setLoaded(true); return; } // 收紧后：非 SystemAdmin 显式提示
       toast(err?.message ?? "加载失败", "error");
     } finally { setLoaded(true); }
   }
@@ -90,7 +92,15 @@ export default function AdminDeadLetters() {
           <button onClick={() => void bulkReplay()} disabled={rows.length === 0 || busy} data-sb-scope="dlq-bulk"
             className="ml-auto h-[30px] px-3 border border-neutral-300 rounded-md text-[13px] hover:bg-neutral-50 disabled:opacity-40 disabled:cursor-not-allowed">批量重放（≤100）</button>
         </div>
-        {!loaded ? (
+        {forbidden ? (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center py-16" data-sb-scope="dlq-forbidden">
+              <div className="text-2xl mb-2">🔒</div>
+              <div className="text-[15px] font-semibold text-neutral-700">需要系统审计权限</div>
+              <div className="text-[13px] text-neutral-400 mt-1">权限码 system.audit.read · 请联系系统管理员授予后访问</div>
+            </div>
+          </div>
+        ) : !loaded ? (
           <div className="text-[13px] text-neutral-400">加载中…</div>
         ) : rows.length === 0 ? (
           /* C.62 空态：无死信 → 队列健康空态 */

@@ -965,14 +965,8 @@ for _ in range(30):  # 轮询 ≤15s
         _cleaned = True
         break
     time.sleep(0.5)
-if _cleaned:
-    PASS += 1
-    print("  ✓ T8-42 异步清理 JSONB key（分批 2000 / GIN 扫描，需 worker）")
-else:
-    # CI 无 worker 环境降级 skip（任务008 的 worker 验证已由本地真跑锚定：
-    # worker 日志 removed key=cf_clean_me rows=1，TASK-008 交付记录）
-    SKIP += 1
-    print("  ⊘ T8-42 异步清理 JSONB key —— SKIP：worker 未运行（本地 worker 真跑已锚定）")
+ck("T8-42", "异步清理 JSONB key（分批 2000 / GIN 扫描，需 worker 常驻）",
+   _cleaned, "轮询 15s 后 key 仍在（worker 未运行或任务失败——跑本 flow 前须起 worker，见 CLAUDE.md 测试段）")
 
 # ═══ 6. TASK-009 复制/归档（IT-009：深拷贝/幂等/写保护/视图） ═══
 section("TASK-009 复制/归档")
@@ -1156,6 +1150,11 @@ ck("T10-11", "非法游标 → 400 VALIDATION_INVALID_CURSOR", code == HTTP["BAD
 # 死信补偿（§4.2.2：Redis hash 元数据直塞 → admin 端点 CRUD）
 import subprocess as _sp
 import uuid as _uuid
+# 幂等清理：上轮失败 run 可能残留死信 hash（须在本次塞入之前）
+import subprocess as _sp_clean
+_sp_clean.run(["docker", "exec", "rp-redis", "sh", "-c",
+               "redis-cli --scan --pattern 'activity:dlq:*' | xargs -r redis-cli del"],
+              capture_output=True, timeout=10)
 _m1, _m2 = str(_uuid.uuid4()), str(_uuid.uuid4())
 def _rset(mid, payload, err, retries):
     _sp.run(["docker", "exec", "rp-redis", "redis-cli", "HSET",
@@ -1167,10 +1166,17 @@ def _rset(mid, payload, err, retries):
 _pl = '{"issue_id": "%s", "actor_id": "00000000-0000-0000-0000-000000000000", "verb": "updated", "epoch": 1}' % i10
 _rset(_m1, _pl, "OperationalError: connection reset", "3")
 _rset(_m2, _pl, "ValueError: bad payload", "0")
+# 权限收紧（用户裁决 2026-09-05）：仅 SystemAdmin 可访问——先授予测试账号
+_admin_uid = admin.req("GET", "/api/v1/users/me/")[1]["data"]["user"]["id"]
+_pg_exec(
+    "INSERT INTO system_admins (id, user_id, is_active, allowed_ip_cidrs, created_at, updated_at) "
+    "SELECT gen_random_uuid(), id, true, '[]'::jsonb, now(), now() FROM users WHERE id = %s "
+    "ON CONFLICT DO NOTHING", (_admin_uid,))
 code, body = admin.req("GET", "/api/v1/activity-dead-letters/")
 items = (body or {}).get("data") or []
-ck("T10-12", "死信列表 2 条（queue 恒 activity.dlq）", code == HTTP["OK"]
-   and len(items) == 2 and all(x.get("queue") == "activity.dlq" for x in items))
+ck("T10-12", "死信列表 2 条（SystemAdmin 授权后可达；queue 恒 activity.dlq）",
+   code == HTTP["OK"] and len(items) == 2 and all(x.get("queue") == "activity.dlq" for x in items),
+   f"got {code}")
 code, body = admin.req("POST", f"/api/v1/activity-dead-letters/{_m1}/replay/", {},
                        {"X-CSRFToken": admin.csrf()})
 d = (body or {}).get("data") or {}
@@ -1195,10 +1201,9 @@ code, _ = admin.req("DELETE", f"/api/v1/activity-dead-letters/{_m2}/", None,
                     {"X-CSRFToken": admin.csrf()})
 ck("T10-18", "重复丢弃 → 404", code == HTTP["NOT_FOUND"])
 
-# 越权（系统级资源：外部登录用户可见列表（只读审计面）——无 SystemAdmin 时开发口径放行；
-# 重放/丢弃同口径。负向由 pytest 锚定 SystemAdmin 非空时的 403）
+# 越权（收紧后：非 SystemAdmin 一律 403——外部登录用户与未授权普通用户同口径）
 code, _ = outsider.req("GET", "/api/v1/activity-dead-letters/")
-ck("T10-19", "外部用户 GET 死信列表可达（开发口径）", code in (HTTP["OK"], HTTP["FORBIDDEN"]), f"got {code}")
+ck("T10-19", "非 SystemAdmin GET 死信列表 → 403", code == HTTP["FORBIDDEN"], f"got {code}")
 
 # ═══ 汇总 ═══
 

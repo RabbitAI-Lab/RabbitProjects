@@ -36,6 +36,10 @@ python3 tests/jmeter/sprint-1-flow.py [http://localhost:8000]   # 信封 C1 / �
 python3 tests/jmeter/api-full-coverage.py                       # 端点 × 方法 × 正负例 契约矩阵
 python3 tests/jmeter/sprint-2-flow.py                          # sprint-2 七段（T4~T10，168 断言）
 python3 tests/jmeter/sprint-2-bench.py                         # 性能门禁（10 万数据集，五项 P95；跑完清数据）
+# ⚠ sprint-2-flow 前置：常驻 worker（Activity 异步化后 T8-42 与时间线断言依赖消费；
+# 启动：cd apps/api && DATABASE_URL=… SECRET_KEY=dev CELERY_BROKER_URL=amqp://guest:guest@localhost:5672// \
+#   REDIS_URL=redis://localhost:6379/0 uv run celery -A plane worker -Q activity,celery --concurrency=2 &）
+# 死信端点（ADR-0016 T-1）：仅 SystemAdmin 表成员可访问——测试前需显式 INSERT system_admins
 
 # 2) L1/L2 静态检查（含 api-ci 平价三件套：与 .github/workflows/api-ci.yml 同 cwd 同命令）
 bash tests/run-ci-checks.sh   # ruff/mypy/pytest 必须在 apps/api 目录跑（uv run --project 不变 cwd）

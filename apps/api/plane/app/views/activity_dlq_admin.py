@@ -26,11 +26,11 @@ BULK_LIMIT = 100
 
 
 def _assert_system_audit(request) -> None:
-    """system.audit.read：SystemAdmin 表成员；开发环境（表空）放行并留痕。"""
-    if SystemAdmin.objects.filter(user=request.user).exists():
+    """system.audit.read：仅 SystemAdmin 表 active 成员（用户裁决收紧，2026-09-05——
+    去掉「表空放行」开发口径；测试/演示账号需显式授予，授予路径见 flow T10 段）。"""
+    if SystemAdmin.objects.filter(user=request.user, is_active=True).exists():
         return
-    if SystemAdmin.objects.exists():
-        raise AppException("PERM_DENIED", message="需要系统审计权限（system.audit.read）")
+    raise AppException("PERM_DENIED", message="需要系统审计权限（system.audit.read）")
 
 
 class ActivityDeadLetterListView(APIView):

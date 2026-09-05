@@ -83,3 +83,61 @@ def enqueue_activity(*, issue_id: uuid.UUID, actor_id: uuid.UUID, verb: str,
         if rows:
             IssueActivity.objects.bulk_create(rows, batch_size=100)
         logger.warning("issue_activity.dispatch_fallback_sync issue_id=%s", issue_id)
+
+
+@shared_task(bind=True, max_retries=3, retry_backoff=True)
+def record_activity_row(
+    self,
+    issue_id: str,
+    actor_id: str | None,
+    verb: str,
+    epoch: float,
+    field: str | None = None,
+    old_value: str | None = None,
+    new_value: str | None = None,
+    old_identifier: str | None = None,
+    new_identifier: str | None = None,
+    comment: str = "",
+) -> None:
+    """单行 Activity 异步落库（主写路径统一管道，用户裁决 2026-09-05 全量异步化）。
+
+    行级幂等：(issue, actor, verb, epoch, field, old_id, new_id) 全键 exists 跳过
+    ——at-least-once 重投不产生重复行。
+    """
+    actor_uuid = uuid.UUID(actor_id) if actor_id else None
+    if IssueActivity.objects.filter(
+        issue_id=issue_id, actor_id=actor_uuid, verb=verb, epoch=epoch,
+        field=field, old_identifier=old_identifier, new_identifier=new_identifier,
+    ).exists():
+        return
+    try:
+        IssueActivity.objects.create(
+            issue_id=issue_id, actor_id=actor_uuid, verb=verb, field=field,
+            old_value=old_value, new_value=new_value,
+            old_identifier=old_identifier, new_identifier=new_identifier,
+            comment=comment or "", epoch=epoch)
+    except Exception as exc:  # noqa: BLE001 —— TASK-010 DLQ 兜底
+        raise self.retry(countdown=4**self.request.retries, exc=exc) from exc
+
+
+def enqueue_activity_row(*, issue_id, actor, verb, field=None, old=None, new=None,
+                         old_identifier=None, new_identifier=None, comment="",
+                         epoch=None) -> None:
+    """同步落库点的统一投递入口：broker 可用走 Worker，不可用降级同步直写
+    （保「业务成功可追溯」底线——降级仅在投递失败时发生，log warning）。"""
+    import time as _time
+
+    ep = epoch if epoch is not None else _time.time() * 1000
+    kwargs = dict(
+        issue_id=str(issue_id), actor_id=str(actor.id) if getattr(actor, "id", None) else None,
+        verb=verb, epoch=ep, field=field,
+        old_value=str(old) if old is not None else None,
+        new_value=str(new) if new is not None else None,
+        old_identifier=str(old_identifier) if old_identifier is not None else None,
+        new_identifier=str(new_identifier) if new_identifier is not None else None,
+        comment=comment or "")
+    try:
+        record_activity_row.delay(**kwargs)
+    except Exception:  # noqa: BLE001 —— 降级同步
+        record_activity_row(**kwargs)
+        logger.warning("activity.dispatch_fallback_sync issue_id=%s field=%s", issue_id, field)

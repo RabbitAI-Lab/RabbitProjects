@@ -87,16 +87,20 @@ def _record_activity(
     comment="",
     epoch: float | None = None,
 ):
-    return IssueActivity.objects.create(
-        issue=issue,
+    # TASK-010 全量异步化（用户裁决 2026-09-05 收紧）：主写路径统一经 Worker 管道
+    # 落库（行级幂等 + DLQ 兜底）；broker 不可用时 enqueue 内部降级同步直写。
+    from plane.bgtasks.issue_activity import enqueue_activity_row
+
+    return enqueue_activity_row(
+        issue_id=issue.id,
         actor=actor,
         verb=verb,
         field=field,
-        old_value=str(old) if old is not None else None,
-        new_value=str(new) if new is not None else None,
+        old=old,
+        new=new,
         old_identifier=old_identifier,
         new_identifier=new_identifier,
-        comment=comment or "",
+        comment=comment,
         epoch=epoch,
     )
 

@@ -17,6 +17,7 @@ app = Celery(
     broker=os.environ.get("CELERY_BROKER_URL", "amqp://rp:rp@localhost:5672//"),
     include=[
         "plane.bgtasks.activity_dlq",      # TASK-010：task_failure 信号（worker 进程加载）
+        "plane.account.tasks",           # 密码重置邮件（sprint-1 历史遗漏，worker 侧 unregistered 修复）
         "plane.bgtasks.asset_cleanup",
         "plane.bgtasks.comments",
         "plane.bgtasks.field_cleanup",     # TASK-008：删除字段值清理 / 视图剔除

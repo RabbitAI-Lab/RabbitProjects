@@ -3,71 +3,47 @@
 用法：python3 tests/jmeter/api-full-coverage.py [http://localhost:8000]
 前置：API + 真实 PG。与 sprint-0-flow.py（10 步动线 CI gate）互补：
   本脚本按端点矩阵逐个打满，任何一例失败 exit 1。
-HTTP/CODES 真相源与 tests/e2e/no-console-errors.ts 镜像（CLAUDE.md 测试脚本规范 ①）。
 
-Sprint-1 INFRA-004 收口：
-  - 成功信封 status 字段由布尔 → 字符串 "success"
-  - 错误信封由 {status:false, meta:{code,message,...}} → {status:"error", error:{code,message,details?,request_id}}
-  - 业务级冲突码（AUTH_EMAIL_EXISTS / PROJECT_IDENTIFIER_EXISTS）按 §4.2 映射到
-    RESOURCE_ALREADY_EXISTS；suggestion 透传到 error.details[0].suggestion。
+Sprint-2 阶段 0 起 HTTP/CODES/Client 一律 import `_contract`（CLAUDE.md 测试脚本规范 ①，
+ADR-0012 E4）：本脚本曾自带硬编码状态码/错误码表，是「唯一真相源」落地的最后一个双源残留，
+切换后 13 端点矩阵与新脚本共享同一份契约常量。
 """
-import http.cookiejar
 import json
 import sys
 import time
-import urllib.error
-import urllib.request
+
+from _contract import CODES, HTTP, Client, detail_of
 
 BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000").rstrip("/")
-HTTP = {"OK": 200, "CREATED": 201, "NO_CONTENT": 204, "UNAUTHORIZED": 401, "FORBIDDEN": 403,
-        "NOT_FOUND": 404, "CONFLICT": 409, "BAD": 400, "TOO_MANY": 429}
-# 真相源：sprint-1 INFRA-004 收口后，业务冲突码统一到 RESOURCE_ALREADY_EXISTS；
-# 错误字段由 meta 迁到 error。e2e 端镜像（tests/e2e/no-console-errors.ts CODES）。
-CODES = {"emailExists": "RESOURCE_ALREADY_EXISTS",
-         "invalidCreds": "AUTH_INVALID_CREDENTIALS",
-         "csrf": "AUTH_CSRF_FAILED",
-         "projectExists": "RESOURCE_ALREADY_EXISTS"}
 
 PASS = FAIL = 0
 FAILURES = []
 
-cj = http.cookiejar.CookieJar()
-opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+C = Client(BASE)
 
 
 def req(method, path, data=None, headers=None, authed=True):
-    url = f"{BASE}{path}"
-    body = json.dumps(data).encode() if data is not None else None
-    h = {"Accept": "application/json", "Content-Type": "application/json", "Referer": BASE + "/"}
-    if headers:
-        h.update(headers)
-    if not authed:
-        saved = list(cj)
-        cj.clear()
-    r = urllib.request.Request(url, data=body, method=method, headers=h)
+    """authed=False：临时清空 cookie 模拟未登录（原 cookie 请求后恢复）。"""
+    if authed:
+        return C.req(method, path, data, headers)
+    saved = list(C.jar)
+    C.jar.clear()
     try:
-        with opener.open(r, timeout=15) as resp:
-            raw = resp.read().decode() or "null"
-            out = (resp.status, json.loads(raw) if raw.strip().startswith(("{", "[")) else None)
-    except urllib.error.HTTPError as e:
-        raw = e.read().decode() or "null"
-        out = (e.code, json.loads(raw) if raw.strip().startswith(("{", "[")) else None)
+        return C.req(method, path, data, headers)
     finally:
-        if not authed:
-            cj.clear()
-            for c in saved:
-                cj.set_cookie(c)
-    return out
+        C.jar.clear()
+        for ck in saved:
+            C.jar.set_cookie(ck)
 
 
 def csrf():
-    return req("GET", "/api/v1/auth/csrf-token/")[1]["data"]["csrf_token"]
+    return C.csrf()
 
 
 def err_field(b, field, code):
     """从新信封 error.details[] 读 (field, code) 命中的条目 —— 没命中返回 None。"""
-    items = ((b or {}).get("error") or {}).get("details") or []
-    return next((it for it in items if it.get("field") == field and it.get("code") == code), None)
+    it = detail_of(b, field)
+    return it if (it or {}).get("code") == code else None
 
 
 def case(cid, desc, cond, extra=""):
@@ -109,11 +85,11 @@ case("SU-4", "workspaces[0].role == 20(OWNER)", ((b or {}).get("data") or {}).ge
 ws = ((b or {}).get("data") or {}).get("default_workspace_slug")
 _, b = expect("SU-5", "重复邮箱 → 409", "POST", "/api/v1/auth/sign-up/", HTTP["CONFLICT"],
               {"email": email, "password": pw}, {"X-CSRFToken": csrf()})
-case("SU-6", "error.code == RESOURCE_ALREADY_EXISTS", ((b or {}).get("error") or {}).get("code") == CODES["emailExists"])
+case("SU-6", "error.code == RESOURCE_ALREADY_EXISTS", ((b or {}).get("error") or {}).get("code") == CODES["alreadyExists"])
 case("SU-7", "error.details 含 (field=email, code=UNIQUE)", err_field(b, "email", "UNIQUE") is not None)
-expect("SU-8", "弱密码 → 400", "POST", "/api/v1/auth/sign-up/", HTTP["BAD"],
+expect("SU-8", "弱密码 → 400", "POST", "/api/v1/auth/sign-up/", HTTP["BAD_REQUEST"],
        {"email": f"x{ts}@x.dev", "password": "abc"}, {"X-CSRFToken": csrf()})
-expect("SU-9", "非法邮箱 → 400", "POST", "/api/v1/auth/sign-up/", HTTP["BAD"],
+expect("SU-9", "非法邮箱 → 400", "POST", "/api/v1/auth/sign-up/", HTTP["BAD_REQUEST"],
        {"email": "not-an-email", "password": pw}, {"X-CSRFToken": csrf()})
 c1 = req("POST", "/api/v1/auth/sign-up/", {"email": f"nocsrf-{ts}@x.dev", "password": pw}, {})  # 不带 CSRF 头
 case("SU-10", "缺 CSRF → 403 AUTH_CSRF_FAILED",
@@ -172,11 +148,11 @@ case("PR-2", "identifier 大写化", ((b or {}).get("data") or {}).get("identifi
 case("PR-3", "total_members == 1", ((b or {}).get("data") or {}).get("total_members") == 1)
 _, b = expect("PR-4", "重复 identifier → 409", "POST", f"/api/v1/workspaces/{ws}/projects/", HTTP["CONFLICT"],
               {"name": "Dup", "identifier": pid}, {"X-CSRFToken": csrf()})
-case("PR-5", "error.code == RESOURCE_ALREADY_EXISTS", ((b or {}).get("error") or {}).get("code") == CODES["projectExists"])
+case("PR-5", "error.code == RESOURCE_ALREADY_EXISTS", ((b or {}).get("error") or {}).get("code") == CODES["alreadyExists"])
 detail = err_field(b, "identifier", "UNIQUE")
 case("PR-6", "error.details 含 (field=identifier, code=UNIQUE)", detail is not None)
 case("PR-7", "error.details[0].suggestion 非空", bool(detail and detail.get("suggestion")))
-expect("PR-8", "identifier 1 位 → 400", "POST", f"/api/v1/workspaces/{ws}/projects/", HTTP["BAD"],
+expect("PR-8", "identifier 1 位 → 400", "POST", f"/api/v1/workspaces/{ws}/projects/", HTTP["BAD_REQUEST"],
        {"name": "Bad", "identifier": "A"}, {"X-CSRFToken": csrf()})
 _, b = expect("PR-9", "列表 → 200", "GET", f"/api/v1/workspaces/{ws}/projects/", HTTP["OK"])
 case("PR-10", "列表含新项目", any(x["id"] == proj for x in (b or {}).get("data", [])))

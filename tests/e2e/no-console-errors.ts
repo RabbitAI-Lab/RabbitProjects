@@ -33,6 +33,7 @@ export const CODES = {
   invalidCreds:  "AUTH_INVALID_CREDENTIALS",
   csrf:          "AUTH_CSRF_FAILED",
   projectExists: "RESOURCE_ALREADY_EXISTS",
+  limitExceeded: "RESOURCE_LIMIT_EXCEEDED", // TASK-004 深度越限（details[].code=DEPTH）
   // Sprint-2（TASK-004~010；均为既有注册码，顶层码零新增）
   stateInvalid:      "RESOURCE_STATE_INVALID",
   circular:          "RESOURCE_CIRCULAR_DEPENDENCY",

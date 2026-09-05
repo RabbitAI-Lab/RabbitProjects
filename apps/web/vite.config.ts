@@ -10,6 +10,10 @@ export default defineConfig({
     port: 3001,
     strictPort: true,
     // 代理：把 /api/v1 → django:8000，/live → express:3000（dev 反代，避免 CORS）
+    // 注意不要给 /api 代理设 `agent: { keepAlive: false }`：每请求新 TCP → Django
+    // 每请求新线程 + CONN_MAX_AGE=60 的 PG 连接，配合项目列表页对每张卡片拉
+    // members 的放大效应，一次全量 e2e 就能把 PG max_connections(100) 打满
+    // （实测 too many clients → 全线 500）。默认 keep-alive 复用少数连接反而安全。
     proxy: {
       "/api": {
         target: "http://localhost:8000",

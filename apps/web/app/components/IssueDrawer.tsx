@@ -11,10 +11,13 @@ import {
   type ActivityRow,
   type AttachmentRow,
   type CommentRow,
+  type DeleteSubtreeResult,
+  type SubtreeData,
 } from "../services/api";
 import { StateBadge } from "./StateBadge";
 import { toast } from "./Toast";
 import { MentionPop, useMentionTrigger, type MentionCandidate } from "./MentionPop";
+import { IssueTreeDrawer } from "./IssueTreeDrawer";
 import type { Issue } from "@rp/types";
 
 type DrawerTab = "desc" | "comments" | "activity" | "attachments";
@@ -69,8 +72,10 @@ function MenuItem({ on, onClick, children }: { on?: boolean; onClick: () => void
  *
  *  API 解包约定：CLAUDE.md §"测试脚本规范" — 所有响应统一通过 `unwrap<T>(r)` 取 `data`，
  *  不再用 `(r as any).data`。 */
-export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged }: {
+export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, layer = "z-50" }: {
   issueId: string; slug: string; projectId: string; onClose: () => void; onChanged?: () => void;
+  /** 层级：普通抽屉 z-50；从全屏树点开的节点抽屉要盖住树（z-[60]）→ z-[70]（TASK-004 §3.3） */
+  layer?: string;
 }) {
   const [issue, setIssue] = useState<Issue | null>(null);
   const [editing, setEditing] = useState(false);
@@ -99,6 +104,12 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged }: {
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
   const [commentDraft, setCommentDraft] = useState("");
   const [newSubName, setNewSubName] = useState("");
+  /** TASK-004 §3.3/C.40：全屏树抽屉（分区头「查看全部 N 个 →」打开）；
+   *  treeNodeIssueId = 树里点开的节点详情（盖在树之上，关闭回树、树状态保留）。 */
+  const [treeOpen, setTreeOpen] = useState(false);
+  const [treeNodeIssueId, setTreeNodeIssueId] = useState<string | null>(null);
+  const [delDescCount, setDelDescCount] = useState<number | null>(null);
+  const subInputRef = useRef<HTMLInputElement | null>(null);
   /** 日期控件的乐观值：先本地回显、失败再回滚（C.23「乐观更新徽章，失败回滚」）。
    *  若直接受控于 issue.*，用户选完日期到 refresh() 返回前这段会被 React 弹回旧值。 */
   const [startDraft, setStartDraft] = useState("");
@@ -340,11 +351,33 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged }: {
     }
   }
 
+  /** 打开删除确认：有子任务时取 subtree stats 的后代数（total-1，与 DELETE 回传的
+   *  deleted_count 同源——TASK-004 §2.4「确认弹层明示将删除的后代数量」）。 */
+  async function openDeleteConfirm() {
+    setConfirmDel(true);
+    setDelDescCount(null);
+    if (subIssues.length > 0) {
+      try {
+        const r = await IssueAPI.subtree(slug, projectId, issueId);
+        const st = unwrap<SubtreeData>(r);
+        setDelDescCount((st.stats?.total ?? subIssues.length + 1) - 1);
+      } catch {
+        setDelDescCount(subIssues.length); // 兜底：直接子级数
+      }
+    } else {
+      setDelDescCount(0);
+    }
+  }
+
   async function del() {
     setConfirmDel(false); onClose();
     try {
-      await IssueAPI.del(slug, projectId, issueId);
-      toast(`已删除 ${issue?.issue_key ?? "任务"}`);
+      // TASK-004 §4.2.5：DELETE 200 + {deleted_count, descendant_ids}（级联软删回传受影响数）
+      const r = await IssueAPI.del(slug, projectId, issueId);
+      const res = unwrap<DeleteSubtreeResult>(r);
+      toast(res && res.deleted_count > 1
+        ? `已删除 ${issue?.issue_key ?? "任务"}（整树 ${res.deleted_count} 个任务）`
+        : `已删除 ${issue?.issue_key ?? "任务"}`);
     } catch { toast("删除失败", "error"); }
     onChanged?.();
   }
@@ -446,7 +479,7 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged }: {
   const priority = issue.priority ?? null;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
+    <div className={`fixed inset-0 ${layer} flex justify-end`}>
       <div className="absolute inset-0 bg-black/25" onClick={onClose} />
       <aside className="relative w-[720px] max-w-[calc(100vw-64px)] bg-white border-l border-neutral-200 shadow-lg flex flex-col" role="dialog" aria-modal="true" aria-label={`任务详情 ${issue.issue_key}`}>
         {/* 头部 */}
@@ -465,7 +498,7 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged }: {
                   <button className="w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50" onClick={() => { navigator.clipboard?.writeText(location.origin + location.pathname + `?peekIssue=${issueId}`); toast("已复制链接"); setMenuOpen(false); }}>复制链接</button>
                   <button className="w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50" onClick={() => { navigator.clipboard?.writeText(issue.issue_key); toast(`已复制 ${issue.issue_key}`); setMenuOpen(false); }}>复制编号</button>
                   <div className="h-px bg-neutral-200 my-1" />
-                  <button className="w-full text-left px-3 h-8 text-[13px] text-red-600 hover:bg-red-50" onClick={() => { setMenuOpen(false); setConfirmDel(true); }}>删除任务</button>
+                  <button className="w-full text-left px-3 h-8 text-[13px] text-red-600 hover:bg-red-50" onClick={() => { setMenuOpen(false); void openDeleteConfirm(); }}>删除任务</button>
                 </div>
               )}
             </div>
@@ -713,59 +746,76 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged }: {
                   }} />
               </div>
 
-              {/* 子任务区（C.24） */}
-              <div className="mt-5 border-t border-neutral-200 pt-3">
+              {/* 子任务区（C.24 基线 + TASK-004 §3.4/C.41 升级）：分区头「子任务 ◔ x/y」+「＋」+ 前 20 条 +「查看全部 N 个 →」 */}
+              <div className="mt-5 border-t border-neutral-200 pt-3" data-sb-scope="drawer-sub-section">
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="text-[13px] font-medium">子任务</span>
-                  <span className="text-[12px] text-neutral-500" data-sb-scope="drawer-sub-progress">
-                    {subIssues.filter((s) => s.state_group === "completed").length}/{subIssues.length}
+                  <span className="text-[13px] font-medium inline-flex items-center gap-1.5">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-neutral-500"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+                    子任务
                   </span>
-                  {/* 8px 进度微条（C.24）—— 全完成变绿 */}
-                  {subIssues.length > 0 && (
-                    <div className="ml-2 h-1 w-[120px] bg-neutral-200 rounded-full overflow-hidden" aria-hidden="true">
-                      <div
-                        className="h-full bg-emerald-500 transition-all"
-                        style={{ width: `${(subIssues.filter((s) => s.state_group === "completed").length / subIssues.length) * 100}%` }}
-                      />
-                    </div>
-                  )}
+                  {/* ◔ 圆环计数（C.41 分区头：16px 圆环 + x/y；BR-05 cancelled 不进分母） */}
+                  {(() => {
+                    const valid = subIssues.filter((s) => s.state_group !== "cancelled");
+                    const done = valid.filter((s) => s.state_group === "completed").length;
+                    const full = valid.length > 0 && done === valid.length;
+                    return valid.length > 0 ? (
+                      <span className="inline-flex items-center gap-1.5 text-[12px] text-neutral-600 tabular-nums"
+                        role="img" aria-label={`子任务 ${valid.length} 个，已完成 ${done} 个`}>
+                        <span className="w-4 h-4 rounded-full inline-block"
+                          style={full
+                            ? { border: "2px solid #10b981", background: "#10b981" }
+                            : { border: "2px solid #e5e5e5", borderTopColor: done > 0 ? "#10b981" : "#9ca3af" }} />
+                        <span data-sb-scope="drawer-sub-progress">{done}/{valid.length}</span>
+                      </span>
+                    ) : null;
+                  })()}
+                  <div className="ml-auto flex items-center gap-1.5">
+                    {subIssues.length > 20 && <span className="text-[12px] text-neutral-400">前 20 条</span>}
+                    <button
+                      onClick={() => subInputRef.current?.focus()}
+                      aria-label="添加子任务"
+                      data-sb-scope="drawer-sub-add"
+                      className="w-7 h-7 inline-flex items-center justify-center text-neutral-500 hover:bg-neutral-100 rounded-md"
+                    >＋</button>
+                    {subIssues.length > 0 && (
+                      <button onClick={() => setTreeOpen(true)} data-sb-scope="drawer-sub-view-all"
+                        className="text-[13px] text-brand-600 hover:text-brand-700">查看全部 {subIssues.length} 个 →</button>
+                    )}
+                  </div>
                 </div>
                 <ul className="flex flex-col gap-1">
                   {subIssues.length === 0 ? (
                     <li className="text-[13px] text-neutral-400 py-1" data-sb-scope="drawer-sub-empty">暂无子任务，添加一个开始拆解</li>
-                  ) : subIssues.map((s) => (
-                    <li key={s.id} className="flex items-center gap-2 text-[13px]" data-sb-scope="drawer-sub-row">
+                  ) : subIssues.slice(0, 20).map((s) => (
+                    <li key={s.id} className="flex items-center gap-2 text-[13px] group/row hover:bg-neutral-50 rounded px-1 py-0.5" data-sb-scope="drawer-sub-row">
                       <input
                         type="checkbox"
                         checked={s.state_group === "completed"}
                         aria-label={`完成子任务 ${s.name}`}
                         disabled={togglingSubId === s.id}
                         onChange={() => void toggleSub(s)}
-                        className="accent-brand-500"
+                        className="accent-brand-500 w-[15px] h-[15px] shrink-0"
                       />
-                      <span className={s.state_group === "completed" ? "line-through text-neutral-400" : ""}>{s.name}</span>
-                      <span className="ml-auto font-mono text-[11px] text-neutral-400">{s.issue_key}</span>
+                      <span className={`flex-1 min-w-0 truncate ${s.state_group === "completed" ? "line-through text-neutral-400" : ""}`}>{s.name}</span>
+                      {/* 状态圆点（C.41：标题 + 状态圆点 + 复选完成） */}
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: STATE_COLOR[s.state_group] ?? "#9ca3af" }} aria-label={`状态 ${s.state_name ?? s.state_group}`} />
+                      <span className="font-mono text-[11px] text-neutral-400">{s.issue_key}</span>
                     </li>
                   ))}
                 </ul>
-                {/* 输入行常驻（C.24「＋ 添加子任务」）—— 仅父任务层级展示，MVP 阶段子任务仅支持一层 */}
-                {(issue as unknown as { parent_issue_id?: string | null }).parent_issue_id == null && (
-                  <div className="flex items-center gap-1.5 border border-dashed border-neutral-300 h-8 mt-2 px-2.5 rounded-md text-neutral-500 focus-within:border-brand-500">
-                    <span>+</span>
-                    <input
-                      className="flex-1 bg-transparent outline-none text-[13px]"
-                      placeholder="添加子任务，回车保存…"
-                      value={newSubName}
-                      onChange={(e) => setNewSubName(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSubIssue(); } }}
-                    />
-                  </div>
-                )}
-                {(issue as unknown as { parent_issue_id?: string | null }).parent_issue_id != null && (
-                  <div className="mt-2 px-2.5 py-1.5 bg-amber-50 border border-amber-200 text-amber-800 text-[12px] rounded" data-sb-scope="drawer-sub-limit">
-                    MVP 阶段子任务仅支持一层
-                  </div>
-                )}
+                {/* 添加行（C.24 文案沿用，R3 裁决）：回车保存；TASK-004 起多层可挂（深度 ≤5 由后端 409 兜底） */}
+                <div className="flex items-center gap-1.5 border border-dashed border-neutral-300 h-8 mt-2 px-2.5 rounded-md text-neutral-500 focus-within:border-brand-500">
+                  <span>+</span>
+                  <input
+                    ref={subInputRef}
+                    className="flex-1 bg-transparent outline-none text-[13px]"
+                    placeholder="添加子任务，回车保存…"
+                    aria-label="子任务标题"
+                    value={newSubName}
+                    onChange={(e) => setNewSubName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSubIssue(); } }}
+                  />
+                </div>
               </div>
 
               {/* 元信息（C.6） */}
@@ -983,14 +1033,39 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged }: {
         </div>
       </aside>
 
+      {/* 全屏树抽屉（TASK-004 §3.3/C.40）：分区头「查看全部 N 个 →」打开；z-[60] 盖住本抽屉 */}
+      {treeOpen && (
+        <IssueTreeDrawer
+          issueId={issueId}
+          issueName={issue.name}
+          slug={slug}
+          projectId={projectId}
+          onClose={() => setTreeOpen(false)}
+          onOpenIssue={(id) => setTreeNodeIssueId(id)}
+          onAddFirst={() => { setTreeOpen(false); subInputRef.current?.focus(); }}
+        />
+      )}
+
+      {/* 树里点开的节点详情（z-[70] 盖住树；关闭回树，树状态保留——§3.3「返回时树状态保留」） */}
+      {treeNodeIssueId && (
+        <IssueDrawer
+          issueId={treeNodeIssueId}
+          slug={slug}
+          projectId={projectId}
+          layer="z-[70]"
+          onClose={() => setTreeNodeIssueId(null)}
+          onChanged={() => { void refresh(); onChanged?.(); }}
+        />
+      )}
+
       {confirmDel && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-4 z-[60]">
           <div className="bg-white rounded-xl shadow-lg w-[420px] p-6">
             <div className="text-base font-semibold mb-3">删除任务</div>
             <div className="text-[13px] text-neutral-600 mb-5">
-              {/* C.24 删除父任务：提示「将同时删除 N 个子任务」 */}
-              {subIssues.length > 0
-                ? `将同时删除 ${subIssues.length} 个子任务。确定删除 ${issue.issue_key}「${issue.name}」？此操作不可撤销。`
+              {/* C.24 + TASK-004 §2.4：删除父任务整树级联，确认弹层明示后代数量（subtree stats 同源） */}
+              {(delDescCount ?? subIssues.length) > 0
+                ? `将同时删除 ${delDescCount ?? subIssues.length} 个子任务。确定删除 ${issue.issue_key}「${issue.name}」？此操作不可撤销。`
                 : `确定删除 ${issue.issue_key}「${issue.name}」？此操作不可撤销。`
               }
             </div>

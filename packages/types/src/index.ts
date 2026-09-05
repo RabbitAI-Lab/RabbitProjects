@@ -151,6 +151,54 @@ export interface Issue {
   created_by: { id: UUID; name: string };
   created_at: string;
   updated_at: string;
+  /** TASK-004 §4.2.1：只读派生深度（根=1）。后端 IssueSerializer 当前未下发该字段
+   *  （仅 subtree 节点携带相对根 depth）——前端树形行深度由懒加载层级推导，不在此累加。 */
+  depth?: number;
+}
+
+/** TASK-004 §4.2.2 `GET …/issues/{id}/subtree/` 响应（axios 解包后的 data 形状）。
+ *  - nodes 为平铺（非嵌套），depth 为**相对根层数（根=0）**，与业务 depth（根=1）相差 1；
+ *  - stats 含根口径（total/completed 均计入根），truncated=true 时无 stats；
+ *  - truncated/node_limit 在响应 meta（axios 拦截器挂在 r.meta）。 */
+export interface SubtreeNode {
+  id: UUID;
+  parent_id: UUID | null;
+  issue_key: string;
+  sequence_id: number;
+  name: string;
+  state_group: StateGroup | null;
+  assignee_ids: UUID[];
+  /** 相对根层数（根=0） */
+  depth: number;
+}
+
+export interface SubtreeRoot extends SubtreeNode {
+  sub_issues_count: number;
+  completed_sub_issues_count: number;
+}
+
+export interface SubtreeStats {
+  total: number;
+  completed: number;
+  cancelled: number;
+  max_depth: number;
+}
+
+export interface SubtreeData {
+  root: SubtreeRoot | null;
+  nodes: SubtreeNode[];
+  stats?: SubtreeStats;
+}
+
+export interface SubtreeMeta {
+  truncated: boolean;
+  node_limit: number;
+}
+
+/** TASK-004 §4.2.5 `DELETE …/issues/{id}/` 200 响应（级联软删回传受影响数）。 */
+export interface DeleteSubtreeResult {
+  deleted_count: number;
+  descendant_ids: UUID[];
 }
 
 /** 统一响应信封（api-conventions.md §4） */

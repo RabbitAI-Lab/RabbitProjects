@@ -13,6 +13,7 @@
 export const HTTP = {
   OK:            200,
   CREATED:       201,
+  ACCEPTED:      202,   // 已受理异步处理（Sprint-2 TASK-008 字段删除）
   NO_CONTENT:    204,
   UNAUTHORIZED:  401,  // DRF 未认证
   FORBIDDEN:     403,  // 越权 / 角色不足
@@ -32,6 +33,12 @@ export const CODES = {
   invalidCreds:  "AUTH_INVALID_CREDENTIALS",
   csrf:          "AUTH_CSRF_FAILED",
   projectExists: "RESOURCE_ALREADY_EXISTS",
+  // Sprint-2（TASK-004~010；均为既有注册码，顶层码零新增）
+  stateInvalid:      "RESOURCE_STATE_INVALID",
+  circular:          "RESOURCE_CIRCULAR_DEPENDENCY",
+  transitionBlocked: "RESOURCE_TRANSITION_BLOCKED",
+  cfInvalid:         "VALIDATION_CUSTOM_FIELD_INVALID",
+  queueError:        "SERVER_QUEUE_ERROR",
 } as const;
 
 /** 端点响应字段名（INFRA-004 C1 信封） */

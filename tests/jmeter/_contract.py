@@ -23,6 +23,7 @@ import urllib.request
 HTTP = {
     "OK": 200,            # GET 资源正常
     "CREATED": 201,       # POST 建资源
+    "ACCEPTED": 202,      # 已受理异步处理（TASK-008 字段删除异步清理值）
     "NO_CONTENT": 204,    # DELETE / sign-out 无 body
     "BAD_REQUEST": 400,   # 参数 / 校验失败
     "UNAUTHORIZED": 401,  # DRF 未认证（CSRF / 未登录）
@@ -34,6 +35,7 @@ HTTP = {
 }
 
 #: 错误码常量（须存在于 apps/api/plane/base/error_codes.py 的 75 码注册表）
+#: Sprint-2 起顶层码零新增（规格与架构文档 §8 已对齐；DEPTH/CYCLE 等为 details 子码）
 CODES = {
     "invalidCreds": "AUTH_INVALID_CREDENTIALS",
     "disabled": "AUTH_ACCOUNT_DISABLED",
@@ -50,6 +52,12 @@ CODES = {
     "alreadyExists": "RESOURCE_ALREADY_EXISTS",
     "conflict": "RESOURCE_CONFLICT",
     "limitExceeded": "RESOURCE_LIMIT_EXCEEDED",
+    # ── Sprint-2（TASK-004~010，均为既有注册码的别名） ──
+    "stateInvalid": "RESOURCE_STATE_INVALID",            # 归档任务/已认领等状态拒绝（T007/T009）
+    "circular": "RESOURCE_CIRCULAR_DEPENDENCY",          # 父子/依赖成环（T004/T005）
+    "transitionBlocked": "RESOURCE_TRANSITION_BLOCKED",  # 未完成前置拦截完成（T005）
+    "cfInvalid": "VALIDATION_CUSTOM_FIELD_INVALID",      # 自定义字段值校验（T008）
+    "queueError": "SERVER_QUEUE_ERROR",                  # 死信堆积告警（T010）
 }
 
 #: 统一信封字段路径（INFRA-004 C1）

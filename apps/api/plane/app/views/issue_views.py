@@ -17,6 +17,7 @@ from rest_framework.exceptions import NotFound
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
 from rest_framework.response import Response
 
+from plane.app.filters.compiler import CompileContext, resolved_applied
 from plane.app.permissions import IsAuthenticated
 from plane.app.serializers.view import IssueViewSerializer, IssueViewWriteSerializer
 from plane.app.views._access import get_project_or_404
@@ -52,7 +53,7 @@ class IssueViewListCreateView(ListCreateAPIView):
         s.is_valid(raise_exception=True)
         # PATCH 安全同款：只取请求中实际出现的字段，serializer 默认值不覆盖用户意图
         payload = {k: v for k, v in s.validated_data.items() if k in request.data}
-        validate_view_payload(project=project, payload=payload, instance=None)
+        validate_view_payload(project=project, payload=payload, instance=None, user=request.user)
         max_order = (
             IssueView.objects.filter(project=project, deleted_at__isnull=True).aggregate(m=Max("sort_order"))["m"]
             or 0.0
@@ -71,8 +72,18 @@ class IssueViewListCreateView(ListCreateAPIView):
             created_by=request.user,
             updated_by=request.user,
         )
+        # BR-17：保存即回显「筛选生效了什么」——视图标识 + 占位符解析值 + 条件统计
+        echo = resolved_applied(view.filters or {}, CompileContext.build(project=project, user=request.user))
         return created_response(
             IssueViewSerializer(view).data,
+            meta={
+                "applied": {
+                    "view": {"id": str(view.id), "name": view.name, "access": view.access},
+                    "resolved_placeholders": echo["resolved_placeholders"],
+                    "conditions_count": echo["conditions_count"],
+                    "groups_count": echo["groups_count"],
+                }
+            },
             location=request.build_absolute_uri(
                 f"/api/v1/workspaces/{kwargs['slug']}/projects/{project.id}/views/{view.id}/"
             ),
@@ -123,7 +134,7 @@ class IssueViewDetailView(RetrieveUpdateDestroyAPIView):
             "filters": payload.get("filters", view.filters or {}),
             "display_props": payload.get("display_props", view.display_props or {}),
         }
-        validate_view_payload(project=self._project, payload=merged, instance=view)
+        validate_view_payload(project=self._project, payload=merged, instance=view, user=request.user)
         update_fields = ["updated_at", "updated_by"]
         for field in WRITABLE_FIELDS:
             if field in payload:

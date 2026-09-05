@@ -27,6 +27,18 @@ from rest_framework.exceptions import NotFound
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
 from rest_framework.views import APIView
 
+from plane.app.filters.compiler import (
+    CompileContext,
+    blocked_exists_annotation,
+    echo_conditions,
+    parse_filters_param,
+    resolved_applied,
+    tree_references_blocked,
+    validate_dsl,
+)
+from plane.app.filters.compiler import (
+    compile as compile_dsl,
+)
 from plane.app.permissions import IsAuthenticated
 from plane.app.serializers.issue import (
     IssueSerializer,
@@ -70,7 +82,7 @@ from plane.db.services.issue_link import TransitionBlockedError
 from plane.db.services.issue_query import IssueFilterSet
 from plane.db.services.issue_sequence import create_issue as create_issue_svc
 from plane.db.services.issue_transition_guard import assert_completable
-from plane.db.services.view_service import compile_view_filters, resolve_view
+from plane.db.services.view_service import resolve_view
 from plane.settings.features import (
     MAX_ISSUE_DEPTH,
     MAX_SUB_ISSUES_PER_PARENT,
@@ -157,31 +169,47 @@ class IssueListCreateView(ListCreateAPIView):
         if request.query_params.get("group_by"):
             dimension = resolve_dimension(project, request.query_params.get("group_by"))
 
-        # ── view_id 展开（视图 filters 为底座，URL 筛选叠加恒取 AND——三层筛选的视图层）──
+        # ── 编译上下文（TASK-011 §4.3：占位符解析与 cf 分派共用）──
+        ctx = CompileContext.build(project=project, user=request.user)
+
+        # ── view_id 展开（② 项目级视图层：filters 树 → Q + 原始值 applied 回显）──
         view_q = Q()
         view_applied: dict = {}
+        view_tree: dict | None = None
+        view_meta: dict | None = None
         degraded = None
-        view_id_out = None
         if raw_vid := request.query_params.get("view_id"):
             view = IssueView.objects.filter(id=raw_vid, project=project, deleted_at__isnull=True).first()
             managed = project.current_user_role >= ProjectRole.CONTRIBUTOR  # board.manage（审计）
             if view is None or not (view.is_system or view.owner_id == request.user.id or managed):
                 raise NotFound("RESOURCE_NOT_FOUND") from None  # 存在性隐藏（§6）
-            filters, degraded = resolve_view(view, project=project, user=request.user)
-            view_q, view_applied = compile_view_filters(project, request.user, filters.get("conditions", []))
-            view_id_out = str(view.id)
+            view_tree, degraded = resolve_view(view, project=project, user=request.user)
+            view_q = compile_dsl(view_tree, ctx)
+            view_applied = echo_conditions(view_tree)
+            view_meta = {"id": str(view.id), "name": view.name, "access": view.access}
+
+        # ── ?filters=<urlencoded DSL>（③ 视图内临时层；三源恒 AND——BR-12）──
+        # 损坏 JSON → 400 VALIDATION_INVALID_PARAM（§2.5）；DSL 四重校验同保存路径
+        adhoc_tree = parse_filters_param(request.query_params.get("filters"))
+        if adhoc_tree is not None:
+            validate_dsl(adhoc_tree, project=project, user=request.user)
+        adhoc_q = compile_dsl(adhoc_tree, ctx) if adhoc_tree is not None else Q()
 
         # ── filter + search（IssueFilterSet 单一实现，TASK-003 §4.3.1）──
         # 分组维度对应的筛选参数动态出域（BOARD-002「减 state_id」的泛化，BOARD-003 §4.2 注）
         drop_keys = drop_filter_keys(dimension) if dimension else ()
         filterset = IssueFilterSet(request, drop_keys=drop_keys, project=project)
-        q_obj = filterset.build_query(request.query_params) & view_q
+        q_obj = filterset.build_query(request.query_params) & view_q & adhoc_q
 
+        annotations = issue_count_annotations()
+        if tree_references_blocked([view_tree, adhoc_tree]):
+            # 白名单 "blocked" 键映射的注解列（§4.3.1）——仅在树引用时注入
+            annotations["_is_blocked"] = blocked_exists_annotation()
         qs = (
             self._base_queryset(project, include_archived=include_archived)
             .annotate(
                 # 计数 annotate —— 列表与卡片渲染消费
-                **issue_count_annotations(),
+                **annotations,
             )
             .filter(q_obj)
             .distinct()  # M2M 筛选避免重复行（FLT-12 守护）
@@ -190,18 +218,53 @@ class IssueListCreateView(ListCreateAPIView):
         # ── 排序（含 priority 语义权重，BR-05）──
         qs, warning = filterset.apply_order(qs, request.query_params.get("order_by"))
 
+        # ── BR-17 结构化 applied 增量（仅 ?filters= 存在时附加——无该参数响应逐字节不变）──
+        applied_extra = self._dsl_applied_extra(
+            ctx, view_tree=view_tree, adhoc_tree=adhoc_tree, view_meta=view_meta
+        )
+
         # ── group_by 走分组分支（BOARD-002 契约的维度泛化，BOARD-003 §4.2.2）──
         if dimension:
             base_unfiltered = self._base_queryset(project, include_archived=include_archived)
             return self._grouped_response(
                 request, project, qs, base_unfiltered, filterset, warning,
-                dimension, view_applied, degraded, view_id_out,
+                dimension, view_applied, applied_extra, degraded, view_id_out=view_meta,
             )
 
         # ── 平铺列表：游标分页（轻量实现：created_at-desc + id + offset 编码）──
-        return self._flat_list_response(qs, filterset, warning)
+        return self._flat_list_response(qs, filterset, warning, applied_extra)
 
-    def _flat_list_response(self, qs, filterset, warning):
+    @staticmethod
+    def _dsl_applied_extra(
+        ctx: CompileContext,
+        *,
+        view_tree: dict | None,
+        adhoc_tree: dict | None,
+        view_meta: dict | None,
+    ) -> dict | None:
+        """?filters= 源的 applied 用解析后值 + resolved_placeholders / 计数（BR-17）；
+        view_id 同在时合并视图树的占位符与计数，并回显视图标识。"""
+        if adhoc_tree is None:
+            return None
+        echo = resolved_applied(adhoc_tree, ctx)
+        extra: dict = {
+            "filters": echo["conditions"],
+            "resolved_placeholders": echo["resolved_placeholders"],
+            "conditions_count": echo["conditions_count"],
+            "groups_count": echo["groups_count"],
+        }
+        if view_tree:
+            vecho = resolved_applied(view_tree, ctx)
+            extra["resolved_placeholders"] = {
+                **vecho["resolved_placeholders"], **echo["resolved_placeholders"]
+            }
+            extra["conditions_count"] += vecho["conditions_count"]
+            extra["groups_count"] += vecho["groups_count"]
+        if view_meta:
+            extra["view"] = view_meta
+        return extra
+
+    def _flat_list_response(self, qs, filterset, warning, applied_extra=None):
         per_page = self._parse_per_page()
         offset = self._parse_cursor_offset()
         total = qs.count()
@@ -218,7 +281,7 @@ class IssueListCreateView(ListCreateAPIView):
             "total_pages": (total + per_page - 1) // per_page,
             "page": (offset // per_page) + 1,
             "per_page": per_page,
-            "applied": filterset.applied,
+            "applied": {**filterset.applied, **(applied_extra or {})},
         }
         merged_warning = filterset.merge_warnings(warning)
         if merged_warning:
@@ -229,7 +292,7 @@ class IssueListCreateView(ListCreateAPIView):
 
     def _grouped_response(
         self, request, project, base_qs, base_unfiltered, filterset, warning,
-        dimension, view_applied, degraded, view_id,
+        dimension, view_applied, applied_extra, degraded, view_id_out,
     ):
         """分组响应（BOARD-003 §4.2.2，BOARD-002 契约的维度泛化）。
 
@@ -271,11 +334,11 @@ class IssueListCreateView(ListCreateAPIView):
             "grouped_by": dimension,
             "sub_grouped_by": None,
             "total_count": base_qs.count(),
-            "applied": {**view_applied, **filterset.applied},
+            "applied": {**view_applied, **filterset.applied, **(applied_extra or {})},
             "group_cursors": group_cursors,
         }
-        if view_id:
-            meta["view_id"] = view_id
+        if view_id_out:
+            meta["view_id"] = view_id_out["id"]
         if degraded:
             meta["degraded"] = degraded
         merged_warning = filterset.merge_warnings(warning)

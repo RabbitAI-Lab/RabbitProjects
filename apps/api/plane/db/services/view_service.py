@@ -1,47 +1,23 @@
 """视图校验服务（BOARD-003 §4.3.1 —— 保存防线 BR-01~09 + 读取降级 BR-08）。
 
 保存防线在写路径拦截非法载荷；读取降级在字段停用后剔除引用并回退
-（resolve_view 供分组端点 / 列表端点消费，TASK-011 编译器同族接管占位符解析）。
+（resolve_view 供分组端点 / 列表端点消费）。TASK-011（T3-07）起：
+- filters 校验由 ``app/filters/compiler.validate_dsl`` 全量 DSL 校验超集接管
+  （嵌套 ≤3 放开、扁平形态向后兼容），P2 扁平校验退役；
+- 条件编译由 ``app/filters/compiler.compile`` 收编，``compile_view_filters``
+  降级为薄包装转发（保持旧 import 兼容）。
 """
 from __future__ import annotations
 
-import uuid as uuid_module
-from datetime import timedelta
-
 from django.db.models import Q
-from django.utils import timezone
 
 from plane.base.exception import AppException
-from plane.db.models import IssueType, IssueView
+from plane.db.models import IssueView
 from plane.db.services.field_schema import get_cached_schema
 from plane.settings.features import MAX_VIEWS_PER_PROJECT
 
 #: 分组维度白名单：内置四维 + Schema groupable=true 的 select 类 cf_*（BR-05）
 GROUPABLE_BUILTIN = frozenset({"state_id", "priority", "assignee_id", "label_id"})
-#: 内置筛选字段域（TASK-011 BUILTIN_FIELD_PATHS 的扁平视图口径；编译器落地后统一收编）
-BUILTIN_FILTER_FIELDS = frozenset(
-    {
-        "name",
-        "state",
-        "state.group",
-        "issue_type",
-        "priority",
-        "assignees",
-        "labels",
-        "created_by",
-        "start_date",
-        "target_date",
-        "created_at",
-        "estimate",
-        "sequence_id",
-        "parent",
-        "blocked",
-    }
-)
-#: P2 扁平条件数上限（BR-07；TASK-011 放开嵌套后仍保留 20 节点全局上限）
-FLAT_MAX_CONDITIONS = 20
-#: 单值列表长度上限（api-conventions §5.3 MAX_IN_VALUES）
-MAX_IN_VALUES = 50
 #: 卡片开关固定 7 项（§3.3 同一集合；cf_* 动态追加，未知键静默剔除 BR-09）
 CARD_FIELD_KEYS = frozenset(
     {"labels", "sub_issues", "attachments", "estimate", "priority", "timer", "target_date"}
@@ -71,109 +47,12 @@ def _groupable(schema_index: dict[str, dict], group_by: str) -> bool:
     return bool(item and item.get("groupable"))
 
 
-def _validate_flat_filters(filters: dict, *, schema_index: dict[str, dict]) -> None:
-    """BR-07：P2 仅支持单层 AND 的扁平条件树（TASK-011 放开为 ≤3 层嵌套）。"""
-    if filters in (None, {}):
-        return
-    if not isinstance(filters, dict):
-        raise AppException(
-            "VALIDATION_ERROR",
-            message="请求参数校验失败",
-            details=[{"field": "filters", "code": "INVALID", "message": "filters 必须为对象"}],
-        )
-    op = filters.get("op", "AND")
-    if op != "AND":
-        raise AppException(
-            "VALIDATION_ERROR",
-            message="请求参数校验失败",
-            details=[
-                {
-                    "field": "filters",
-                    "code": "INVALID",
-                    "message": "嵌套条件组将在组合筛选器版本开放，当前仅支持单层 AND",
-                }
-            ],
-        )
-    conditions = filters.get("conditions", [])
-    if not isinstance(conditions, list):
-        raise AppException(
-            "VALIDATION_ERROR",
-            message="请求参数校验失败",
-            details=[{"field": "filters", "code": "INVALID", "message": "conditions 必须为数组"}],
-        )
-    if len(conditions) > FLAT_MAX_CONDITIONS:
-        raise AppException(
-            "VALIDATION_ERROR",
-            message="请求参数校验失败",
-            details=[
-                {
-                    "field": "filters",
-                    "code": "TOO_MANY",
-                    "message": f"条件数上限 {FLAT_MAX_CONDITIONS}（当前 {len(conditions)}）",
-                }
-            ],
-        )
-    for cond in conditions:
-        if not isinstance(cond, dict) or "op" in cond or "conditions" in cond:
-            raise AppException(
-                "VALIDATION_ERROR",
-                message="请求参数校验失败",
-                details=[
-                    {
-                        "field": "filters",
-                        "code": "INVALID",
-                        "message": "嵌套条件组将在组合筛选器版本开放，当前仅支持单层 AND",
-                    }
-                ],
-            )
-        field = cond.get("field")
-        operator = cond.get("operator")
-        value = cond.get("value")
-        if not isinstance(field, str) or not field:
-            raise AppException(
-                "VALIDATION_ERROR",
-                message="请求参数校验失败",
-                details=[{"field": "filters", "code": "INVALID", "message": "条件缺少 field"}],
-            )
-        if field not in BUILTIN_FILTER_FIELDS and not (
-            field.startswith("cf_") and _cf_active(schema_index, field)
-        ):
-            raise AppException(
-                "VALIDATION_ERROR",
-                message="请求参数校验失败",
-                details=[{"field": "filters", "code": "INVALID", "message": f"未知字段 {field}"}],
-            )
-        if not isinstance(operator, str) or not operator:
-            raise AppException(
-                "VALIDATION_ERROR",
-                message="请求参数校验失败",
-                details=[{"field": "filters", "code": "INVALID", "message": f"条件 {field} 缺少 operator"}],
-            )
-        if value is None and operator not in ("is_empty", "is_not_empty"):
-            raise AppException(
-                "VALIDATION_ERROR",
-                message="请求参数校验失败",
-                details=[{"field": "filters", "code": "INVALID", "message": f"条件 {field} 缺少 value"}],
-            )
-        if value is not None:
-            if not isinstance(value, list):
-                raise AppException(
-                    "VALIDATION_ERROR",
-                    message="请求参数校验失败",
-                    details=[{"field": "filters", "code": "INVALID", "message": f"条件 {field} 的 value 必须为数组"}],
-                )
-            if len(value) > MAX_IN_VALUES:
-                raise AppException(
-                    "VALIDATION_ERROR",
-                    message="请求参数校验失败",
-                    details=[
-                        {
-                            "field": "filters",
-                            "code": "TOO_MANY",
-                            "message": f"条件 {field} 的取值数上限 {MAX_IN_VALUES}",
-                        }
-                    ],
-                )
+def _validate_filters(filters: dict, *, project, user) -> None:
+    """BR-01~04：filters 全量 DSL 校验（TASK-011 超集接管 P2 扁平校验——
+    嵌套 ≤3 / 条件 ≤20 / 白名单 / 操作符 × 类型 / 值域，扁平形态向后兼容）。"""
+    from plane.app.filters.compiler import validate_dsl
+
+    validate_dsl(filters, project=project, user=user)
 
 
 def _validate_group_by(schema_index: dict[str, dict], group_by) -> None:
@@ -211,9 +90,12 @@ def _sanitize_card_fields(display_props: dict, *, schema_index: dict[str, dict])
     }
 
 
-def validate_view_payload(*, project, payload: dict, instance: IssueView | None) -> None:
+def validate_view_payload(
+    *, project, payload: dict, instance: IssueView | None, user=None
+) -> None:
     """保存防线：BR-01~09 全景（数量上限 / access 白名单 / layout 白名单 /
-    filters 扁平结构 / group_by 在 groupable 域 / card_fields 键域 / icon 预设）。"""
+    filters 全量 DSL 校验（BR-09 复跑 BR-01~04）/ group_by 在 groupable 域 /
+    card_fields 键域 / icon 预设）。user 供 DSL 值域校验锚点（@me 编译期解析）。"""
     schema_index = _schema_index(project)
     if instance is None:
         count = IssueView.objects.filter(project=project, deleted_at__isnull=True).count()
@@ -276,121 +158,65 @@ def validate_view_payload(*, project, payload: dict, instance: IssueView | None)
         _validate_group_by(schema_index, display_props.get("group_by"))
         _sanitize_card_fields(display_props, schema_index=schema_index)
 
-    _validate_flat_filters(payload.get("filters") or {}, schema_index=schema_index)  # BR-07
+    _validate_filters(payload.get("filters") or {}, project=project, user=user)
+
+
+def _prune_inactive_cf(node: dict, schema_index: dict[str, dict], flags: list[str]) -> dict | None:
+    """递归剔除引用停用字段的条件（BR-08 降级而非报错）；组内条件清空则整组剔除。
+
+    返回 None 表示该节点应剔除；根组恒保留（可能为空 conditions → 无操作）。
+    """
+    if not ("op" in node or "conditions" in node):
+        f = node.get("field", "")
+        if f.startswith("cf_") and not _cf_active(schema_index, f):
+            flags.append(f"{f} 已停用，条件已剔除")
+            return None
+        return node
+    kept = []
+    for child in node.get("conditions") or []:
+        if not isinstance(child, dict):
+            continue
+        pruned = _prune_inactive_cf(child, schema_index, flags)
+        if pruned is not None:
+            kept.append(pruned)
+    return {"op": str(node.get("op", "AND")).upper(), "conditions": kept}
 
 
 def resolve_view(view: IssueView, *, project, user) -> tuple[dict, dict | None]:
-    """读取降级：filters / group_by 引用的字段停用时剔除并回退（BR-08 / §2.6）。
-
-    返回 (生效 filters, degraded 提示)；@me 占位符在编译期由 TASK-011 的编译器
-    解析（本迭代 assignees-in-@me 由扁平编译子集展开）。
-    """
+    """读取降级：filters（递归嵌套树）/ group_by 引用的字段停用时剔除并回退
+    （BR-08 / §2.6）。返回 (生效 filters 树, degraded 提示)；占位符在编译期由
+    TASK-011 编译器解析（compiler.compile，BR-05）。"""
     schema_index = _schema_index(project)
     degraded: dict | None = None
 
-    conditions = []
-    for cond in (view.filters or {}).get("conditions", []):
-        field = cond.get("field", "")
-        if field.startswith("cf_") and not _cf_active(schema_index, field):
-            degraded = degraded or {"filters": f"{field} 已停用，条件已剔除"}
-            continue
-        conditions.append(cond)
+    flags: list[str] = []
+    tree = view.filters or {}
+    pruned = _prune_inactive_cf(tree, schema_index, flags) if tree else None
+    if pruned is None:
+        pruned = {"op": "AND", "conditions": []}
+    if flags:
+        degraded = {"filters": flags[0]}
 
     group_by = (view.display_props or {}).get("group_by") or "state_id"
     if group_by != "state_id" and not _groupable(schema_index, group_by):  # BR-05 回退
         degraded = degraded or {}
         degraded["group_by"] = f"{group_by} 已停用，已回退为按状态分组"
         group_by = "state_id"
-    return {"op": "AND", "conditions": conditions}, degraded
+    return pruned, degraded
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 扁平条件编译（读取侧；TASK-011 全量编译器同族接管后由 compiler.py 收编）
+# 条件编译（读取侧）——TASK-011 全量编译器已收编，此处仅存薄包装
 # ─────────────────────────────────────────────────────────────────────
-#: 类型名占位符 → 项目内 IssueType.name（编译期解析为 UUID，§4.1.1 注）
-_TYPE_NAME_PLACEHOLDERS = {"__requirement__": "需求", "__bug__": "缺陷", "__test__": "测试"}
-
-
-def _resolve_type_ids(project, values: list) -> list:
-    """类型值（占位符 / 类型名 / UUID）→ issue_type_id 列表；无匹配 → 空集（条件命中零行）。"""
-    names = {v for v in values if not _is_uuid(v)}
-    type_ids = [uuid_module.UUID(v) for v in values if _is_uuid(v)]
-    if names:
-        rows = IssueType.objects.filter(
-            workspace_id=project.workspace_id, name__in=names, deleted_at__isnull=True
-        ).values_list("id", flat=True)
-        type_ids.extend(rows)
-    return type_ids
-
-
-def _is_uuid(v) -> bool:
-    try:
-        uuid_module.UUID(str(v))
-        return True
-    except (ValueError, AttributeError, TypeError):
-        return False
-
-
-def _date_range(value: str) -> tuple | None:
-    """日期占位符 → (start, end) 闭区间（按服务器本地时区；TASK-011 接管用户时区口径）。"""
-    today = timezone.localdate()
-    if value == "today":
-        return today, today
-    if value == "this_week":
-        start = today - timedelta(days=today.weekday())
-        return start, start + timedelta(days=6)
-    if value == "overdue":
-        return None, today
-    return None
-
-
 def compile_view_filters(project, user, conditions: list[dict]) -> tuple[Q, dict]:
-    """视图扁平条件 → Q + applied 回显（字段域经保存防线校验，此处只做映射）。
+    """薄包装（TASK-011 T3-07 收编）：转发 ``app/filters/compiler`` 全量编译器。
 
-    仅覆盖内置五视图与扁平个人视图用到的字段/操作符组合；TASK-011 全量编译器
-    （build_issue_queryset）落地后本函数退役收编。
+    旧签名（扁平 conditions 列表 → Q + 原始值 applied 回显）保持兼容；
+    列表端点已直接消费 compiler.compile / echo_conditions。
     """
-    q = Q()
-    applied: dict = {}
-    for cond in conditions:
-        field, op, value = cond.get("field"), cond.get("operator"), cond.get("value") or []
-        if field == "issue_type" and op == "in":
-            ids = _resolve_type_ids(project, value)
-            q &= Q(issue_type_id__in=ids)
-        elif field == "priority" and op == "in":
-            q &= Q(priority__in=value)
-        elif field == "state" and op == "in":
-            q &= Q(state_id__in=[v for v in value if _is_uuid(v)])
-        elif field == "state.group" and op == "in":
-            q &= Q(state__group__in=value)
-        elif field == "assignees" and op == "in":
-            ids = [str(user.id) if v == "@me" else v for v in value if v == "@me" or _is_uuid(v)]
-            q &= Q(issue_assignees__assignee_id__in=ids)
-        elif field == "assignees" and op == "is_empty":
-            q &= Q(issue_assignees__isnull=True)
-        elif field == "labels" and op == "in":
-            q &= Q(issue_labels__label_id__in=[v for v in value if _is_uuid(v)])
-        elif field == "target_date" and op == "between":
-            if len(value) == 1 and value[0] in ("today", "this_week", "overdue"):
-                rng = _date_range(value[0])
-                if rng:
-                    lo, hi = rng
-                    range_kwargs: dict = {}
-                    if lo is not None:
-                        range_kwargs["target_date__gte"] = lo
-                    if hi is not None:
-                        range_kwargs["target_date__lte"] = hi
-                    q &= Q(**range_kwargs)
-            elif len(value) == 2:
-                q &= Q(target_date__gte=value[0], target_date__lte=value[1])
-        elif field == "target_date" and op in ("eq", "before", "after"):
-            lookup = {"eq": "exact", "before": "lt", "after": "gt"}[op]
-            q &= Q(**{f"target_date__{lookup}": value[0] if value else None})
-        elif field == "created_by" and op == "in":
-            q &= Q(created_by_id__in=[v for v in value if _is_uuid(v)])
-        else:
-            # 保存防线外的组合（如历史数据）：跳过该条件并回显，不阻断读取
-            applied.setdefault("_skipped", []).append(f"{field}.{op}")
-            continue
-        applied[field] = value
-    return q, applied
+    from plane.app.filters.compiler import CompileContext, echo_conditions
+    from plane.app.filters.compiler import compile as compile_dsl
+
+    tree = {"op": "AND", "conditions": list(conditions or [])}
+    ctx = CompileContext.build(project=project, user=user)
+    return compile_dsl(tree, ctx), echo_conditions(tree)

@@ -279,6 +279,7 @@ class IssueFilterSet:
             "group_by",
             "group_id",
             "group_per_page",
+            "filters",  # TASK-011 ?filters=<urlencoded DSL>（③ 临时层，三源恒 AND）
         }
         for key in params:
             if key in known or key.startswith(PROPERTY_PARAM_PREFIX):

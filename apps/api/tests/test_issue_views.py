@@ -126,28 +126,37 @@ class TestValidatePayload:
     def test_layout_invalid_rejected(self, env):
         _raises_code(_payload(layout="timeline"), env, "VALIDATION_ERROR")
 
-    def test_nested_conditions_rejected(self, env):
+    def test_nested_conditions_allowed(self, env):
+        """TASK-011 超集接管：嵌套 ≤3 放开（P2 扁平限制废止）；4 层仍拒。"""
         nested = {"op": "AND", "conditions": [
-            {"op": "OR", "conditions": [{"field": "priority", "operator": "in", "value": ["high"]}]},
+            {"op": "OR", "conditions": [
+                {"field": "priority", "operator": "in", "value": ["high"]},
+                {"op": "AND", "conditions": [
+                    {"field": "name", "operator": "contains", "value": "x"},
+                ]},
+            ]},
         ]}
-        exc = _raises_code(_payload(filters=nested), env, "VALIDATION_ERROR")
-        assert "嵌套" in exc.extra_details[0]["message"]
+        validate_view_payload(project=env["proj"], payload=_payload(filters=nested), instance=None)
+        depth4 = {"op": "AND", "conditions": [nested]}  # 包一层 → 4 层，拒
+        exc = _raises_code(_payload(filters=depth4), env, "VALIDATION_INVALID_PARAM")
+        assert "嵌套层级" in exc.extra_details[0]["message"]
 
-    def test_or_op_rejected_in_p2(self, env):
+    def test_or_op_allowed(self, env):
+        """TASK-011：顶层 OR 合法（AND/OR 递归放开）。"""
         filters = {"op": "OR", "conditions": [{"field": "priority", "operator": "in", "value": ["high"]}]}
-        _raises_code(_payload(filters=filters), env, "VALIDATION_ERROR")
+        validate_view_payload(project=env["proj"], payload=_payload(filters=filters), instance=None)
 
     def test_too_many_conditions_rejected(self, env):
         conds = [{"field": "priority", "operator": "in", "value": ["high"]}] * 21
-        _raises_code(_payload(filters={"op": "AND", "conditions": conds}), env, "VALIDATION_ERROR")
+        _raises_code(_payload(filters={"op": "AND", "conditions": conds}), env, "VALIDATION_INVALID_PARAM")
 
     def test_unknown_builtin_field_rejected(self, env):
         conds = [{"field": "no_such", "operator": "in", "value": ["x"]}]
-        _raises_code(_payload(filters={"op": "AND", "conditions": conds}), env, "VALIDATION_ERROR")
+        _raises_code(_payload(filters={"op": "AND", "conditions": conds}), env, "VALIDATION_INVALID_PARAM")
 
     def test_unknown_cf_field_rejected(self, env):
         conds = [{"field": "cf_ghost", "operator": "in", "value": ["x"]}]
-        _raises_code(_payload(filters={"op": "AND", "conditions": conds}), env, "VALIDATION_ERROR")
+        _raises_code(_payload(filters={"op": "AND", "conditions": conds}), env, "VALIDATION_INVALID_PARAM")
 
     def test_active_cf_field_passes(self, env):
         CustomFieldDefinition.objects.create(
@@ -160,11 +169,11 @@ class TestValidatePayload:
 
     def test_value_must_be_list(self, env):
         conds = [{"field": "priority", "operator": "in", "value": "high"}]
-        _raises_code(_payload(filters={"op": "AND", "conditions": conds}), env, "VALIDATION_ERROR")
+        _raises_code(_payload(filters={"op": "AND", "conditions": conds}), env, "VALIDATION_INVALID_PARAM")
 
     def test_value_over_50_rejected(self, env):
         conds = [{"field": "priority", "operator": "in", "value": [f"v{i}" for i in range(51)]}]
-        _raises_code(_payload(filters={"op": "AND", "conditions": conds}), env, "VALIDATION_ERROR")
+        _raises_code(_payload(filters={"op": "AND", "conditions": conds}), env, "VALIDATION_INVALID_PARAM")
 
     def test_group_by_nongroupable_rejected(self, env):
         CustomFieldDefinition.objects.create(

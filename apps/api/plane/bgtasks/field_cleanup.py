@@ -3,8 +3,8 @@
 - ``cleanup_deleted_field_values`` —— 分批（2000）从 ``issues.custom_fields``
   移除残留 key：``custom_fields ? key`` 走 GIN 索引（每批 SELECT 是索引扫描），
   ``-`` 操作符删 key 后 GIN 随之更新；避免长事务与 WAL 洪峰。
-- ``prune_views_referencing_field`` —— 视图引用剔除（降级而非报错）。
-  TASK-011 视图（IssueView）上线前为预置空实现，幂等。
+- ``prune_views_referencing_field`` —— 视图引用剔除（降级而非报错，
+  TASK-011 §4.3.4 激活：filters 递归嵌套剔除 + display_props 三处去引用）。
 """
 from __future__ import annotations
 
@@ -71,12 +71,68 @@ def cleanup_deleted_field_values(self, definition_id: str, batch_size: int = BAT
 
 @shared_task(name="plane.bgtasks.field_cleanup.prune_views_referencing_field")
 def prune_views_referencing_field(definition_id: str) -> int:
-    """视图引用剔除（降级而非报错）：移除 filters/display_props 中该 key 的引用。
+    """视图引用剔除（BR-15 / TASK-011 §4.3.4 激活；降级而非报错）。
 
-    TASK-011 视图模型（IssueView）上线前的预置任务体——返回 0（无视图可清理），
-    上线后在此扩展为真正的剔除 + 提示标记（架构 §5.6）。
+    - filters：递归（嵌套树）剔除 ``field == key`` 的条件，组内条件清空则整组剔除；
+    - display_props：``group_by == key`` 回退 ``state_id``（BR-05 默认维度）；
+      ``sub_group_by`` / ``order_by``（含 ``-key``）置空；``columns`` / ``card_fields`` 去键；
+    - ``updated_at`` 触碰即前端「视图已自动调整」黄条依据（§4.3.4）；
+    - 幂等：无引用不落库；返回本次处理的行数。作用域：项目私有字段 → 该项目
+      IssueView；全局字段 → workspace 全部视图（含跨项目视图，架构 §5.6）。
     """
-    from plane.db.models import CustomFieldDefinition
+    from plane.db.models import CustomFieldDefinition, IssueView
 
-    CustomFieldDefinition.all_objects.filter(pk=definition_id).exists()  # 幂等触发：定义存在性检查
-    return 0
+    definition = CustomFieldDefinition.all_objects.filter(pk=definition_id).first()
+    if definition is None:
+        return 0
+    key = definition.field_key
+    views = IssueView.objects.filter(workspace_id=definition.workspace_id, deleted_at__isnull=True)
+    if definition.project_id is not None:
+        views = views.filter(project_id=definition.project_id)
+
+    affected = 0
+    for view in views.iterator():
+        original_filters = view.filters or {}
+        original_props = view.display_props or {}
+        new_filters = _strip_field_from_tree(original_filters, key) if original_filters else original_filters
+        props = dict(original_props)
+        changed = new_filters != original_filters
+        for prop in ("sub_group_by", "order_by"):
+            if props.get(prop) in (key, f"-{key}"):
+                props[prop] = None
+                changed = True
+        if props.get("group_by") == key:
+            props["group_by"] = "state_id"  # 分组键回退（display_props.group_by 读侧同款默认）
+            changed = True
+        if key in (props.get("columns") or []):
+            props["columns"] = [c for c in props["columns"] if c != key]
+            changed = True
+        if isinstance(props.get("card_fields"), dict) and key in props["card_fields"]:
+            props["card_fields"] = {k: v for k, v in props["card_fields"].items() if k != key}
+            changed = True
+        if changed:
+            view.filters = new_filters
+            view.display_props = props
+            view.save(update_fields=["filters", "display_props", "updated_at"])
+            affected += 1
+    if affected:
+        logger.info("field_cleanup.pruned_views key=%s views=%s", key, affected)
+    return affected
+
+
+def _strip_field_from_tree(node: dict, key: str) -> dict:
+    """递归剔除引用 ``key`` 的条件节点；空组剔除、根组保留（空 conditions = 无操作）。"""
+    is_logic = "op" in node or "conditions" in node
+    if not is_logic:
+        return node  # 条件节点：field != key 的保留（== key 的由父层过滤）
+    kept = []
+    for child in node.get("conditions") or []:
+        if not isinstance(child, dict):
+            continue
+        if "op" in child or "conditions" in child:
+            pruned = _strip_field_from_tree(child, key)
+            if pruned.get("conditions"):
+                kept.append(pruned)
+        elif child.get("field") != key:
+            kept.append(child)
+    return {"op": str(node.get("op", "AND")).upper(), "conditions": kept}

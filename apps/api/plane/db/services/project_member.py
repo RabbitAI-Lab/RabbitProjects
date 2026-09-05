@@ -18,6 +18,7 @@ from plane.db.models import (
     WorkspaceMember,
 )
 from plane.db.models.roles import ProjectRole, WorkspaceRole
+from plane.db.services.issue_assignee import purge_member_assignments
 
 MAX_BATCH_MEMBERS = 20
 PROJECT_MEMBER_LIMIT = 100
@@ -192,7 +193,13 @@ class ProjectMemberService:
         )
         self._assert_not_last_admin(project=project, member_being_changed=member)
         member_id_str = str(member.member_id)
-        member.delete()  # 软删；任务指派保留（BR-07）
+        member.delete()  # 软删
+        # BR-12（TASK-007 §4.3.3）：移除即失权 —— 同事务物理删除其在本项目的全部
+        # 指派行（原「保留指派」口径已回改为级联清空：BR-02 要求执行人是 active
+        # 成员，保留行即长期维持违约状态；历史贡献由 IssueActivity 逐人留痕承载）
+        purge_member_assignments(
+            project_id=project.id, member_id=member.member_id, actor=actor
+        )
         _notify(
             member_id_str,
             event="project.member.removed",

@@ -24,6 +24,7 @@ from plane.db.models import (
     WorkspaceMemberInvite,
 )
 from plane.db.models.roles import WorkspaceRole
+from plane.db.services.issue_assignee import purge_member_assignments
 
 MAX_INVITE_EMAILS = 20
 MAX_WORKSPACE_MEMBERS = 100  # §2.8 P1 标准版软限
@@ -309,7 +310,7 @@ class MemberService:
     @staticmethod
     @transaction.atomic
     def _soft_delete_with_cascade(*, workspace, membership: WorkspaceMember, actor) -> None:
-        """软删除成员 + 级联回收 ProjectMember；私有 helper。"""
+        """软删除成员 + 级联回收 ProjectMember + 级联清空指派（BR-12）；私有 helper。"""
         membership.deleted_at = timezone.now()
         membership.is_active = False
         membership.updated_by = actor
@@ -318,6 +319,11 @@ class MemberService:
         ProjectMember.objects.filter(
             workspace=workspace, member=membership.member, deleted_at__isnull=True,
         ).update(deleted_at=timezone.now(), updated_at=timezone.now())
+        # BR-12（TASK-007 §4.3.3，TEAM-002 同口径）：移除即失权 —— 同事务物理删除
+        # 该成员在本工作空间全部项目的 IssueAssignee 行（原「保留指派」口径已回改）
+        purge_member_assignments(
+            workspace_id=workspace.id, member_id=membership.member_id, actor=actor
+        )
 
     @transaction.atomic
     def remove_member(self, *, workspace, member: WorkspaceMember, actor) -> None:

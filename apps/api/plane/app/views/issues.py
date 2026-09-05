@@ -32,15 +32,14 @@ from plane.app.serializers.issue import (
     IssueSerializer,
     IssueWriteSerializer,
     diff_labels,
-    sync_assignees,
     sync_labels,
-    validate_assignees,
 )
 from plane.app.views._access import get_project_or_404
 from plane.base.exception import AppException
 from plane.base.response import created_response, success_response
 from plane.db.models import Issue, IssueActivity, IssueType, Label, State
 from plane.db.models.roles import ProjectRole
+from plane.db.services.issue_assignee import sync_assignees_full
 from plane.db.services.issue_hierarchy import (
     CircularDependencyError,
     DepthLimitExceeded,
@@ -173,8 +172,9 @@ class IssueListCreateView(ListCreateAPIView):
             "per_page": per_page,
             "applied": filterset.applied,
         }
-        if warning:
-            meta["warning"] = warning
+        merged_warning = filterset.merge_warnings(warning)
+        if merged_warning:
+            meta["warning"] = merged_warning
         if filterset.ignored_params:
             meta["ignored_params"] = filterset.ignored_params
         return success_response(IssueSerializer(rows, many=True).data, meta=meta)
@@ -212,8 +212,9 @@ class IssueListCreateView(ListCreateAPIView):
             "applied": filterset.applied,
             "group_cursors": group_cursors,
         }
-        if warning:
-            meta["warning"] = warning
+        merged_warning = filterset.merge_warnings(warning)
+        if merged_warning:
+            meta["warning"] = merged_warning
         if filterset.ignored_params:
             meta["ignored_params"] = filterset.ignored_params
         return success_response(grouped, meta=meta)
@@ -265,7 +266,6 @@ class IssueListCreateView(ListCreateAPIView):
                 details=[{"field": "name", "code": "REQUIRED", "message": "标题不能为空"}],
             )
         assignee_ids = s.validated_data.get("assignee_ids", []) or []
-        validate_assignees(project.id, assignee_ids)
         label_ids = s.validated_data.get("label_ids", []) or []
         state_id = s.validated_data.get("state_id")
         if state_id is None:
@@ -293,7 +293,10 @@ class IssueListCreateView(ListCreateAPIView):
                 },
             )
             if assignee_ids:
-                sync_assignees(issue, assignee_ids, request.user.id)
+                # TASK-007：创建首派同样收敛唯一写入口（校验 + 落库 + 通知一体）
+                sync_assignees_full(
+                    issue_id=issue.id, new_ids=assignee_ids, actor_id=request.user.id
+                )
             if label_ids:
                 sync_labels(issue, label_ids, request.user.id)
             transaction.on_commit(
@@ -601,7 +604,8 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
             )
             issue.sort_order = data["sort_order"]
 
-        # ---- 负责人 ----
+        # ---- 负责人（TASK-007：兼容路径收敛 sync_assignees_full 唯一写入口，
+        #      保留原有 assignees 汇总 Activity 行；逐人明细行由 on_commit 任务补写 BR-10）----
         if "assignee_ids" in data:
             new_ids = list(data["assignee_ids"] or [])
             old_ids = sorted(str(ia.assignee_id) for ia in issue.issue_assignees.all())
@@ -615,8 +619,9 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
                         "comment": "更新了 负责人",
                     }
                 )
-                validate_assignees(project.id, new_ids)
-                sync_assignees(issue, new_ids, request.user.id)
+                sync_assignees_full(
+                    issue_id=issue.id, new_ids=new_ids, actor_id=request.user.id
+                )
 
         with transaction.atomic():
             issue.save()
@@ -813,7 +818,6 @@ class IssueSubIssueListCreateView(APIView):
         )
         s.is_valid(raise_exception=True)
         assignee_ids = s.validated_data.get("assignee_ids", []) or []
-        validate_assignees(project.id, assignee_ids)
         label_ids = s.validated_data.get("label_ids", []) or []
         # 缺省 state 取项目默认
         state_id = s.validated_data.get("state_id")
@@ -842,7 +846,10 @@ class IssueSubIssueListCreateView(APIView):
                 },
             )
             if assignee_ids:
-                sync_assignees(sub, assignee_ids, request.user.id)
+                # TASK-007：子任务创建首派同样收敛唯一写入口
+                sync_assignees_full(
+                    issue_id=sub.id, new_ids=assignee_ids, actor_id=request.user.id
+                )
             if label_ids:
                 sync_labels(sub, label_ids, request.user.id)
             transaction.on_commit(

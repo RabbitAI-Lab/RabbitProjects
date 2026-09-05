@@ -5,6 +5,11 @@ urls.py 通过 import_module 把本模块的 urlpatterns 自动追加（FEATURE_
 
 from django.urls import path
 
+from plane.app.views.issue_assignees import (
+    IssueAssigneeClaimView,
+    IssueAssigneeDeleteView,
+    IssueAssigneesView,
+)
 from plane.app.views.issue_relations import (
     IssueRelationDeleteView,
     IssueRelationListCreateView,
@@ -43,6 +48,22 @@ urlpatterns = [
         "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/labels/",
         IssueLabelsView.as_view(),
         name="issue-labels",
+    ),
+    # 多执行人：全量替换 / 认领 / 自退（TASK-007 §4.2，PUT 白名单第二成员）
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/assignees/",
+        IssueAssigneesView.as_view(),
+        name="issue-assignees",
+    ),
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/assignees/claim/",
+        IssueAssigneeClaimView.as_view(),
+        name="issue-assignee-claim",
+    ),
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/assignees/<uuid:user_id>/",
+        IssueAssigneeDeleteView.as_view(),
+        name="issue-assignee-delete",
     ),
     # 工作项子任务（TASK-002 §4.3.4/5）
     path(

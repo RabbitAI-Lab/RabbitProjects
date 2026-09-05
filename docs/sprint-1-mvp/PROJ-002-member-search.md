@@ -266,7 +266,7 @@ flowchart TD
 | BR-04 | 仅 `project.member.manage` 持有者（含隐式 `PROJ_ADMIN`）可管理项目成员 | Permission | 403 `PERM_ROLE_INSUFFICIENT` |
 | BR-05 | `WS_GUEST` 只能被授予 `PROJ_COMMENTER` 及以下（rbac §7.3 `ALLOWED_PROJECT_ROLES_FOR_GUEST`）；整请求级前置校验 | Service（`assert_valid_project_role_for_guest`） | 403 `PERM_GUEST_LIMIT`（rbac §5.5/§7.3） |
 | BR-06 | **末位 ADMIN 保护**：移除 / 降级最后一个 `PROJ_ADMIN` 前，断言「仍存在其他显式 ADMIN **或** 空间存在 `WS_OWNER`/`WS_ADMIN`（隐式接管）」；全部不满足 → 拒绝 | Service（事务） | 403 `PERM_LAST_OWNER`（rbac §5.5/§7.2） |
-| BR-07 | 移除项目成员**不触发任务改派**：其名下任务保留指派但该成员已不可见（前端以「已移出成员」灰头像展示）；P2 `TASK-007` 交付转交 | — | — |
+| BR-07 | 移除项目成员**不触发任务改派**：其名下任务指派**同事务级联清空**（任务转「未指派」，进待分派池；历史贡献由 `IssueActivity` 逐人留痕可溯）；P2 `TASK-007` BR-12 交付级联与显式转交。【回改登记】原「保留指派、灰头像展示」口径已由 `TASK-007` BR-12 改定为级联清空（指派是准入凭证：BR-02 要求执行人为 active 成员，保留行即长期违约） | 级联钩子（`remove_member` 同事务） | — |
 | BR-08 | 收藏幂等：POST = `get_or_create`（重复 200）；DELETE 不存在也 204 | 动作子资源（`api-conventions.md` §2.6） | — |
 | BR-09 | 搜索关键词 1 ~ 64 字符；匹配 `name` 与 `identifier` 前缀（大小写不敏感）；URL `?search=` 同源可分享（参数命名与 `api-conventions.md` §5.5 一致） | Serializer | 400 `VALIDATION_INVALID_PARAM` + `details.field=search/TOO_LONG` |
 | BR-10 | 列表排序：收藏段（组内按收藏时间倒序）→ 其余（按 `-updated_at`）；两段间有视觉分隔；游标分页尾部追加 `-id` 保稳定 | 前端 + 查询 | — |
@@ -380,7 +380,7 @@ flowchart TD
 | 隐式管理员提示条 | 仅当前用户为 `WS_ADMIN`+ 且无 `ProjectMember` 行时显示（rbac §7.4 标注口径）；`bg-blue-50 text-blue-700` |
 | 添加按钮 | `<PermissionGate permission="project.member.manage">` 包裹 |
 | 角色行内下拉 | 四档（管理员/协作者/评论者/查看者）；`PROJ_ADMIN` 之间互改时层级保护拦截（BR-12，后端 403 → 前端回滚 + Toast）；下拉项附能力说明（`aria-describedby`） |
-| 移除菜单 | 确认弹窗列明「其名下 N 个任务指派将保留，以已移出成员展示」（BR-07）；末位 ADMIN 拦截提示（BR-06） |
+| 移除菜单 | 确认弹窗列明「其名下 N 个任务指派将级联清空、任务转为未指派」（BR-07，TASK-007 BR-12 回改口径）；末位 ADMIN 拦截提示（BR-06） |
 | GUEST 行 | 若成员空间角色为 GUEST，其角色下拉仅显示查看者 / 评论者两档（BR-05 前端预拦） |
 
 ### 3.3 添加成员弹窗
@@ -1331,8 +1331,8 @@ export class ProjectMemberStore {
 | BE-10 | 末位 ADMIN 降级 | 同 BE-08 前置 | PATCH role=15 | 403 `PERM_LAST_OWNER` |
 | BE-11 | 层级保护 | PROJ_ADMIN 改另一 PROJ_ADMIN | PATCH | 403 `PERM_ROLE_HIERARCHY`（rbac §5.5/§7.1） |
 | BE-12 | 移除后隔离 | 移除成员 | 该成员 GET 项目 / 任务 | 404（`accessible_by`） |
-| BE-13 | 任务指派保留 | 被移除者名下 5 个任务 | 移除后查 | `IssueAssignee` 行完整（BR-07） |
-| BE-14 | 空间移除级联 | `TEAM-002` 移除空间成员 | 查其 ProjectMember | 行软删 |
+| BE-13 | 任务指派级联清空 | 被移除者名下 5 个任务 | 移除后查 | `IssueAssignee` 行同事务物理删除、任务转「未指派」（BR-07，TASK-007 BR-12 回改口径） |
+| BE-14 | 空间移除级联 | `TEAM-002` 移除空间成员 | 查其 ProjectMember 与 IssueAssignee | ProjectMember 行软删；IssueAssignee 同事务物理删除（TASK-007 BR-12） |
 | BE-15 | 重新添加新建行 | 移除后再次添加 | 查行数与 created_at | 新行；旧行保持软删 |
 | BE-16 | 搜索前缀命中 | 造 `兔子核心系统 RBT` / `营销页改版 MKP` | `?search=rbt` | 仅命中 RBT（大小写不敏感） |
 | BE-17 | 搜索 identifier 前缀 | `?search=mk` | — | 命中 MKP |
@@ -1369,7 +1369,7 @@ export class ProjectMemberStore {
 | FE-08 | 候选为空态 | 显示「去邀请成员」链接 |
 | FE-09 | GUEST 预拦 | 选中 GUEST + 角色协作者 → 内联警示 |
 | FE-10 | 角色回滚 | PATCH 403 后徽章恢复 |
-| FE-11 | 移除确认文案 | 显示其名下任务数（「指派将保留」） |
+| FE-11 | 移除确认文案 | 显示其名下任务数（「指派将级联清空」，TASK-007 BR-12 回改口径） |
 | FE-12 | 星标 aria | `aria-pressed` 随状态切换；`aria-label` 含项目名 |
 | FE-13 | 收藏 Tab 归档徽标 | 「已收藏」Tab 含归档项目 | 卡片显示「⊘ 已归档」灰徽标 + `opacity-75`（配套 BE-35） |
 

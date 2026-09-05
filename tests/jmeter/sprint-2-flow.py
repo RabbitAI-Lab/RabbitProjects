@@ -2,17 +2,18 @@
 """Sprint 2 接口端到端验证 —— 与 sprint-0/1-flow.py 并列的 CI gate。
 
 用法：python3 tests/jmeter/sprint-2-flow.py [http://localhost:8000]
-前置：API 已启动并连接真实 PG；TASK-008/010 段另需 Redis + RabbitMQ + activity 队列
-worker（本地：docker 起 rp-redis/rp-mq 后 `uv run --project apps/api celery -A plane
-worker -Q activity,celery`；或 compose 全套）。
+前置：API 已启动并连接真实 PG；TASK-007 段归档写保护用例直改库（需 psycopg，
+推荐 `uv run --project apps/api python tests/jmeter/sprint-2-flow.py`）；TASK-008/010
+段另需 Redis + RabbitMQ + activity 队列 worker（本地：docker 起 rp-redis/rp-mq 后
+`uv run --project apps/api celery -A plane worker -Q activity,celery`；或 compose 全套）。
 
 契约常量全部来自 tests/jmeter/_contract.py（CLAUDE.md 测试脚本规范 ①）。
 Sprint-2 顶层错误码零新增（75 码注册表已含全部所需；DEPTH/CYCLE/LIMIT/STATE/
 BLOCKED_BY 为 error.details[].sub_code 字段级子码，按 api-conventions §8.8 登记）。
 
-本文件当前为**骨架**（阶段 0 产出）：环境准备段已可跑通，七个功能域分段随
-TASK-004~010 逐段落地填充。每段标注归属文档 §，关键异常/并发用例与
-docs/sprint-2-task-full/test-cases.md 的 IT 清单对应。
+TASK-004/005/006/007 四段已落地；TASK-008~010 三段随交付逐段填充。每段标注
+归属文档 §，关键异常/并发用例与 docs/sprint-2-task-full/test-cases.md 的 IT
+清单对应。
 """
 from __future__ import annotations
 
@@ -387,13 +388,201 @@ code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issue
 ck("T6-17", "详情 spent_minutes=150（删 150 后 90+30+30）",
    (body or {}).get("data", {}).get("spent_minutes") == 150, f"got {(body or {}).get('data', {}).get('spent_minutes')}")
 
-# ═══ 4. TASK-007 多执行人（随阶段 4 落地） ═══
-# 计划锚点：
-#   - PUT assignees/ 全量替换（changes.added/removed）；>10 人 → 409 LIMIT；
-#     非成员/COMMENTER/VIEWER → 400 DOES_NOT_EXIST；归档任务 → 409 STATE
-#   - POST assignees/claim/ 空集合才可；重复认领 → 409 STATE
-#   - DELETE assignees/{user_id}/ 仅自退；删他人 → 403
-#   - GET ?assignee_ids=me,null（null 糖值 = 未指派；组合丢弃 null + meta.warning）
+# ═══ 4. TASK-007 多执行人（IT-007：转交/认领/自退/null 糖值/BR-12 级联） ═══
+section("TASK-007 多执行人")
+
+# —— 环境准备：独立项目 T7A（断言计数不与 T4/T5/T6 段串台）；
+#    u1/u2（CONTRIBUTOR）+ uc（COMMENTER）经邀请→接受→加项目三步入项 ——
+proj7 = make_project(admin, ws, "T7A")
+
+def _signup(tag):
+    c = Client(BASE)
+    email, _ = signup(c, tag)
+    return c, email
+
+u1, u1_email = _signup("t7a-")
+u2, u2_email = _signup("t7b-")
+uc, uc_email = _signup("t7c-")
+code, body = admin.req(
+    "POST", f"/api/v1/workspaces/{q(ws)}/invitations/",
+    {"emails": [u1_email, u2_email, uc_email], "role": 10},
+    {"X-CSRFToken": admin.csrf()})
+links = ((body or {}).get("meta") or {}).get("invite_links") or {}
+for _c, _e in ((u1, u1_email), (u2, u2_email), (uc, uc_email)):
+    _token = (links.get(_e) or "").rsplit("/", 1)[-1]
+    _code, _ = _c.req("POST", f"/api/v1/invitations/{_token}/accept/", {},
+                      {"X-CSRFToken": _c.csrf()})
+
+def _uid(c):
+    return c.req("GET", "/api/v1/users/me/")[1]["data"]["user"]["id"]
+
+u1_id, u2_id, uc_id, admin_id = _uid(u1), _uid(u2), _uid(uc), _uid(admin)
+
+code, body = admin.req(
+    "POST", f"/api/v1/workspaces/{q(ws)}/projects/{proj7}/members/",
+    {"member_ids": [u1_id, u2_id], "role": 15}, {"X-CSRFToken": admin.csrf()})
+code2, body2 = admin.req(
+    "POST", f"/api/v1/workspaces/{q(ws)}/projects/{proj7}/members/",
+    {"member_ids": [uc_id], "role": 10}, {"X-CSRFToken": admin.csrf()})
+ck("T7-01", "前置：2 CONTRIBUTOR + 1 COMMENTER 入项",
+   code == HTTP["OK"] and sum(1 for r in (body or {}).get("data") or [] if r.get("status") == "added") == 2
+   and code2 == HTTP["OK"] and sum(1 for r in (body2 or {}).get("data") or [] if r.get("status") == "added") == 1,
+   f"got {code} {body} / {code2} {body2}")
+
+i7a = make_issue(admin, ws, proj7, "T7-转交")
+i7b = make_issue(admin, ws, proj7, "T7-认领")
+i7c = make_issue(admin, ws, proj7, "T7-空池")
+
+def _as(iid):
+    return f"/api/v1/workspaces/{q(ws)}/projects/{proj7}/issues/{iid}/assignees/"
+
+# PUT 全量替换：去重保序 + changes 明细 + meta.assigned_by + comment 随行（IT-01）
+code, body = admin.req(
+    "PUT", _as(i7a["id"]), {"assignee_ids": [u1_id, u2_id, u1_id], "comment": "联调窗口改到周四"},
+    {"X-CSRFToken": admin.csrf()})
+d = (body or {}).get("data") or {}
+ck("T7-02", "PUT 全量替换 → 200 且去重保序回显 [u1,u2]",
+   code == HTTP["OK"] and d.get("assignee_ids") == [u1_id, u2_id], f"got {code} {body}")
+ck("T7-03", "changes.added 2 人 / removed 空 + meta.assigned_by=操作者",
+   [x["id"] for x in ((d.get("changes") or {}).get("added") or [])] == [u1_id, u2_id]
+   and (d.get("changes") or {}).get("removed") == []
+   and ((body or {}).get("meta") or {}).get("assigned_by") == admin_id, f"{body}")
+
+# 转交：换成 [admin,u1] → removed 含 u2（IT-01 差异化 changes）
+code, body = admin.req("PUT", _as(i7a["id"]), {"assignee_ids": [admin_id, u1_id]},
+                       {"X-CSRFToken": admin.csrf()})
+d = (body or {}).get("data") or {}
+ck("T7-04", "转交 [admin,u1] → removed 含 u2、added 含 admin",
+   code == HTTP["OK"] and [x["id"] for x in d.get("changes", {}).get("removed", [])] == [u2_id]
+   and admin_id in [x["id"] for x in d.get("changes", {}).get("added", [])], f"got {code} {body}")
+
+# 上限 / 成员资格（UT-03/05/06 HTTP 侧）
+import uuid as _uuid
+eleven = [str(_uuid.uuid4()) for _ in range(11)]
+code, body = admin.req("PUT", _as(i7a["id"]), {"assignee_ids": eleven},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T7-05", "11 人 → 409 LIMIT（details 子码 LIMIT）",
+   code == HTTP["CONFLICT"] and error_code(body) == CODES["limitExceeded"]
+   and any(x.get("code") == "LIMIT" for x in ((body or {}).get("error") or {}).get("details") or []),
+   f"got {code} {body}")
+code, body = admin.req("PUT", _as(i7a["id"]),
+                       {"assignee_ids": [str(_uuid.uuid4())]}, {"X-CSRFToken": admin.csrf()})
+ck("T7-06", "非成员 → 400 DOES_NOT_EXIST",
+   code == HTTP["BAD_REQUEST"] and error_code(body) == CODES["validation"]
+   and any(x.get("code") == "DOES_NOT_EXIST" for x in ((body or {}).get("error") or {}).get("details") or []),
+   f"got {code} {body}")
+code, body = admin.req("PUT", _as(i7a["id"]), {"assignee_ids": [uc_id]},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T7-07", "COMMENTER → 400 DOES_NOT_EXIST（评论者不可被指派）",
+   code == HTTP["BAD_REQUEST"] and any(
+       x.get("code") == "DOES_NOT_EXIST" for x in ((body or {}).get("error") or {}).get("details") or []),
+   f"got {code} {body}")
+code, body = admin.req("PUT", _as(i7a["id"]),
+                       {"assignee_ids": [u1_id], "comment": "长" * 501}, {"X-CSRFToken": admin.csrf()})
+ck("T7-08", "转交说明 501 字 → 400 TOO_LONG（BR-08 ≤500）",
+   code == HTTP["BAD_REQUEST"] and any(
+       x.get("field") == "comment" and x.get("code") == "TOO_LONG"
+       for x in ((body or {}).get("error") or {}).get("details") or []), f"got {code} {body}")
+
+# 认领（IT-02 单线程语义：空集合成功 → 重复 409 STATE）
+code, body = u2.req("POST", _as(i7b["id"]) + "claim/", {}, {"X-CSRFToken": u2.csrf()})
+ck("T7-09", "空集合认领 → 200 且 assignee_ids=[u2]",
+   code == HTTP["OK"] and (body or {}).get("data", {}).get("assignee_ids") == [u2_id],
+   f"got {code} {body}")
+code, body = admin.req("POST", _as(i7b["id"]) + "claim/", {}, {"X-CSRFToken": admin.csrf()})
+ck("T7-10", "重复认领 → 409 STATE（认领是补位不是加入）",
+   code == HTTP["CONFLICT"] and error_code(body) == CODES["stateInvalid"]
+   and any(x.get("code") == "STATE" for x in ((body or {}).get("error") or {}).get("details") or []),
+   f"got {code} {body}")
+
+# 自退 / 删他人（UT-16 / BR-07）
+code, _ = u2.req("DELETE", _as(i7b["id"]) + f"{u2_id}/", None, {"X-CSRFToken": u2.csrf()})
+code_g, body_g = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj7}/issues/{i7b['id']}/")
+ck("T7-11", "自退 → 204 且任务未指派（BR-06 清空中间态）",
+   code == HTTP["NO_CONTENT"] and (body_g or {}).get("data", {}).get("assignee_ids") == [],
+   f"got {code} {body_g}")
+code, body = admin.req("DELETE", _as(i7a["id"]) + f"{u1_id}/", None, {"X-CSRFToken": admin.csrf()})
+ck("T7-12", "删他人执行人 → 403 PERM_DENIED（删他人=转交语义，走 PUT）",
+   code == HTTP["FORBIDDEN"] and error_code(body) == "PERM_DENIED", f"got {code} {body}")
+
+# PATCH 兼容路径（IT-05：与 PUT 收敛同一 sync 落库一致）
+code, body = admin.req("PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj7}/issues/{i7a['id']}/",
+                       {"assignee_ids": [u2_id, u1_id]}, {"X-CSRFToken": admin.csrf()})
+ck("T7-13", "PATCH assignee_ids 多人兼容路径 → 200 回显保序",
+   code == HTTP["OK"] and (body or {}).get("data", {}).get("assignee_ids") == [u2_id, u1_id],
+   f"got {code} {(body or {}).get('data', {}).get('assignee_ids')}")
+code, body = admin.req("PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj7}/issues/{i7a['id']}/",
+                       {"assignee_ids": eleven}, {"X-CSRFToken": admin.csrf()})
+ck("T7-14", "PATCH 11 人 → 400 TOO_LONG（与 PUT 的 409 LIMIT 有意区分）",
+   code == HTTP["BAD_REQUEST"] and any(
+       x.get("field") == "assignee_ids" and x.get("code") == "TOO_LONG"
+       for x in ((body or {}).get("error") or {}).get("details") or []), f"got {code} {body}")
+
+# null 糖值 / me 组合（IT-09 / §4.2.5）
+code, body = admin.req("PUT", _as(i7a["id"]), {"assignee_ids": [u1_id]},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T7-15", "PUT [u1] 收敛集合（为 null 筛选铺底）", code == HTTP["OK"], f"got {code} {body}")
+code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj7}/issues/?assignee_ids=me,null")
+meta = (body or {}).get("meta") or {}
+ck("T7-16", "me,null 组合 → 200 丢弃 null 并 meta.warning 提示",
+   code == HTTP["OK"] and "null" in (meta.get("warning") or "")
+   and meta.get("applied", {}).get("assignee_ids") == [admin_id], f"meta={meta}")
+code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj7}/issues/?assignee_ids=null")
+rows = (body or {}).get("data") or []
+ck("T7-17", "?assignee_ids=null → 恰 2 条未指派（i7b/i7c）",
+   code == HTTP["OK"] and {r["id"] for r in rows} == {i7b["id"], i7c["id"]},
+   f"got {len(rows)} {[r['name'] for r in rows]}")
+
+# 归档任务写保护（IT-10：TASK-009 archive 端点未交付，直改库构造 archived_at；
+# 需 psycopg —— 以 `uv run --project apps/api python tests/jmeter/sprint-2-flow.py` 运行）
+def _pg_exec(sql, params=()):
+    import os
+
+    import psycopg  # noqa: PLC0415 —— 归档前置构造专用，主流程仍纯 HTTP
+
+    dsn = os.environ.get("DATABASE_URL", "postgresql://rp:rp@localhost:5432/rabbit_projects")
+    with psycopg.connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+        conn.commit()
+
+try:
+    _pg_exec("UPDATE issues SET archived_at = now() WHERE id = %s", (i7c["id"],))
+    archived_ready = True
+except Exception as _e:  # noqa: BLE001 —— 无 psycopg/DB 时显式红，不静默跳过
+    ck("T7-18", "归档前置可构造（直改库）", False, f"直改库失败：{_e}")
+    archived_ready = False
+if archived_ready:
+    code, body = admin.req("PUT", _as(i7c["id"]), {"assignee_ids": [u1_id]},
+                           {"X-CSRFToken": admin.csrf()})
+    ck("T7-18", "归档任务 PUT → 409 STATE", code == HTTP["CONFLICT"]
+       and error_code(body) == CODES["stateInvalid"], f"got {code} {body}")
+    code, body = u2.req("POST", _as(i7c["id"]) + "claim/", {}, {"X-CSRFToken": u2.csrf()})
+    ck("T7-19", "归档任务 claim → 409 STATE（Service 层双保险）",
+       code == HTTP["CONFLICT"] and error_code(body) == CODES["stateInvalid"], f"got {code} {body}")
+    code, body = admin.req("PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj7}/issues/{i7c['id']}/",
+                           {"assignee_ids": [u1_id]}, {"X-CSRFToken": admin.csrf()})
+    ck("T7-20", "归档任务 PATCH assignee_ids → 409 STATE",
+       code == HTTP["CONFLICT"] and error_code(body) == CODES["stateInvalid"], f"got {code} {body}")
+    code, body = u1.req("DELETE", _as(i7c["id"]) + f"{u1_id}/", None, {"X-CSRFToken": u1.csrf()})
+    ck("T7-21", "归档任务自退 DELETE → 409 STATE（统一入口兜底）",
+       code == HTTP["CONFLICT"] and error_code(body) == CODES["stateInvalid"], f"got {code} {body}")
+
+# 越权（AUTH-003 基线口径：不可见即 404）
+code, _ = outsider.req("PUT", _as(i7a["id"]), {"assignee_ids": []},
+                       {"X-CSRFToken": outsider.csrf()})
+ck("T7-22", "外部用户 PUT assignees → 404", code == HTTP["NOT_FOUND"], f"got {code}")
+
+# BR-12：移除项目成员 → 同事务级联清空其指派（UT-15 HTTP 侧）
+code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj7}/members/")
+pm_id = next((m["id"] for m in ((body or {}).get("data") or [])
+              if (m.get("user") or {}).get("id") == u1_id), None)
+code, _ = admin.req("DELETE", f"/api/v1/workspaces/{q(ws)}/projects/{proj7}/members/{pm_id}/",
+                    None, {"X-CSRFToken": admin.csrf()})
+code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj7}/issues/{i7a['id']}/")
+ck("T7-23", "BR-12 移除成员 → 其指派级联清空（任务转未指派）",
+   code == HTTP["OK"] and (body or {}).get("data", {}).get("assignee_ids") == [],
+   f"got {code} {(body or {}).get('data', {}).get('assignee_ids')}")
 
 # ═══ 5. TASK-008 自定义字段（随阶段 5 落地） ═══
 # 计划锚点：
@@ -424,7 +613,7 @@ ck("T6-17", "详情 spent_minutes=150（删 150 后 90+30+30）",
 
 # ═══ 汇总 ═══
 
-print(f"\n{'═' * 40}\nSprint 2 接口流程：{PASS} 通过 / {FAIL} 失败（骨架：七个功能域待逐段填充）")
+print(f"\n{'═' * 40}\nSprint 2 接口流程：{PASS} 通过 / {FAIL} 失败（TASK-008~010 段待逐段填充）")
 if FAILURES:
     print("\n".join("  ✗ " + f for f in FAILURES))
     sys.exit(1)

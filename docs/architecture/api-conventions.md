@@ -464,14 +464,14 @@ GET .../issues/?expand=state,assignees,labels,type
 ### 5.3 筛选
 
 ```http
-GET .../issues/?state_id=3f2c…,7a9d…&priority=high,urgent&assignee_ids=6c7d…&target_date=2026-09-01;before
+GET .../issues/?state_id=3f2c…,7a9d…&priority=high,urgent&assignee_ids=null&target_date=2026-09-01;before
 ```
 
 | 语法 | 语义 | 示例 |
 | --- | --- | --- |
 | `?field=value` | 等值 | `?priority=high` |
 | `?field=v1,v2` | IN（逗号分隔即 OR） | `?priority=high,urgent` |
-| `?field__isnull=true` | 空值判定 | `?assignee_ids__isnull=true`（未指派） |
+| `?field=null` | 空值判定糖值（URL 层；逻辑算子 `is_empty`） | `?assignee_ids=null`（未指派——TASK-007 §4.2.5；`__isnull` 直写不在白名单，按 `ignored_params` 丢弃并出 `meta.warning`） |
 | `?field=<date>;before` / `;after` | 日期比较（分号分隔修饰符，对标 Plane） | `?target_date=2026-09-30;before` |
 | `?field=<a>,<b>;between` | 区间 | `?created_at=2026-08-01,2026-08-31;between` |
 | `?field=<n>;gte` / `;lte` | 数值比较 | `?estimate_point=3;gte` |
@@ -769,6 +769,7 @@ GET .../issues/?ordering=-priority,target_date,-created_at
 | `CYCLE` | 循环依赖（Sprint-2 TASK-005 §4.2.2 登记：`RESOURCE_CIRCULAR_DEPENDENCY` 的字段级子码，message 携带人类可读依赖链/环路径） |
 | `BLOCKED_BY` | 未完成前置拦截迁入 completed（Sprint-2 TASK-005 §4.2.4 登记：`RESOURCE_TRANSITION_BLOCKED` 的字段级子码，`details[]` 携带结构化 `issue_key`） |
 | `LIMIT` | 关联/执行人数等集合上限（Sprint-2 TASK-005/007 登记：`RESOURCE_LIMIT_EXCEEDED` 的字段级子码） |
+| `STATE` | 资源当前状态不允许该操作（Sprint-2 TASK-007 §2.4 登记：`RESOURCE_STATE_INVALID` 的字段级子码——已归档任务集合变更 / 重复认领等；TASK-009 归档写保护沿用） |
 
 ### 8.9 前端消费范式
 

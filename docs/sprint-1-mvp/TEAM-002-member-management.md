@@ -241,7 +241,7 @@ sequenceDiagram
     Note over DB: 数据面隔离由 accessible_by() 兜底：<br/>被移者下次任何携带该空间上下文的请求 → 404
 ```
 
-**为什么 `IssueAssignee` 不清理**：任务指派是业务数据而非准入凭证。保留指派记录使「该成员的历史贡献」可追溯；其不可见性由项目可见性传导（`Issue` 经 `project` 过滤）。前端对「已移出成员」的指派以灰头像 + 「已移出」标记展示（`TASK-002` 口径），P2 `TASK-007` 交付转交能力。
+**为什么 `IssueAssignee` 也要清理（P2 回改）**：【回改登记】P1 原口径为「不清理：指派是业务数据而非准入凭证，保留指派使历史贡献可追溯」。P2 `TASK-007` BR-12 已改定为**级联清空**——工作空间移除 → 同事务回收全部 `ProjectMember` 并**物理删除**其全部 `IssueAssignee` 行：① 指派是**准入凭证**（TASK-007 BR-02 要求执行人为该项目 active 成员且 ≥CONTRIBUTOR，保留行即长期维持「不可指派者仍在集合内」的违约状态）；② 与中间表全程物理删除口径（TASK-001 §4.1.2）及「移除即失权」原则一致；③ 历史贡献可溯性由 `IssueActivity` 逐人留痕（TASK-007 BR-10）承载，被移除人逐任务收 `issue.unassigned` 移出通知。显式换人走转交（`TASK-007` PUT），与本隐式级联并行不悖。
 
 ### 2.5 所有权转让流程
 
@@ -464,7 +464,7 @@ Headless UI `Dialog`，宽 560px。
 │  移除成员                                      │
 │  确定将 王工（wang@ex.com）移出 RabbitProjects？│
 │  ⚠ 该成员将同时被移出 3 个项目的成员名单；        │
-│    其名下任务指派将保留并以「已移出成员」展示。    │
+│    其名下任务指派将级联清空、任务转为未指派。      │
 │               ┌────────┐  ┌────────┐          │
 │               │  取消   │  │ 移除     │（红色） │
 │               └────────┘  └────────┘          │
@@ -1749,7 +1749,7 @@ export class WorkspaceMemberStore {
 | BE-12 | 已撤销 token | 先 DELETE invitations/{id}/ | POST accept | 400 + `token/INVALID`（message「已撤销」） |
 | BE-13 | 并发接受 | 同 token 两并发请求 | POST accept ×2 | 恰一 200，另一 400；成员恰一行 |
 | BE-14 | 注册钩子 | 面向新邮箱的 pending 邀请 | 完成注册 | 注册事务内自动接受；`WorkspaceMember` 落库；多空间邀请逐一接受 |
-| BE-15 | 移除级联 | 成员属 3 个项目 | DELETE members/{id}/ | 204；3 条 `ProjectMember.deleted_at` 置值；`IssueAssignee` 保留 |
+| BE-15 | 移除级联 | 成员属 3 个项目 | DELETE members/{id}/ | 204；3 条 `ProjectMember.deleted_at` 置值；`IssueAssignee` 同事务物理删除（TASK-007 BR-12 回改） |
 | BE-16 | 移除后隔离 | 上一步被移除者 | GET 该空间任意资源 | 404（`accessible_by` 过滤） |
 | BE-17 | 移除 OWNER | 目标 role=20 | DELETE | 409 `RESOURCE_STATE_INVALID` |
 | BE-18 | 层级保护 | ADMIN 移除另一 ADMIN | DELETE | 403 `PERM_ROLE_INSUFFICIENT`（rbac §7.1） |
@@ -1838,7 +1838,7 @@ export class WorkspaceMemberStore {
 | --- | --- | --- | --- |
 | 入队方式 | 管理员可配「需审批」；支持 Excel / LDAP 通讯录批量导入；入队即挂部门岗位 | 免审批 + 邮箱邀请 | ⏭️ 导入与审批依赖组织架构（P3 `AUTH-007`），P1 不做 |
 | 组织卫生 | 成员生命周期与部门 / 岗位 / 权限组联动，无悬挂权限 | 软删 + 级联 + 行级过滤实现同等卫生 | ✅ 目标采纳、轻量实现 |
-| 移除成员 | 与项目权限组解绑（联动部门体系） | 级联 `ProjectMember`；`IssueAssignee` 保留（业务数据） | ⚠️ 有意差异：指派是贡献记录不是准入凭证 |
+| 移除成员 | 与项目权限组解绑（联动部门体系） | 级联 `ProjectMember` + `IssueAssignee`（TASK-007 BR-12 回改：级联清空） | ✅ P2 起同口径：指派是准入凭证，移除即失权 |
 | 邮箱域名白名单 | 企业版可限定 @company.com 才可被邀 | P1 不做 | ⏭️ P3 治理项 |
 
 ### 6.3 三方能力矩阵

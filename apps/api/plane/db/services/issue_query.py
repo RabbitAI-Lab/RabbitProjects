@@ -48,6 +48,7 @@ class IssueFilterSet:
         self.applied: dict = {}
         self.drop_keys = set(drop_keys)
         self._ignored_params: list[str] = []
+        self.warnings: list[str] = []
 
     # -----------------------------------------------------------------
     # 公共入口
@@ -68,12 +69,21 @@ class IssueFilterSet:
                 q &= Q(**{lookup: values})
                 self.applied[key] = [str(v) for v in values]
 
-        # ---- assignee_ids（支持 'me' 占位展开）----
+        # ---- assignee_ids（'me' 占位展开 + 'null' 未指派糖值，TASK-007 §4.2.5）----
         if "assignee_ids" not in self.drop_keys:
             # 同时认 ?assignee_ids= 和 ?assignee_id=（BOARD-002 单数历史参数；TASK-003 用复数）
             raw = params.get("assignee_ids") or params.get("assignee_id")
-            assignees = self._parse_uuid_list(raw, field_name="assignee_ids", alias_me=True)
-            if assignees:
+            assignees, has_null = self._parse_assignee_values(raw)
+            if has_null and assignees:
+                # me,null 组合禁止（§4.2.5）：null 无意义 → 丢弃并 warning（沿用 BR-06 通道）
+                self.warnings.append("assignee_ids=null 已忽略（与具体执行人同时给出时无意义）")
+                has_null = False
+            if has_null:
+                # null 糖值编译为 is_empty 逻辑算子：中间表物理删除（被移出即行消失），
+                # 不存在任何 IssueAssignee 行 = 未指派；与 BR-06 清空中间态构成「待分派池」
+                q &= Q(assignees__id__isnull=True)
+                self.applied["assignee_ids"] = ["null"]
+            elif assignees:
                 q &= Q(assignees__id__in=assignees)
                 self.applied["assignee_ids"] = [str(v) for v in assignees]
 
@@ -209,6 +219,53 @@ class IssueFilterSet:
     # -----------------------------------------------------------------
     # 内部工具
     # -----------------------------------------------------------------
+    def _parse_assignee_values(self, raw: str | None) -> tuple[list[uuid.UUID], bool]:
+        """assignee_ids 专用解析：``me`` 占位（TASK-001 §4.2.2 前例）+ ``null``
+        未指派糖值（TASK-007 §4.2.5）。
+
+        返回 ``(ids, has_null)``；两者同真表示 ``me,null`` 组合，由调用方丢弃
+        null 并出 ``meta.warning``。``__isnull`` 直写不在白名单（两写法并存会
+        破坏「URL → 结果集」纯函数），落入 ignored_params 通道。
+        """
+        if not raw:
+            return [], False
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        if len(parts) > MAX_VALUES_PER_PARAM:
+            raise AppValidationError(
+                [
+                    field_error("assignee_ids", "TOO_LARGE", f"单参数最多 {MAX_VALUES_PER_PARAM} 个值"),
+                ]
+            )
+        ids: list[uuid.UUID] = []
+        has_null = False
+        for p in parts:
+            if p.lower() == "null":
+                has_null = True
+                continue
+            if p == "me":
+                if not self.request.user or not self.request.user.is_authenticated:
+                    raise AppValidationError(
+                        [
+                            field_error("assignee_ids", "INVALID", "me 仅对登录用户有效"),
+                        ]
+                    )
+                ids.append(self.request.user.id)
+                continue
+            try:
+                ids.append(uuid.UUID(p))
+            except ValueError as err:
+                raise AppValidationError(
+                    [
+                        field_error("assignee_ids", "INVALID_UUID", f"UUID 格式非法：{p}"),
+                    ]
+                ) from err
+        return ids, has_null
+
+    def merge_warnings(self, order_warning: str | None) -> str | None:
+        """把 order_by 回退 warning 与 FilterSet 自身 warnings 合并成 meta.warning 文案。"""
+        parts = ([order_warning] if order_warning else []) + list(self.warnings)
+        return "; ".join(parts) if parts else None
+
     def _parse_uuid_list(self, raw: str | None, *, field_name: str, alias_me: bool = False) -> list[uuid.UUID]:
         if not raw:
             return []

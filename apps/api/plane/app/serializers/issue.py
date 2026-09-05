@@ -10,13 +10,12 @@ from rest_framework import serializers
 
 from plane.db.models import (
     Issue,
-    IssueAssignee,
     IssueLabel,
     IssueType,
     Label,
-    ProjectMember,
     State,
 )
+from plane.db.services.issue_assignee import MAX_ASSIGNEES
 from plane.utils.exceptions import AppValidationError, field_error
 
 
@@ -230,6 +229,11 @@ class IssueWriteSerializer(serializers.Serializer):
                 if len(label_ids) > MAX_LABELS_PER_ISSUE:
                     errors.append(field_error("label_ids", "TOO_LARGE", f"单个任务最多 {MAX_LABELS_PER_ISSUE} 个标签"))
 
+        # ---- BR-01（TASK-007）：执行人 0~10（PATCH 兼容路径超限 400 TOO_LONG；
+        #      PUT 主入口走服务层 409 LIMIT 通道——两条路径错误码有意区分）----
+        if "assignee_ids" in attrs and len(attrs["assignee_ids"] or []) > MAX_ASSIGNEES:
+            errors.append(field_error("assignee_ids", "TOO_LONG", f"执行人最多 {MAX_ASSIGNEES} 人"))
+
         # ---- BR-06 日期联合：start ≤ target ----
         new_start = attrs.get("start_date", "__absent__")
         new_target = attrs.get("target_date", "__absent__")
@@ -263,13 +267,6 @@ class IssueWriteSerializer(serializers.Serializer):
 # ─────────────────────────────────────────────────────────────────────
 # 服务函数
 # ─────────────────────────────────────────────────────────────────────
-def sync_assignees(issue, assignee_ids, actor_id) -> None:
-    """替换式同步：清旧 + bulk_create；中间表无软删除，物理删除。"""
-    IssueAssignee.objects.filter(issue=issue).delete()
-    for uid in assignee_ids:
-        IssueAssignee.objects.create(issue=issue, assignee_id=uid, assigned_by_id=actor_id)
-
-
 def sync_labels(issue, label_ids, actor_id) -> None:
     """TASK-002 §2.3 标签 PUT 全量替换 —— 差分方式：删除旧关联 + bulk_create 新关联。
 
@@ -281,20 +278,6 @@ def sync_labels(issue, label_ids, actor_id) -> None:
     IssueLabel.objects.bulk_create(
         [IssueLabel(issue_id=issue_id, label_id=lid, created_by_id=actor_id) for lid in label_ids]
     )
-
-
-def validate_assignees(project_id, assignee_ids) -> None:
-    """任一非本项目 active ProjectMember → AppValidationError DOES_NOT_EXIST（统一信封）。"""
-    if not assignee_ids:
-        return
-    valid_members = set(
-        ProjectMember.objects.filter(project_id=project_id, member_id__in=assignee_ids, is_active=True).values_list(
-            "member_id", flat=True
-        )
-    )
-    invalid = {str(u) for u in assignee_ids} - {str(v) for v in valid_members}
-    if invalid:
-        raise AppValidationError([field_error("assignee_ids", "DOES_NOT_EXIST", "包含不属于当前项目的成员")])
 
 
 def diff_labels(old_ids: set[str], new_ids: set[str]) -> tuple[list[str], list[str]]:

@@ -41,7 +41,7 @@
 | @提及 | 评论中的 `@成员`：编辑器 Mention 锚点（`data-mention-id`）；服务端解析 → 域校验 → 去重 → 触发提醒 |
 | `IssueComment` 模型 | 架构基线全列：`comment_json` / `comment_html` / `comment_stripped` / `accessory` JSONB / `parent_id` 楼中楼预留（P1 建列不启用） |
 | `Notification` 模型 | receiver / event / title / data / read_at / `dedup_key` 唯一约束 |
-| 四类事件通知 | `issue.assigned` / `issue.mentioned` / `issue.commented` / `issue.updated`（仅负责人 + 创建者收摘要） |
+| 五类事件通知 | `issue.assigned` / `issue.unassigned`（TASK-007 补登） / `issue.mentioned` / `issue.commented` / `issue.updated`（仅负责人 + 创建者收摘要） |
 | 生成管道 | `notify_comment` / `notify_issue_event` 两个 Celery 任务 + epoch 批量合并 |
 | 通知中心 | 顶栏铃铛（未读徽标 99+，30s 轮询）→ 抽屉（时间分组列表 / 单条点击已读跳转 / 全部已读 / 仅看未读） |
 | 清理任务 | 已读超 90 天、未读超 180 天物理清理（beat） |
@@ -164,7 +164,8 @@ flowchart TD
 
 | 事件 | 触发 | 接收人 | title 文案 | data 载荷 |
 | --- | --- | --- | --- | --- |
-| `issue.assigned` | 指派集合**新增**成员（含创建时首派；移除不通知） | 新增被指派人 − 操作者 | 「{actor} 将 {RBT-128} 指派给你」 | `{issue_id, project_id, workspace_slug, issue_key, actor}` |
+| `issue.assigned` | 指派集合**新增**成员（含创建时首派） | 新增被指派人 − 操作者 | 「{actor} 将 {RBT-128} 指派给你」 | `{issue_id, project_id, workspace_slug, issue_key, actor}` |
+| `issue.unassigned` | 指派集合**移除**成员（TASK-007 补登：转交 PUT / 自退 / PATCH 移除；BR-12 成员移出项目级联同键） | 被移除人 − 操作者 | 「{actor} 将你移出 {RBT-128}」（转交场景附说明引用） | 同上 + `comment`（有转交说明时） |
 | `issue.mentioned` | 评论 **或** 任务描述编辑中**新增** @ 锚点 | 被 @ 者 − 操作者 | 「{actor} 在 {RBT-128} 中提到了你」 | 同上 + `comment_id`（描述来源无此项） |
 | `issue.commented` | 新评论 | 指派人 ∪ 创建者 − 操作者 − **已 @ 者**（@ 已单独通知，去重） | 「{actor} 评论了 {RBT-128}」 | 同上 + `comment_id` |
 | `issue.updated` | 关键属性变更（state / priority / target_date / assignees 增删） | 指派人 ∪ 创建者 − 操作者 | 「{actor} 更新了 {RBT-128}：状态 待办 → 已完成」 | 同上 + `changes` 摘要数组 |

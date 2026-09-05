@@ -72,7 +72,8 @@ class ProjectMemberListCreateView(ListCreateAPIView):
         project, _, _ = self.get_project(kwargs["slug"], kwargs["project_id"], request.user)
         # rbac §6.2：仅 visible 项目可读其成员（get_project_or_404 已隐式 ADMIN）
         # assigned_issue_count：本项目中指派给该成员的任务数（移除确认弹窗
-        # 「其名下 N 个任务指派将保留」需要，PROJ-002 §3.2 BR-07）；子查询注解，无 N+1。
+        # 「其名下 N 个任务指派将级联清空」需要，PROJ-002 §3.2 BR-07 → TASK-007
+        # BR-12 回改后口径）；子查询注解，无 N+1。
         assigned_count = (
             Issue.objects.filter(
                 project_id=OuterRef("project_id"),

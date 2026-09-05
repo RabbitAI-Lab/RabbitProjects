@@ -34,6 +34,8 @@ API 启动需要环境变量：`DATABASE_URL=postgresql://rp:rp@localhost:5432/r
 python3 tests/jmeter/sprint-0-flow.py [http://localhost:8000]   # 10 步（10a 删除 + 10b 越权）
 python3 tests/jmeter/sprint-1-flow.py [http://localhost:8000]   # 信封 C1 / 权限快照 / sort_order / 搜索收藏归档 / 隔离
 python3 tests/jmeter/api-full-coverage.py                       # 端点 × 方法 × 正负例 契约矩阵
+python3 tests/jmeter/sprint-2-flow.py                          # sprint-2 七段（T4~T10，168 断言）
+python3 tests/jmeter/sprint-2-bench.py                         # 性能门禁（10 万数据集，五项 P95；跑完清数据）
 
 # 2) L1/L2 静态检查（含 api-ci 平价三件套：与 .github/workflows/api-ci.yml 同 cwd 同命令）
 bash tests/run-ci-checks.sh   # ruff/mypy/pytest 必须在 apps/api 目录跑（uv run --project 不变 cwd）
@@ -66,6 +68,10 @@ PG schema 准备（Django migrate 在 PG 上有已知问题，见下面"坑"）�
 10. **GateGuard hook**：本仓库 Bash/Edit/Write 首次调用会要求陈述事实，按提示输出后重试即可。
 11. **禁止用 `document.cookie` 嗅探 `sessionid`**：Django 默认 `SESSION_COOKIE_HTTPONLY=True`，前端 JS **恒读不到**，判据永远为 false —— 曾让 `labels-admin` 的 `load()` 直接短路（标签列表永远空、新建后也不刷新）。要判断「有无会话」请用 `apps/web/app/services/session-probe.ts` 的 `rp_session` 探针 cookie（SessionStore 在登录/bootstrap 成功时写、登出或 bootstrap 失败时清）。
 12. **Django `reverse()` 必须带 `app:` 命名空间**：`plane/urls.py` 是 `include((..., "app"), namespace="app")`，裸名 reverse 必抛 `NoReverseMatch`；一旦外层有 `except Exception: return ""`，错误就被吞成静默空串（附件 `download_url` 曾因此为空 → 下载按钮跳 `/undefined`）。捕获要收窄到 `NoReverseMatch`。
+14. **runserver 重启必须带全量环境变量**：某 agent 重启 API 时只带了 DB/SECRET，MinIO 凭证（AWS_ACCESS_KEY_ID 等）丢失导致附件 presign 500 SERVER_STORAGE_ERROR——REG-4 e2e 连带红。完整 env 见 /tmp/rp-api.log 的启动命令（DATABASE_URL/SECRET_KEY/REDIS_URL/CELERY_BROKER_URL/AWS_S3_*）。
+15. **RabbitMQ 同名队列参数不可变**：worker 以不同参数（如新增 x-dead-letter-exchange）declare 已存在队列会 406 PreconditionFailed——先 rabbitmqctl delete_queue 再让新声明生效；改队列参数前先杀旧 worker。
+16. **bench 数据集是 dev 库的大负载**：sprint-2-bench.py 会灌 10 万行（跑完手工清理 s2bench%/BNZ 项目数据，否则全局查询与 e2e 变慢）；复跑幂等（自动清理旧数据集）。
+
 13. **网关 `/uploads/` 反代是附件直传的必经环节**：presign 返回的是同源 `/uploads/<bucket>/<key>?X-Amz-…`，缺 Nginx `location ^~ /uploads/`（生产）或 Vite `/uploads` proxy（dev）就会静默 404；且必须 `Host $proxy_host` / `changeOrigin: true`，因为 SigV4 把 host 纳入签名，透传浏览器 Host 会让 MinIO 判签名不匹配。
 
 ## 文档体系（改代码前先读对应文档）

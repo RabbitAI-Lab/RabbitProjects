@@ -104,6 +104,7 @@ FEATURE_MODULES = (
     "stats",            # RPT-001 个人统计
     "custom_fields",    # TASK-008 自定义字段（Schema API + 管理 CRUD）
     "issue_views",      # BOARD-003 保存的视图（views/ CRUD 五端点）
+    "activity_stream",  # COLLAB-003 项目动态流（合流 + 折叠 + 组感知游标）
 )
 
 for _name in FEATURE_MODULES:

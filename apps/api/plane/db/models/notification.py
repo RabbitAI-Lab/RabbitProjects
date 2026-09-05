@@ -18,6 +18,8 @@ class Notification(BaseModel):
         ISSUE_MENTIONED = "issue.mentioned", "被提及"
         ISSUE_COMMENTED = "issue.commented", "任务被评论"
         ISSUE_UPDATED = "issue.updated", "任务被更新"
+        # COLLAB-002 §4.3.4：楼中楼回复事件（与 mentioned / commented 三互斥）
+        COMMENT_REPLIED = "comment.replied", "评论被回复"
 
     receiver = models.ForeignKey(
         "db.User",

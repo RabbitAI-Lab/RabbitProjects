@@ -49,11 +49,22 @@ class _ScopedHelper:
         return project, issue
 
     @staticmethod
-    def get_asset(*, project, issue, asset_id):
+    def get_asset(*, project, issue, asset_id,
+                  entity_types: list[str] | None = None):
+        """按 entity_type 分派归属校验（COLLAB-002 §4.2 注）。
+
+        - ``issue``：任务附件域（FILE-001 原语义）；
+        - ``comment_image``：评论图域——entity_id 同样落当前 issue（多态挂载），
+          不入附件区列表、不走 20 配额（complete/download 可达；删除不可达——
+          评论图片与评论同生共死，无独立删除流）。
+        """
         try:
             asset = FileAsset.objects.get(
                 pk=asset_id,
-                entity_type=FileAsset.EntityType.ISSUE,
+                entity_type__in=(entity_types if entity_types is not None else [
+                    FileAsset.EntityType.ISSUE,
+                    FileAsset.EntityType.COMMENT_IMAGE,
+                ]),
                 entity_id=issue.id,
             )
         except FileAsset.DoesNotExist as exc:
@@ -132,7 +143,11 @@ class AttachmentListView(ListAPIView):
 
 
 class AttachmentDownloadView(APIView):
-    """GET .../issues/{id}/attachments/{asset_id}/download/ —— §4.3.4 换发 302"""
+    """GET .../issues/{id}/attachments/{asset_id}/download/ —— §4.3.4 换发 302
+
+    COLLAB-002 §1.6：``?variant=thumb`` 缩略变体（480px webp，Pillow 同步生成、
+    缓存 MinIO）；无参原图直取。
+    """
 
     permission_classes = [FilePermission]
 
@@ -145,8 +160,16 @@ class AttachmentDownloadView(APIView):
         )
         if asset.status != FileAsset.Status.UPLOADED:
             raise NotFound("RESOURCE_NOT_FOUND")
+        variant = request.query_params.get("variant")
+        if variant is not None and variant != "thumb":
+            raise AppException(
+                "VALIDATION_INVALID_PARAM",
+                message="请求参数不合法",
+                details=[{"field": "variant", "code": "NOT_A_CHOICE",
+                          "message": "variant 仅支持 thumb"}],
+            )
         svc = AssetService()
-        url = svc.download_url(asset=asset)
+        url = svc.download_url(asset=asset, variant=variant)
         return Response(status=status.HTTP_302_FOUND, headers={"Location": url})
 
 
@@ -161,6 +184,8 @@ class AttachmentDeleteView(APIView):
         )
         asset = _ScopedHelper.get_asset(
             project=project, issue=issue, asset_id=kwargs["asset_id"],
+            # 评论图片与评论同生共死（COLLAB-002 §1.4）：不开放独立删除
+            entity_types=[FileAsset.EntityType.ISSUE],
         )
         # BR-10 R1 受限项：CONTRIBUTOR 仅本人上传可删；ADMIN 全量
         if (

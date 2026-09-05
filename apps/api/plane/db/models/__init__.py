@@ -1,7 +1,7 @@
 from .account import PasswordResetToken
 from .asset import FileAsset
 from .base import BaseModel, SoftDeleteManager, SoftDeleteQuerySet
-from .comment import IssueComment
+from .comment import CommentReaction, IssueComment
 from .custom_field import CustomFieldDefinition
 from .issue import Issue, IssueActivity, IssueAssignee, IssueLabel, IssueLink
 from .issue_type import IssueType
@@ -36,6 +36,7 @@ __all__ = [
     "IssueActivity",
     "IssueLink",
     "IssueComment",
+    "CommentReaction",
     "FileAsset",
     "Notification",
     "PasswordResetToken",

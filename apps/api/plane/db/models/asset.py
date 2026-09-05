@@ -20,6 +20,9 @@ class FileAsset(BaseModel):
         """注册制（FILE-001 §2.4 BR-12）：新增宿主须在 §1.4 矩阵登记并经架构评审。"""
         ISSUE = "issue", "任务"
         AVATAR = "avatar", "头像"
+        # COLLAB-002 图片评论挂载点（FILE-001 §1.4 注册位）：entity_id 落当前 issue，
+        # 不占单任务 20 附件配额、不入附件区列表。
+        COMMENT_IMAGE = "comment_image", "评论图片"
 
     workspace = models.ForeignKey(
         "db.Workspace",

@@ -25,6 +25,10 @@ class PresignSerializer(serializers.Serializer):
     # 不设 max_value —— 让 AssetService.presign 抛 ``VALIDATION_FILE_SIZE_EXCEEDED``
     file_size = serializers.IntegerField(min_value=1)
     content_type = serializers.CharField(max_length=64)
+    # COLLAB-002 §2.3：评论图域挂载点（缺省 issue 语义不变；FILE-001 §1.4 注册位）
+    entity_type = serializers.ChoiceField(
+        choices=["issue", "comment_image"], required=False,
+    )
 
 
 class CompleteSerializer(serializers.Serializer):

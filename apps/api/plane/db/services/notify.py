@@ -1,7 +1,8 @@
-"""通知扇出服务（COLLAB-001 §4.4.3 / RPT-001 §4.2 摘要）。
+"""通知扇出服务（COLLAB-001 §4.4.3 / RPT-001 §4.2 摘要 + COLLAB-002 §4.3.4）。
 
 四个核心动作：
-  1. ``fanout_comment`` —— 新评论：mentioned ∪ commented 分派（去重）
+  1. ``fanout_comment`` —— 新评论 / 回复：mentioned ∪ replied ∪ commented
+     三集合差分派（COLLAB-002 BR-11 互斥优先级）
   2. ``fanout_issue_event`` —— 单 issue 事件（assigned / updated / 描述新增 mention）
   3. ``mark_read`` / ``read_all`` —— 通知已读动作（user 域内）
 
@@ -60,6 +61,8 @@ def _title_for(event: str, *, actor_name: str, issue_key: str, summary: str = ""
         return f"{actor_name} 在 {issue_key} 中提到了你"[:200]
     if event == Notification.Event.ISSUE_COMMENTED:
         return f"{actor_name} 评论了 {issue_key}"[:200]
+    if event == Notification.Event.COMMENT_REPLIED:
+        return f"{actor_name} 回复了你在 {issue_key} 的评论"[:200]
     if event == Notification.Event.ISSUE_UPDATED:
         suffix = f"：{summary}" if summary else ""
         return f"{actor_name} 更新了 {issue_key}{suffix}"[:200]
@@ -75,8 +78,13 @@ def _build_rows(*, event: str, issue: Issue, actor, comment_id: str | None,
                 receiver_ids: set[str], epoch: str,
                 summary: str = "", changes: list | None = None,
                 merged_count: int | None = None,
-                merged_keys: list[str] | None = None) -> list[Notification]:
-    """构造 Notification 列表（不落库）。"""
+                merged_keys: list[str] | None = None,
+                root_id: str | None = None) -> list[Notification]:
+    """构造 Notification 列表（不落库）。
+
+    ``root_id``：楼中楼场景的顶层评论 ID（COLLAB-002 §4.3.4，mentioned /
+    replied 事件的跳转载荷键）。
+    """
     actor_id = str(actor.id) if actor else "system"
     actor_name = actor.display_name if actor else "系统"
     data_base = {
@@ -89,6 +97,8 @@ def _build_rows(*, event: str, issue: Issue, actor, comment_id: str | None,
     }
     if comment_id:
         data_base["comment_id"] = str(comment_id)
+    if root_id:
+        data_base["root_id"] = str(root_id)
     if changes:
         data_base["changes"] = changes
     if merged_count:
@@ -117,9 +127,12 @@ def _build_rows(*, event: str, issue: Issue, actor, comment_id: str | None,
 
 def fanout_comment(*, comment_id: str, issue_id: str, actor,
                    mention_ids: set[str]) -> int:
-    """新评论扇出：mentioned / commented 两类事件（BR-06 互斥分派）。
+    """新评论 / 回复扇出：mentioned / replied / commented 三类事件（互斥分派）。
 
-    接收人集合 = (mentions ∪ assignees ∪ creator) − actor − 域外。
+    COLLAB-002 §4.3.4 扩展（BR-11/12 互斥优先级）：
+      mentioned（@ 锚点者） > comment.replied（顶层评论作者） > issue.commented
+    接收人集合 = (mentions ∪ assignees ∪ creator ∪ {root_comment.actor})
+    − actor − 域外；三集合做差后再分派（同一线程动作对同一人至多一条）。
     """
     try:
         issue = Issue.objects.select_related("project", "project__workspace").get(
@@ -130,10 +143,16 @@ def fanout_comment(*, comment_id: str, issue_id: str, actor,
                        comment_id, issue_id)
         return 0
 
-    # 重读 comment：评论可能已被删除（删除任务超时），被删则静默跳过
+    # 重读 comment：评论可能已被删除（删除任务超时），被删则静默跳过。
+    # parent 仅取 id/actor_id（顶层根作者 = comment.replied 的唯一接收候选）。
     from plane.db.models import IssueComment
     try:
-        cm = IssueComment.objects.only("id", "deleted_at", "created_at").get(id=comment_id)
+        cm = (
+            IssueComment.objects
+            .select_related("parent")
+            .only("id", "deleted_at", "created_at", "parent__id", "parent__actor_id")
+            .get(id=comment_id)
+        )
     except IssueComment.DoesNotExist:
         return 0
     if cm.deleted_at:
@@ -142,6 +161,12 @@ def fanout_comment(*, comment_id: str, issue_id: str, actor,
     if actor is None:
         return 0
     actor_id = str(actor.id)
+
+    root_id = str(cm.parent_id) if cm.parent_id else None
+    root_author_id = (
+        str(cm.parent.actor_id)
+        if cm.parent is not None and cm.parent.actor_id else None
+    )
 
     member_ids = _member_ids_for_issue(issue)
     # 域内 @（BR-04：域外锚点保留原文但不触发通知 —— 服务端解析后已过滤）。
@@ -159,13 +184,29 @@ def fanout_comment(*, comment_id: str, issue_id: str, actor,
         fanout_base = _assignee_ids(issue)
     # str-化所有参与集合（UUID/str 混型比对一致）
     fanout_base = {str(x) for x in fanout_base}
-    others = (fanout_base - safe_mentions - {actor_id}) & str_member_ids
+    if root_author_id:
+        fanout_base |= {root_author_id}
+
+    # ── 三互斥差分派（BR-11：mentioned > comment.replied > issue.commented）──
+    replied_receivers: set[str] = set()
+    if root_author_id:
+        # BR-12：仅发顶层评论作者；被 @ 走 mentioned（更高优先级）、
+        # 操作者本人 / 域外一律剔除
+        replied_receivers = (
+            ({root_author_id} - safe_mentions - {actor_id}) & str_member_ids
+        )
+    others = (
+        fanout_base - safe_mentions - replied_receivers - {actor_id}
+    ) & str_member_ids
 
     epoch = _epoch_seconds(cm.created_at)
     rows: list[Notification] = []
     rows += _build_rows(event=Notification.Event.ISSUE_MENTIONED, issue=issue,
                          actor=actor, comment_id=comment_id,
-                         receiver_ids=safe_mentions, epoch=epoch)
+                         receiver_ids=safe_mentions, epoch=epoch, root_id=root_id)
+    rows += _build_rows(event=Notification.Event.COMMENT_REPLIED, issue=issue,
+                         actor=actor, comment_id=comment_id,
+                         receiver_ids=replied_receivers, epoch=epoch, root_id=root_id)
     rows += _build_rows(event=Notification.Event.ISSUE_COMMENTED, issue=issue,
                          actor=actor, comment_id=comment_id,
                          receiver_ids=others, epoch=epoch)

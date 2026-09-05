@@ -44,6 +44,14 @@ DAILY_COUNT_QUOTA = 200
 DAILY_BYTES_QUOTA = 2 * 1024 ** 3
 BUCKET = "rp-uploads"
 
+# ── COLLAB-002 评论图片域收紧（BR-08：FILE-001 25MB / 全量白名单的子集）──
+COMMENT_IMAGE_MAX_FILE_SIZE = 5 * 1024 * 1024          # 5MB
+COMMENT_IMAGE_EXTS: frozenset[str] = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
+#: 缩略图长边 480px webp（COLLAB-002 §1.6：Sprint 3 Pillow 同步产物，
+#: Sprint 4 FILE-003 接管完整 derivatives 管线——前向依赖已声明）
+THUMB_MAX_SIDE = 480
+THUMB_SUFFIX = ".__thumb.webp"
+
 
 class AssetService:
     """任务附件完整三步 + 下载 + 删除。"""
@@ -54,13 +62,21 @@ class AssetService:
 
         校验链（顺序即判定顺序，§2.1）：
           扩展名白名单 → 大小 1~25MB → 单任务 ≤ 20 → 日配额（仅 count 预占）。
+
+        COLLAB-002 §2.3 扩展：请求体选填 ``entity_type=comment_image``
+        （缺省 ``issue`` 语义不变）——评论图域收紧为 5MB + png/jpg/jpeg/gif/webp，
+        不占单任务 20 附件配额、不入附件区列表（entity_id 落当前 issue）。
         """
         name = Path(payload["file_name"]).name  # basename 化防路径注入
         ext = Path(name).suffix.lower()         # 大小写不敏感（BR-02）
         mime = (payload.get("content_type") or "").lower()
         size = int(payload["file_size"])
+        entity_type = payload.get("entity_type") or FileAsset.EntityType.ISSUE
+        is_comment_image = entity_type == FileAsset.EntityType.COMMENT_IMAGE
+        allowed_exts = COMMENT_IMAGE_EXTS if is_comment_image else ALLOWED_EXTS
+        max_size = COMMENT_IMAGE_MAX_FILE_SIZE if is_comment_image else MAX_FILE_SIZE
 
-        if ext not in ALLOWED_EXTS:
+        if ext not in allowed_exts:
             raise AppException(
                 "VALIDATION_FILE_TYPE_NOT_ALLOWED",
                 message="不支持的文件类型",
@@ -68,7 +84,7 @@ class AssetService:
                     {
                         "field": "file_name",
                         "code": "INVALID",
-                        "message": f"仅支持 {sorted(ALLOWED_EXTS)}",
+                        "message": f"仅支持 {sorted(allowed_exts)}",
                     }
                 ],
             )
@@ -80,7 +96,7 @@ class AssetService:
                     {"field": "file_size", "code": "TOO_SMALL", "message": "空文件"}
                 ],
             )
-        if size > MAX_FILE_SIZE:
+        if size > max_size:
             raise AppException(
                 "VALIDATION_FILE_SIZE_EXCEEDED",
                 message="文件大小超出限制",
@@ -88,20 +104,21 @@ class AssetService:
                     {
                         "field": "file_size",
                         "code": "TOO_LARGE",
-                        "message": f"单文件不能超过 {MAX_FILE_SIZE // (1024 * 1024)}MB",
+                        "message": f"单文件不能超过 {max_size // (1024 * 1024)}MB",
                     }
                 ],
             )
 
-        self._check_task_limit(issue)               # BR-03a：行锁
+        if not is_comment_image:
+            self._check_task_limit(issue)           # BR-03a：行锁
         # count 预占（BR-03b）；本环境无 Redis，限额检查做 best-effort（不抛错）
         self._check_daily_quota_soft(actor, count=1)
 
-        key = self._build_key(issue, ext)
+        key = self._build_key(issue, ext, entity_type=entity_type)
         asset = FileAsset.objects.create(
             workspace_id=issue.project.workspace_id,
             project_id=issue.project_id,
-            entity_type=FileAsset.EntityType.ISSUE,
+            entity_type=entity_type,
             entity_id=issue.id,
             attributes={"name": name, "size": size, "mime": mime, "ext": ext},
             size=size,
@@ -115,7 +132,7 @@ class AssetService:
                 bucket=BUCKET,
                 key=key,
                 content_type=mime or "application/octet-stream",
-                content_length_range=(1, MAX_FILE_SIZE),
+                content_length_range=(1, max_size),
             )
         except storage.StorageUnavailable as exc:
             logger.warning("asset.presign_failed issue=%s err=%s", issue.id, exc)
@@ -191,7 +208,9 @@ class AssetService:
                     pk=asset.pk, status=FileAsset.Status.UPLOADING
                 ).update(status=FileAsset.Status.UPLOADED, is_uploaded=True)
             )
-            if updated:
+            # attachment_count 仅统计任务附件域（COLLAB-002：评论图片不占配额、
+            # 不入附件区列表）
+            if updated and asset.entity_type == FileAsset.EntityType.ISSUE:
                 Issue.objects.filter(pk=issue.pk).update(
                     attachment_count=F("attachment_count") + 1
                 )
@@ -243,18 +262,31 @@ class AssetService:
         ]
 
     # ─── download ──────────────────────────────────────────────
-    def download_url(self, *, asset: FileAsset) -> str:
+    def download_url(self, *, asset: FileAsset, variant: str | None = None) -> str:
+        """换发预签名 GET（5 分钟）。
+
+        ``variant=None`` 原图直取；``variant="thumb"``（COLLAB-002 §1.6 / BR-15）
+        缩略变体——Pillow 同步生成 480px webp 首取后缓存 MinIO（key =
+        ``{storage_path}{THUMB_SUFFIX}``），后续命中直接签发。
+        """
         from urllib.parse import quote
 
+        key = asset.storage_path
         filename = (asset.attributes or {}).get("name", "download")
+        # 评论图片 / 缩略变体 → inline（正文内联渲染）；任务附件原图 → attachment
+        disposition = "inline" if (
+            variant == "thumb" or asset.entity_type == FileAsset.EntityType.COMMENT_IMAGE
+        ) else "attachment"
+        if variant == "thumb":
+            key = self._ensure_thumb(asset)
         try:
             url = storage.presigned_get_url(
                 bucket=BUCKET,
-                key=asset.storage_path,
+                key=key,
                 expires=300,                            # 5 分钟（§2.3）
                 response_headers={
                     "response-content-disposition": (
-                        f"attachment; filename*=UTF-8''{quote(filename)}"
+                        f"{disposition}; filename*=UTF-8''{quote(filename)}"
                     ),
                 },
             )
@@ -265,6 +297,39 @@ class AssetService:
                 message="对象存储暂时不可用，请稍后重试",
             ) from exc
         return _rewrite_to_uploads_prefix(url)
+
+    def _ensure_thumb(self, asset: FileAsset) -> str:
+        """确保缩略对象存在（惰性生成 + 缓存），返回缩略对象 key。"""
+        import io
+
+        from PIL import Image
+
+        thumb_key = f"{asset.storage_path}{THUMB_SUFFIX}"
+        try:
+            storage.head_object_size(bucket=BUCKET, key=thumb_key)
+            return thumb_key                                   # 缓存命中
+        except storage.StorageObjectNotFound:
+            pass
+        except storage.StorageUnavailable as exc:
+            raise AppException(
+                "SERVER_STORAGE_ERROR",
+                message="对象存储暂时不可用，请稍后重试",
+            ) from exc
+        data = storage.get_object_bytes(bucket=BUCKET, key=asset.storage_path)
+        try:
+            with Image.open(io.BytesIO(data)) as img:
+                thumb_img = img.convert("RGBA") if img.mode not in ("RGB", "RGBA") else img
+                # 长边 ≤ 480px（GIF 取首帧——Pillow 默认；帧数限制不在范围）
+                thumb_img.thumbnail((THUMB_MAX_SIDE, THUMB_MAX_SIDE))
+                buf = io.BytesIO()
+                thumb_img.save(buf, format="WEBP", quality=80)
+        except Exception as exc:                              # noqa: BLE001
+            # 损坏图 / 解码失败：派生不出缩略 → 原图直取兜底（灯箱语义不受影响）
+            logger.warning("asset.thumb_decode_failed asset=%s err=%s", asset.id, exc)
+            return asset.storage_path
+        storage.put_object(bucket=BUCKET, key=thumb_key, body=buf.getvalue(),
+                           content_type="image/webp")
+        return thumb_key
 
     # ─── delete ────────────────────────────────────────────────
     def delete(self, *, asset: FileAsset, issue: Issue, actor) -> int:
@@ -326,7 +391,7 @@ class AssetService:
         return None
 
     @staticmethod
-    def _build_key(issue: Issue, ext: str) -> str:
+    def _build_key(issue: Issue, ext: str, *, entity_type: str = FileAsset.EntityType.ISSUE) -> str:
         # 复用 base 层的 ulid_new()：本仓库锁的是 python-ulid（暴露 ULID 类），
         # 而 `ulid.new().str` 是另一个包 ulid-py 的 API，调用即 AttributeError → 500。
         ulid = ulid_new()
@@ -334,7 +399,7 @@ class AssetService:
             [
                 str(issue.project.workspace_id),
                 str(issue.project_id),
-                "issue",
+                entity_type,
                 str(issue.id),
                 f"{ulid}{ext}",
             ]

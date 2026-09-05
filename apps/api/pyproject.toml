@@ -16,6 +16,7 @@ dependencies = [
     "boto3>=1.43.87",
     "django-stubs>=6.1.0",
     "redis>=8.1.0",
+    "pillow>=12.3.0",
 ]
 
 [dependency-groups]

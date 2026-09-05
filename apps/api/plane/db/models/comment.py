@@ -74,3 +74,47 @@ class IssueComment(BaseModel):
         if self.comment_html:
             self.comment_stripped = strip_tags(self.comment_html)
         super().save(*args, **kwargs)
+
+
+class CommentReaction(BaseModel):
+    """评论表情反应（COLLAB-002 §4.1.1）—— 独立表，区别于 accessory 内联。
+
+    一人对同一评论可持有多个不同 emoji（多行并存）；同 (comment, actor, emoji)
+    活跃行唯一——toggle 的幂等基座（§1.4：有独立生命周期的数据进表）。
+    """
+
+    comment = models.ForeignKey(
+        "db.IssueComment",
+        on_delete=models.CASCADE,
+        related_name="reactions",
+        verbose_name="所属评论",
+    )
+    actor = models.ForeignKey(
+        "db.User",
+        on_delete=models.CASCADE,
+        related_name="comment_reactions",
+        verbose_name="反应人",
+    )
+    emoji = models.CharField(
+        max_length=16,
+        verbose_name="emoji 字面量",
+        help_text="白名单 24 枚（COLLAB-002 §4.3.1），存字面量不存编码",
+    )
+
+    class Meta(BaseModel.Meta):
+        db_table = "comment_reactions"
+        verbose_name = "评论表情"
+        verbose_name_plural = "评论表情"
+        ordering = ("created_at",)
+        constraints = [
+            # 软删偏条件唯一：软删行不占约束位 → 复活语义（get_or_create 复活或新建）
+            models.UniqueConstraint(
+                fields=["comment", "actor", "emoji"],
+                condition=models.Q(deleted_at__isnull=True),
+                name="uniq_reaction_comment_actor_emoji",
+            ),
+        ]
+        indexes = [
+            # 聚合主查询：WHERE comment_id IN (页面评论集) GROUP BY emoji
+            models.Index(fields=["comment", "emoji"], name="idx_reaction_comment_emoji"),
+        ]

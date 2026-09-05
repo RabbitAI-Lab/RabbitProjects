@@ -114,6 +114,36 @@ def remove_object(*, bucket: str, key: str) -> None:
         raise StorageUnavailable(str(exc)) from exc
 
 
+def get_object_bytes(*, bucket: str, key: str) -> bytes:
+    """GET 对象全量字节（缩略图派生读原图用，COLLAB-002 §1.6）。
+
+    不存在抛 ``StorageObjectNotFound``。
+    """
+    client = _client()
+    try:
+        resp = client.get_object(Bucket=bucket, Key=key)
+        with resp["Body"] as body:
+            return body.read()
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            raise StorageObjectNotFound(key) from exc
+        logger.warning("storage_get_failed bucket=%s key=%s err=%s", bucket, key, exc)
+        raise StorageUnavailable(str(exc)) from exc
+    except (BotoCoreError, EndpointConnectionError) as exc:
+        raise StorageUnavailable(str(exc)) from exc
+
+
+def put_object(*, bucket: str, key: str, body: bytes, content_type: str) -> None:
+    """PUT 对象字节（缩略图产物缓存写回 MinIO，COLLAB-002 §1.6）。"""
+    client = _client()
+    try:
+        client.put_object(Bucket=bucket, Key=key, Body=body, ContentType=content_type)
+    except (BotoCoreError, ClientError, EndpointConnectionError) as exc:
+        logger.warning("storage_put_failed bucket=%s key=%s err=%s", bucket, key, exc)
+        raise StorageUnavailable(str(exc)) from exc
+
+
 def presigned_get_url(
     *,
     bucket: str,

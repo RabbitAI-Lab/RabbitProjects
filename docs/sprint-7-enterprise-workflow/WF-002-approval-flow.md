@@ -8,7 +8,7 @@
 | 覆盖模块 | M11-WF 企业工作流与审批（模块码以 `docs/architecture/dependency-graph.md` §1.2 为唯一事实，同 `sprint-overview.md` §3 注一口径） |
 | 工作量估算 | 8 人日（后端 4.5 + 前端 2.5 + QA 1） |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
+| 最后更新日期 | 2026-09-04（R4 修复：issue FK 改 PROTECT+软删钩子终止、§2.3 覆盖编号、pending_approval_instance_id、runTransition 补 to_state_id、先例 TASK-008、清单 UT-01~18/IT-01~10、timeout_scan 补离职转交、UT-12 同口径 IT-09；R3：is_terminal_passed 三处/主键链/count_only 待补登/排期对齐/ApiError 统一/BR-09 级联/IT-09 拆分/UT-17~18/IT-10；R2/R1 见主记录） |
 | 上游依赖 | `WF-001`（`WorkflowTransition.approval_flow` FK 挂点、单事务流转引擎、`side_effects` 协议） |
 | 下游消费 | `WF-005`（审批流随模板下发）、`WF-006`（审批留痕与合规导出）、Sprint 9（审批时效报表） |
 
@@ -137,14 +137,14 @@ stateDiagram-v2
 | 状态显示 | 任务仍为发起前状态；详情页头部与看板卡片显示「审批中 · 第 N 级」徽标（非状态，实例查询派生） |
 | 再次流转 | 同一条边重复发起 → `409 RESOURCE_ALREADY_EXISTS`；**其他边不受限**（可从待审状态走取消边，此时审批实例自动 `terminated`，原因 `state_changed`） |
 | 字段编辑 | 不锁定（审批的是「流转」不是「任务」）；但终审重跑守卫可能因编辑而失败 → 实例置 `terminated`（原因 `guard_failed_at_complete`）并通知双方 |
-| 任务删除/归档 | 级联终止实例（原因 `issue_deleted`/`issue_archived`），记录保留 |
+| 任务删除/归档 | 软删（`deleted_at`）/归档（`archived_at`）写入钩子终止实例（原因 `issue_deleted`/`issue_archived`），记录保留；实例 FK 为 PROTECT——硬删任务须先经项目归档导出链（WF-006 BR-11） |
 
 > **终止触发落点**（§2.3 / §4.4 / §4.7 三处触发器实现挂点）：
 > - `state_changed`：消费 WF-001 §7.3 `state_changed` 事件（`WorkflowService.transition` 第 6 步 `on_commit` 发布，事件登记面在 §7.3 下游消费表——**WF-001 §7.3 待同步登记本文消费方（上游待回改）**），handler 内 `ApprovalInstance.objects.filter(issue_id=…, status="pending").update(status=TERMINATED, terminated_reason="state_changed")`。
-> - `issue_deleted`：订阅 `Issue.post_delete` signal（**本文新增**的 Django 信号订阅——注册于审批域 `apps.py.ready()`，不依赖 TASK-001 侧总线），handler 同上。
+> - `issue_deleted`：订阅 `Issue.deleted_at` **写入钩子**（软删信号——TASK-009 §2.3 任务删除为软删进回收站，不触发 post_delete；与 issue_archived 的 archived_at 钩子同范式，注册于审批域 `apps.py.ready()`），handler 同上。硬删仅经 WF-006 BR-11 项目归档导出链（PROTECT 拦截直连硬删）。
 > - `issue_archived`：订阅 `Issue` 归档字段更新 signal（`Issue.archived_at` 写入钩子——**本文新增**订阅，与 `issue_deleted` 同一注册点），handler 同上。
 > - `admin` / `guard_failed_at_complete`：直接调 `_finalize(TERMINATED, reason=…)`。
-> - 全部落库用单 UPDATE 减少 IO；用例覆盖：UT-13（state_changed）+ UT-17（issue_deleted）/ UT-18（issue_archived，§5.1）；`admin`/`guard_failed_at_complete` 分别由 UT-14/UT-06 覆盖。
+> - 全部落库用单 UPDATE 减少 IO；用例覆盖：UT-13（state_changed）+ UT-17（issue_deleted）/ UT-18（issue_archived，§5.1）；`admin` 终止由 IT-04（集成级）、`guard_failed_at_complete` 由 UT-09 覆盖。
 
 ### 2.4 超时与提醒
 
@@ -196,7 +196,7 @@ stateDiagram-v2
 
 | 边界场景 | 限制值 | 超出处理 |
 | --- | --- | --- |
-| 单流节点数 | 10 级 | `409 RESOURCE_LIMIT_EXCEEDED`（裁决 F 上限类口径，与 TASK-002 层级深度/TASK-012 字段数同构；`LIMIT` 为其 details 子码） |
+| 单流节点数 | 10 级 | `409 RESOURCE_LIMIT_EXCEEDED`（裁决 F 上限类口径，与 TASK-002 层级深度/TASK-008 字段数（其 BR-10，50 字段同码同子码）同构；`LIMIT` 为其 details 子码） |
 | 单节点审批人 | 20 人 | 同上 |
 | 并发同级动作（会签两人同时提交） | 行锁串行 | 后到者按最新实例状态判定（可能因前者驳回而 409） |
 | 审批人离职/移出项目 | 快照不变（BR-11） | 其待办转交：beat 每日扫描，pending 超 24h 且审批人已非成员 → 该票 `skipped(offboarded)` 并提醒 `PROJ_ADMIN` 补位（补位 = admin 动作，留痕） |
@@ -281,7 +281,7 @@ stateDiagram-v2
 | 详情页头部 | 状态旁「审批中 · 第 N 级」徽标，点击跳审批详情；发起人可见「撤回」按钮 |
 | 看板卡片 | 右上角紫色沙漏徽标，tooltip 显示当前级与剩余超时 |
 | 列表 | `approval_status` 可筛选（pending/approved/rejected…）——按可筛选字段登记进 FilterCompiler（归属 TASK-011 §4.3.2，TASK-008 子集扩全；WF-004 仅冻结守卫协议，不涉筛选） |
-| 流转按钮 | 审批中同边按钮禁用 + tooltip「审批进行中」；其他边正常 |
+| 流转按钮 | 审批中同边按钮禁用（`available/` 项增 `pending_approval_instance_id` 键——**WF-001 §4.8① 待同步登记（上游待回改）**，`has_approval` 是边级静态位、此键为实例级锁定位） + tooltip「审批进行中」；其他边正常 |
 
 ### 3.5 空状态 / 加载 / 失败
 
@@ -401,7 +401,8 @@ class ApprovalInstance(BaseModel):
         WITHDRAWN = "withdrawn", "已撤回"
         TERMINATED = "terminated", "已终止"
 
-    issue = models.ForeignKey(Issue, on_delete=models.CASCADE, related_name="approval_instances")
+    issue = models.ForeignKey(Issue, on_delete=models.PROTECT, related_name="approval_instances",
+        help_text="PROTECT：硬删任务前须先终止/归档其实例——与 transition/initiator 同档；软删（deleted_at）不涉级联，实例由 §2.3 钩子终止")
     transition = models.ForeignKey("WorkflowTransition", on_delete=models.PROTECT,
                                    related_name="instances")
     flow_snapshot = models.JSONField(verbose_name="立案时刻的流+节点定义快照")
@@ -413,7 +414,7 @@ class ApprovalInstance(BaseModel):
         help_text="终审回填瞬态位（§4.5 _complete_via_engine 三文档时序闭环）：终级票据全通过后、"
                   "引擎 transition() 回调前置 True——WF-001 §4.4 守门据此放行「is_terminal_passed=True "
                   "AND status=pending」形态；迁移成功 finalize APPROVED / 守卫失败复位 False 并 finalize "
-                  "TERMINATED(guard_failed_at_complete)。恒 False 除非处于该回调窗口")
+                  "TERMINATED(guard_failed_at_complete)。回调窗口外恒 False；成功路径 finalize APPROVED 后随终态保留 True（终态行只读，不再参与判定）")
     terminal_reason = models.CharField(max_length=32, blank=True, default="",
         help_text="terminated 时：state_changed|guard_failed_at_complete|issue_deleted|issue_archived|admin（与 §2.3 终止原因一致）")
     from_state = models.ForeignKey(State, on_delete=models.PROTECT, related_name="+",
@@ -741,7 +742,9 @@ def notify_approvers(instance_id: str, level: int):
 
 @app.task(queue="workflow")    # 队列名登记：tech-stack.md §9 准入同步（INFRA-002 §4.1 既有四队列 notifications/webhooks/reports/imports 不含 workflow；Sprint 7 由 WF-002/003/005/006 共用，按 §9 流程随首个 PR 并入 worker 编排表）。**架构文档待回改**
 def approval_timeout_scan():
-    """beat 每 15min：超时提醒 + 离职审批人转交（§2.4 / §2.7）"""
+    """beat 每 15min：超时提醒；离职审批人转交按每日聚合窗口执行（§2.4 / §2.7——offboarded 判定
+    以「非成员且 pending 超 24h」为条件，15min 扫描内以任务内 24h 窗口自然限频，与 §2.7
+    「每日扫描」语义等价：每任务每审批人至多每日转交一次）"""
     now = timezone.now()
     qs = ApprovalInstance.objects.filter(status="pending").select_related("issue")
     for inst in qs.iterator(chunk_size=200):
@@ -757,6 +760,10 @@ def approval_timeout_scan():
         if overdue_h >= hours + 24:
             remind_once(inst, kind="timeout_escalate",
                         extra_targets=[inst.initiator, *proj_admins(inst.issue.project)])
+    # 离职转交（§2.7）：当前级审批人已非项目成员且 pending 超 24h → 该票 skipped(offboarded)
+    for inst in qs:                                            # 同一扫描内二次遍历，条件独立
+        if pending_over_24h(inst) and not is_active_member(inst.current_approvers, inst.issue.project):
+            skip_offboarded_and_notify(inst)                   # 置 skipped(offboarded) + 提醒 PROJ_ADMIN 补位（admin 动作留痕）
 ```
 
 ### 4.8 前端实现
@@ -795,7 +802,8 @@ export class ApprovalStore {
 
 ```tsx
 async function runTransition(edge: TransitionEdge) {
-  const res = await api.post(issueUrl + "transitions/", { transition_id: edge.id });
+  const res = await api.post(issueUrl + "transitions/",
+      { to_state_id: edge.to_state.id, transition_id: edge.id });   // §4.6 正典形态：发起路径必填 to_state_id（WF-001 §4.8②）
   if (res.status === 202 || res.data.pending_approval) {
     toast.info("已提交审批，通过后自动完成流转");      // 不乐观迁移卡片
     approvalStore.refreshCount();
@@ -833,7 +841,7 @@ async function runTransition(edge: TransitionEdge) {
 | UT-09 | 终审守卫重跑失败 | 实例 `terminated(guard_failed_at_complete)`，任务未迁移，双方通知 |
 | UT-10 | 同边并发发起 | 部分唯一索引兜底，后到 409 |
 | UT-11 | 停用流发起 → 409 `DISABLED`；存量实例可继续 | BR-13 |
-| UT-12 | 审批人被移出项目后仍持快照票 | 动作时校验项目成员身份：快照审批人身份失效（被移出项目）→ 403 `PERM_APPROVAL_NOT_ASSIGNEE`（按 rbac §8.4 R8 判定其仍属本级审批人范畴，不降级为 404）；跨项目非成员直连 → 404 `RESOURCE_NOT_FOUND`（行级过滤不可见，rbac §6）；其待办由 beat 扫描置 `skipped(offboarded)` 并转交（§2.7） |
+| UT-12 | 审批人被移出项目后仍持快照票 | 动作时校验项目成员身份：快照审批人身份失效（被移出项目）→ 404 `RESOURCE_NOT_FOUND`（行级过滤先行，不可见即不达动作校验——与 §4.6/IT-09 一致）；被移出项目后直连项目级端点 → 404 `RESOURCE_NOT_FOUND`（行级过滤不可见，rbac §6，与 IT-09 同口径）；其待办由 beat 扫描置 `skipped(offboarded)` 并转交（§2.7） |
 | UT-13 | 其他边流转成功 → 本实例自动 `terminated(state_changed)` | §2.3 |
 | UT-14 | 超时扫描：到点提醒、24h 升级、去重窗口 | 通知次数精确断言 |
 | UT-15 | BR-02 空审批人集两入口同码：role 组展开后全员非项目成员 | 立案（发起流转）→ 400 `VALIDATION_ERROR` + 子码 `EMPTY_APPROVERS`；审批流定义保存（POST/PATCH nodes）→ 同码同子码 |
@@ -916,7 +924,7 @@ async function runTransition(edge: TransitionEdge) {
 | 后端 | `ApprovalService`（立案/动作/推进/终审/撤回/终止）、审批人三源解析、超时扫描与转交 beat、与 `WorkflowService.transition()` 单事务衔接（终审回填，§4.5） |
 | API | 审批流 CRUD 四端点 + 审批中心三端点（`pending`/`acted`/`mine`，§4.6 与 §3.1 三 Tab 一一对应）+ 实例详情/动作/任务实例列表三端点 |
 | 前端 | 审批中心三 Tab 页、审批详情抽屉（时间线）、画布审批分区配置、任务/看板审批徽标、202 分支流转交互 |
-| 测试 | UT-01~16、IT-01~09、E2E-01~06 |
+| 测试 | UT-01~18、IT-01~10、E2E-01~06 |
 
 ### 7.2 可操作演示的验收标准
 
@@ -942,7 +950,7 @@ WF-002 排期严格对齐 `WF-001` §1.2 目标 5「画布编辑器在第 10 周
 | 端到端接口测试：JMeter `sprint-7-flow.py` + 静态检查 `ci-checks-sprint-7.sh`（新增 WF-002 集合断言：守卫双跑 / 终审回填 200 / 实例未终态回填 409 / 触发器白名单 / BR-02 空审批人集） | 后端 0.5 | WF-002 | 第 9 周 D1-2 窗 | 与 WF-001 引擎 IT-03 同窗收口（WF-001 §6.1 IT-03 已覆盖「发起挂起 / 终审回填 / 守门 409」三态） |
 | 前端审批中心页：三 Tab（待办 / 已办 / 我发起，§3.1）+ 详情抽屉（§3.2）+ 任务侧徽标 + 202 分支流转交互 | 前端 2.0 | WF-002 | 第 10 周 D1-2 起步、D3-4 联调收口 | 与 WF-001 流转按钮侧（§3.4、§4.8 `runTransition`）联调，徽标走 COLLAB-004 个人房间 `approval.updated` |
 | 前端画布审批分区侧栏（§3.3，挂在 WF-001 流转边侧栏内） | 前端 0.5 | WF-002 | 第 10 周 D3-4 窗 | 与 WF-001 画布编辑器（§1.2 目标 5）同窗交付——WF-001 画布先稳定侧栏挂点，本分区挂接后联调；画布本体不属 WF-002 |
-| 测试：UT-01~16、IT-01~09、E2E-01~06 + Playwright `parity.spec.ts` 新增审批中心 / 画布侧栏 / 任务徽标字段断言（带出处注释，UI parity 五步纪律②，ADR-0010） | QA 1.0 | WF-002 | 第 10 周 D3-4 窗收口 | — |
+| 测试：UT-01~18、IT-01~10、E2E-01~06 + Playwright `parity.spec.ts` 新增审批中心 / 画布侧栏 / 任务徽标字段断言（带出处注释，UI parity 五步纪律②，ADR-0010） | QA 1.0 | WF-002 | 第 10 周 D3-4 窗收口 | — |
 
-> **排期对齐锚点**：上表「第 9 周 D1-2 窗（后端三项）」与 `sprint-overview.md` §8 第 9 周 D1-2 主线 A「`WF-001` 模型与执行引擎 + `WF-002` 审批引擎与端点（同窗联调）」一致——TASK-013 第 9 周 D5 工时审批依赖本引擎，同窗交付不倒挂；「前端审批中心页 D1-2 起步、D3-4 联调收口」与概览 §8 第 10 周 D1-2 主线 A 一致；「前端画布审批分区侧栏 D3-4」与概览 §8 第 10 周 D3-4 槽位（WF-001 画布编辑器同窗联调）一致，画布编辑器本体仍归属 WF-001（不重复计入 WF-002 工作量）。
+> **排期对齐锚点**：上表「第 9 周 D1-2 窗（后端三项）」与 `sprint-overview.md` §8 第 9 周 D1-2 主线 A「`WF-001` 模型与执行引擎 + `WF-002` 审批引擎与端点（同窗联调）」一致——TASK-013 第 9 周 D5 工时审批依赖本文审批语义对齐（轻量单级、不复用 ApprovalFlow 引擎，其 §0 meta 口径），同窗交付不倒挂；「前端审批中心页 D1-2 起步、D3-4 联调收口」与概览 §8 第 10 周 D1-2 主线 A 一致；「前端画布审批分区侧栏 D3-4」与概览 §8 第 10 周 D3-4 槽位（WF-001 画布编辑器同窗联调）一致，画布编辑器本体仍归属 WF-001（不重复计入 WF-002 工作量）。
 > **跨文档契约同步点**：WF-001 §4.4「审批发起与终审回填」与本节 §4.5「引擎契约对齐」为同一协议的两端文档化形态；WF-001 侧定义引擎守门与 `details[]` 形态，WF-002 侧定义 `act()` 边界条件表与 `_complete_via_engine()` 调用形态，任一侧变更须同步更新另一侧（CI 静态检查：`tests/jmeter/_contract.py` 错误码枚举 + 路径口径为唯一事实源）。

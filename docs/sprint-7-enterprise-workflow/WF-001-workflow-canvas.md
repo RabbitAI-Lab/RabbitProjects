@@ -342,6 +342,9 @@ class Workflow(BaseModel):
         max_length=16, choices=Status.choices, default=Status.DRAFT, db_index=True, verbose_name="状态"
     )
     version = models.PositiveIntegerField(default=1, verbose_name="版本号", help_text="每次发布 +1")
+    based_on_version = models.PositiveIntegerField(
+        null=True, blank=True, verbose_name="克隆来源版本",
+        help_text="基于已发布版本克隆草稿时写入其 version；首次建草稿 NULL（§4.8⑤ 注）")
     published_at = models.DateTimeField(null=True, blank=True, verbose_name="最近发布时间")
     published_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
@@ -388,7 +391,7 @@ class WorkflowState(BaseModel):
     layout_y = models.FloatField(default=0.0, verbose_name="画布 Y")
     field_locks = models.JSONField(
         default=list, blank=True, verbose_name="进入本状态锁定的字段",
-        help_text='WF-004 协议：[{"field": "target_date"}, {"field": "cf_<uuid>"}]',
+        help_text='WF-004 协议：[{"field": "target_date"}, {"field": "cf_<key>（TASK-008 field_key 语义名形态）"}]',
     )
 
     class Meta(BaseModel.Meta):
@@ -572,14 +575,19 @@ def resolve_initial_state(self, project, issue_type) -> State:
     「该 issue_type 的 is_default」。两档都不过 → 发布 400，杜绝新任务落图外状态。"""
     wf = self._resolve_published(project, issue_type)        # 同上查询（不带 issue 实参的重载）
     if wf is not None:
-        node = wf.states.filter(is_initial=True).select_related("state").first()
+        node = wf.wf_states.filter(is_initial=True).select_related("state").first()  # related_name=wf_states（§4.2）
         if node is not None:
             return node.state                                  # 发布校验保证存在且 = is_default
-    return State.objects.get(project=project, issue_type=issue_type, is_default=True)
+    # 两级回落：该类型专属 is_default 行不存在时（P0 全部 issue_type=NULL、专属状态渐进补建，
+    # §2.5 场景 2 明确合法），回落项目级 issue_type=NULL 的 is_default——避免 DoesNotExist 500
+    return (State.objects.filter(project=project, issue_type=issue_type, is_default=True).first()
+            or State.objects.get(project=project, issue_type__isnull=True, is_default=True))
 
 # signals.py —— 发布/归档/删除时失效（范式同 TASK-008 字段定义缓存）
 @receiver([post_save, post_delete], sender=Workflow)
 def invalidate_workflow_cache(sender, instance, **kwargs):
+    # 注：改绑类型（PATCH issue_type）时旧 (project, 旧类型) 键的失效由 view 层 pre_save 快照旧值
+    # 显式删除承载（信号触发时 instance 已持新值，删不到旧键）——见 §4.8 PATCH 行。
     cache.delete(f"wf:resolved:{instance.project_id}:{instance.issue_type_id}")
     cache.delete(f"wf:graph:{instance.id}")
 ```
@@ -588,7 +596,7 @@ def invalidate_workflow_cache(sender, instance, **kwargs):
 
 ```python
 def validate_for_publish(wf: Workflow) -> list[PublishIssue]:
-    """BR-08 四项图校验 + BR-09 在用状态迁移阻断。发布事务内执行。"""
+    """BR-08 四项图校验 + BR-09 + BR-16 初始态一致性（⑤） 在用状态迁移阻断。发布事务内执行。"""
     states = list(wf.wf_states.select_related("state"))
     edges = list(wf.transitions.all())
     issues: list[PublishIssue] = []
@@ -616,8 +624,19 @@ def validate_for_publish(wf: Workflow) -> list[PublishIssue]:
     known = {s.id for s in states}
     for e in edges:
         if e.from_state_id not in known or e.to_state_id not in known:
-            issues.append(PublishIssue("MISSING_REF", "边引用了不在图内的状态节点",
+            issues.append(PublishIssue("MISSING_REF", "边引用了不在图内的状态节点（守卫/副作用内字段键校验归 WF-004 保存校验侧）",
                                        node_ids=[str(e.from_state_id), str(e.to_state_id)]))
+    # ⑤ BR-16：is_initial.state 与对应默认状态一致（两档——类型专属图对应该类型的 is_default，
+    #    项目默认图对应项目级 issue_type=NULL 的 is_default；类型专属 is_default 行不存在时
+    #    回落项目级判定，与 §4.5 resolve_initial_state 两级回落同形——§2.5 场景 2 类型沿用通用状态集）
+    default_state = (State.objects.filter(project=wf.project,
+                                          issue_type_id=wf.issue_type_id, is_default=True).first()
+                     or State.objects.get(project=wf.project, issue_type__isnull=True, is_default=True))
+    initial = next((st for st in states if st.is_initial), None)
+    if initial is None or initial.state_id != default_state.id:
+        issues.append(PublishIssue("INITIAL_MISMATCH",
+                                   "初始状态节点须与该绑定维度的默认状态一致（BR-16）",
+                                   node_ids=[str(initial.id) if initial else ""]))
     # ④ BR-09：在用状态必须在新图状态集内
     state_ids = {s.state_id for s in states}
     in_use = (
@@ -641,7 +660,7 @@ def validate_for_publish(wf: Workflow) -> list[PublishIssue]:
 ```json
 {
   "guards": [
-    {"type": "required_fields", "config": {"fields": ["assignees", "target_date", "cf_6f4a8c2d-…"]}},
+    {"type": "required_fields", "config": {"fields": ["assignees", "target_date", "cf_severity"]}},
     {"type": "estimate_required", "config": {}},
     {"type": "blocker_completed", "config": {}},
     {"type": "role_allowed", "config": {"roles": ["PROJ_ADMIN", "custom:6f9c1e3a-5b7d-4f2a-9e4c-8d1b3a7f5c14"]}}
@@ -669,7 +688,7 @@ def validate_for_publish(wf: Workflow) -> list[PublishIssue]:
 | GET | `/api/v1/workspaces/{slug}/projects/{id}/workflows/` | 工作流列表（含各状态计数） | `project.read`（项目成员可读） |
 | POST | 同上 | 创建草稿（BR-02 至多一个） | `workflow.manage` |
 | GET | `…/workflows/{wf_id}/` | 图详情（states+transitions 全量，画布载荷，**ETag**） | `project.read`（项目成员可读） |
-| PATCH | 同上 | 改名/说明/绑定类型——**draft-only（BR-11）**：`published`/`archived` 行 PATCH 一律 `409 RESOURCE_STATE_INVALID`（含改绑类型——published 改绑会绕过 BR-09/BR-16 发布校验；改名/说明亦走「克隆新草稿」路径）；改绑成功后缓存**双向失效**（新 `(project, 新类型)` 键 + 旧 `(project, 旧类型)` 键） | `workflow.manage` |
+| PATCH | 同上 | 改名/说明/绑定类型——**draft-only（BR-11）**：`published`/`archived` 行 PATCH 一律 `409 RESOURCE_STATE_INVALID`（含改绑类型——published 改绑会绕过 BR-09/BR-16 发布校验；改名/说明亦走「克隆新草稿」路径）；改绑成功后缓存**双向失效**（新 `(project, 新类型)` 键由 post_save 信号删；旧 `(project, 旧类型)` 键在 PATCH view 层 pre_save 快照旧值后显式删除——信号触发时 instance 已持新值，旧键须 view 承载，§4.5 signals 注） | `workflow.manage` |
 | PUT | `…/workflows/{wf_id}/graph/` | **整图替换**（画布保存，单事务，协议校验；§3.2 PUT 白名单登记见 ④） | `workflow.manage` |
 | POST | `…/workflows/{wf_id}/publish/` | 发布（§4.6 校验 + 版本轮转） | `workflow.manage` |
 | POST | `…/workflows/{wf_id}/archive/` | 归档（BR-10） | `workflow.manage` |
@@ -979,6 +998,7 @@ class WorkflowCanvasStore {
 | UT-05 | `validate_for_publish` 初始态 0 个/2 个 | 均报 `NON_SINGLE_INITIAL` |
 | UT-06 | 不可达节点检出（孤岛状态） | `UNREACHABLE` + 正确定位 node_id |
 | UT-07 | 无 completed 组节点 / completed 不可达 | `NO_COMPLETED` |
+| UT-07b | BR-16 初始态不一致（is_initial.state ≠ 对应维度 is_default；含类型专属回落项目级判定分支） | `INITIAL_MISMATCH` + 定位初始节点 |
 | UT-08 | BR-09 在用状态不在新图 | `STATE_IN_USE` + affected count 准确 |
 | UT-09 | guards/side_effects 未知 `type` 保存 | 400 + `NOT_A_CHOICE`，枚举列表返回 |
 | UT-10 | 守卫执行顺序与全量求值（无短路） | 按 WF-004 §2.2 固定执行序（`required_fields → estimate_required → blocker_completed → role_allowed`）全量求值，失败项按 details 全量收集（WF-004 BR-01/BR-04 冻结语义）；`details` 顺序与执行序一致 |
@@ -996,7 +1016,7 @@ class WorkflowCanvasStore {
 | IT-01 | 全链路：建草稿→PUT graph→发布→available→执行流转 | 各端点信封/字段符合 §4.8；Activity 落库含边名 |
 | IT-02 | 并发流转同一任务（两条不同边） | 先锁者成功；后者 409 `RESOURCE_TRANSITION_INVALID`；DB 无中间态 |
 | IT-03 | 触发审批的边：发起挂起 / 终审回填再入（WF-002 挂点契约） | 发起：202 + `pending_approval.instance_id`，任务状态**未变**；终审回填（带 `approval_instance_id` 且实例已 `approved`）：跳过二次挂起直接迁移、Activity 含边名（§4.4 两路径）；实例未终态回填 → 409 `RESOURCE_STATE_INVALID` |
-| IT-04 | 发布校验失败响应 | `details[]` 四类问题序列化与节点/边定位 ID 正确（§4.8③ code 命名：NON_SINGLE_INITIAL/UNREACHABLE/NO_COMPLETED/MISSING_REF） |
+| IT-04 | 发布校验失败响应 | `details[]` 问题序列化与节点/边定位 ID 正确（§4.8③ code 命名：NON_SINGLE_INITIAL/UNREACHABLE/NO_COMPLETED/MISSING_REF/**INITIAL_MISMATCH**（BR-16⑤）） |
 | IT-05 | `PUT graph/` 乐观锁与 ETag 轮转 | 过期 ETag → 409 `RESOURCE_CONFLICT`；PUT 成功后响应头新 ETag ≠ 请求时 If-Match 值、紧随 `GET …/workflows/{wf_id}/` 返回 200（非 304）——`updated_at` bump 契约（④）双断言 |
 | IT-06 | 并发创建项目默认工作流（`issue_type=NULL`） | Service 行锁 + 约束兜底，恰一个 draft（§4.2 NULL 唯一性说明） |
 | IT-07 | 标准版回归：无工作流项目的看板拖拽/状态下拉 | 行为与 V1.0 快照逐字段一致（零行为变化验收） |
@@ -1012,7 +1032,7 @@ class WorkflowCanvasStore {
 | E2E-03 | 看板拖拽：无边列置灰禁投；有边列拖入成功；守卫拦截卡片弹回 + 对话框 |
 | E2E-04 | 详情页边按钮点击 → 必填补齐表单 → 提交 → 状态与 Activity 时间线更新 |
 | E2E-05 | 缺陷类型绑定独立流程后，需求任务仍走项目默认流程；未配置类型退化 V1.0 下拉 |
-| E2E-06 | 已发布 v2 基础上「编辑」→ 克隆草稿 v3 → 修改发布 → v2 归档，进行中任务不受影响 |
+| E2E-06 | 已发布 v2 基础上「编辑」→ 克隆草稿（沿用 v2）→ 修改发布为 v3 → v2 归档，进行中任务不受影响 |
 
 ---
 

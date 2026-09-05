@@ -8,7 +8,7 @@
 | 覆盖模块 | M11-WF 企业工作流与审批（模板切面；模块码以 `docs/architecture/dependency-graph.md` §1.2 为唯一事实） |
 | 工作量估算 | 4 人日（后端 2 + 前端 1.5 + QA 0.5） |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
+| 最后更新日期 | 2026-09-04（R3 修复：TemplateUnlockRequest 状态机闭环（reject 分支/upgrade 回写/重复待审 409）、兜底链第二级、BR-17 引用、5v6 口径两侧同步、overview 措辞待回改登记；R2：UnlockRequest 模型、空数组语义、子码待补登、TEAM-003 收窄、distribution 摘要、approval key；R1 见首评） |
 | 上游依赖 | `WF-001`（三表模型与草稿/发布）、`WF-002`（审批流可随模板预置）、`WF-004`（守卫随模板预置）、`TEAM-003`（工作空间级全局标签/状态模板——Sprint 5 已交付；本文复用其**治理语义先例**（WS 级配置权 + 快照不直改既有项目），**不复用其下发路径**：TEAM-003 是引用式语义（并集展示 + 本地覆盖），本文是复制式实例化，§1.5/§6.1 刻意不学共享引用） |
 | 下游消费 | Sprint 8 组织治理（组织级配置权审计） |
 
@@ -65,7 +65,7 @@ flowchart LR
 | `WF-001` §4.2 | 三表模型、草稿/发布、`issue_type` 绑定 | 序列化目标结构 |
 | `WF-002` §4.2 | ApprovalFlow/Node 结构 | 模板含审批引用 |
 | `WF-004` §4.1 | guards config schema | 序列化校验 |
-| `TEAM-003` §2.2/§2.3 | 工作空间级全局标签/状态模板的**并集展示 + 本地覆盖 + default_states 快照**机制（Sprint 5 已交付，引用式语义） | 组织级工作流下发**仅复用其治理语义先例**（WS 级配置权 + 快照不直改既有项目）；下发路径不复用——本文为复制式实例化（§1.5/§6.1 刻意不学共享引用），无「下发记录」共享 |
+| `TEAM-003` §2.2/§2.3 | 工作空间级全局标签/状态模板的**并集展示 + 本地覆盖 + default_states 快照**机制（Sprint 5 已交付，引用式语义） | 组织级工作流下发**仅复用其治理语义先例**（WS 级配置权 + 快照不直改既有项目）；下发路径不复用——本文为复制式实例化（§1.5/§6.1 刻意不学共享引用），无「下发记录」共享；**sprint-overview §3「复用同一路径」措辞待回改**为「治理语义先例复用、下发路径独立」 |
 | `TASK-008`/`TASK-012` | `CustomFieldDefinition` 作用域（`project` 可空）与 `FieldType` 枚举 | 快照内嵌 `field_definitions`（§2.1/§2.2）实例化到项目作用域 |
 
 ### 1.5 竞品参考
@@ -103,7 +103,7 @@ flowchart LR
      "guards": [{"type": "required_fields", "config": {"fields": ["assignees", "target_date"]}},
                 {"type": "blocker_completed", "config": {}}],
      "side_effects": [],
-     "approval": {"name": "研发上线审批", "nodes": [
+     "approval": {"key": "a1", "name": "研发上线审批", "nodes": [
        {"level": 1, "pass_mode": "any", "approver_type": "role",
         "approver_config": {"role": "PROJ_ADMIN"}, "timeout_hours": 24}]}}
   ],
@@ -115,7 +115,7 @@ flowchart LR
 | --- | --- |
 | `key` 为模板内符号引用 | 实例化时映射为新生成的 UUID（状态/流转/审批全部新建，不复用模板内 id） |
 | `group` 必须属于五语义组 | 实例化校验；未知 group 拒绝 |
-| **`issue_types` 空数组语义** | 空数组 `[]` ＝ 实例化为**项目默认工作流**（`issue_type=NULL`，WF-001 §2 三级兜底的第三级）——「日常任务」预设即此形态，向导在确认步骤明示「将设为项目默认工作流」；非空数组按类型逐条实例化（注 1） |
+| **`issue_types` 空数组语义** | 空数组 `[]` ＝ 实例化为**项目默认工作流**（`issue_type=NULL`，WF-001 §2 三级兜底链的**第二级**（第一级类型专属、第三级 V1.0 自由流转））——「日常任务」预设即此形态，向导在确认步骤明示「将设为项目默认工作流」；非空数组按类型逐条实例化（注 1） |
 | 审批内联定义（非引用） | 实例化时按定义新建 `ApprovalFlow/Node`（同名冲突自动加后缀）；内联对象**必填 `key`**（模板内符号引用，transitions 经 `approval_key` 引用，§2.3 示例 `"a1"`） |
 | `version` | 序列化协议版本（非模板版本）；解析器按版本分派，向前兼容 |
 | `field_definitions` 可随模板 | 自定义字段定义内嵌：每项 `{key, name, field_type, options?, cascade_config?}`；`key` 恒 `cf_` 前缀，`field_type` 枚举同 TASK-008/012 `FieldType`——守卫/字段锁引用的 `cf_*` 字段由此自包含，实例化与降级规则见 §2.2 |
@@ -139,7 +139,7 @@ flowchart LR
 | 测试上线 | 待提测(unstarted) / 测试中(started) / 待上线(started) / 已上线(completed) / 已取消(cancelled) | 待提测→测试中（开始测试）；测试中→待上线（测试通过）；待上线→已上线（发布）；测试中→待提测（打回）；任意→已取消 | 发布：或签审批（运维/值班角色，24h 超时）；已上线节点 `field_locks: [target_date, cf_release_version]`（`cf_release_version` 亦为内嵌定义） |
 | 日常任务 | 待开始(unstarted) / 进行中(started) / 已完成(completed) / 已取消(cancelled) | 待开始↔进行中、待开始↔已完成、进行中↔已完成（两两全通）；任意→已取消（取消） | 无（隐式 `blocker_completed` 仍生效） |
 
-**规模口径**（§3.1 卡片与 §5 E2E 断言同此）：状态数**含「已取消」**；边数按**快照边**计——`from:"*"` 通配取消边计 1 条，实例化展开为逐源显式边（§2.3 注）。四套预设：研发需求 **6 状态·6 边**、缺陷修复 **5 状态·5 边**、测试上线 **5 状态·5 边**、日常任务 **4 状态·7 边**（三非取消状态两两全通 6 边 + 取消通配 1 边）。**跨文档口径登记**：WF-001 E2E-01/§7.2 演示与 sprint-overview §6 验收 3 的「研发需求流程模板编辑（5 状态 6 边）」为**画布演示视图口径——不含「已取消」态**（5 = 6 − 已取消；边数两口径同为 6：演示图不画取消通配边但含一条显式打回边），非数字冲突；概览措辞随 Sprint 8 文档回改时统一标注「（不含取消态）」。
+**规模口径**（§3.1 卡片与 §5 E2E 断言同此）：状态数**含「已取消」**；边数按**快照边**计——`from:"*"` 通配取消边计 1 条，实例化展开为逐源显式边（§2.3 注）。四套预设：研发需求 **6 状态·6 边**、缺陷修复 **5 状态·5 边**、测试上线 **5 状态·5 边**、日常任务 **4 状态·7 边**（三非取消状态两两全通 6 边 + 取消通配 1 边）。**跨文档口径登记**：WF-001 E2E-01/§7.2 与 sprint-overview §6 验收 3 的「研发需求流程（5 状态 6 边）」是 **WF-001 画布演示的自建独立图**（从零搭建、自定打回/重开边，与本预设无派生关系）——数字各自独立成立、无冲突；overview §6 验收 3 与 §10 第 1 项均已回改为「自建演示图编辑…非 WF-005 预设实例化」——措辞闭环完成。
 
 **预设的自定义字段依赖**：缺陷修复守卫引用 `cf_fix_solution`（修复方案）、测试上线锁定 `cf_release_version`（发布版本）——两个 `cf_*` 字段**随快照以 `field_definitions` 内嵌定义**（§2.1），模板自包含，不依赖目标项目预建。实例化三态：
 
@@ -263,10 +263,11 @@ stateDiagram-v2
 | 删除被引用模板 | 409 | `RESOURCE_IN_USE` | `IN_USE` | 列出锁定项目清单 |
 | 编辑内置模板 | 403 | `PERM_DENIED` | `BUILTIN` | 引导「另存为」 |
 | 迁移向导缺映射 | 400 | `VALIDATION_ERROR` | `REQUIRED` | 未映射状态标红 |
+| 重复待审申请 | 409 | `RESOURCE_ALREADY_EXISTS` | `UNIQUE` | 已有待审单（每项目至多一条，§4.4 unlock-requests 行） |
 | 超配额 | 409 | `RESOURCE_LIMIT_EXCEEDED` | `TEMPLATE_LIMIT` | — |
 | 快照体积超 256KB | 413 | `VALIDATION_PAYLOAD_TOO_LARGE` | `TOO_LARGE` | 「模板内容超上限（256KB），请精简后重试」——api-conventions §8.4 已注册码，复用不新增 |
 
-> **字段级子码登记**：`REQUIRED` / `TOO_LARGE` 直用 api-conventions §8.8/§8.4 既有条目；`UNSUPPORTED_VERSION` / `INVALID_GRAPH` / `TEMPLATE_LOCKED` / `IN_USE` / `BUILTIN` / `TEMPLATE_LIMIT` 六个为本迭代新增 `details[].code` 字段级子码，不占用全局错误码注册表，交付时按 TASK-005 §2.5 同款模式在 §8.8 补登——**架构文档待回改登记**（同 WF-002 §2.6 / WF-004 §2.5 注范式，随 Sprint 7 首个 PR 同步）。
+> **字段级子码登记**：`REQUIRED` / `TOO_LARGE` / `UNIQUE` 直用 api-conventions §8.8/§8.4 既有条目；`UNSUPPORTED_VERSION` / `INVALID_GRAPH` / `TEMPLATE_LOCKED` / `IN_USE` / `BUILTIN` / `TEMPLATE_LIMIT` 六个为本迭代新增 `details[].code` 字段级子码，不占用全局错误码注册表，交付时按 TASK-005 §2.5 同款模式在 §8.8 补登——**架构文档待回改登记**（同 WF-002 §2.6 / WF-004 §2.5 注范式，随 Sprint 7 首个 PR 同步）。
 
 ### 2.8 边界条件
 
@@ -388,7 +389,7 @@ class TemplateDistribution(BaseModel):
 
 class TemplateUnlockRequest(BaseModel):
     """项目侧解锁/升级申请（§4.4 端点族：POST …/projects/{project_id}/workflow-templates/
-    unlock-requests/；「每项目至多一条待审」由部分唯一约束承载，§2.6）"""
+    unlock-requests/；「每项目至多一条待审」由部分唯一约束承载，§4.4 unlock-requests 行）"""
 
     class Kind(models.TextChoices):
         UNLOCK = "unlock", "解锁（转独立副本）"
@@ -413,7 +414,7 @@ class TemplateUnlockRequest(BaseModel):
     class Meta(BaseModel.Meta):
         db_table = "template_unlock_requests"
         constraints = [
-            # 「每项目至多一条待审」（§4.6）：仅对 pending 态生效的部分唯一约束（软删行不计）
+            # 「每项目至多一条待审」（§4.4 unlock-requests 行 + §2.7 异常表重复待审行）：仅对 pending 态生效的部分唯一约束（软删行不计）
             models.UniqueConstraint(fields=["project"],
                                     condition=Q(status="pending", deleted_at__isnull=True),
                                     name="uniq_unlock_request_pending_per_project"),
@@ -421,7 +422,7 @@ class TemplateUnlockRequest(BaseModel):
         indexes = [models.Index(fields=["project", "status"], name="idx_unlock_req_proj")]
 ```
 
-> **锁定唯一事实源与溯源接线**：锁定判定/解除/升级全部以本表记录为准（§4.2 `assert_graph_editable` 查活跃 distribution，`Workflow` 自身无锁定字段）；实例化产物通过 `Workflow.source_template_id`（WF-001 §7.3 下游冻结契约预留的溯源列）由 §4.2 `instantiate()` 统一写入 `template.id`——项目工作流可反查来源模板，供升级推送与 WF-006 审计消费。申请受理即发 WS_ADMIN 通知（`notify_unlock_request.delay`，COLLAB-001 通道）；批准动作 = WS_ADMIN 调 `POST …/distributions/{id}/unlock/`（§4.4 ③）时同事务回写申请单 `status=approved / handled_by / handled_at`。
+> **锁定唯一事实源与溯源接线**：锁定判定/解除/升级全部以本表记录为准（§4.2 `assert_graph_editable` 查活跃 distribution，`Workflow` 自身无锁定字段）；实例化产物通过 `Workflow.source_template_id`（WF-001 §7.3 下游冻结契约预留的溯源列）由 §4.2 `instantiate()` 统一写入 `template.id`——项目工作流可反查来源模板，供升级推送与 WF-006 审计消费。申请受理即发 WS_ADMIN 通知（`notify_unlock_request.delay`，COLLAB-001 通道）；**回写闭环**：kind=unlock 由 §4.4 ③（action=approve|reject）回写、kind=upgrade 由 §4.4 ② upgrades/ 成功时同事务回写 approved——两路确保 pending 单不滞留（否则「每项目至多一条待审」约束将阻塞后续申请）；reject 分支 comment 必填。
 
 ### 4.2 实例化服务
 
@@ -541,7 +542,7 @@ def confirm_distribution(*, distribution_id: str, state_mapping: dict,
 
 ### 4.4 API 定义
 
-前缀 `/api/v1/workspaces/{slug}/`（下表 `…/` 承前省略；资源名复数、路径尾斜杠，api-conventions §2.3）。模板写操作统一 WS_ADMIN（`workspace.setting.manage`，rbac §8.1；BR-01——工作流模板属工作空间设置面，WS 侧不复用项目级 `workflow.manage`）；项目侧实例化/解锁申请走项目级 `workflow.manage`（PROJ_ADMIN+，rbac §8.2，与 WF-001 BR-16 同源）。
+前缀 `/api/v1/workspaces/{slug}/`（下表 `…/` 承前省略；资源名复数、路径尾斜杠，api-conventions §2.3）。模板写操作统一 WS_ADMIN（`workspace.setting.manage`，rbac §8.1；BR-01——工作流模板属工作空间设置面，WS 侧不复用项目级 `workflow.manage`）；项目侧实例化/解锁申请走项目级 `workflow.manage`（PROJ_ADMIN+，rbac §8.2，与 WF-001 BR-17 同源（R3 重号后权限条为 BR-17））。
 
 | 方法 | 路径 | 说明 | 权限 |
 | --- | --- | --- | --- |
@@ -553,10 +554,10 @@ def confirm_distribution(*, distribution_id: str, state_mapping: dict,
 | POST | `…/workflow-templates/{template_id}/distribute/` | 下发 `{project_ids, locked}` | WS_ADMIN |
 | POST | `…/workflow-templates/{template_id}/withdraw/` | 撤回下发 `{project_ids}` | WS_ADMIN |
 | GET | `…/workflow-templates/{template_id}/distributions/` | 下发记录列表（**①**）——升级确认与解锁审批的数据源 | WS_ADMIN |
-| POST | `…/workflow-templates/{template_id}/distributions/{distribution_id}/upgrades/` | 确认升级（锁定项目替换式升级，**②**）／既有项目**首次下发确认**（§4.3 两步链路第二步，请求体同携映射单与类型重绑） | 升级：WS_ADMIN；首次下发确认：项目管理员（`workflow.manage`，PROJ_ADMIN+，rbac §8.2）或 WS_ADMIN |
-| POST | `…/workflow-templates/{template_id}/distributions/{distribution_id}/unlock/` | 审批通过解锁申请 → 转独立副本（**③**） | WS_ADMIN |
+| POST | `…/workflow-templates/{template_id}/distributions/{distribution_id}/upgrades/` | 确认升级（锁定项目替换式升级，**②**；成功时同事务回写该项目 kind=upgrade 的待审申请单 `status=approved / handled_by / handled_at`）／既有项目**首次下发确认**（§4.3 两步链路第二步，请求体同携映射单与类型重绑） | 升级：WS_ADMIN；首次下发确认：项目管理员（`workflow.manage`，PROJ_ADMIN+，rbac §8.2）或 WS_ADMIN |
+| POST | `…/workflow-templates/{template_id}/distributions/{distribution_id}/unlock/` | 审批处理解锁申请，请求体 `{action: "approve"|"reject", comment?}`——approve → 转独立副本（**③**）；reject → 不解除引用，仅回写申请单 `status=rejected / handled_by / handled_at`（comment 必填留痕，供项目侧再申请） | WS_ADMIN |
 | POST | `/api/v1/workspaces/{slug}/projects/{project_id}/workflow-templates/` | 项目实例化（**④**；项目侧集合复用模板资源名，POST = 应用动作，动作子资源语义同 api-conventions §2.6） | `workflow.manage`（项目级，PROJ_ADMIN+） |
-| POST | `…/projects/{project_id}/workflow-templates/unlock-requests/` | 项目申请解锁/升级（每项目至多一条待审） | `workflow.manage`（PROJ_ADMIN+） |
+| POST | `…/projects/{project_id}/workflow-templates/unlock-requests/` | 项目申请解锁/升级（每项目至多一条待审——已有 pending 单时 `409 RESOURCE_ALREADY_EXISTS` + 子码 `UNIQUE`，§2.7） | `workflow.manage`（PROJ_ADMIN+） |
 
 **① 下发记录列表（GET `distributions/` → 200）**——含锁定引用与升级状态（`TemplateDistribution`，§4.1）：
 
@@ -736,6 +737,8 @@ export class WorkflowTemplateStore {
 | UT-10 | 在途迁移映射 | 映射后任务状态正确；未映射阻塞提交 |
 | UT-11 | 配额 100 | 第 101 个 409 |
 | UT-12 | 快照 256KB 上限 | 超限 `413 VALIDATION_PAYLOAD_TOO_LARGE`（§2.8） |
+| UT-13b | 重复待审：已有 pending 单再申请 → 409 `RESOURCE_ALREADY_EXISTS`+`UNIQUE`；reject 分支：不解除引用、回写 rejected、缺 comment 400 | 409/400 断言 + 引用未变 |
+| UT-13c | 升级成功同事务回写 kind=upgrade 待审单 approved（handled_by/handled_at 落值） | 申请单状态断言 |
 | UT-13 | 内嵌字段定义实例化三态（§2.2） | 项目缺 `key` 在项目作用域新建；同 `key` 复用并明示差异；高级类型无许可降级 `textarea` 且降级项入清单 |
 
 ### 5.2 集成测试
@@ -744,6 +747,7 @@ export class WorkflowTemplateStore {
 | --- | --- | --- |
 | IT-01 | 全链路：另存模板 → 发布 → 下发 3 项目（锁定）→ 项目只读生效 | 画布只读、流转正常、审批可用；`GET distributions/`（§4.4 ①）记录与实况一致 |
 | IT-02 | 模板升级推送：v2 发布 → 锁定项目 upgrade_available → `POST …/distributions/{id}/upgrades/`（§4.4 ②）确认 | 202 受理、状态映射执行、在途任务正确迁移、映射单留痕 |
+| IT-03b | 升级确认（② upgrades/）成功后 kind=upgrade 待审申请单回写 approved（§4.4 ② 回写闭环） | 申请单状态/handler 断言 |
 | IT-03 | 解锁申请（项目侧 `unlock-requests/`）→ WS_ADMIN `POST …/distributions/{id}/unlock/`（§4.4 ③）批准 → 独立副本可编辑 | 引用解除留痕（status=unlocked） |
 | IT-04 | 下发部分失败（1 项目图冲突） | 其余成功；失败汇总通知 WS_ADMIN |
 | IT-05 | 审计链 | 创建/发布/下发/升级/撤回全事件可查 |

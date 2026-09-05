@@ -8,7 +8,7 @@
 | 覆盖模块 | M11-WF 企业工作流与审批（留痕切面；执行切面在 WF-002——模块码以 `dependency-graph.md` §1.2 为唯一事实，无 M5-WF） |
 | 工作量估算 | 3 人日（后端 2 + 前端 0.5 + QA 0.5） |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-04 |
+| 最后更新日期 | 2026-09-04（R4 修复：API 表补第 5 行下载代理端点（404/410/409 契约）、轮询示例 url 清残渣、WF-002 同步登记闭环、导出列 JOIN 投影注明；R3：代理口径传导、哈希链顺序（先 with_comment_hash 再 canonical）、附录 C 改待入、archived 双份消解、BR-08 截断、架构偏离登记；R2/R1 见主记录） |
 | 上游依赖 | `WF-001`（工作流引擎/状态机执行模型）、`WF-002`（`ApprovalInstance/ApprovalRecord` 执行模型）、`TASK-010`（Activity 管道）、`GANTT-002`（导出范式先例：导出产物文件名/水印规则 BR-11 与 §2.6 文件名模板） |
 | 下游消费 | Sprint 8 `AUTH-010`（按 dependency-graph §1.3 当前为 SSO 单点登录；如纳入全站审计并统一检索，需在 sprint-overview 与 dependency-graph 同步登记后调整本表依赖表述——**跨档继承矛盾待登记回改**）、Sprint 9（审批时效报表数据源）、P4 合规认证 |
 
@@ -111,7 +111,7 @@ sequenceDiagram
 
 | 机制 | 实现 |
 | --- | --- |
-| 哈希链 | 每条审计事件 `prev_hash` 指向前条（项目维度链）；`event_hash = sha256(prev_hash ‖ canonical_json(payload))`——删改任何历史行都会断链，校验任务可检测 |
+| 哈希链 | 每条审计事件 `prev_hash` 指向前条（项目维度链）；`event_hash = sha256(prev_hash ‖ canonical_json(payload))`（**payload 一律指 BR-04 哈希化后的入库形态**——canonical 在 with_comment_hash 之后取，保证校验/重放按存储行重算可命中）——删改任何历史行都会断链，校验任务可检测 |
 | 链校验 | beat 每日抽查（每项目末 1000 条重算比对）；年度合规审计可全量重放 |
 | records 有限状态机 | `pending→approve/reject/skipped` 单向；触发器列级白名单（仅 `action/comment/acted_at` 可写且仅一次） |
 | 实例终态保护 | `status ∈ {approved,rejected,withdrawn,terminated}` 后任何 UPDATE 拒绝（completed_at 一次性写入除外，同事务） |
@@ -122,9 +122,9 @@ sequenceDiagram
 | --- | --- |
 | 检索维度 | 项目内：任务/发起人/审批人/流/动作/状态/时间窗（组合 AND）；工作空间级（`audit.read`，WS_OWNER/WS_ADMIN）：跨项目同人/同流检索 |
 | 权限 | 项目成员可查本项目审批业务记录；**审计检索页**与导出需 `approval.audit`（PROJ_ADMIN+，rbac §8.2 未注册——按 rbac 附录 B 待登记，见 §4.5 注）；跨项目检索复用 rbac §8.1 既有 `audit.read`，不新增码位 |
-| 导出 | CSV（UTF-8 BOM，Excel 兼容）；**统一异步**（Celery 任务，`202 + task_id + status_url` 轮询契约见 §4.5；小数据量秒级完成）；产物落 MinIO，完成后 `result.url` 为**流式下载代理端点** `GET …/approval-audit/exports/{task_id}/download/`（持 `approval.audit`，api-conventions §13.1 `succeeded` 后可用、1 小时过期）——代理端点内服务端经 MinIO 预签（应用侧签名、客户端不直连存储）流式回传并 `emit(audit.accessed)`（**下载动作入审计的唯一实现路径**——预签直连应用不经手则无法留痕，故下载必须走代理）；**导出动作与下载动作均入审计** |
+| 导出 | CSV（UTF-8 BOM，Excel 兼容）；**统一异步**（Celery 任务，`202 + task_id + status_url` 轮询契约见 §4.5；小数据量秒级完成）；产物落 MinIO，完成后 `result.url` 为**流式下载代理端点** `GET …/approval-audit/exports/{task_id}/download/`（持 `approval.audit`，api-conventions §13.1 `succeeded` 后可用、1 小时过期）——代理端点内服务端经 MinIO 预签（应用侧签名、客户端不直连存储）流式回传并 `emit(audit.accessed)`（**下载动作入审计的唯一实现路径**——预签直连应用不经手则无法留痕，故下载必须走代理）；**导出动作与下载动作均入审计**。**架构偏离登记**：api-conventions §13.1 明文「result 携带预签名下载 URL」——本端点改代理下载（客户端不直连存储，为承载 `audit.accessed` 留痕）属实质细化，**架构文档待回改**（§13.1 补代理变体条款） |
 | 导出文件名 | `{项目key}-approval-audit-{yyyyMMdd-HHmm}.csv`（循 GANTT-002 §2.6 导出文件名范式；CSV 为纯数据无水印，导出人/时间由 `audit.exported` 事件承载） |
-| 导出字段 | 时间/项目/任务编号/任务标题/流转/发起人/级别/审批人/动作/意见/耗时/request_id |
+| 导出字段 | 时间/项目/任务编号/任务标题/流转/发起人/级别/审批人/动作/意见/耗时/request_id——**发起人/流转/级别等实例维度列经 `instance_id` JOIN `approval_instances` 投影**（`flow_snapshot` 冗余可回查；实例行被项目删除级联清除后置空——SET_NULL 语义，投影列输出空串），`approval_audit_events` 本表不重复建列 |
 | 留存 | records 与审计事件在线 3 年；超期月度归档任务导出 Parquet 至 MinIO 冷存（再存 4 年），在线表删除归档段（归档本身入审计）——留存口径与 AUTH-010 的对齐登记见下方注 |
 
 > **留存口径登记（与 Sprint 8 AUTH-010 统一）**：审批域留痕（`approval_records` + `approval_audit_events`）为合规专表，保持**在线 3 年 + 冷存 4 年**不变。AUTH-010 的全站 `audit_log` 留存 **180 天**（其 BR-07）仅约束本表事件**双写副本**在该表的留存——两表管道同源、消费者与留存各自独立（AUTH-010 §1.2「管道同源、消费者与留存不同」既有边界约定的直接推论）。统一检索面（AUTH-010 并入）按此路由：180 天内审批事件可命中 `audit_log`，更早事件以本表在线段/冷存为准。**跨档继承矛盾待登记回改**：AUTH-010 按 dependency-graph §1.3 当前为 SSO 单点登录，本节与 §1.2/§3.2/§0 meta 将其描述为「全站审计并统一检索」需在 sprint-overview 与 dependency-graph 同步登记后调整 WF-006 §0 meta 当前依赖表述（待上游回改同步）；**登记回改项**：AUTH-010 BR-07 分区清理与统一检索实现不得以 180 天截断审批域事件的可见性（随 Sprint 8 首个 PR 同步）。
@@ -140,7 +140,7 @@ sequenceDiagram
 | BR-05 | 导出需 `approval.audit`（按 rbac 附录 B 待登记，§4.5 注）；导出与下载动作自身入审计（谁导了什么条件多少行） | Service | `403 PERM_DENIED` |
 | BR-06 | 在线留存 3 年；归档冷存 4 年；归档段删除前必须完成冷存校验（与 AUTH-010 180 天口径的边界见 §2.3 登记注） | 归档任务 | 校验失败中止删除 |
 | BR-07 | 审计检索结果不含意见原文（仅哈希）——意见只在业务时间线与导出中可见 | Serializer | — |
-| BR-08 | 双写预留：事件写入同时发 `approval.audit` 总线消息，**载荷自包含**（`event/event_id/occurred_at/workspace_id/project_id/actor_id/instance_id/request_id/data`——字段名对齐 api-conventions §13.3 载荷结构，满足 AUTH-010 消费所需，消费方无需回查本表，§4.3）；Sprint 8 AUTH-010 消费建全站表；消费方缺席不影响本表 | on_commit | — |
+| BR-08 | 双写预留：事件写入同时发 `approval.audit` 总线消息，**载荷自包含**（AUTH-010 `actor_id/object_id` 扩长前，双写副本暂截断至 26 字符、回改后全量重放补全——见 §4.8 末注）（`event/event_id/occurred_at/workspace_id/project_id/actor_id/instance_id/request_id/data`——字段名对齐 api-conventions §13.3 载荷结构，满足 AUTH-010 消费所需，消费方无需回查本表，§4.3）；Sprint 8 AUTH-010 消费建全站表；消费方缺席不影响本表 | on_commit | — |
 | BR-09 | request_id 贯穿：每条审计事件记录产生它的请求 request_id（INFRA-004 中间件注入） | 服务 | — |
 | BR-10 | 篡改检测抽查每日执行；全量重放工具随运维手册交付 | beat | — |
 | BR-11 | 实例/票据删除仅一种合法路径：项目删除级联（级联前先归档导出）。触发链路：`DELETE /api/v1/admin/projects/{id}/`（`apps/admin`，按 monorepo-structure §apps 与 api-conventions §2.1 三套 API 分组）→ 触发 §4.8 归档接口 → 归档完成 → 允许 DB 级联 DELETE；`approval_records_guard` 与 `trg_aae_guard` 仅在 `pg_trigger_depth() > 0` 的级联上下文放行 DELETE，直连 DELETE 仍拒 | 级联服务 + DB | 触发器异常 |
@@ -185,7 +185,7 @@ sequenceDiagram
 | 元素 | 行为 |
 | --- | --- |
 | 意见「查看」 | 审计页内仅显示哈希与「存在意见」标记；点击跳业务时间线（BR-07 权限继承业务侧） |
-| 导出 | 弹窗确认当前筛选条件与预估行数；提交后 202 转进度态（§4.5 task 轮询，终态即停——QA-001 §4.7 release-gates 条件轮询先例）；完成后通知 + 预签下载链接（1h） |
+| 导出 | 弹窗确认当前筛选条件与预估行数；提交后 202 转进度态（§4.5 task 轮询，终态即停——QA-001 §4.7 release-gates 条件轮询先例）；完成后通知 + 下载代理链接（§2.3 代理端点，1h 窗口） |
 | 完整性徽标 | 展示最近一次链校验结果与时间；断裂时红色横幅 + 导出禁用 |
 
 ### 3.2 工作空间级检索（WS_ADMIN）
@@ -301,7 +301,7 @@ CREATE TRIGGER aae_no_mutation BEFORE UPDATE OR DELETE
 
 > 归档删除走**专用归档角色** `rp_archiver`（应用连接账号不授该角色）：归档函数 `archive_approval_audit`（§4.8）以 `SECURITY DEFINER` 执行且 owner 为 `rp_archiver`，函数内 `current_user` 即该角色，触发器据此放行归档 DELETE（UPDATE 任何角色都不放行）。项目删除的 FK 级联仅在 `pg_trigger_depth() > 0` 时放行两个表守卫；应用账号与 superuser 直连的 UPDATE/DELETE 仍被触发器拒绝（BR-01——superuser 亦不豁免 BEFORE 触发器）。BR-06 冷存校验通过才可删，删除窗口即审计事件（`audit.archived`）。
 
-> **WF-002 同步登记**：`approval_records_guard` / `trg_aae_guard` 的级联放行口已按 PG 标准 `pg_trigger_depth() > 0` 补齐；WF-002 BR-09 与 §4.4 仍写「DELETE 一律拒绝」，标注为**级联放行口待同步——上游待回改**。
+> **WF-002 同步登记**：`approval_records_guard` / `trg_aae_guard` 的级联放行口已按 PG 标准 `pg_trigger_depth() > 0` 补齐；WF-002 BR-09 与其 §4.4 迁移要点现行版均已写「直连 DELETE 拒绝、仅级联上下文放行」——**双向闭环，无待办**。
 
 ### 4.3 事件写入服务
 
@@ -320,11 +320,12 @@ class ApprovalAuditor:
              instance_id: str | None = None, request_id: str = "") -> None:
         prev = (ApprovalAuditEvent.objects.filter(project_id=project_id)
                 .order_by("-id").values_list("event_hash", flat=True).first() or GENESIS_HASH)
-        canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
-        event_hash = hashlib.sha256(f"{prev}{canonical}".encode()).hexdigest()
+        payload = with_comment_hash(payload)                    # 先哈希化（BR-04）——canonical/hash
+        canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)   # 一律基于入库形态，
+        event_hash = hashlib.sha256(f"{prev}{canonical}".encode()).hexdigest()  # 校验/重放才能命中
         event = ApprovalAuditEvent.objects.create(
             project_id=project_id, type=type, actor_id=actor_id, instance_id=instance_id,
-            payload=with_comment_hash(payload), request_id=request_id,   # BR-04 / BR-09
+            payload=payload, request_id=request_id,               # 已哈希化（上方先行处理）
             prev_hash=prev, event_hash=event_hash)
         ws_id = str(Project.objects.values_list("workspace_id", flat=True)
                     .get(id=project_id))
@@ -378,6 +379,7 @@ def verify_hash_chains():
 | POST | `…/approval-audit/exports/` | 触发导出（统一异步：`202 + task_id + status_url`，§4.4） | `approval.audit`（限流 10 次/时/人） |
 | GET | `/api/v1/workspaces/{slug}/approval-audit/` | 工作空间级跨项目检索 | `audit.read`（WS_OWNER/WS_ADMIN，rbac §8.1 既有码） |
 | GET | `…/projects/{project_id}/approval-audit/integrity/` | 链校验状态（最近结果） | `approval.audit` |
+| GET | `…/approval-audit/exports/{task_id}/download/` | **流式下载代理**（§2.3 下载审计唯一路径）：`succeeded` 后 1h 窗口内可用；服务端 MinIO 预签 + 流式回传（`Content-Disposition: attachment; filename={项目key}-approval-audit-{ts}.csv`）+ `emit(audit.accessed)`。错误契约：任务不存在/非本人触发 → `404 RESOURCE_NOT_FOUND`（存在性隐藏）；超 1h 窗口 → `410 RESOURCE_GONE`；未 `succeeded` → `409 RESOURCE_STATE_INVALID` | `approval.audit`（同导出限流域） |
 
 > **权限码登记**：`approval.audit`（项目级：审计检索/导出/完整性）**尚未在 rbac §8.2 项目级矩阵注册**——按 rbac 附录 B「新增受权限管控资源落地清单」随 Sprint 7 首个 PR 登记：§8.2 矩阵补行（PROJ_ADMIN ✅ / CONTRIBUTOR/COMMENTER/VIEWER ❌）+ `packages/constants` 前端矩阵 + 后端矩阵 + Permission 引用三处一致（rbac §5.5 CI 一致性测试），登记前相关端点不得合并；工作空间级检索复用 rbac §8.1 既有 `audit.read`，**不新增码位**。
 
@@ -423,13 +425,13 @@ def verify_hash_chains():
   "status": "success",
   "data": {"task_id": "d4e5f607-1829-4ab3-9c4d-5e6f708192a3", "state": "succeeded",
            "progress": 100,
-           "result": {"url": "https://minio…/audit-exports/…?X-Amz-Signature=…",
+           "result": {"url": "/api/v1/workspaces/{slug}/projects/{project_id}/approval-audit/exports/{task_id}/download/",
                       "rows": 18422, "expires_in": 3600},
            "error": null}
 }
 ```
 
-- `state ∈ {queued, processing, succeeded, failed, cancelled}`（api-conventions §13.1）；完成后 `result.url` 为 MinIO 预签名下载链接（1 小时有效，§2.3）；失败时 `error` 为与 api-conventions §4.2 统一错误结构同构的对象（如行数复检超限：`VALIDATION_ERROR` + 子码 `TOO_LARGE`）。
+- `state ∈ {queued, processing, succeeded, failed, cancelled}`（api-conventions §13.1）；完成后 `result.url` 为**下载代理端点**（§2.3——内部服务端预签流式回传，客户端不直连存储；1 小时窗口由代理侧校验）；失败时 `error` 为与 api-conventions §4.2 统一错误结构同构的对象（如行数复检超限：`VALIDATION_ERROR` + 子码 `TOO_LARGE`）。
 - 前端轮询 2s 起指数放大至 10s，`state` 到终态即停（api-conventions §13.1；QA-001 §4.7 release-gates 的 SWR 条件轮询为同款先例）；完成另有站内通知（§4.4），收到通知可免轮询。
 
 **错误响应示例**（哈希链断裂后导出，§2.5——`request_id` 在 `error` 内，api-conventions §4.2）：
@@ -519,7 +521,7 @@ BEGIN
   FOR proj IN SELECT DISTINCT aae.project_id FROM approval_audit_events aae
               WHERE aae.created_at < cutoff LOOP
     -- 1. 冷存校验（Parquet 已在应用层上传并回读校验 MD5）
--- 归档完成钩子：应用侧补 emit(audit.archived, ...)（BR-08 总线消息不因裸 SQL 归档而丢失——AUTH-010 消费方依赖；归档函数返回后由调用方同事务补发）
+-- 归档完成钩子：SQL 函数内 INSERT 已落表（上），应用侧仅补发 BR-08 总线消息（emit_audit_bus.delay 直发、不再插表——避免双份表记录；AUTH-010 消费方依赖总线）
     PERFORM assert_cold_storage_verified(proj, cutoff);
     -- 2. 删除在线段（触发器内 current_user='rp_archiver' 放行口；本函数 SECURITY DEFINER
     --    且 owner=rp_archiver——函数内 current_user 即该角色，§4.2）
@@ -591,7 +593,7 @@ GRANT EXECUTE ON FUNCTION archive_approval_audit(timestamptz) TO rp_archiver;
 | 编号 | 用例 | 断言 |
 | --- | --- | --- |
 | IT-01 | 审批全链路事件完整性（五场景） | §2.1 事件序列与 WF-002 动作一一对应 |
-| IT-02 | 导出全链路：触发（202 + `task_id`/`status_url`）→ task 轮询至 `succeeded` → 通知 → 下载（预签链接 1h） | 导出与下载各入一条审计 |
+| IT-02 | 导出全链路：触发（202 + `task_id`/`status_url`）→ task 轮询至 `succeeded` → 通知 → 下载（代理端点 1h 窗口，emit audit.accessed） | 导出与下载各入一条审计 |
 | IT-03 | 双写总线 | `approval.audit` 消息（§4.3 载荷自包含：event/event_id/occurred_at/workspace_id/project_id/actor_id/instance_id/request_id/data）发出且可被 AUTH-010 消费端零回查接收 |
 | IT-04 | 每日链校验 beat | 抽查通过记录 integrity；注入断链后 P0 告警 + 导出冻结 |
 | IT-05 | 归档月度任务 | 3 年前数据导出冷存 + 校验 + 在线删除 + `audit.archived` 事件 |
@@ -647,8 +649,8 @@ GRANT EXECUTE ON FUNCTION archive_approval_audit(timestamptz) TO rp_archiver;
 | --- | --- |
 | Model / Migration | `approval_audit_events` 表、records/audit 触发器 DDL、归档角色与函数 |
 | 后端 | `ApprovalAuditor`（链式写入）、导出 worker（流式 CSV）、链校验 beat、月度归档任务、双写总线预留 |
-| API | 项目检索/导出/完整性 + 工作空间检索共 4 端点 |
-| 前端（附录 C 已入清单：§3 审计检索页/完整性徽标/导出确认流/WS 检索页四块 UI 表面逐行入 `docs/sprint-0-poc/test-cases.md` 附录 C，来源 §3.x；`parity.spec.ts` 断言随实现补齐——ADR-0010 五步纪律②） | 项目审批审计页、完整性徽标、导出确认流、工作空间级检索页 |
+| API | 项目检索/导出/完整性 + 工作空间检索共 5 端点（含下载代理） |
+| 前端（附录 C **待入清单**：§3 审计检索页/完整性徽标/导出确认流/WS 检索页四块 UI 表面在实现启动前逐行入 `docs/sprint-0-poc/test-cases.md` 附录 C（标来源 §3.x），`parity.spec.ts` 断言随后补齐——ADR-0010 五步纪律①前置，未入清单不开工） | 项目审批审计页、完整性徽标、导出确认流、工作空间级检索页 |
 | 测试 | UT-01~12、IT-01~08、E2E-01~06 |
 
 ### 7.2 可操作演示的验收标准

@@ -382,7 +382,8 @@ def automation_match(self, event: dict):
         if gate:
             log_run(rule, issue, event, status="skipped", reason=gate)      # 闸 1/2 拦截仍留痕
             continue
-        if not dedup_acquire(rule.id, issue.id, rule.dedup_window_minutes):
+        if event["type"] != "due_approaching":              # §2.3 闸 3 豁免：due 去重由扫描端独立键承担
+            if not dedup_acquire(rule.id, issue.id, rule.dedup_window_minutes):
             log_run(rule, issue, event, status="skipped", reason="dedup")   # 闸 3（BR-09）
             continue
         run = log_run(rule, issue, event, status="running")
@@ -612,7 +613,7 @@ export class AutomationRuleStore {
 | `add_label` | `label_id` | uuid，必填 | 项目内标签；幂等 |
 | 公共 | `on_error` | `stop` / `continue`，默认 stop | — |
 
-**条件操作符白名单**（FilterCompiler 子集）：`eq / neq / in / not_in / is_empty / is_not_empty / contains`（文本与选项）/ `gt / gte / lt / lte`（数字与日期，含绝对值）/ `before / after`（日期锚点）/ `between`（日期区间，TASK-011 快捷值 `this_week` / `next_n_days:N` 的唯一宿主算子）——均带适用类型限定，与 TASK-011 §2.3「操作符×类型」冻结矩阵逐行闭环；`range` 等其余复杂算子不开放（条件面保持可读）；日期字段相对值使用 FilterCompiler 字符串快捷形态（`today` / `this_week` / `next_n_days:N`，TASK-011 §4.1 DSL）——超集形态 `{"relative": "-7d"}` 不在条件子集内，条件端 Service 落库前须归一化。
+**条件操作符白名单**（FilterCompiler 子集）：`eq / neq / in / not_in / is_empty / is_not_empty / contains`（文本）/ `gt / gte / lt / lte`（数字）/ `before / after`（日期锚点，TASK-011 §4.3.2 注明 ≡ lt/gt 语义糖）/ `between`（日期区间，TASK-011 快捷值 `this_week` / `next_n_days:N` 的唯一宿主算子）——适用类型限定逐格对齐 TASK-011 §2.3 冻结矩阵（选项类无裸 contains、date 行无 gte/lte，表外组合按其 BR-03 拒绝）；`range` 等其余复杂算子不开放（条件面保持可读）；日期字段相对值使用 FilterCompiler 字符串快捷形态（`today` / `this_week` / `next_n_days:N`，TASK-011 §4.1 DSL）——超集形态 `{"relative": "-7d"}` 不在条件子集内，条件端 Service 落库前须归一化。
 
 ---
 
@@ -633,7 +634,7 @@ export class AutomationRuleStore {
 | UT-08 | 动作 stop/continue 两策略 | 失败后动作执行边界正确 |
 | UT-09 | transition 动作走守卫 | 守卫失败 run=failed 含守卫明细 |
 | UT-10 | BR-13 熔断：连续 10 败自动停用 | is_active=false + 管理者通知 |
-| UT-11 | due_approaching 唯一触发 | 窗口内重复扫描只触发一次 |
+| UT-11 | due_approaching 唯一触发 + 闸 3 豁免分支 | 窗口内重复扫描只触发一次（扫描端独立键）；due 事件不占标准键 `autodedup:{rule}:{issue}`——紧随的 state/field 触发同规则不被抑制（§2.3 豁免） |
 | UT-12 | Dry Run 零写 | 无 run/Activity/通知；返回解析明细 |
 | UT-13 | add_label 幂等 | 已有标签 no-op 不报错 |
 | UT-14 | 规则保存 → 缓存失效 | 下次匹配用新定义 |

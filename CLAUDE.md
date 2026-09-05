@@ -96,6 +96,9 @@ PG schema 准备（Django migrate 在 PG 上有已知问题，见下面"坑"）�
 - **性能压测 vs 端到端分清**：`tests/jmeter/sprint-0-flow.py` 是 CI gate（10 步单线程）；`tests/jmeter/sprint-0-flow.jmx` 是性能压测（多线程 / 持续时间 / 报告），不要混用
 - **加/移 SerializerMethodField 必加 Meta.fields**：GET 路径不触发 `get_field_names` assert，PATCH/POST 路径触发 500（教训 #3）
 - **dropdown 全局点击监听禁 document click**：改 `mousedown` 阶段 + `target.closest('[data-sb-scope="..."]')` 判范围，破坏性操作（登出/删账户）继续用 `location.href` 全量重载（教训 #4）
-- **行为断言三件套（sprint-1 验收教训）**：`toBeVisible` 只证明渲染、不证明接线。任何交互控件的测试覆盖 = ①点击/输入 → ②`waitForResponse` 断言对应 PATCH/POST 发出且 2xx → ③UI 回读确认新值（重开抽屉/刷新后仍在更好）。存在性断言只能算 parity，不算行为测试。
-- **禁止空转（vacuous）断言**：不得用不存在的资源做被测路径的断言（如 `goto("/__no_such_ws__/")` 后断 URL 不变——真实代码路径根本没执行）；需要登录态的页面必须显式登录（先 `clearCookies`），禁止依赖前序 spec 泄漏的会话。CI 用 grep 扫 `__no_such` / `__bogus` 类资源在**非错误分支测试**里的使用（TC-INF4-016）。
+- **用户入口铁律（最高优先级，sprint-1 三次漏网 + 一次扫描器漏报的共同根因）**：每条 e2e 测试必须像真实用户一样进入——**登录 → 点导航/卡片到达被测页**（深链 goto 仅当先登录且资源真实时可用）。判断标准一句话：**绿灯的路径必须是用户走得通的路径**。反面清单（出现即重写）：① 未登录 goto 需登录的页（Guard 跳走后断言落在登录页上）；② goto 假资源（`__no_such_ws__` 等——被测代码根本不执行）；③ 断言全局元素（Logo/"RabbitProjects"）当页面内容——403/白屏/登录页全都渲染它；④ `expect(body).toBeAttached()`——白屏也绿。
+- **行为断言三件套**：`toBeVisible` 只证明渲染、不证明接线。任何交互控件的测试覆盖 = ①点击/输入 → ②`waitForResponse` 断言对应 PATCH/POST 发出且 2xx → ③UI 回读确认新值（重开抽屉/刷新后仍在更好）。存在性断言只能算 parity，不算行为测试。
+- **禁止空转（vacuous）断言**：不得用不存在的资源做被测路径的断言；需要登录态的页面必须显式登录（先 `clearCookies`），禁止依赖前序 spec 泄漏的会话。假资源 goto 仅允许出现在**错误分支测试**（标题须含 错误/失效/invalid/不白屏），由 `tests/e2e/_scan_vacuous.py`（TC-INF4-016）机器扫描。
+- **突变自检（写完测试必须做一次）**：把被测的 bug/实现临时还原或破坏 → 测试必须变红 → 恢复 → 绿。没咬过人的测试不证明任何事——空转断言与真断言在绿灯时无法区分，只有突变能暴露。新写/重写行为测试后在报告里给出突变验证结果。
+- **鉴权负向成对写**：每个受权限保护的页面，正向（有权者可进且见内容）与负向（无权者直进 URL → 前端 403 且后端 API 404/403）各至少一条；前端守卫只是 UX，后端才是安全边界，两层都要断。
 - **演示数据健康检查**：演示账号是验收环境也是测试环境。`scripts/seed_demo_history.py` 保证 stats 非零 + 趋势非平；C.35 golden-path spec 断言真实数据非空。改演示数据结构时两者必须同步。

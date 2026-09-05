@@ -13,7 +13,7 @@
 | 用例总数 | 219 = UT 119 + IT 61 + E2E 39（各章小计见 §1~§7 章首） |
 | 验收依据 | [`sprint-overview.md`](./sprint-overview.md) §6 验收标准 10 条、§10 退出条件 3 项 |
 | 关联交付（计划） | `tests/jmeter/sprint-2-flow.py`（CI 端到端）、`tests/e2e/parity-sprint2-*.spec.ts`（浏览器端到端 + parity 扫描，7 个计划文件见附录 B）、`apps/api` pytest 专项（并发 / 事务 / 幂等 / 死信 / EXPLAIN）、性能门禁 bench 脚本（10 万数据集） |
-| 视觉基准 | [`docs/design/sprint-2-hifi-prototype.html`](../design/sprint-2-hifi-prototype.html)（当前 **DRAFT 待评审冻结**；冻结后回写附录 C 基线列，e2e 视觉断言以冻结版为准） |
+| 视觉基准 | [`docs/design/sprint-2-hifi-prototype.html`](../design/sprint-2-hifi-prototype.html)（**FROZEN 2026-09-05**，ADR-0013 裁决定稿；e2e 视觉断言以此为基准） |
 | 上游格式基准 | [`docs/sprint-1-mvp/test-cases.md`](../sprint-1-mvp/test-cases.md)（章节组织 / 表格列 / 术语表 / 回归锚点写法完全沿用） |
 
 ---

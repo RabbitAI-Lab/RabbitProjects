@@ -146,7 +146,9 @@
 | Yjs | `13.6.x`（与前端**严格同版本**） | CRDT 实时协同引擎 | 与 Plane 一致；无中心冲突解决，离线编辑后可自动合并；二进制更新体积小；`Y.Doc` 子文档能力支撑「一个任务描述 + 多个评论」的复合协同 |
 | y-prosemirror | `1.3.x` | ProseMirror ↔ Yjs 桥接 | 服务端用于文档快照转换与 schema 校验（防恶意客户端注入非法节点） |
 | y-protocols | `1.0.x` | 同步与感知（awareness）协议 | 在线成员列表、协作光标 |
-| ws | `8.18.x` | WebSocket 实现 | Hocuspocus 底层依赖，显式声明以统一版本 |
+| ws | `8.18.x` | WebSocket 实现 | Hocuspocus 底层依赖，显式声明以统一版本；Sprint 3 业务事件通道（`COLLAB-004` 房间推送）直接复用 |
+| jsonwebtoken | `^9.0.x` | live 侧 RS256 票据验签 | 校验 api 侧 **PyJWT `2.10.x`（§3 已登记）** 签发的短时效业务事件票据，两端算法/密钥对配对；自带 TS 类型、体积小（Sprint-3 回改 2026-09-05，`COLLAB-004` §4.3.1 登记声明兑现） |
+| ioredis | `5.x` | live 侧 Redis 订阅客户端 | 订阅 `rp:events` 通道（api→live 唯一通道，`COLLAB-004` BR-09；live 无状态可横扩）；与 @hocuspocus/extension-redis 内建 ioredis 同源、统一版本（`COLLAB-004` 仅登记「Redis 订阅客户端」未点名，按与 extension-redis 同源原则选定；Sprint-3 回改 2026-09-05） |
 | TypeScript + tsup | `5.8.x` / `8.x` | 构建为单文件 ESM 产物 | 容器镜像仅需 Node 运行时 + 产物，镜像体积可控 |
 | pino | `9.x` | 结构化日志 | 与后端 structlog 输出格式对齐，统一采集 |
 
@@ -351,3 +353,4 @@ Renovate 开 PR（按 §1.2 窗口调度）
 | 日期 | 版本 | 变更内容 | 责任人 |
 | --- | --- | --- | --- |
 | 2026-08-31 | 1.0 | 初版：确认全栈技术选型与版本锁定，完成 Plane / Ones 对标分析 | 架构组 |
+| 2026-09-05 | 1.1 | Sprint-3 回改（T3-01）：§4 apps/live 版本表补 `jsonwebtoken ^9.0.x`（RS256 票据验签）与 `ioredis 5.x`（Redis 订阅客户端）；`ws 8.18.x` 原已登记、注明 Sprint 3 业务事件通道复用 | 架构组 |

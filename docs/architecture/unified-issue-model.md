@@ -287,6 +287,7 @@ erDiagram
         uuid issue_id FK
         uuid actor_id FK
         uuid parent_id FK "self, nullable, 楼中楼"
+        jsonb accessory "预留：images 键承载评论图引用 {images:[asset_id,…]}（COLLAB-002 §4.1.2；Sprint-3 回改 2026-09-05 补录该列）"
         jsonb comment_json
         text comment_html
         datetime created_at
@@ -1564,15 +1565,17 @@ def seed_project_states(project: Project) -> None:
 
 ### 5.4 需求池等内置视图
 
-内置视图不是新表，而是 `IssueView` 表中 `is_system=True` 的预置筛选配置：
+内置视图不是新表，而是 `IssueView` 表中 `is_system=True` 的预置筛选配置。**五内置视图（需求池 / 缺陷列表 / 我的待办 / 本周到期 / 测试执行）随 Sprint 3 由 `BOARD-003` §4.1.2 迁移 `RunPython` 统一种入，`min_phase` 均为 P2（P1 未交付视图种子；Sprint-3 回改 2026-09-05，原前四视图标 P1 的旧口径废止）；`IssueView` 无 `icon` 模型字段（§5.6），图标存 `display_props.icon` 且取值限于八枚 emoji 预设 ✨ 📦 🐛 👤 📅 🧪 🔥 🚒（原顶层 lucide 图标名 sparkles 等口径废止）**：
 
 ```python
 BUILTIN_VIEWS = [
-    {"name": "需求池", "icon": "sparkles", "filters": {"issue_type__name": ["需求"]}, "group_by": "state", "min_phase": "P1"},
-    {"name": "缺陷列表", "icon": "bug", "filters": {"issue_type__name": ["缺陷"]}, "group_by": "priority", "min_phase": "P1"},
-    {"name": "我的待办", "icon": "user", "filters": {"assignees": ["@me"], "state__group": ["unstarted", "started"]}, "min_phase": "P1"},
-    {"name": "本周到期", "icon": "calendar", "filters": {"target_date": ["this_week"]}, "min_phase": "P1"},
-    {"name": "测试执行", "icon": "flask-conical", "filters": {"issue_type__name": ["测试"]}, "min_phase": "P2"},
+    # 五视图随 Sprint 3 种入（min_phase 统一 P2）；icon 存 display_props（八枚 emoji 预设）
+    # ——Sprint-3 回改 2026-09-05（对照 BOARD-003 §3.4 / §4.1.2）
+    {"name": "需求池", "display_props": {"icon": "✨"}, "filters": {"issue_type__name": ["需求"]}, "group_by": "state", "min_phase": "P2"},
+    {"name": "缺陷列表", "display_props": {"icon": "🐛"}, "filters": {"issue_type__name": ["缺陷"]}, "group_by": "priority", "min_phase": "P2"},
+    {"name": "我的待办", "display_props": {"icon": "👤"}, "filters": {"assignees": ["@me"], "state__group": ["unstarted", "started"]}, "min_phase": "P2"},
+    {"name": "本周到期", "display_props": {"icon": "📅"}, "filters": {"target_date": ["this_week"]}, "min_phase": "P2"},
+    {"name": "测试执行", "display_props": {"icon": "🧪"}, "filters": {"issue_type__name": ["测试"]}, "min_phase": "P2"},
 ]
 ```
 
@@ -1615,7 +1618,7 @@ def split_requirement_into_subtasks(requirement: Issue, subtask_specs: list[dict
 | 阶段 | Issue 模型能力 | 类型能力 | 状态能力 | 数据库变更 |
 | --- | --- | --- | --- | --- |
 | **P0**（POC，第 1-2 周） | 仅基础 CRUD，固定 5 字段：`name` / `description_*` / `state` / 单负责人 / `target_date`；`issue_type` 建列可空、不暴露；`custom_fields` 建列不使用 | 仅内置「任务」1 种，UI 不暴露类型选择 | 项目固定 3 状态（待办/进行中/已完成），不可自定义 | 全部列一次建齐，后续阶段零 DDL |
-| **P1**（MVP，第 3 周） | 开放 `priority` / `start_date` / `labels` / 一级 `parent` 子任务；列表筛选、关键词搜索、排序 | 开放 `issue_type` 切换，内置 5 种类型全部可用，按类型筛选，需求池/缺陷列表内置视图 | 状态可增删改排序（项目级、类型无关） | 无 DDL（仅种子数据补充） |
+| **P1**（MVP，第 3 周） | 开放 `priority` / `start_date` / `labels` / 一级 `parent` 子任务；列表筛选、关键词搜索、排序 | 开放 `issue_type` 切换，内置 5 种类型全部可用，按类型筛选（需求池/缺陷列表等内置视图**不在 P1 交付**，五视图随 Sprint 3（P2）迁移统一种入——Sprint-3 回改 2026-09-05） | 状态可增删改排序（项目级、类型无关） | 无 DDL（仅种子数据补充） |
 | **P2**（标准版，第 4-7 周） | 多层 `parent`、`IssueLink` 依赖、多负责人、工时、`archived_at` 归档、`description_binary` 协作编辑、全文搜索 | 类型专属字段模板（`applicable_types`）、需求一键转子任务、自定义新增类型 | 状态仍为项目级共用；看板列 = 状态 | 新增 `search_vector` 生成列 + GIN 索引 |
 | **P3**（企业版，第 9-11 周） | 字段级权限、工作流流转校验、审批节点、基线快照 | **按类型绑定独立工作流**（`IssueTypeWorkflow`）、类型级详情布局、类型级通知方案、全局配置 + 项目级覆盖 | 开启 `State.issue_type` 类型专属状态集 | 新增工作流相关表；`states.issue_type_id` 已预留 |
 | **P4**（远期） | 公式字段、跨项目关联、全变更审计、`IssueActivity` 分区归档 | Custom Link Types 配置化、多级 Issue Hierarchy | 状态流转矩阵可视化编排 | `issue_activities` 声明式分区 |

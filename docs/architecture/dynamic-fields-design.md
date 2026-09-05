@@ -849,20 +849,19 @@ def next_auto_increment(project_id: uuid.UUID, field_key: str) -> int:
 
 | `field_type` | 筛选控件 | 支持的操作符 | JSONB 查询形态 |
 | --- | --- | --- | --- |
-| `text` / `textarea` | 文本输入框 | `contains` / `not_contains` / `eq` / `neq` / `is_empty` / `is_not_empty` | `->> ILIKE` / `@>` / `?` |
-| `number` | 数字区间（min-max） | `eq` / `neq` / `gt` / `gte` / `lt` / `lte` / `between` / `is_empty` | `(->>)::numeric` 比较 |
+| `text` / `textarea` / `url` | 文本输入框 | `contains` / `not_contains` / `eq` / `neq` / `is_empty` / `is_not_empty` | `->> ILIKE` / `@>` / `?` |
+| `number` / `auto_increment` | 数字区间（min-max） | `eq` / `neq` / `gt` / `gte` / `lt` / `lte` / `between` / `is_empty` | `(->>)::numeric` 比较 |
 | `select` | 多选下拉（选项带色块） | `in` / `not_in` / `is_empty` / `is_not_empty` | `@>` OR 展开 |
 | `multi_select` | 多选下拉 + AND/OR 切换 | `contains_any` / `contains_all` / `not_contains` / `is_empty` | `@>` / `?` |
 | `date` | 日期区间 + 相对时间快捷项 | `eq` / `before` / `after` / `between` / `is_empty` + `today` / `this_week` / `this_month` / `overdue` / `next_n_days` | ISO 文本比较 |
-| `member` | 人员选择器（含「我」） | `in` / `not_in` / `is_empty` | `@>` |
-| `member_multi` | 人员多选器 | `contains_any` / `contains_all` / `is_empty` | `@>` |
+| `member` / `member_multi` | 人员选择器（含「我」）/ 人员多选器 | `in` / `not_in` / `contains_any` / `contains_all` / `is_empty` | `@>` |
 | `checkbox` | 三态（是/否/全部） | `eq` | `@>` |
-| `url` | 文本输入框 | `contains` / `is_empty` / `is_not_empty` | `->> ILIKE` / `?` |
 | `currency` | 数字区间 + 币种下拉 | `gte` / `lte` / `between` | `(#>>'{k,amount}')::numeric` |
-| `auto_increment` | 数字区间 | `eq` / `between` | `(->>)::bigint` |
 | `cascade`（P3） | 级联选择器 | `in` / `starts_with` | `@>` / 路径前缀匹配 |
 | `relation`（P3） | 工作项选择器 | `in` / `is_empty` | `@>` |
 | `date_range`（P3） | 双日期区间 | `overlaps` / `contains_date` | 双键比较 |
+
+> 操作符集口径（Sprint-3 回改 2026-09-05，以 TASK-011 §2.3 全表为准）：`url` 并入 `text` 操作符集（增 `not_contains` / `eq` / `neq`）、`auto_increment` 扩全数字集（增 `gt` / `gte` / `lt` / `lte` / `neq` / `is_empty`）、`member` 与 `member_multi` 取并集（`in` / `not_in` / `contains_any` / `contains_all` / `is_empty`）——原 `url` / `auto_increment` / `member` / `member_multi` 四行独立窄集已合并至上表。
 
 内置字段共用同一套控件映射（`state` → 状态多选、`priority` → 枚举多选、`assignees` → 人员选择器、`labels` → 标签多选、`target_date` → 日期区间），因此**筛选器 UI 对「内置字段」与「自定义字段」无差别对待**，只是数据来源不同（内置字段的 schema 由后端硬编码常量提供，自定义字段的 schema 来自配置表）。
 
@@ -929,9 +928,9 @@ Schema API 响应示例：
 
 DSL 设计要点：
 
-1. **递归结构**：节点分「逻辑节点」（含 `op` + `conditions`）与「条件节点」（含 `field` + `operator` + `value`），支持任意深度分组嵌套（实际限制深度 ≤ 5，防止恶意构造）。
+1. **递归结构**：节点分「逻辑节点」（含 `op` + `conditions`）与「条件节点」（含 `field` + `operator` + `value`），支持任意深度分组嵌套——实际限制**深度 ≤ 3、条件节点总数 ≤ 20、单值列表长度 ≤ 50**（`MAX_IN_VALUES`，锚 [`api-conventions.md`](./api-conventions.md) §5.3，防止恶意构造；Sprint-3 回改 2026-09-05，原「≤ 5 层」口径废止）。
 2. **字段引用统一**：内置字段用裸名（`priority`）或点号路径（`state.group`），自定义字段用 `cf_` 前缀 key。编译器凭前缀分派。
-3. **占位符**：`@me` 表示当前用户，`today` / `this_week` / `this_month` / `overdue` / `next_7_days` 表示相对时间。占位符在**编译期**解析为具体值，因此保存的视图对不同用户、不同日期都是「活的」。
+3. **占位符**：`@me` 表示当前用户，`today` / `this_week` / `this_month` / `overdue` / `next_n_days`（n=1~90，泛化自原 `next_7_days` 冻结口径）表示相对时间；另有类型名占位符 `__requirement__` / `__bug__` / `__test__`——`issue_type` 条件值按项目内 `IssueType.name` 在编译期解析为 UUID（TASK-011 §4.1.1）。占位符在**编译期**解析为具体值，因此保存的视图对不同用户、不同日期都是「活的」。（Sprint-3 回改 2026-09-05）
 4. **前后端同构**：同一份 DSL 前端用于渲染筛选面板，后端用于编译 SQL，视图保存即保存这份 JSON，无二次转换。
 
 ### 5.3 筛选器编译器
@@ -953,7 +952,36 @@ class CompileContext:
     tz: ZoneInfo
 
 
-MAX_FILTER_DEPTH = 5
+# DSL 上限（锚 api-conventions.md §5.3；Sprint-3 回改 2026-09-05，原 MAX_FILTER_DEPTH=5 废止）
+MAX_FILTER_DEPTH = 3      # 深度 ≤ 3
+MAX_CONDITIONS = 20       # 条件节点总数 ≤ 20
+MAX_IN_VALUES = 50        # 单值列表长度上限（in / not_in / contains_any 等多值操作符）
+
+# 白名单常量表（内置字段唯一寻址来源——DSL 无任何语法可达关联遍历）。
+# dict[str, {path, type}] 形态（Sprint-3 回改 2026-09-05，原为 path 字符串映射）：
+# path = ORM 查询路径，type 供「操作符 × 类型」校验（§5.1）。
+BUILTIN_FIELD_PATHS: dict[str, dict] = {
+    "name":        {"path": "name", "type": "text"},
+    "state":       {"path": "state", "type": "select_ref"},
+    "state.group": {"path": "state__group", "type": "select"},
+    # issue_type 值域：类型 UUID，或 __requirement__ / __bug__ / __test__ 等类型名占位符
+    #（编译期按项目内 IssueType.name 解析为 UUID——TASK-011 §4.1.1；不设 issue_type.name 点号寻址键）
+    "issue_type":  {"path": "issue_type", "type": "select_ref"},
+    "priority":    {"path": "priority", "type": "select"},
+    "assignees":   {"path": "assignees__id", "type": "member_multi"},
+    "labels":      {"path": "labels__id", "type": "multi_select_ref"},
+    "created_by":  {"path": "created_by", "type": "member"},
+    "start_date":  {"path": "start_date", "type": "date"},
+    "target_date": {"path": "target_date", "type": "date"},
+    "created_at":  {"path": "created_at", "type": "date"},
+    "estimate":    {"path": "estimate_minutes", "type": "number"},
+    "sequence_id": {"path": "sequence_id", "type": "number"},
+    "parent":      {"path": "parent", "type": "select_ref"},
+    # blocked 为注解列而非物理列：build_issue_queryset 每次注入
+    # _is_blocked = Exists(IssueLink: issue=pk ∧ relation_type='is_blocked_by' ∧ 未删)
+    #（Sprint-3 回改 2026-09-05 补该键，TASK-011 §4.3.1），编译器映射到该注解名
+    "blocked":     {"path": "_is_blocked", "type": "checkbox"},
+}
 
 
 class FilterCompiler:
@@ -1000,7 +1028,7 @@ class FilterCompiler:
 
     def _compile_builtin(self, field: str, operator: str, value: Any, schema: dict) -> Q:
         """内置字段 → 标准 ORM lookup"""
-        path = BUILTIN_FIELD_PATHS[field]          # 如 "state.group" -> "state__group"
+        path = BUILTIN_FIELD_PATHS[field]["path"]  # dict 形态取 path（Sprint-3 回改 2026-09-05），如 "state.group" -> "state__group"
         match operator:
             case "in":            return Q(**{f"{path}__in": value})
             case "not_in":        return ~Q(**{f"{path}__in": value})
@@ -1098,7 +1126,7 @@ class FilterCompiler:
         if value == "@me":
             return str(ctx.user_id)
         if schema["type"] in ("date", "datetime", "date_range") and isinstance(value, str):
-            return resolve_relative_date(value, ctx.tz)      # today / this_week / overdue / next_7_days ...
+            return resolve_relative_date(value, ctx.tz)      # today / this_week / this_month / overdue / next_n_days（n=1~90）...（Sprint-3 回改 2026-09-05）
         return value
 ```
 
@@ -1161,7 +1189,7 @@ flowchart TB
 | 层级 | 作用域 | 可用字段 | 保存方式 | 迭代阶段 |
 | --- | --- | --- | --- | --- |
 | ① 全局跨项目 | 当前 Workspace 内所有可见项目 | 内置字段 + **全局字段**（`project IS NULL`）。项目私有字段不可用（不同项目语义不同） | 保存为 Workspace 级视图 | P3 |
-| ② 项目内 | 单个项目 | 内置字段 + 全局字段 + 该项目私有字段 | 保存为项目级视图（个人/共享） | P2 |
+| ② 项目内 | 单个项目 | 内置字段 + 全局字段 + 该项目私有字段 | 保存为项目级视图（个人；shared 归 P3 `BOARD-005`——Sprint-3 回改 2026-09-05） | P2 |
 | ③ 视图内临时 | 已选定视图的结果集之上 | 同层级 ② | 不保存，URL query 携带，刷新保留 | P2 |
 
 三层叠加的最终查询是 `视图 filters AND 临时 filters AND 权限 filters`，编译器统一处理：
@@ -1383,7 +1411,7 @@ def drop_field_expression_index(field_key: str) -> None:
 | 高频写入 + GIN | GIN 更新代价高于 B-Tree | GIN 的 `fastupdate` 默认开启（先写 pending list 后批量合并），写入影响可控；若写入成为瓶颈，对写多读少的字段不建额外表达式索引 |
 | 排序字段无索引 | 大结果集排序落盘 | 强制分页（`LIMIT` ≤ 100）；提示管理员为该字段开启 `is_indexed`；`work_mem` 适当调大 |
 | 分组统计全表聚合 | 看板按自定义字段分组时全表 HashAggregate | 分组查询始终带 `project_id`；分组值集合从 `options` 配置直接取（不用 `SELECT DISTINCT` 扫表）；每组的 count 用单独的并发小查询 |
-| 深度嵌套筛选 | 编译出的 SQL 过大 | DSL 深度上限 5、条件总数上限 50；超限返回 400 |
+| 深度嵌套筛选 | 编译出的 SQL 过大 | DSL 深度 ≤ 3、条件节点 ≤ 20、单值列表 ≤ 50（锚 `api-conventions.md` §5.3；Sprint-3 回改 2026-09-05，原「深度 5 / 总数 50」口径废止）；超限返回 400 |
 
 **看板分组的关键优化**（自定义字段作为分组键时）：分组的「列」不由数据决定，而由 `options` 配置决定。这样即使某个选项下没有任何工作项，看板也能正确展示空列；且无需 `SELECT DISTINCT custom_fields->>'k'` 这种必然全表扫描的查询。
 
@@ -1455,7 +1483,7 @@ SELECT calls, mean_exec_time, query FROM pg_stat_statements
 | --- | --- | --- | --- |
 | **P0**（POC） | **不做动态字段。** 仅 5 个核心内置字段（标题/描述/状态/负责人/截止时间）。`issues.custom_fields` JSONB 列 **建好但不使用**，GIN 索引一并建好 | 建列 + 建 GIN 索引（首次建表，无存量数据，零成本） | Sprint 0（第 1-2 周） |
 | **P1**（MVP） | 内置业务字段（`priority` / `issue_type` / `labels`）的基础筛选、关键词搜索、简单排序。**不开放自定义字段配置入口** | 无（种子数据 + trgm 索引） | Sprint 1（第 3 周） |
-| **P2**（标准版） | **完整交付**：`CustomFieldDefinition` 表 + 12 种基础字段类型 + 可视化字段管理（增删改停用拖拽排序）+ 全字段 AND/OR 组合筛选器 + 条件分组嵌套 + 自定义字段排序与分组 + 视图保存（个人/共享）+ 四视图共用筛选器 | 新建 `custom_field_definitions`、`issue_views` 表；按需表达式索引 | Sprint 2-5（第 4-7 周） |
+| **P2**（标准版） | **完整交付**：`CustomFieldDefinition` 表 + 12 种基础字段类型 + 可视化字段管理（增删改停用拖拽排序）+ 全字段 AND/OR 组合筛选器 + 条件分组嵌套 + 自定义字段排序与分组 + 视图保存（个人；shared 归 P3 `BOARD-005`——Sprint-3 回改 2026-09-05）+ 四视图共用筛选器 | 新建 `custom_field_definitions`、`issue_views` 表；按需表达式索引 | Sprint 2-5（第 4-7 周） |
 | **P3**（企业版核心） | 高级字段类型（级联下拉 / 关联工作项 / 日期区间 / 附件）+ 字段级权限（只读/隐藏/按角色必填）+ 字段联动显隐 + 按任务类型/项目控制字段显隐 + 全局跨项目筛选 + 管理员视图锁定 | 无表结构变更（`permission_config` / `cascade_config` 列 P2 已建） | Sprint 7-9（第 9-12 周） |
 | **P4**（远期增强） | 公式计算字段 + 多级级联字段 + 跨项目关联字段 + 字段全变更审计（逐键 diff 落 `IssueActivity` 并支持合规导出） | `issue_activities` 分区；公式依赖图缓存表 | 第 13 周起 |
 
@@ -1476,7 +1504,7 @@ SELECT calls, mean_exec_time, query FROM pg_stat_statements
 - [ ] 动态表单渲染：新建弹窗、详情页侧栏，按 `sort_order` 排列，必填校验，帮助说明 tooltip
 - [ ] 筛选器：全字段覆盖、AND/OR、条件分组嵌套、一键清空、最近使用
 - [ ] 排序 / 分组：任意可排序字段作为 `order_by`，任意可分组字段作为 `group_by`
-- [ ] 视图保存：个人/共享、四种布局、`display_props` 完整、URL 可分享
+- [ ] 视图保存：个人（shared 归 P3 `BOARD-005`——Sprint-3 回改 2026-09-05）、四种布局、`display_props` 完整、URL 可分享
 - [ ] 字段删除的异步清理（JSONB key + 视图引用）
 - [ ] `is_indexed` 开关 + 异步 `CONCURRENTLY` 建/删索引 + 10 个上限校验
 - [ ] 性能验收：10 万工作项 / 单项目 1 万，20 个自定义字段，5 条 AND/OR 混合筛选条件，P95 < 200ms
@@ -1690,7 +1718,7 @@ Ones 未公开其存储实现，但从其查询能力（支持跨项目字段聚
 | 字段作用域（类型/项目） | ❌ | ✅ | ✅ P2 |
 | 全字段 AND/OR 筛选 | 部分（仅内置字段） | ✅ | ✅ P2 |
 | 自定义字段排序/分组 | ❌ | ✅ | ✅ P2 |
-| 视图保存（个人/共享） | ✅ | ✅ | ✅ P2 |
+| 视图保存 | ✅（个人与共享） | ✅ | ✅ P2（个人）；共享 P3 `BOARD-005`（Sprint-3 回改 2026-09-05） |
 | 高级字段类型 | ❌ | ✅ Business+ | ✅ P3 |
 | 字段级权限 | ❌ | ✅ Business+ | ✅ P3 |
 | 字段联动显隐 | ❌ | ✅ Business+ | ✅ P3 |

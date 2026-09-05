@@ -118,9 +118,11 @@ PATCH  .../projects/{project_id}/issues/{issue_id}/             部分更新
 DELETE .../projects/{project_id}/issues/{issue_id}/             删除
 POST   .../projects/{project_id}/issues/{issue_id}/duplicate/   复制
 POST   .../projects/{project_id}/issues/{issue_id}/archive/     归档
-POST   .../projects/{project_id}/issues/bulk/                   批量创建
+POST   .../projects/{project_id}/issues/bulk/                   批量创建（前瞻登记：P2 显式排除，归 P4）
 PATCH  .../projects/{project_id}/issues/bulk/                   批量更新（拖拽多选场景）
 DELETE .../projects/{project_id}/issues/bulk/                   批量删除
+POST   .../projects/{project_id}/issues/bulk/archive/           批量归档（archive/ 动作子资源的批量变体）
+POST   .../projects/{project_id}/issues/bulk/preview/           批量危险动作预检（级联统计，供确认弹层）
 GET    .../issues/{issue_id}/sub-issues/                        子任务
 POST   .../issues/{issue_id}/sub-issues/                        挂载子任务
 GET    .../issues/{issue_id}/relations/                         依赖关系（blocks/blocked_by/relates_to/duplicate）
@@ -134,6 +136,8 @@ GET    .../issues/{issue_id}/worklogs/                          工时记录
 POST   .../issues/{issue_id}/transitions/                       工作流状态流转（含校验与审批触发）
 GET    .../issues/{issue_id}/transitions/available/             当前可用流转（供前端渲染按钮）
 ```
+
+> 批量端点族口径（Sprint-3 回改 2026-09-05，`BOARD-004` §4.2）：`PATCH/DELETE …/issues/bulk/`（批量更新 / 批量删除）、`POST …/issues/bulk/archive/`（批量归档，§2.6 `archive/` 动作子资源的批量变体）与 `POST …/issues/bulk/preview/`（危险动作预检·级联统计——Sprint 3 新增的动作子资源，此处补登记）为 Sprint 3 交付面；`POST …/issues/bulk/`（批量创建）为前瞻登记行——`BOARD-004` P2 显式排除（编号洪峰难追溯），归 P4 导入通道立项时再评估。
 
 视图 / 迭代 / 模块 / 文档：
 
@@ -762,6 +766,7 @@ GET .../issues/?ordering=-priority,target_date,-created_at
 | `NOT_A_CHOICE` | 不在允许的枚举值内 |
 | `UNIQUE` | 唯一性冲突 |
 | `DOES_NOT_EXIST` | 引用的关联对象不存在或不可见 |
+| `PERM_DENIED` | 项级权限不足拒绝——§8.3 全局 403 码名在批量端点 `details[].code` 场景的复用（如批量删除中 CONTRIBUTOR 混选他人任务的失败项；Sprint-3 回改 2026-09-05，`BOARD-004` §2.5） |
 | `READ_ONLY` | 试图写入只读字段 |
 | `INVALID_DATE_RANGE` | 日期区间逻辑错误 |
 | `RETRY_AFTER` | 限流场景下承载等待秒数 |
@@ -875,6 +880,8 @@ live 服务不重复实现认证，采用短时效票据模式：
 
 设计要点：票据有效期极短（120 秒，仅覆盖握手窗口），泄露风险可控；live 持有的是**公钥**，即使 live 被攻破也无法伪造票据；权限声明内嵌于票据，live 无需理解业务权限模型。
 
+**两种 live 票据的续签口径区分（Sprint-3 回改 2026-09-05，`COLLAB-004` BR-02）**：上文「每 30 分钟静默续签」为**页面协同票据**（collab-token，Hocuspocus 协同编辑通道）口径；Sprint 3 新增的**业务事件票据**（WebSocket 实时推送通道）TTL 短、房间随路由变化，续签更密——有效期 120s、连接期间每 **90s 静默续签**（`POST /api/v1/users/me/realtime-token/renew/`，签发响应提示 `renew_after=90`，留 30s 轮换余量），**续签失败 2 次主动断开**走重连；续签与心跳（25s）分层独立、不共用定时器。两通道各按各表，不得混用。
+
 ### 9.6 认证失败的统一行为
 
 | 场景 | 状态码 | 错误码 | 附加行为 |
@@ -884,6 +891,14 @@ live 服务不重复实现认证，采用短时效票据模式：
 | 凭证无效 | 401 | `AUTH_INVALID_TOKEN` | 计入失败计数 |
 | 账号禁用 | 401 | `AUTH_ACCOUNT_DISABLED` | 同时吊销其全部 session 与 API Key |
 | 登录失败 | 401 | `AUTH_INVALID_CREDENTIALS` | **响应时间常量化**（无论邮箱是否存在都执行一次哈希运算），防时序攻击枚举用户 |
+
+### 9.7 服务间内部认证（X-Internal-Key）
+
+Sprint 3 实时通道（`COLLAB-004` §4.2）引入的服务间机制，用于 live → api 的内部端点（不面向用户流量；Sprint-3 回改 2026-09-05 补登）：
+
+- **凭证**：`X-Internal-Key` 请求头，值为部署期生成的共享密钥（`INTERNAL_KEY` 注入 live 容器，随 `INFRA-004` .env 模板登记配置项）。
+- **适用面**：live 对 api 的内部调用，现例为 `POST /api/v1/internal/realtime/verify-rooms/`——live 每 60s 批量复核房间读权限有效性（`BR-03`），请求体 `{ "tickets": [{ "sub": "…", "rooms": ["…"] }] }`，响应走统一信封、仅返失效项。
+- **边界**：其为**服务态共享密钥、非用户态权限码**，不涉 `rbac-permission-model.md` 附录 B 的权限码清单；第二道防线为 **proxy 不路由 `/api/v1/internal/` 前缀**（仅 compose 内网可达）。
 
 ---
 
@@ -1258,7 +1273,7 @@ GET  /api/v1/tasks/{task_id}/                    → 200
 
 ```
 1. POST .../issues/{id}/attachments/presign/
-   body: { file_name, file_size, content_type }
+   body: { file_name, file_size, content_type, entity_type? }
    → 服务端校验类型白名单、体积上限、工作空间存储配额
    → 201 { upload_url, fields, asset_id, expires_at }
 2. 前端直接 POST/PUT 到 MinIO/S3（不经 Django，节省带宽与内存）
@@ -1267,6 +1282,10 @@ GET  /api/v1/tasks/{task_id}/                    → 200
 ```
 
 未在 30 分钟内 `complete` 的预签名记录由 Celery beat 定时清理（同时删除可能已上传的孤儿对象）。
+
+**`entity_type` 选填参数（Sprint-3 回改 2026-09-05，`COLLAB-002` §4.2）**：缺省 `issue`（任务附件语义不变）；Sprint 3 新增 `comment_image`——评论图片挂载点（`FileAsset` 多态挂载，`entity_id` 落当前 issue，**不占单任务 20 附件配额、不入附件区列表**）。
+
+**下载端点缩略变体（Sprint-3 回改 2026-09-05，`COLLAB-002` §4.2）**：`GET .../attachments/{asset_id}/download/`（`file.read` 鉴权后 302 预签名 GET）支持 `?variant=thumb` 查询参数——返回缩略变体（Sprint 3 Pillow 480px webp 产物，评论图与列表缩略消费）；原图（灯箱）无参直取。
 
 ### 13.3 Webhook 出站规范
 
@@ -1365,3 +1384,4 @@ GET  /api/v1/tasks/{task_id}/                    → 200
 | 日期 | 版本 | 变更内容 | 责任人 |
 | --- | --- | --- | --- |
 | 2026-08-31 | 1.0 | 初版：确立 URL / 方法 / 响应格式 / 分页 / 查询 / 限流 / 错误码 / 认证 / DRF 实现全套规范，完成与 Plane API 及 Ones Open API 的对标分析 | 架构组 |
+| 2026-09-05 | 1.1 | Sprint-3 回改（T3-01）：§2.5 补登记 `issues/bulk/` 端点族（`bulk/archive/`、`bulk/preview/`，批量创建行标注 P2 排除归 P4）；§8.8 补 `PERM_DENIED` 项级子码；§9.5 补业务事件票据 90s 续签与 collab-token 30 分钟续签的区分；新增 §9.7 服务间内部认证（X-Internal-Key）；§13.2 补 `entity_type` 选填参数（`comment_image`）与 `?variant=thumb` 缩略变体 | 架构组 |

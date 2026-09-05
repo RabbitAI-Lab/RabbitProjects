@@ -25,12 +25,15 @@ const FIELD_TYPES: Array<{ t: string; n: string; icon: string }> = [
   { t: "date", n: "日期", icon: "📅" },
   { t: "checkbox", n: "复选框", icon: "☑︎" },
   { t: "member", n: "成员", icon: "👤" },
+  { t: "member_multi", n: "人员多选", icon: "👥" },
   { t: "url", n: "链接", icon: "🔗" },
-  { t: "email", n: "邮箱", icon: "✉" },
-  { t: "phone", n: "电话", icon: "☎" },
+  { t: "auto_increment", n: "自增编号", icon: "№" },
 ];
+// ADR-0015 A-8 勘误：P2 白名单 12 类型为 member_multi/auto_increment（非原型宫格的
+// email/phone——后端 P2_ALLOWED_TYPES 拒绝 email/phone，原型/旧清单照抄系笔误）
 /** 选项区仅下拉类型显示（C.53：选定后表单下段按类型变形）。 */
 const OPTION_TYPES = ["select", "multi_select"];
+const AUTO_INC = "auto_increment"; // 选项区隐藏 + 必填强制关（TASK-008 §4.4.2）
 const PRESET_COLORS = ["#DC2626", "#F59E0B", "#3B82F6", "#10B981", "#8B5CF6", "#EC4899", "#14B8A6", "#F97316", "#6B7280", "#0EA5E9", "#84CC16", "#A855F7"];
 const MAX_FIELDS = 50;
 
@@ -480,7 +483,8 @@ function FieldModal({ slug, projectId, types, editing, onClose, onSaved }: {
         {/* C.53 必填 / 索引（帮助气泡） / 帮助说明 */}
         <div className="flex gap-4 items-center my-3.5 text-[13px] text-neutral-600">
           <label className="inline-flex items-center gap-1.5" data-sb-scope="field-required">
-            <input type="checkbox" className="accent-brand-500" checked={required} onChange={(e) => setRequired(e.target.checked)} />必填
+            <input type="checkbox" className="accent-brand-500" checked={fieldType === AUTO_INC ? false : required}
+                   disabled={fieldType === AUTO_INC} onChange={(e) => setRequired(e.target.checked)} />必填
           </label>
           <label className="inline-flex items-center gap-1.5" data-sb-scope="field-indexed">
             <input type="checkbox" className="accent-brand-500" checked={indexed} onChange={(e) => setIndexed(e.target.checked)} />建立索引优化

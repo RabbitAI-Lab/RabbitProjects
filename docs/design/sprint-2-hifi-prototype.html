@@ -11,6 +11,11 @@ RabbitProjects · Sprint 2 高保真可交互原型（单文件自包含，无�
 状态：FROZEN 2026-09-05（用户评审通过：R1~R5 裁决与 O1~O4 开放点全部确认）
 裁决登记：docs/adr/0013-sprint-2-prototype-freeze-adjudication.md
 
+冻结后勘误（不改动冻结内容，实现以勘误为准）
+  · E1（ADR-0015 A-8 同源）：M-FIELD 12 类型宫格中的「邮箱(email)/电话(phone)」系笔误，
+    P2 白名单实为「人员多选(member_multi)/自增编号(auto_increment)」——前端宫格、
+    清单 C.53 与 e2e 断言已按勘误实现；本原型的这两格不作为验收基准。
+
 冻结记录
   · 评审：用户逐项确认 R1~R5 跨文档裁决 + O1~O4 原型先行定义，无修改意见。
   · 走查：Playwright 断言全过（27 表面结构断言 + 弹窗内容断言），console/pageerror 零报错；

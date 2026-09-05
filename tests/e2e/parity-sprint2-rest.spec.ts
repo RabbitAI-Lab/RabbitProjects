@@ -631,7 +631,8 @@ test.describe("Sprint-2 前端批量（TASK-005~010 / C.42~C.62）", () => {
     await expect(page.locator('[data-sb-scope="field-modal-title"]')).toHaveText("新建字段");
     const grid = page.locator('[data-sb-scope="field-type-grid"]');
     await expect(grid.locator('[data-sb-scope="field-type-cell"]'), "12 类型宫格").toHaveCount(12);
-    for (const n of ["单行文本", "多行文本", "单选下拉", "多选下拉", "数字", "金额", "日期", "复选框", "成员", "链接", "邮箱", "电话"]) {
+    // ADR-0015 A-8 勘误：12 类型 = member_multi/auto_increment（非 email/phone）
+    for (const n of ["单行文本", "多行文本", "单选下拉", "多选下拉", "数字", "金额", "日期", "复选框", "成员", "人员多选", "链接", "自增编号"]) {
       await expect.soft(grid.locator('[data-sb-scope="field-type-cell"]').filter({ hasText: n }), `类型「${n}」`).toBeVisible();
     }
     await page.locator('[data-sb-scope="field-name"]').fill("上线日期字段");

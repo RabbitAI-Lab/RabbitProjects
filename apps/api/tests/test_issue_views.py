@@ -22,8 +22,8 @@ from plane.db.models import (
 from plane.db.seeds.project_views import BUILTIN_VIEWS, seed_project_views
 from plane.db.services.view_service import (
     ICON_POOL,
-    validate_view_payload,
     resolve_view,
+    validate_view_payload,
 )
 
 pytestmark = pytest.mark.django_db
@@ -82,15 +82,19 @@ class TestSeed:
     def test_builtin_views_integrity(self):
         assert len(BUILTIN_VIEWS) == 5
         assert {v["name"] for v in BUILTIN_VIEWS} == {"需求池", "缺陷列表", "我的待办", "本周到期", "测试执行"}
+        seed_keys = {"name", "layout", "filters", "display_props", "sort_order"}
         for v in BUILTIN_VIEWS:
             assert v["display_props"]["icon"] in ICON_POOL
-            assert set(v) == {"name", "layout", "filters", "display_props", "sort_order"}, "种子 defaults 仅传模型字段（FieldError 防线）"
+            # 种子 defaults 仅传模型字段（迁移 FieldError 防线，§4.1.2 注）
+            assert set(v) == seed_keys
 
     def test_seed_idempotent(self, env):
         assert seed_project_views(env["proj"]) == 5
         assert seed_project_views(env["proj"]) == 0  # 幂等重跑
         names = list(
-            IssueView.objects.filter(project=env["proj"], is_system=True).order_by("sort_order").values_list("name", flat=True)
+            IssueView.objects.filter(project=env["proj"], is_system=True)
+            .order_by("sort_order")
+            .values_list("name", flat=True)
         )
         assert names == [v["name"] for v in BUILTIN_VIEWS]
 
@@ -151,7 +155,8 @@ class TestValidatePayload:
             field_key="cf_severity", field_type="select", options=OPTS, created_by=env["owner"],
         )
         conds = [{"field": "cf_severity", "operator": "in", "value": ["critical"]}]
-        validate_view_payload(project=env["proj"], payload=_payload(filters={"op": "AND", "conditions": conds}), instance=None)
+        payload = _payload(filters={"op": "AND", "conditions": conds})
+        validate_view_payload(project=env["proj"], payload=payload, instance=None)
 
     def test_value_must_be_list(self, env):
         conds = [{"field": "priority", "operator": "in", "value": "high"}]

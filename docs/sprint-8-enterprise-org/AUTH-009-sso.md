@@ -7,7 +7,7 @@
 | 优先级 | P3（企业版核心级 · 身份面） |
 | 所属模块 | M1-AUTH｜账号与权限 |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
+| 最后更新日期 | 2026-09-05 |
 | 上游依赖 | `AUTH-001/004`（账号体系与密码登录）、`AUTH-007`（部门树——JIT 部门映射落点）、`AUTH-008`（JIT 角色映射落点） |
 | 下游消费 | `AUTH-010`（SSO 登录/配置变更入审计）、`AUTH-011`（P4 LDAP/SCIM 同源身份面）、`AUTH-012`（P4 多租户按 IdP 隔离） |
 | 上游依据 | `docs/需求文档.md` §3.1 企业版专属（SSO 单点登录）、§8.2 账号 P3 列 |
@@ -117,12 +117,15 @@ sequenceDiagram
     SP->>SP: 查 SSOAccount(idp, sub)
     alt 已绑定
         SP->>SP: 属性同步（姓名/部门变更落地）
-    else 未绑定·邮箱已存在
-        SP-->>U: 认领页：输入该账号密码完成绑定
+    else 未绑定·邮箱已存在（认领，§4.2 POST /api/v1/auth/sso/claim/）
+        SP-->>U: 302 → 认领页（sso_txn 原地重写为 pending_claim 态，<br/>仍 10min 有效，§4.2）
+        U->>SP: POST /api/v1/auth/sso/claim/ {password}<br/>（sso_txn 经 Cookie 携带，请求体只放密码）
+        SP->>SP: 验密 → 建 SSOAccount → 消费/删除 sso_txn<br/>→ establish_session()（14 天滑动）→ 审计 sso.claim
+        SP-->>U: 200 {user, workspaces, next} → 前端跳转 next<br/>（认领分支到此结束，不再走下方两步）
     else 未绑定·邮箱不存在
         SP->>SP: JIT：建 User+SSOAccount+Member（默认角色+部门映射）
     end
-    SP->>SP: 签发本系统 Session（复用 AUTH-001 establish_session()<br/>默认 14 天滑动，与密码登录同源）
+    SP->>SP: （已绑定 / JIT 分支）签发本系统 Session<br/>（复用 AUTH-001 establish_session()，默认 14 天滑动，与密码登录同源）
     SP-->>U: 302 → next；审计 sso.login
 ```
 
@@ -144,14 +147,15 @@ SAML 流程骨架同 OIDC，差异：发起端 `GET /api/v1/auth/sso/{slug}/saml
 
 ```mermaid
 flowchart TB
-    L["POST /api/v1/auth/sign-in/（密码登录，AUTH-001）"] --> Q1{"该邮箱属于<br/>强制 SSO 的 Workspace？"}
-    Q1 -- 否 --> P["正常密码校验"]
+    L["POST /api/v1/auth/sign-in/（密码登录，AUTH-001）"] --> V["密码校验<br/>（失败 → 401 AUTH_INVALID_CREDENTIALS）"]
+    V --> Q1{"密码正确，且该邮箱属于<br/>强制 SSO 的 Workspace？"}
+    Q1 -- 否 --> S["建会话（establish_session），登录成功"]
     Q1 -- 是 --> Q2{"邮箱 ∈ SSO_BREAK_GLASS_EMAILS？"}
-    Q2 -- 是 --> P
-    Q2 -- 否 --> R["403 PERM_SSO_REQUIRED<br/>{sso_login_url}，前端跳转 IdP"]
+    Q2 -- 是 --> S
+    Q2 -- 否 --> R["403 PERM_SSO_REQUIRED<br/>{sso_login_url}，前端跳转 IdP<br/>（建会话前拦截）"]
 ```
 
-> **状态码裁定（全文唯口径）**：走到此分支时**密码校验已通过**（认证成功）但被 Workspace 级策略拒绝——按 `api-conventions.md` §4.3/§8.3，「已认证但策略拒绝」为 **403 + `PERM_*` 码**，与「未认证」的 401 不可混用。故本文使用新码 **`PERM_SSO_REQUIRED`(403)**，「按附录 B 登记」（rbac `PERM_*` 码族）；`api-conventions.md` §8.2 现行登记的 `AUTH_SSO_REQUIRED`(401) 描述的是「实例级强制 SSO」未认证语义，与本场景不同——**api-conventions §8.2 该行待回改**（补注 Workspace 级场景分流至 `PERM_SSO_REQUIRED`）。未认证用户直接访问受 SSO 保护资源（无 Session）仍按 `AUTH-002` 通用口径返回 **401 `AUTH_REQUIRED`**，不经本分支。
+> **状态码裁定（全文唯口径）**：**执行顺序唯一定义——强制 SSO 门（Q1/Q2）在密码校验通过之后、建会话之前执行；密码错误者一律 401 `AUTH_INVALID_CREDENTIALS`，不经本分支**（歧义消解用例 UT-20；§4.3 `enforce_sso_gate` 即由 `AUTH-001` 登录视图于密码校验通过后、建会话前调用，403 的「已认证」定性以此顺序为前提）。走到此分支时**密码校验已通过**（认证成功）但被 Workspace 级策略拒绝——按 `api-conventions.md` §4.3/§8.3，「已认证但策略拒绝」为 **403 + `PERM_*` 码**，与「未认证」的 401 不可混用。故本文使用新码 **`PERM_SSO_REQUIRED`(403)**，「按附录 B 登记」（rbac `PERM_*` 码族）；`api-conventions.md` §8.2 现行登记的 `AUTH_SSO_REQUIRED`(401) 描述的是「实例级强制 SSO」未认证语义，与本场景不同——**api-conventions §8.2 该行待回改**（补注 Workspace 级场景分流至 `PERM_SSO_REQUIRED`）。未认证用户直接访问受 SSO 保护资源（无 Session）仍按 `AUTH-002` 通用口径返回 **401 `AUTH_REQUIRED`**，不经本分支。
 > **未绑定 vs 已绑定**：`PERM_SSO_REQUIRED` 不区分该成员是否已有 SSO 绑定——强制 SSO 开启后密码登录一律拒绝（无绑定者走 IdP 登录即完成 JIT/认领绑定）；`sso_login_url` 恒由 Workspace 的启用中 IdP 给出。
 
 ### 2.5 业务规则汇总
@@ -159,7 +163,7 @@ flowchart TB
 | 编号 | 规则 | 触发点 | 违规响应 |
 | --- | --- | --- | --- |
 | BR-01 | 绑定锚 `(idp_id, subject)` 唯一且不可改 | 绑定 | uq 冲突 409 `RESOURCE_ALREADY_EXISTS`（`details.field=subject`/`code=UNIQUE`） |
-| BR-02 | 同邮箱本地账号认领须密码验证一次 | JIT 链接 | 401 `AUTH_INVALID_CREDENTIALS` |
+| BR-02 | 同邮箱本地账号认领须密码验证一次 | JIT 链接 | 401 `AUTH_INVALID_CREDENTIALS`（§4.2 `claim/` 验密失败/事务无效） |
 | BR-03 | IdP 配置（元数据/证书/client_secret）变更需 WS_OWNER | 配置写 | 403 `PERM_WORKSPACE_OWNER_REQUIRED`（api-conventions §8.3 已注册） |
 | BR-04 | 启用 SSO 前必须通过「测试连接」干跑（验签+取 claims，不建会话） | 启用 | 409 `RESOURCE_STATE_INVALID`（`details` 子码 `TEST_REQUIRED`，§8.8 待补登） |
 | BR-05 | 强制 SSO 开启前要求：≥1 名 WS_OWNER 已完成 SSO 登录绑定 | 开关 | 409 `RESOURCE_STATE_INVALID`（`details` 子码 `OWNER_BINDING_REQUIRED`，§8.8 待补登；防自锁） |
@@ -220,15 +224,15 @@ flowchart TB
 
 ### 3.2 登录页与认领页
 
-- 登录页：输入邮箱 → 经 §4.2 `POST /api/v1/auth/sso/route/` 判定 → 若属强制 SSO 组织（`route=sso`）→ 直接跳转 IdP（密码框不渲染）；否则（`route=password`）显示密码框 + 「使用企业 SSO 登录」次级按钮（通用入口，按邮箱域/工作空间路由到 IdP）。
-- 认领页：「检测到 alice@acme.com 已有账号。输入该账号密码完成与贵司身份系统的绑定，此后可直接 SSO 登录。」——一次性，绑定后不再出现。
+- 登录页：输入邮箱 → 经 §4.2 `POST /api/v1/auth/sso/route/` 判定 → 若属强制 SSO 组织（`route=sso`）→ 直接跳转 IdP（密码框不渲染）；否则（`route=password`）显示密码框 + 「使用企业 SSO 登录」次级按钮——**取数方式**：点击后复用 §4.2 `POST route/`、请求体附加 `prefer_sso: true`（邮箱沿用已输入值，无需重复输入）获取 `sso_login_url` 后跳转 IdP；返回仍为 `password`（未知邮箱/非成员）则提示「该邮箱未关联企业 SSO，请使用密码登录」。按邮箱域自动路由归 P4。
+- 认领页：「检测到 alice@acme.com 已有账号。输入该账号密码完成与贵司身份系统的绑定，此后可直接 SSO 登录。」——一次性，绑定后不再出现；密码提交至 §4.2 `POST /api/v1/auth/sso/claim/`（`sso_txn` 经 Cookie 自动携带，前端无需透传）。
 
 ### 3.3 空状态 / 加载 / 失败
 
 | 状态 | 表现 |
 | --- | --- |
 | 未配置 | 配置向导三步（选协议 → 填元数据 → 测试连接），附各 IdP（Okta/Azure AD/Keycloak）配置指引链接 |
-| 测试连接中 | 按钮 loading + 步骤进度（重定向 → 回调 → 验签） |
+| 测试连接中 | 按钮 loading + 步骤进度（提交 → IdP 探测/验签 → 同步返回结果）：前端以 `POST connection-check/` 提交并按 `last_test_passed_at` 轮询刷新展示，**无浏览器跳转/新窗**（§4.4） |
 | 登录失败 | 统一文案「企业身份验证未通过，请联系管理员」+ 错误参考号（request_id）——**不回显**验签细节 |
 | 证书临期 | 配置页顶部黄色横幅 + 给 WS_OWNER 的站内通知 |
 
@@ -312,16 +316,18 @@ class SSOAccount(models.Model):
 | --- | --- | --- | --- |
 | GET | `/api/v1/workspaces/{slug}/sso/` | 配置读取（密钥不回显，`secret_set` 代替；`enforce_sso` 为只读状态位） | `workspace.sso.manage`（WS_OWNER）* |
 | PATCH | `/api/v1/workspaces/{slug}/sso/` | 部分更新配置（协议/元数据/属性映射/JIT 默认角色等；**`enforce_sso` 不在接受写入的字段集内**——见下方 enforce 动作端点） | 同上 |
-| POST | `/api/v1/workspaces/{slug}/sso/connection-check/` | 测试连接干跑（验签+claims 取样，不建会话；命名对标 §2.5 `slug-check/` 范式） | 同上 |
+| POST | `/api/v1/workspaces/{slug}/sso/connection-check/` | 测试连接干跑（验签+claims 取样，不建会话；**同步返回结果**——前端 XHR `POST` 提交，非浏览器跳转，§3.3/§4.4；命名对标 §2.5 `slug-check/` 范式） | 同上 |
 | POST | `/api/v1/workspaces/{slug}/sso/enforce/` | **开启**强制 SSO（BR-05 前置校验；幂等，重复 POST 返回 200） | 同上 |
 | DELETE | `/api/v1/workspaces/{slug}/sso/enforce/` | **关闭**强制 SSO（api-conventions §2.6 归档类动作子资源范式：POST 开 / DELETE 关，方法表达方向） | 同上 |
 | GET | `/api/v1/workspaces/{slug}/sso/bindings/` | 绑定成员清单 | 同上 |
 | POST | `/api/v1/auth/sso/route/` | 登录路由发现：邮箱 → `sso` / `password`（完整契约见下方） | 公开（登录前置，10/min 限流 + CSRF） |
 | GET | `/api/v1/auth/sso/{slug}/sign-in/` | OIDC 发起（302 IdP；`sign-in` 命名对齐 `AUTH-001` §4.2 已注册端点，不用 `login` 动词） | 公开 |
 | GET | `/api/v1/auth/sso/callback/` | OIDC 回调 | 公开 |
+| POST | `/api/v1/auth/sso/claim/` | 认领绑定提交：验本地账号密码一次 → 建 `SSOAccount` + 建会话（完整契约见下方；`sso_txn` 经 Cookie 携带，请求体只放密码） | 公开（登录档 10/min 限流 + CSRF） |
 | GET | `/api/v1/auth/sso/{slug}/saml/sign-in/` · POST `/api/v1/auth/sso/saml/acs/` | SAML 发起/断言消费 | 公开 |
 | GET | `/api/v1/auth/sso/{slug}/metadata/` | SP 元数据（SAML XML / OIDC 配置摘要） | 公开 |
-| DELETE | `/api/v1/users/me/sso/bindings/{binding_id}/` | 解绑本人 SSO 绑定（BR-11；绑定为资源、解绑即删除该资源行，不用动词路径） | 登录用户（对象级：仅本人绑定行） |
+| GET | `/api/v1/users/me/sso/bindings/` | 本人 SSO 绑定列表（`id`/`provider`/`created_at`；解绑前发现 `binding_id` 用；信封列表形态，`data` 为数组） | 登录用户（仅本人绑定行） |
+| DELETE | `/api/v1/users/me/sso/bindings/{binding_id}/` | 解绑本人 SSO 绑定（BR-11；绑定为资源、解绑即删除该资源行，不用动词路径；`binding_id` 经上行列表端点发现） | 登录用户（对象级：仅本人绑定行） |
 
 \* 权限 Key `workspace.sso.manage`（矩阵取值：仅 WS_OWNER ✅，WS_ADMIN/WS_MEMBER/WS_GUEST ❌）不在 `rbac-permission-model.md` §8.1 现行矩阵中——IdentityProvider 为新增受管控资源，**按附录 B 登记**（7 步清单：permission.ts 定义 + §8.1 补行 + 前端 `<PermissionGate>` 包裹 + 三处一致性 CI + 越权测试）。配置读取与全部写操作同码：IdP 配置含全体成员的认证入口，WS_ADMIN 亦不可见/不可改（配置页仅 WS_OWNER 渲染，§3.1）。
 
@@ -406,10 +412,12 @@ class SSOAccount(models.Model):
 请求（`Content-Type: application/json`，另带 `X-CSRFToken` 头）：
 
 ```json
-{ "email": "alice@acme.com" }
+{ "email": "alice@acme.com", "prefer_sso": false }
 ```
 
-成功响应 — 200（强制 SSO 组织成员）：
+> `prefer_sso` 为**可选布尔**（缺省/false 即默认路径）：显式 SSO 意图标记，供 §3.2 密码阶段「使用企业 SSO 登录」次级入口复用本端点获取 `sso_login_url`。
+
+成功响应 — 200（默认路径：强制 SSO 组织成员；或 `prefer_sso=true` 且邮箱命中「**已启用** SSO（含未强制）」Workspace 的在册成员）：
 
 ```json
 {
@@ -418,7 +426,7 @@ class SSOAccount(models.Model):
 }
 ```
 
-成功响应 — 200（其余一切情况，含邮箱不存在/未启用 SSO/未强制）：
+成功响应 — 200（其余一切情况，含邮箱不存在/未启用 SSO/未强制且未显式 opt-in）：
 
 ```json
 { "status": "success", "data": { "route": "password" } }
@@ -426,9 +434,56 @@ class SSOAccount(models.Model):
 
 错误响应：400 `VALIDATION_ERROR`（`details.field=email`/`code=INVALID_EMAIL`）、403 `AUTH_CSRF_FAILED`、429 `RATE_LIMIT_EXCEEDED`（含 `Retry-After`）——均为 §8 已注册码。
 
-> **防枚举口径**：仅当邮箱命中「强制 SSO 的 Workspace 成员」才返回 `sso`；邮箱不存在、非成员、未启用、未强制一律返回 `password`，随后由正常密码流程给出 401 `AUTH_INVALID_CREDENTIALS`——本端点不产生「该邮箱已注册」信号，不执行密码哈希（恒定时间无必要）。判定查询与 §4.3 `enforce_sso_gate` 同源（同一 `IdentityProvider` 查询函数，避免两套口径）。
+> **防枚举口径**：默认路径（不带 `prefer_sso`）仅当邮箱命中「强制 SSO 的 Workspace 成员」才返回 `sso`；邮箱不存在、非成员、未启用、未强制一律返回 `password`，随后由正常密码流程给出 401 `AUTH_INVALID_CREDENTIALS`——本端点不产生「该邮箱已注册」信号，不执行密码哈希（恒定时间无必要）。`prefer_sso=true` 的**显式 opt-in 分支**放宽为「已启用（无论强制与否）的在册成员返回 `sso`」：调用方已明示 SSO 意图，返回 `sso_login_url` 泄露的仅是「该邮箱为已启用 SSO 的 Workspace 在册成员」这一弱信号，且仅对显式携带该字段的请求生效；未知邮箱/非成员在 opt-in 下仍恒返回 `password`——**默认路径口径不变**。默认判定与 §4.3 `enforce_sso_gate` 同源（同一 `IdentityProvider` 查询函数）；`prefer_sso` 分支为其同构查询（仅去掉 `enforce_sso=True` 条件），同模块实现，避免两套口径。
 
 > 错误码 `PERM_SSO_REQUIRED`(403，按附录 B 登记)/`AUTH_INVALID_CREDENTIALS`(401)/`RESOURCE_STATE_INVALID`(409)/`SERVER_EXTERNAL_SERVICE_ERROR`(502) 均出自 `api-conventions.md` §8 注册表（`PERM_SSO_REQUIRED` 为本登记新增，见 §2.4 裁定注）。
+
+**POST /api/v1/auth/sso/claim/ — 认领绑定（完整契约）**：
+
+承接 §2.1 认领往返与 §4.3 `ClaimRequired` 的提交端点（§3.2 认领页 / §4.4 `<ClaimAccountPage>`）：回调判定「未绑定·邮箱已存在」后，对该本地账号**验密一次**并完成绑定。`sso_txn` **经 Cookie 携带**（与 callback 同源：`request.get_signed_cookie("sso_txn")`，HttpOnly 前端不可读、api 实例自动携带），请求体只放密码。`AllowAny` + CSRF 校验（`AUTH-001` BR-12：登录端点同检）；限流取登录档 **10 请求/分钟（IP + 事务绑定账号双维度，api-conventions §7.2）**，验密失败并计入 `AUTH-001` BR-11 登录失败锁定（同邮箱 15 分钟内失败 5 次 → 429 `AUTH_TOO_MANY_ATTEMPTS`），杜绝借本端点绕过 sign-in 锁定撞库。
+
+请求（`Content-Type: application/json`，另带 `X-CSRFToken` 头）：
+
+```json
+{ "password": "Rabbit2026Pm" }
+```
+
+成功响应 — 200（响应头 `Set-Cookie: rp_sessionid=…`——会话经 `AUTH-001` `establish_session()` 签发，默认 14 天滑动，与密码登录同源）：
+
+```json
+{
+  "status": "success",
+  "data": {
+    "user": {
+      "id": "7d2a9c11-88a4-4f30-9b6c-1a2b3c4d5e6f",
+      "email": "alice@acme.com",
+      "display_name": "Alice",
+      "avatar_url": "",
+      "is_active": true,
+      "last_login_at": "2026-09-01T08:00:22.005Z",
+      "last_workspace_id": "2c7d9e11-88a4-4f30-9b6c-77e1d2f3a4b5"
+    },
+    "workspaces": [
+      { "id": "2c7d9e11-88a4-4f30-9b6c-77e1d2f3a4b5", "name": "Acme", "slug": "acme", "role": 20 }
+    ],
+    "next": "/acme/projects"
+  }
+}
+```
+
+> 响应形态对齐 `AUTH-001` §4.2.2 sign-in 成功响应（`user` + `workspaces` 内联，`role` 为整数等级值同其登记例外口径），前端登录后直接水合 AuthStore；另附 `next`（取自 `sso_txn`）供前端跳转。落库动作：建 `SSOAccount(idp, subject, user, email_at_binding)`（BR-01 唯一锚）+ 审计 `sso.claim`（BR-13）。
+
+错误响应：
+
+| HTTP | 错误码 | 触发 | 客户端动作 |
+| --- | --- | --- | --- |
+| 401 | `AUTH_INVALID_CREDENTIALS` | 密码错误（与 `AUTH-001` 同码同文案，防探测） | 原密码重试 |
+| 401 | `AUTH_INVALID_CREDENTIALS` + `details` 子码 `SSO_TXN_INVALID` | `sso_txn` Cookie 缺失/过期/签名无效（txn 由服务端签名且 HttpOnly，不构成探测面，故与密码错误区分以指引不同恢复动作；子码**按 §8.8 待补登**） | **重新发起 SSO 登录**（重走 sign-in → IdP），非重试密码 |
+| 400 | `VALIDATION_ERROR`（`details.field=password`/`code=REQUIRED`，§8.8 已注册） | 缺密码字段 | 补齐表单 |
+| 409 | `RESOURCE_ALREADY_EXISTS`（`details.field=subject`/`code=UNIQUE`，BR-01） | 并发下 `(idp, subject)` 已被绑定 | 提示直接用 SSO 登录 |
+| 403 / 429 | `AUTH_CSRF_FAILED` / `RATE_LIMIT_EXCEEDED`（含 `Retry-After`） | CSRF 缺失 / 触达登录档限流 | §8 通用处理 |
+
+**认领期间 `sso_txn` 的保持与消费（唯一定义）**：callback 判定 `ClaimRequired` 时将 `sso_txn` Cookie **原地重写为 pending_claim 态**（载荷 `{pending_claim: true, idp, sub, email, claim_user_id, next}`，仍为签名 HttpOnly Cookie，`max_age` 仍 600s——认领须在 IdP 回调后 10 分钟内完成）；`claim/` 验密成功即**消费**——建 `SSOAccount`、响应删除该 Cookie，事务一次性使用、不可重放（重放因 Cookie 已删除而无 txn 可验）；超时即自然失效（`SignatureExpired` → 401 + `SSO_TXN_INVALID`）。事务态纯 Cookie 承载，无服务端 pending 表，**无需后台清理任务**。
 
 ### 4.3 核心逻辑
 
@@ -471,7 +526,8 @@ class OIDCFlow:
         else:
             local = User.objects.filter(email__iexact=email).first()
             if local and local.has_usable_password():
-                raise ClaimRequired(local)      # → 认领页：验密后建 SSOAccount
+                raise ClaimRequired(local)      # → 视图捕获后把 sso_txn 原地重写为 pending_claim 态
+                                                #   （§4.2 claim/ 契约），认领页验密后建 SSOAccount
             user = jit_provision(idp, claims)   # 建 User+SSOAccount+WorkspaceMember
             binding = user.sso_accounts.get(idp=idp)
         if idp.sync_profile_on_login:
@@ -513,6 +569,8 @@ def find_enforced_idp_for_email(email: str) -> IdentityProvider | None:
 
 
 def enforce_sso_gate(email: str) -> None:
+    # 调用时序（§2.4 执行顺序唯一定义）：AUTH-001 密码校验通过后、建会话前；
+    # 密码错误者在更早的校验步即收 401，不经本门
     idp = find_enforced_idp_for_email(email)
     if idp and email.lower() not in settings.SSO_BREAK_GLASS_EMAILS:
         # 密码校验已通过（认证成功）但策略拒绝 → 403 PERM_SSO_REQUIRED（§2.4 裁定，
@@ -534,6 +592,26 @@ async function onEmailSubmit(email: string) {
   setStage("password");
 }
 
+// 登录页密码阶段「使用企业 SSO 登录」次级入口（§3.2）：复用 route/ 显式 opt-in 分支取 sso_login_url
+async function onVoluntarySso(email: string) {
+  const data = await api.post(`/api/v1/auth/sso/route/`, { email, prefer_sso: true });
+  if (data.route === "sso") { location.href = data.sso_login_url; return; }
+  showToast("该邮箱未关联企业 SSO，请使用密码登录");
+}
+
+// pages/claim.tsx：<ClaimAccountPage> 认领验密（sso_txn 为 HttpOnly Cookie，api 实例自动携带）
+async function onClaimSubmit(password: string) {
+  try {                                    // 完整契约见 §4.2 POST /api/v1/auth/sso/claim/
+    const data = await api.post(`/api/v1/auth/sso/claim/`, { password });
+    location.href = data.next;             // 绑定完成且已建会话，跳转 next
+  } catch (e) {
+    if (e.details?.some(d => d.code === "SSO_TXN_INVALID"))
+      location.href = "/login";            // 事务过期/无效 → 重新发起 SSO 登录（非重试密码）
+    else
+      setError("密码不正确，请重试");       // 401 AUTH_INVALID_CREDENTIALS
+  }
+}
+
 // stores/sso-config.store.ts
 class SsoConfigStore {
   config = observable<IdentityProviderConfig | null>(null);
@@ -543,16 +621,16 @@ class SsoConfigStore {
     const data = await api.patch(`/api/v1/workspaces/${slug}/sso/`, cfg);
     runInAction(() => (this.config = data));
   }
-  async test() {                                      // 干跑，新窗走一遍登录
-    const w = window.open(`/api/v1/workspaces/${slug}/sso/connection-check/`, "_blank");
-    const r = await pollUntil(() => api.get(`/api/v1/workspaces/${slug}/sso/`),
+  async test() {                                      // 干跑：POST 同步返回（§4.2），无新窗/浏览器跳转；
+                                                      // §3.3 进度三步即「提交 → 验签 → 同步返回结果」
+    await api.post(`/api/v1/workspaces/${slug}/sso/connection-check/`);
+    return pollUntil(() => api.get(`/api/v1/workspaces/${slug}/sso/`),
       d => d.last_test_passed_at !== this.config?.last_test_passed_at);
-    w?.close(); return r;
   }
 }
 ```
 
-组件：`<SsoWizard>`（三步配置）、`<ClaimAccountPage>`（认领验密）、`<BindingListPanel>`（绑定清单）。登录页（密码阶段）对 `PERM_SSO_REQUIRED` 响应自动 `location.href = details` 中的 `sso_login_url`；邮箱阶段则已在 `route/` 端点完成定向，通常不触达密码校验。
+组件：`<SsoWizard>`（三步配置）、`<ClaimAccountPage>`（认领验密，提交至 §4.2 `claim/`）、`<BindingListPanel>`（绑定清单，解绑前经 §4.2 `GET /users/me/sso/bindings/` 发现 `binding_id`）。登录页（密码阶段）对 `PERM_SSO_REQUIRED` 响应自动 `location.href = details` 中的 `sso_login_url`；邮箱阶段则已在 `route/` 端点完成定向，通常不触达密码校验。
 
 ---
 
@@ -568,18 +646,21 @@ class SsoConfigStore {
 | UT-04 | SAML Response 未签名/断言未签名 | 拒绝（strict 模式） |
 | UT-05 | SAML InResponseTo 伪造 | 拒绝 |
 | UT-06 | JIT：无本地账号建号 | User(password=None)+SSOAccount+Member 默认角色 |
-| UT-07 | JIT：本地有密码账号 → 认领 | 未验密不建绑定 |
-| UT-08 | 认领验密成功 → 绑定 | SSOAccount 落库，uq(idp,subject) |
+| UT-07 | JIT：本地有密码账号 → 认领 | callback 返回认领页且 `sso_txn` 重写为 pending_claim 态；未验密不建 `SSOAccount`（§4.2 `claim/`） |
+| UT-08 | `POST /claim/` 认领验密成功 → 绑定 | `SSOAccount` 落库 uq(idp,subject)；`sso_txn` Cookie 删除（消费）、建会话、审计 `sso.claim`（§4.2） |
 | UT-09 | 部门映射：名称匹配成功/无匹配保持现值 | 两分支 |
 | UT-10 | 角色映射仅首次 JIT 生效 | 二次登录角色不变 |
-| UT-11 | 强制 SSO 拦截密码登录（密码正确） | 403 `PERM_SSO_REQUIRED` + `sso_login_url` |
+| UT-11 | 强制 SSO 拦截密码登录（密码正确） | 403 `PERM_SSO_REQUIRED` + `sso_login_url`（密码错误的情形见 UT-20） |
 | UT-12 | 逃生名单放行密码登录 | 200 |
 | UT-13 | enforce 前置校验（无 owner 绑定） | 409 `RESOURCE_STATE_INVALID` + `OWNER_BINDING_REQUIRED`（BR-05） |
 | UT-14 | 解绑：未设密码拒绝 | 400 `VALIDATION_ERROR`/`REQUIRED`（BR-11） |
 | UT-15 | client_secret 加密存储且 API 不回显 | 响应仅 secret_set |
-| UT-16 | 登录路由发现：强制 SSO 成员邮箱 → `{route:"sso", sso_login_url}`；未知邮箱/非成员/未强制 → 恒 `{route:"password"}`（防枚举） | 200，两分支（§4.2） |
+| UT-16 | 登录路由发现（默认路径，不带 `prefer_sso`）：强制 SSO 成员邮箱 → `{route:"sso", sso_login_url}`；未知邮箱/非成员/未强制 → 恒 `{route:"password"}`（防枚举） | 200，两分支（§4.2） |
 | UT-17 | 回调 `sso_txn` Cookie 丢失 / 过期 / 签名无效 | 均 401 `AUTH_INVALID_CREDENTIALS`，对外同文案（BR-07/§2.6） |
 | UT-18 | PATCH /sso/ 请求体携带 `enforce_sso` 字段 | 字段被忽略（serializer 只读），开关值不变（§4.2 职责分工） |
+| UT-19 | `POST /claim/`：密码错误；`sso_txn` 缺失/过期/签名无效 | 密码错 401 `AUTH_INVALID_CREDENTIALS`（可重试）；txn 异常 401 + `SSO_TXN_INVALID` 子码，引导重发登录（§4.2 错误表） |
+| UT-20 | 密码错误 + 强制 SSO 开启 | 401 `AUTH_INVALID_CREDENTIALS`——SSO 门在密码校验之后执行，不返回 403（§2.4 执行顺序唯一定义） |
+| UT-21 | `route/` 带 `prefer_sso=true`：已启用未强制成员 vs 未知/非成员邮箱 | 前者 200 `{route:"sso", sso_login_url}`；后者恒 `{route:"password"}`（§4.2 opt-in 分支；默认路径口径见 UT-16） |
 
 ### 5.2 集成测试
 
@@ -593,6 +674,7 @@ class SsoConfigStore {
 | IT-06 | 停用 IdP → 登录入口关闭、绑定保留 | 重启用后可登录 |
 | IT-07 | 测试连接干跑不建会话不留 Cookie 会话 | Session 表无新行 |
 | IT-08 | 登录路由发现端点：CSRF 缺失 403；同邮箱 11 次/分钟触达 10/min 限流 | 403 `AUTH_CSRF_FAILED` / 429 `RATE_LIMIT_EXCEEDED`+`Retry-After`（§4.2） |
+| IT-09 | `POST /claim/`：CSRF 缺失；同账号 11 次/分钟触达登录档限流；借该端点连续验密失败 5 次 | 403 `AUTH_CSRF_FAILED` / 429 `RATE_LIMIT_EXCEEDED` / 429 `AUTH_TOO_MANY_ATTEMPTS`（失败计入 `AUTH-001` BR-11 锁定，§4.2） |
 
 ### 5.3 E2E 测试
 
@@ -637,15 +719,15 @@ Ones 企业 SSO 支持 SAML+OIDC、强制 SSO、属性映射到部门——功�
 | 类别 | 内容 |
 | --- | --- |
 | Model / Migration | `identity_provider`、`sso_account` 表 |
-| 后端 | OIDC/SAML 双协议流（发起/回调/元数据）、JIT 开通与属性同步、认领、强制 SSO 门与 enforce 动作端点（POST 开/DELETE 关）、登录路由发现（`route/`）、解绑、配置读写（PATCH）与测试连接（`connection-check/`）、密钥加密 |
+| 后端 | OIDC/SAML 双协议流（发起/回调/元数据）、JIT 开通与属性同步、认领（`claim/`）、强制 SSO 门与 enforce 动作端点（POST 开/DELETE 关）、登录路由发现（`route/`）、解绑（含本人绑定列表 `GET /users/me/sso/bindings/`）、配置读写（PATCH）与测试连接（`connection-check/`）、密钥加密 |
 | 前端 | SSO 配置向导、登录页邮箱路由、认领页、绑定清单 |
-| 测试 | UT-01~18、IT-01~08、E2E-01~04；容器化 Keycloak 双协议夹具 |
+| 测试 | UT-01~21、IT-01~09、E2E-01~04；容器化 Keycloak 双协议夹具 |
 
 ### 7.2 可操作演示的验收标准
 
 1. 对接演示 IdP（OIDC 与 SAML 各一遍）：向导配置 → 测试连接干跑通过 → 启用；未测试不可启用。
 2. 新员工 SSO 首登 JIT：自动建号、部门映射命中、默认角色正确；二次登录同步 IdP 侧改名/调部门。
-3. 同邮箱存量账号：认领页验密一次完成绑定；此后 SSO 直登，密码登录仍可用（未强制时）。
+3. 同邮箱存量账号：认领页验密一次完成绑定（§4.2 `claim/`）；此后经登录页「使用企业 SSO 登录」入口直登（§3.2，`route/` 带 `prefer_sso` 取 `sso_login_url`），密码登录仍可用（未强制时）。
 4. 开启强制 SSO（前置校验通过）：成员密码登录返回 403 `PERM_SSO_REQUIRED` 并自动跳 IdP；逃生名单账号可密码登录；`PATCH /sso/` 携带 `enforce_sso` 字段不改变开关（仅 enforce/ 端点可变更）。
 5. 验签/时效/nonce/state 任一篡改的断言与令牌被拒，对外统一文案、细节仅服务端日志。
 6. 配置中 client_secret 全程不回显（API 仅 `secret_set`）；证书临期 14 天内配置页横幅 + WS_OWNER 通知。

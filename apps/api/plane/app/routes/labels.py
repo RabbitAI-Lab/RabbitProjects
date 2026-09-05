@@ -17,6 +17,7 @@ from plane.app.views.issues import (
     IssueTypeListView,
 )
 from plane.app.views.labels import LabelDetailView, LabelListCreateView
+from plane.app.views.worklogs import WorkLogDetailView, WorkLogListCreateView
 
 urlpatterns = [
     # 类型（= Workspace active）—— 仅 GET，TASK-002 §4.3.1 第 12 行
@@ -59,6 +60,17 @@ urlpatterns = [
         "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/relations/<uuid:link_id>/",
         IssueRelationDeleteView.as_view(),
         name="issue-relation-delete",
+    ),
+    # 工时记录（TASK-006 §4.2）
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/worklogs/",
+        WorkLogListCreateView.as_view(),
+        name="issue-worklogs",
+    ),
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/worklogs/<uuid:log_id>/",
+        WorkLogDetailView.as_view(),
+        name="issue-worklog-detail",
     ),
     # 工作项整棵子树（TASK-004 §4.2.2：一次 CTE，root+nodes+stats）
     path(

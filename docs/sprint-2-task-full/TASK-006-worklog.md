@@ -567,10 +567,11 @@ SUBTREE_WORKLOG_SQL = """
           JOIN target t ON i.parent_id = t.id
          WHERE i.deleted_at IS NULL AND i.archived_at IS NULL
     )
-    SELECT COALESCE(SUM(w.minutes), 0)      AS spent,
-           COALESCE(SUM(t.estimate_minutes), 0) AS estimated
-      FROM target t
-      LEFT JOIN work_logs w ON w.issue_id = t.id AND w.deleted_at IS NULL
+    SELECT COALESCE((SELECT SUM(w.minutes) FROM work_logs w
+                      WHERE w.issue_id IN (SELECT id FROM target)
+                        AND w.deleted_at IS NULL), 0) AS spent,
+           COALESCE((SELECT SUM(t2.estimate_minutes) FROM target t2
+                      WHERE t2.estimate_minutes IS NOT NULL), 0) AS estimated
 """
 
 
@@ -582,7 +583,10 @@ def subtree_worklog_summary(root_id: uuid.UUID) -> dict[str, int]:
     return {"subtree_spent_minutes": spent, "subtree_estimate_minutes": estimated}
 ```
 
-> `LEFT JOIN work_logs` 使无记录节点不丢行；`SUM(estimate_minutes)` 跳过 NULL（未估算节点不计入分母——「估了的部分达成率」语义）。
+> 两个标量子查询各自聚合（ADR-0014 A-1 修正）：初版 `FROM target LEFT JOIN
+> work_logs` 同时 SUM 两列会把 `estimate_minutes` 按工时笔数放大（单节点
+> 4 笔工时 × estimate 480 = 1920，与 §4.3.1 UT-09 锚定的 JOIN 放大同源）。
+> `SUM(estimate_minutes)` 跳过 NULL（未估算节点不计入分母——「估了的部分达成率」语义）。
 
 #### 4.3.3 填报服务（含活动投递）
 

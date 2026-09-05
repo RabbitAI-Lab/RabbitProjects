@@ -11,7 +11,7 @@
 | 上游依赖 | `PROJ-001/003`（项目生命周期）；`TASK-005`（IssueLink 成对存储与无环约束——**BR-02 同项目限制在本迭代放开为「同工作空间可跨项目」**）；`TASK-013`（工时台账——资源汇总数据源） |
 | 下游消费 | P4 资源统一调度、项目集级工作流；`RPT-004`（健康度可按项目集聚合） |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-05（R2 修复：响应信封对齐 api-conventions §4、BLOCKER_SQL 按上游 TASK-005 语义重写、深度超限改 409、`Portfolio.manager` 数据模型落地 BR-03、blocked_external 方向与字段名修正、DELETE 去请求体、响应示例补齐、BR-10 用例与 P95 门槛、四主体越权用例） |
+| 最后更新日期 | 2026-09-05（R2 修复：响应信封对齐 api-conventions §4、BLOCKER_SQL 按上游 TASK-005 语义重写并逐行对齐别名、深度超限改 409（子码 `DEPTH`，api-conventions §8.8 已注册）、`Portfolio.manager` 数据模型落地 BR-03、blocked_external 方向与字段名修正、DELETE 去请求体、响应示例补齐、BR-10 用例与 P95 门槛、四主体越权用例、UT-01 断言对齐、端点/约束计数修正） |
 
 ---
 
@@ -92,7 +92,7 @@ flowchart TB
 
 | 编号 | 规则 | 强制层 | 违约响应 |
 | --- | --- | --- | --- |
-| BR-01 | `Portfolio` 树深度 ≤3（组合 L1 → 项目集 L2 → 子项目集 L3）；禁止成环（parent 链检查同 TASK-004 `_is_descendant` CTE） | Service + CTE | `409 RESOURCE_LIMIT_EXCEEDED`（超深，details 子码 `TOO_LARGE`）/ `409 RESOURCE_CIRCULAR_DEPENDENCY`（成环） |
+| BR-01 | `Portfolio` 树深度 ≤3（组合 L1 → 项目集 L2 → 子项目集 L3）；禁止成环（parent 链检查同 TASK-004 `_is_descendant` CTE） | Service + CTE | `409 RESOURCE_LIMIT_EXCEEDED`（超深，details 子码 `DEPTH`——api-conventions §8.8 已注册条目，与 TASK-004 层级深度越限同码）/ `409 RESOURCE_CIRCULAR_DEPENDENCY`（成环） |
 | BR-02 | 一个项目至多挂一个项目集节点；迁移挂载需原目标双权限 | DB 唯一约束（project_id 部分唯一） | `409 RESOURCE_ALREADY_EXISTS` |
 | BR-03 | 项目集/里程碑管理需 WS 级权限（WS_ADMIN+）**或**项目集 `manager`（数据支撑：`Portfolio.manager` 外键，§4.2；节点祖先链上的 manager 同样放行——深度 ≤3 至多回溯 2 跳）；只读对全部 WS 成员开放 | Permission（对象级旁路，同 rbac §5.3 `has_object_permission` 模式） | `403 PERM_ROLE_INSUFFICIENT` |
 | BR-04 | 里程碑 `target_date` 必填；贡献项任务须属于项目集下任一项目（直接/间接子节点） | Serializer | `400 VALIDATION_ERROR` + `DOES_NOT_EXIST` |
@@ -378,16 +378,16 @@ class PortfolioService:
 
 # TASK-005 assert_completable 的 BLOCKER_SQL diff（BR-07 软策略）——在上游 SQL 基础上仅加一行项目过滤：
   SELECT i.id, i.sequence_id, i.name, s."group"
-    FROM issue_links il
-    JOIN issues i ON i.id = il.related_issue_id    -- related_issue_id = 阻塞我的任务（镜像行语义）
+    FROM issue_links l
+    JOIN issues i ON i.id = l.related_issue_id     -- related_issue_id = 阻塞我的任务（镜像行语义）
     LEFT JOIN states s ON s.id = i.state_id
-   WHERE il.issue_id = %(me)s
-     AND il.relation_type = 'is_blocked_by'        -- 我持有的镜像行（字段名为 relation_type，非 link_type）
-     AND il.deleted_at IS NULL
+   WHERE l.issue_id = %(me)s
+     AND l.relation_type = 'is_blocked_by'         -- 我持有的镜像行（字段名为 relation_type，非 link_type）
+     AND l.deleted_at IS NULL
      AND i.deleted_at IS NULL
 +    AND i.project_id = %(project_id)s             -- BR-07：仅同项目边参与硬拦截；跨项目边仅展示与统计
      AND COALESCE(s."group", 'unstarted') NOT IN ('completed', 'cancelled')
--- 调用侧传参：{"me": issue.id, "project_id": issue.project_id}
+-- 调用侧传参：{"me": issue.id, "project_id": issue.project_id}（除 + 号行外与 TASK-005 §4.3.3 BLOCKER_SQL 逐行一致）
 
 # 无环检测 _reaches 不加项目过滤（BR-09：环就是环，跨项目同样禁止）
 ```
@@ -513,7 +513,7 @@ def milestone_due_alerts():
 
 | 场景 | HTTP | code | details |
 | --- | --- | --- | --- |
-| 树深度 >3 | 409 | `RESOURCE_LIMIT_EXCEEDED` | `[{"field": "parent_id", "code": "TOO_LARGE", "message": "组合树深度上限 3"}]` |
+| 树深度 >3 | 409 | `RESOURCE_LIMIT_EXCEEDED` | `[{"field": "parent_id", "code": "DEPTH", "message": "组合树深度上限 3"}]`（子码 `DEPTH` 为 api-conventions §8.8 已注册条目，同 TASK-004） |
 | 父链成环 | 409 | `RESOURCE_CIRCULAR_DEPENDENCY` | `parent_id` / 子码 `CYCLE` / 环路径（`CYCLE` 同 TASK-005 §2.5 待登记，架构文档待回改） |
 | 项目重复挂载 | 409 | `RESOURCE_ALREADY_EXISTS` | `project_id` / 子码 `UNIQUE` / 当前挂载点 |
 | 删除非空项目集 | 409 | `RESOURCE_IN_USE` | `children`/`projects` / 子码 `IN_USE` / 计数（见 ③ 示例） |
@@ -557,7 +557,7 @@ class PortfolioStore {
 
 | 编号 | 用例 | 断言 |
 | --- | --- | --- |
-| UT-01 | 组合树深度：L3 下再挂子节点 | 400 `TOO_LARGE` |
+| UT-01 | 组合树深度：L3 下再挂子节点 | 409 `RESOURCE_LIMIT_EXCEEDED` + 子码 `DEPTH` |
 | UT-02 | 父链成环（A→B→C→A） | 409 `RESOURCE_CIRCULAR_DEPENDENCY` + 环路径 |
 | UT-03 | 项目重复挂载 | 409 `RESOURCE_ALREADY_EXISTS`（DB 约束并发兜底） |
 | UT-04 | 删除非空项目集 | 409 `RESOURCE_IN_USE` + 计数 |
@@ -569,6 +569,9 @@ class PortfolioStore {
 | UT-10 | 资源矩阵聚合与 TASK-013 快照对账 | 逐 cell 一致 |
 | UT-11 | 里程碑预警幂等：同日重复跑 beat 只一条 | SETNX 生效 |
 | UT-12 | 贡献项项目归属校验（非项目集内任务） | 400 `DOES_NOT_EXIST` |
+| UT-13 | BR-10 归档项目写保护：组合树/项目集视图内写归档项目内任务 | 403 `PERM_PROJECT_ARCHIVED`（PROJ-003 守卫不因组合树上下文绕过） |
+| UT-14 | BR-10 归档项目统计：项目归档后项目集进度/资源矩阵仍聚合其历史数据 | 与归档前口径一致 |
+| UT-15 | BR-03 对象级判定三路径：项目集 manager / 祖先链 manager（≤2 跳）/ 非 manager | 放行 / 放行 / 403 `PERM_ROLE_INSUFFICIENT` |
 
 ### 5.2 集成测试（IT）
 
@@ -579,6 +582,10 @@ class PortfolioStore {
 | IT-03 | 跨项目边下 TASK-005 守卫回归：同项目 blocks 仍硬拦 | 行为快照一致 |
 | IT-04 | 里程碑 T-7 预警：每日一条、完成度达 100% 后停止 | 通知计数正确 |
 | IT-05 | 挂载/迁移/卸载项目的权限矩阵（双端权限） | 403/200 路径正确 |
+| IT-06 | BR-03 四主体越权矩阵（组合树写端点）：WS_ADMIN+ / 项目集 manager / WS_MEMBER / WS_GUEST（只读） | 前两者 2xx；后两者均 403 `PERM_ROLE_INSUFFICIENT`（负向用例） |
+| IT-07 | 性能门禁压测：`summary/` 与 `dependency-graph/` 在 perf-heavy 数据集跑压（见下方门禁登记） | P95 均达标 |
+
+> **性能门禁（P95，登记口径对齐 QA-001 §2.2 基准矩阵）**：`GET …/portfolios/{id}/summary/` < 300ms（perf-heavy：项目集下 3 项目合计 1 万任务 + 近 4 周工时快照；summary 单载荷聚合进度/资源/风险三源，较单项目 stats（RPT-002 <200ms）放宽一档）；`GET …/portfolios/{id}/dependency-graph/` < 200ms（perf-heavy：同工作空间 1 万任务，项目集子图 ≤100 节点 / 500 边——§3.3 有界）。出处锚定本文 §5.2（IT-07）；补登后由 QA-001 §2.2 的收录口径（其 UT-07 一致性守卫）同步纳入压测基准矩阵。
 
 ### 5.3 E2E
 
@@ -609,10 +616,10 @@ class PortfolioStore {
 
 | 类别 | 交付物 |
 | --- | --- |
-| Model / Migration | `portfolios` / `portfolio_projects` / `portfolio_milestones` / `milestone_items` 四表 + 5 约束 + 3 索引 |
-| 后端 | `PortfolioService`（子树展开/进度/里程碑完成度/资源矩阵/风险列表）、TASK-005 跨项目放开 diff（校验 + 守卫 SQL）、`milestone_due_alerts` beat 任务、8 组端点 |
+| Model / Migration | `portfolios` / `portfolio_projects` / `portfolio_milestones` / `milestone_items` 四表 + 4 命名约束 + 3 索引（`idx_portfolio_ws_parent` / `idx_pm_portfolio_target` / `target_date` db_index） |
+| 后端 | `PortfolioService`（子树展开/进度/里程碑完成度/资源矩阵/风险列表）、TASK-005 跨项目放开 diff（校验 + 守卫 SQL）、`milestone_due_alerts` beat 任务、9 组端点（§4.6 表 9 条路径） |
 | 前端 | 组合树导航、汇总面板三卡、里程碑视图、依赖关系图（ELK 布局）、任务详情外部依赖分组 |
-| 测试 | UT-01~12、IT-01~05、E2E-01~04 |
+| 测试 | UT-01~15、IT-01~07、E2E-01~04 |
 
 ### 7.2 可操作演示的验收标准
 

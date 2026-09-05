@@ -18,7 +18,7 @@ import time
 import uuid
 
 from django.conf import settings as dj_settings
-from django.db import connection, transaction
+from django.db import connection, models, transaction
 from django.db.models import Count, Q
 from django.utils import timezone
 
@@ -69,15 +69,29 @@ COMPLETED_COUNT_FILTER = Q(
 
 
 def issue_count_annotations() -> dict:
-    """sub_issues_count / completed_sub_issues_count 的统一 annotate 装配。
+    """sub_issues_count / completed_sub_issues_count / spent_minutes 统一装配。
 
     distinct=True 防与其他 JOIN（assignees 预取）笛卡尔放大；cancelled 既不在
-    分子也不在分母（BR-05「有效子任务完成率」）。所有视图（列表 / group /
-    详情 / sub-issues）必须经此装配，禁止各处手写表达式（口径漂移源头）。
+    分子也不在分母（BR-05「有效子任务完成率」）。spent_minutes 用 Subquery 而非
+    JOIN Sum——与 sub_issues/assignees 的 JOIN 同存在时 Sum 会被多行放大
+    （TASK-006 UT-09 专项锚定）。所有视图（列表 / group / 详情 / sub-issues）
+    必须经此装配，禁止各处手写表达式（口径漂移源头）。
     """
+    from django.db.models import OuterRef, Subquery
+    from django.db.models.functions import Coalesce
+
+    from plane.db.models import WorkLog
+
+    spent_sq = (
+        WorkLog.objects.filter(issue_id=OuterRef("pk"), deleted_at__isnull=True)
+        .values("issue_id")
+        .annotate(s=models.Sum("minutes"))
+        .values("s")
+    )
     return {
         "sub_issues_count": Count("sub_issues", filter=SUBTREE_COUNT_FILTER, distinct=True),
         "completed_sub_issues_count": Count("sub_issues", filter=COMPLETED_COUNT_FILTER, distinct=True),
+        "spent_minutes": Coalesce(Subquery(spent_sq), 0),
     }
 
 
@@ -274,12 +288,16 @@ def fetch_subtree(root_id: uuid.UUID) -> dict:
     root = _node(rows[0], is_root=True) if rows else None
     data = {"root": root, "nodes": [_node(r) for r in rows[1:]]}
     if not truncated and rows:
+        from plane.db.services.worklog import subtree_worklog_summary
+
         groups = [r[4] for r in rows]
         data["stats"] = {
             "total": len(rows),
             "completed": sum(1 for g in groups if g == "completed"),
             "cancelled": sum(1 for g in groups if g == "cancelled"),
             "max_depth": max(r[6] for r in rows),
+            # TASK-006 §4.2.4：契约加字段（向后兼容扩展）
+            **subtree_worklog_summary(root_id),
         }
     return data
 

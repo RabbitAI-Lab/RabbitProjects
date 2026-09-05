@@ -297,13 +297,95 @@ code, _ = outsider.req(
     "GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{x_id}/relations/")
 ck("T5-18", "外部用户 relations → 404", code == HTTP["NOT_FOUND"], f"got {code}")
 
-# ═══ 3. TASK-006 工时（随阶段 3 落地） ═══
-# 计划锚点：
-#   - PATCH estimate_minutes（≤525600；超限 400）
-#   - POST worklogs/（1~1440 分钟；未来日期/超 30 天窗口 → 400）
-#   - PATCH worklogs/{id}/ 编辑对他人的 → 403；编辑重校验窗口（29 天前记录改 31 天前 → 400）
-#   - GET worklogs/ meta.sum_minutes + actor/worked_on/mine 筛选
-#   - subtree/ stats 扩展 subtree_spent_minutes / subtree_estimate_minutes
+# ═══ 3. TASK-006 工时（IT-006：填报/窗口/权限/汇总） ═══
+section("TASK-006 工时")
+
+import datetime as _dt
+
+bE = make_issue(admin, ws, proj, "T6-估算")
+e_id = bE["id"]
+wl_base = f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{e_id}/worklogs/"
+
+# estimate_minutes（IT：≤525600）
+code, body = admin.req("PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{e_id}/",
+                       {"estimate_minutes": 480}, {"X-CSRFToken": admin.csrf()})
+ck("T6-01", "设估算 480 → 200 且落库",
+   code == HTTP["OK"] and (body or {}).get("data", {}).get("estimate_minutes") == 480)
+code, body = admin.req("PATCH", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{e_id}/",
+                       {"estimate_minutes": 600000}, {"X-CSRFToken": admin.csrf()})
+ck("T6-02", "估算超 525600 → 400 TOO_LARGE", code == HTTP["BAD_REQUEST"], f"got {code}")
+
+# 填报（含 issue_spent_minutes 实时聚合回传）
+today = _dt.date.today()
+code, body = admin.req("POST", wl_base, {"minutes": 120, "worked_on": str(today), "note": "联调收尾"},
+                       {"X-CSRFToken": admin.csrf()})
+d = (body or {}).get("data") or {}
+log1 = d.get("id")
+ck("T6-03", "填报 120m → 201 + issue_spent_minutes=120",
+   code == HTTP["CREATED"] and d.get("issue_spent_minutes") == 120, f"got {code} {body}")
+code, body = admin.req("POST", wl_base, {"minutes": 90, "worked_on": str(today - _dt.timedelta(days=2))},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T6-04", "补填 2 天前 90m → spent=210",
+   (body or {}).get("data", {}).get("issue_spent_minutes") == 210)
+
+# 窗口边界（UT-15 端点语义：未来 → 400；31 天前 → 400；30 天前 → 201）
+code, body = admin.req("POST", wl_base, {"minutes": 30, "worked_on": str(today + _dt.timedelta(days=1))},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T6-05", "未来日期 → 400 INVALID_DATE", code == HTTP["BAD_REQUEST"])
+code, body = admin.req("POST", wl_base, {"minutes": 30, "worked_on": str(today - _dt.timedelta(days=31))},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T6-06", "31 天前 → 400（窗口 30 天）", code == HTTP["BAD_REQUEST"])
+code, body = admin.req("POST", wl_base, {"minutes": 30, "worked_on": str(today - _dt.timedelta(days=30))},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T6-07", "恰 30 天前 → 201（含端点）", code == HTTP["CREATED"], f"got {code}")
+code, body = admin.req("POST", wl_base, {"minutes": 1500, "worked_on": str(today)},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T6-08", "minutes 1500 → 400（1~1440）", code == HTTP["BAD_REQUEST"])
+
+# 列表 + 筛选 + sum_minutes
+code, body = admin.req("GET", wl_base)
+meta = (body or {}).get("meta") or {}
+ck("T6-09", "列表 sum_minutes=240（120+90+30）", meta.get("sum_minutes") == 240, f"meta={meta}")
+code, body = admin.req("GET", wl_base + "?mine=true")
+ck("T6-10", "?mine=true 过滤后仍 3 条", len((body or {}).get("data") or []) == 3)
+code, body = admin.req("GET", wl_base + f"?worked_on={today},{today};between")
+ck("T6-11", "worked_on between 命中当日 1 条", len((body or {}).get("data") or []) == 1)
+
+# 编辑重校验窗口（UT-16：29 天前记录改 31 天前 → 400）
+code, body = admin.req("POST", wl_base,
+                       {"minutes": 30, "worked_on": str(today - _dt.timedelta(days=29))},
+                       {"X-CSRFToken": admin.csrf()})
+log29 = (body or {}).get("data", {}).get("id")
+code, body = admin.req("PATCH", wl_base + f"{log29}/",
+                       {"worked_on": str(today - _dt.timedelta(days=31))},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T6-12", "29 天前记录改 31 天前 → 400", code == HTTP["BAD_REQUEST"], f"got {code}")
+
+# 他人记录权限（BR-05：仅本人/ADMIN）
+outsider2 = Client(BASE)
+_o_email, _o_ws = signup(outsider2, "s6out2-")
+# owner（ADMIN）可改他人记录 → 200；外部改 → 404（项目隔离）
+code, body = admin.req("PATCH", wl_base + f"{log1}/", {"minutes": 150},
+                       {"X-CSRFToken": admin.csrf()})
+ck("T6-13", "ADMIN 改任意记录 → 200 且 minutes=150",
+   code == HTTP["OK"] and (body or {}).get("data", {}).get("minutes") == 150)
+code, _ = outsider2.req("PATCH", wl_base + f"{log1}/", {"minutes": 999},
+                        {"X-CSRFToken": outsider2.csrf()})
+ck("T6-14", "外部用户改记录 → 404（不可见即拒）", code == HTTP["NOT_FOUND"], f"got {code}")
+
+# subtree stats 扩展（§4.2.4：契约加字段）
+code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{e_id}/subtree/")
+stats = ((body or {}).get("data") or {}).get("stats") or {}
+ck("T6-15", "subtree stats 含工时两数（spent=300, estimate=480 无 JOIN 放大）",
+   stats.get("subtree_spent_minutes") == 300 and stats.get("subtree_estimate_minutes") == 480,
+   f"stats={stats}")
+
+# 删除（204）+ 详情 spent 联动
+code, _ = admin.req("DELETE", wl_base + f"{log1}/", None, {"X-CSRFToken": admin.csrf()})
+ck("T6-16", "DELETE 记录 → 204", code == HTTP["NO_CONTENT"], f"got {code}")
+code, body = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{e_id}/")
+ck("T6-17", "详情 spent_minutes=150（删 150 后 90+30+30）",
+   (body or {}).get("data", {}).get("spent_minutes") == 150, f"got {(body or {}).get('data', {}).get('spent_minutes')}")
 
 # ═══ 4. TASK-007 多执行人（随阶段 4 落地） ═══
 # 计划锚点：

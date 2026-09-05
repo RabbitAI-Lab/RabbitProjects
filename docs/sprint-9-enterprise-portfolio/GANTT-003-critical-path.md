@@ -25,7 +25,7 @@
 
 ### 1.2 目标
 
-1. **CPM 引擎**：基于项目内 `blocks` 依赖图（无环由 `TASK-005` 保证）计算每个任务的 ES/EF/LS/LF 与 `float_time`；1 万节点 < 300ms（迭代概览性能约束）。
+1. **CPM 引擎**：基于项目内 `blocks` 依赖图（无环由 `TASK-005` 保证）计算每个任务的 ES/EF/LS/LF 与浮动时间 `float_days`；1 万节点 < 300ms（迭代概览性能约束）。
 2. **甘特高亮**：关键链任务条红色描边 + 连线加粗；非关键任务显示浮动时间余量条。
 3. **延期预警**：关键任务逾期未完成 / 非关键任务浮动时间耗尽转关键 → 负责人与项目经理收件箱预警（幂等）。
 4. **计算边界**：CPM 仅计算**同项目**子图；跨项目边在图上标注「外部约束」提示但不进计算（`PROJ-004` BR-07 软策略的延伸）。
@@ -494,10 +494,10 @@ class CriticalPathStore {
 
 | 类别 | 交付物 |
 | --- | --- |
-| Model / Migration | `issue_cpm_cache` 表 + 1 唯一约束 + 1 索引 |
-| 后端 | `CPMEngine`（Kahn 拓扑 + 两遍扫描 + 防御性环检测）、`cpm_recompute`（debounce 合并 + input_hash 短路）、`cpm_overdue_alerts` beat、3 组端点 |
+| Model / Migration | `cpm_alert_config` 表（1 唯一约束，预警配置 BR-14）+ `issue_cpm_cache` 表（1 唯一约束 + 1 索引，BR-07） |
+| 后端 | `CPMEngine`（Kahn 拓扑 + 两遍扫描 + 防御性环检测）、`cpm_recompute`（debounce 合并 + input_hash 短路）、`cpm_daily_maintenance` 每日 beat（重算 + 关键逾期扫描，§4.3）、3 组端点 |
 | 前端 | 关键链高亮图层、浮动余量条、⚓ 外部约束徽标、任务详情计划分析卡、预警配置页 |
-| 测试 | UT-01~12、IT-01~05、E2E-01~04 |
+| 测试 | UT-01~17、IT-01~05、E2E-01~04 |
 
 ### 7.2 可操作演示的验收标准
 

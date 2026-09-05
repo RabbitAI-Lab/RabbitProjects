@@ -69,6 +69,10 @@ class Issue(BaseModel):
         verbose_name="标签",
     )
 
+    estimate_minutes = models.PositiveIntegerField(
+        null=True, blank=True, verbose_name="估算工时（分钟）",
+        help_text="P2 分钟制；P3 视需要叠加 Estimate 点数系统（TASK-006 §4.1.1）",
+    )
     custom_fields = models.JSONField(default=dict, blank=True, verbose_name="自定义字段值")
 
     archived_at = models.DateTimeField(null=True, blank=True, verbose_name="归档时间")

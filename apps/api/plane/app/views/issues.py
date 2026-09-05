@@ -569,6 +569,26 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
             )
             issue.parent_id = data["parent_id"]
 
+        # ---- 估算工时（TASK-006 §4.2.3：≤525600 分钟）----
+        if "estimate_minutes" in data:
+            est = data["estimate_minutes"]
+            if est is not None and est > 525600:
+                raise AppException(
+                    "VALIDATION_ERROR",
+                    message="估算不能超过 525600 分钟",
+                    details=[{"field": "estimate_minutes", "code": "TOO_LARGE", "message": "估算不能超过 525600 分钟"}],
+                )
+            if est != issue.estimate_minutes:
+                activities.append(
+                    {
+                        "field": "estimate_minutes",
+                        "old": str(issue.estimate_minutes),
+                        "new": str(est),
+                        "comment": "更新了 估算工时",
+                    }
+                )
+                issue.estimate_minutes = est
+
         # ---- sort_order（看板拖拽）----
         if "sort_order" in data and data["sort_order"] != issue.sort_order:
             activities.append(

@@ -19,6 +19,7 @@ from plane.app.views.users import (
     AvatarDeleteView,
     AvatarPresignView,
     ChangePasswordView,
+    UserSettingsView,
     public_avatar_svg,
 )
 
@@ -63,5 +64,13 @@ urlpatterns = [
         "auth/reset-password/",
         ResetPasswordView.as_view(),
         name="auth-reset-password",
+    ),
+]
+urlpatterns += [
+    # ── BOARD-003 §4.2 注（BR-10）：「设为默认」偏好键 board.default_view_id ──
+    path(
+        "users/me/settings/",
+        UserSettingsView.as_view(),
+        name="users-me-settings",
     ),
 ]

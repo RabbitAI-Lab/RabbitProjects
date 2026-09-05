@@ -7,8 +7,12 @@
   DELETE /api/v1/users/me/avatar/                        恢复默认头像
   GET    /api/v1/public/users/{user_id}/avatar/          默认头像 SVG
   POST   /api/v1/users/me/change-password/              改密
+  GET    /api/v1/users/me/settings/                     偏好读取（BOARD-003 BR-10 补写）
+  PATCH  /api/v1/users/me/settings/                     偏好写入（board.default_view_id）
 """
 from __future__ import annotations
+
+import uuid as uuid_module
 
 from django.http import HttpResponse
 from rest_framework import status
@@ -29,7 +33,9 @@ from plane.app.serializers.user import (
     ChangePasswordSerializer,
     ProfileUpdateSerializer,
 )
+from plane.base.exception import AppException
 from plane.base.response import success_response
+from plane.db.models import IssueView
 
 
 class ProfileView(APIView):
@@ -117,6 +123,106 @@ class ChangePasswordView(APIView):
             request_session_key=session_key,
         )
         return success_response(data)
+
+
+class UserSettingsView(APIView):
+    """GET / PATCH /api/v1/users/me/settings/ —— 偏好键值存储。
+
+    BOARD-003 §4.2 注（BR-10）：「设为默认」零新端点的落点——偏好键
+    ``board.default_view_id``，值按项目记 ``{"<project_id>": "<view_uuid>"}``；
+    取消默认 = 传 ``{"<project_id>": null}`` 删该条目。PATCH 为逐键合并语义。
+    存储取 User.preferences JSONB（实现偏差登记 ADR-0018）。
+    """
+
+    permission_classes = [IsAuthenticated]
+    ALLOWED_KEYS = frozenset({"board.default_view_id"})
+
+    def get(self, request):
+        return success_response(request.user.preferences or {})
+
+    def patch(self, request):
+        body = request.data or {}
+        unknown = sorted(set(body) - self.ALLOWED_KEYS)
+        if unknown:
+            raise AppException(
+                "VALIDATION_INVALID_PARAM",
+                message="请求参数不合法",
+                details=[
+                    {"field": k, "code": "INVALID", "message": f"未知偏好键 {k}"} for k in unknown
+                ],
+            )
+        prefs = dict(request.user.preferences or {})
+        if "board.default_view_id" in body:
+            prefs["board.default_view_id"] = self._merge_default_view(request, body["board.default_view_id"])
+        request.user.preferences = prefs
+        request.user.save(update_fields=["preferences", "updated_at"])
+        return success_response(prefs)
+
+    def _merge_default_view(self, request, value) -> dict:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise AppException(
+                "VALIDATION_ERROR",
+                message="请求参数校验失败",
+                details=[
+                    {
+                        "field": "board.default_view_id",
+                        "code": "INVALID",
+                        "message": "取值须为 {project_id: view_id|null} 映射",
+                    }
+                ],
+            )
+        current = dict((request.user.preferences or {}).get("board.default_view_id") or {})
+        for pid, vid in value.items():
+            try:
+                uuid_module.UUID(str(pid))
+            except (ValueError, AttributeError):
+                raise AppException(
+                    "VALIDATION_ERROR",
+                    message="请求参数校验失败",
+                    details=[
+                        {
+                            "field": "board.default_view_id",
+                            "code": "INVALID",
+                            "message": f"{pid} 不是合法项目 ID",
+                        }
+                    ],
+                ) from None
+            if vid is None:
+                current.pop(str(pid), None)
+                continue
+            try:
+                uuid_module.UUID(str(vid))
+            except (ValueError, AttributeError):
+                raise AppException(
+                    "VALIDATION_ERROR",
+                    message="请求参数校验失败",
+                    details=[
+                        {
+                            "field": "board.default_view_id",
+                            "code": "INVALID",
+                            "message": f"{vid} 不是合法视图 ID",
+                        }
+                    ],
+                ) from None
+            exists = IssueView.objects.filter(
+                id=vid, project_id=pid, deleted_at__isnull=True
+            ).exists()
+            if not exists:
+                raise AppException(
+                    "VALIDATION_ERROR",
+                    message="请求参数校验失败",
+                    details=[
+                        {
+                            "field": "board.default_view_id",
+                            "code": "DOES_NOT_EXIST",
+                            "message": f"视图 {vid} 不存在或不属于项目 {pid}",
+                        }
+                    ],
+                )
+            current[str(pid)] = str(vid)
+        return current
 
 
 @api_view(["GET"])

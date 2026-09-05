@@ -12,6 +12,7 @@ from plane.base.response import created_response, success_response
 from plane.db.models import Project, ProjectMember, State
 from plane.db.models.roles import ProjectRole, WorkspaceRole
 from plane.db.seeds.project_states import seed_project_states
+from plane.db.seeds.project_views import seed_project_views
 
 #: 兼容既有 import 路径；唯一定义在 plane.app.views._access
 _get_workspace_or_404 = get_workspace_or_404
@@ -127,6 +128,8 @@ class ProjectListCreateView(ListCreateAPIView):
             )
             # 种子四态（待办/进行中/已完成/已取消）
             seed_project_states(project)
+            # 种子内置五视图（BOARD-003 §4.1.2 双触发之二：与 seed_project_states 同事务钩子）
+            seed_project_views(project)
         return created_response(
             _serialize_project(project, request.user),
             location=request.build_absolute_uri(f"/api/v1/workspaces/{ws.slug}/projects/{project.id}/"),

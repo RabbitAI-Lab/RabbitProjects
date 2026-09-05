@@ -103,6 +103,7 @@ FEATURE_MODULES = (
     "notifications",    # COLLAB-001 通知中心
     "stats",            # RPT-001 个人统计
     "custom_fields",    # TASK-008 自定义字段（Schema API + 管理 CRUD）
+    "issue_views",      # BOARD-003 保存的视图（views/ CRUD 五端点）
 )
 
 for _name in FEATURE_MODULES:

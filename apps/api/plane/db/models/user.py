@@ -39,6 +39,15 @@ class User(AbstractUser):
         verbose_name="个人简介",
         help_text="≤500 字符；纯文本（无富文本），列表/提及浮层可截断展示",
     )
+    # Sprint-3 新增（BOARD-003 BR-10）：偏好键值存储（board.default_view_id 等）。
+    # 实现偏差登记 ADR-0018：规格按「users/me/settings/ 资源已存在」行文，实际
+    # 无存储列，取 User.preferences JSONB（全局单列、读时配置，无查询诉求）。
+    preferences = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name="用户偏好",
+        help_text='{"board.default_view_id":{"<project_id>":"<view_uuid>"}}',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     deleted_at = models.DateTimeField(null=True, blank=True, db_index=True)

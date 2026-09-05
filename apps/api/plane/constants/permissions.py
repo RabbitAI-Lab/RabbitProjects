@@ -40,6 +40,9 @@ PERMISSION_MATRIX: dict[str, dict[str, int]] = {
         "issue.state.transition": ProjectRole.CONTRIBUTOR,
         "issue.delete": ProjectRole.ADMIN,
         "issue.delete.own": ProjectRole.CONTRIBUTOR,      # + R1 对象级
+        # BOARD-004 §4.2 #1/#3：批级键（AUTH-005 矩阵增量，rbac §8.2 已注册）。
+        # P2 以动作码逐条判定等效（rbac §5.3 对象级 + 各单条动作门槛）。
+        "issue.bulk.update": ProjectRole.CONTRIBUTOR,
         "comment.create": ProjectRole.COMMENTER,
         "file.upload": ProjectRole.CONTRIBUTOR,
     },
@@ -73,6 +76,7 @@ PERMISSION_LABELS: dict[str, str] = {
     "issue.state.transition": "流转任务状态",
     "issue.delete": "删除任务",
     "issue.delete.own": "删除自己创建的任务",
+    "issue.bulk.update": "批量操作任务",
     "comment.create": "发表评论",
     "file.upload": "上传文件",
 }

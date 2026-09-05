@@ -89,18 +89,34 @@ def _safe_delay(task, *args) -> None:
 # 归档 / 恢复（§4.3.2）
 # ─────────────────────────────────────────────────────────────────────
 @transaction.atomic
-def archive_subtree(*, issue_id: uuid.UUID, actor_id: uuid.UUID) -> dict:
+def archive_subtree(
+    *,
+    issue_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    epoch: float | None = None,
+    suppress_activity: bool = False,
+) -> dict:
     """整树归档（BR-07/09/10）。
 
     UPDATE 仅触及 ``archived_at IS NULL`` 的行——各节点**首次归档时间不可变**
     （BR-10：「什么时候归档的」是审计事实，恢复-再归档不覆写）。重复 POST
     时全部行已置位 → rowcount=0，幂等返回 200（api-conventions §2.6）。
     部分归档树（先归档子、再归档父）只补齐未归档行，计数即增量。
+
+    ADR-0017 参数化（BOARD-004 BR-05 兑现路径）：``epoch=None``（缺省）入口自
+    生成——单条端点行为逐字节不变；批量调用方传入共享 epoch 时必须同时
+    ``suppress_activity=True``（抑制内建 on_commit 投递，Activity 落库与投递
+    职责上移给调用方，由批量出口单次投递 batch 载荷）——半吊子组合在开发期
+    assert 即暴露（防「共享 epoch 但双份投递」）。
     """
     from plane.bgtasks.issue_hierarchy import record_archive
 
+    assert suppress_activity or epoch is None, (
+        "archive_subtree: 传入共享 epoch 时必须同时 suppress_activity=True（ADR-0017）"
+    )
     now = timezone.now()
-    epoch = time.time() * 1000  # TASK-010 BR-04：epoch 在动作入口生成（毫秒）
+    if epoch is None:
+        epoch = time.time() * 1000  # TASK-010 BR-04：epoch 在动作入口生成（毫秒）
     with connection.cursor() as cursor:
         cursor.execute(
             ARCHIVE_TARGET_CTE
@@ -109,9 +125,10 @@ def archive_subtree(*, issue_id: uuid.UUID, actor_id: uuid.UUID) -> dict:
             {"root": issue_id, "now": now, "actor": actor_id},
         )
         count = cursor.rowcount
-    transaction.on_commit(
-        lambda: _safe_delay(record_archive, str(issue_id), str(actor_id), int(count), now.isoformat(), epoch)
-    )
+    if not suppress_activity:
+        transaction.on_commit(
+            lambda: _safe_delay(record_archive, str(issue_id), str(actor_id), int(count), now.isoformat(), epoch)
+        )
     return {"archived_count": int(count), "archived_at": now}
 
 

@@ -105,6 +105,7 @@ FEATURE_MODULES = (
     "custom_fields",    # TASK-008 自定义字段（Schema API + 管理 CRUD）
     "issue_views",      # BOARD-003 保存的视图（views/ CRUD 五端点）
     "activity_stream",  # COLLAB-003 项目动态流（合流 + 折叠 + 组感知游标）
+    "issue_bulk",       # BOARD-004 任务批量操作（bulk/ + bulk/archive/ + bulk/preview/）
 )
 
 for _name in FEATURE_MODULES:

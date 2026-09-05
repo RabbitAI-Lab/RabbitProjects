@@ -314,16 +314,32 @@ def _issue_key_of(root_id: uuid.UUID) -> str | None:
 # 级联软删（§4.3.4）
 # ─────────────────────────────────────────────────────────────────────
 @transaction.atomic
-def delete_subtree(issue_id: uuid.UUID, actor_id: uuid.UUID) -> dict:
+def delete_subtree(
+    issue_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    *,
+    epoch: float | None = None,
+    suppress_activity: bool = False,
+) -> dict:
     """整树软删 + 中间表物理删除（BR-06/BR-15），回传受影响数。
 
     级联必须包含已归档后代（否则残留指向软删父的孤儿）；archived_at 过滤只
     用于可见性查询。附件由 FILE-001 purge_deleted_assets 延迟回收（30 天窗）。
+
+    ADR-0017 参数化（BOARD-004 BR-05 兑现路径）：``epoch=None``（缺省）入口自
+    生成——单条端点行为逐字节不变；批量调用方传入共享 epoch 时必须同时
+    ``suppress_activity=True``（抑制内建 on_commit 投递，Activity 落库与投递
+    职责上移给调用方，由批量出口单次投递 batch 载荷）——半吊子组合在开发期
+    assert 即暴露（防「共享 epoch 但双份投递」）。
     """
     from plane.bgtasks.issue_hierarchy import record_delete
 
+    assert suppress_activity or epoch is None, (
+        "delete_subtree: 传入共享 epoch 时必须同时 suppress_activity=True（ADR-0017）"
+    )
     now = timezone.now()
-    epoch = time.time() * 1000
+    if epoch is None:
+        epoch = time.time() * 1000
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -356,5 +372,8 @@ def delete_subtree(issue_id: uuid.UUID, actor_id: uuid.UUID) -> dict:
             {"root": issue_id, "now": now, "actor": actor_id},
         )
         deleted_count, ids = cursor.fetchone()
-    transaction.on_commit(lambda: record_delete.delay(str(issue_id), str(actor_id), int(deleted_count), epoch))
+    if not suppress_activity:
+        transaction.on_commit(
+            lambda: record_delete.delay(str(issue_id), str(actor_id), int(deleted_count), epoch)
+        )
     return {"deleted_count": int(deleted_count), "descendant_ids": [str(x) for x in (ids or [])[1:]]}

@@ -104,18 +104,50 @@ def record_activity_row(
     行级幂等：(issue, actor, verb, epoch, field, old_id, new_id) 全键 exists 跳过
     ——at-least-once 重投不产生重复行。
     """
+    try:
+        _write_activity_row(
+            issue_id=issue_id, actor_id=actor_id, verb=verb, epoch=epoch, field=field,
+            old_value=old_value, new_value=new_value,
+            old_identifier=old_identifier, new_identifier=new_identifier,
+            comment=comment)
+    except Exception as exc:  # noqa: BLE001 —— TASK-010 DLQ 兜底
+        raise self.retry(countdown=4**self.request.retries, exc=exc) from exc
+
+
+def _write_activity_row(
+    *, issue_id: str, actor_id: str | None, verb: str, epoch: float,
+    field: str | None = None, old_value: str | None = None, new_value: str | None = None,
+    old_identifier: str | None = None, new_identifier: str | None = None,
+    comment: str = "",
+) -> None:
+    """行级幂等基座（BOARD-004 提取为模块级共享）：全键 exists 跳过后单行落库。"""
     actor_uuid = uuid.UUID(actor_id) if actor_id else None
     if IssueActivity.objects.filter(
         issue_id=issue_id, actor_id=actor_uuid, verb=verb, epoch=epoch,
         field=field, old_identifier=old_identifier, new_identifier=new_identifier,
     ).exists():
         return
+    IssueActivity.objects.create(
+        issue_id=issue_id, actor_id=actor_uuid, verb=verb, field=field,
+        old_value=old_value, new_value=new_value,
+        old_identifier=old_identifier, new_identifier=new_identifier,
+        comment=comment or "", epoch=epoch)
+
+
+@shared_task(bind=True, max_retries=3, retry_backoff=True)
+def record_activity_batch(self, payload: dict) -> None:
+    """批量载荷（BOARD-004 BR-05）：``{"batch": [单行 kwargs, ...], "comment": str}``。
+
+    同批共享 epoch、逐条落库（每任务各有时间线）；行级幂等基座不动——每行独立
+    走 :func:`_write_activity_row` 的全键 exists 检查，幂等键 sha256(verb|issue|
+    actor|epoch) 逐行独立天然成立（TASK-010 BR-07）。顶层 ``comment``（批量摘要，
+    前缀 ``batch:``）填充未带 comment 的行。失败整批重试：已落库行被行级幂等
+    跳过，at-least-once 不产生重复。
+    """
+    fallback_comment = payload.get("comment") or ""
     try:
-        IssueActivity.objects.create(
-            issue_id=issue_id, actor_id=actor_uuid, verb=verb, field=field,
-            old_value=old_value, new_value=new_value,
-            old_identifier=old_identifier, new_identifier=new_identifier,
-            comment=comment or "", epoch=epoch)
+        for row in payload.get("batch") or []:
+            _write_activity_row(**{**row, "comment": row.get("comment") or fallback_comment})
     except Exception as exc:  # noqa: BLE001 —— TASK-010 DLQ 兜底
         raise self.retry(countdown=4**self.request.retries, exc=exc) from exc
 
@@ -141,3 +173,20 @@ def enqueue_activity_row(*, issue_id, actor, verb, field=None, old=None, new=Non
     except Exception:  # noqa: BLE001 —— 降级同步
         record_activity_row(**kwargs)
         logger.warning("activity.dispatch_fallback_sync issue_id=%s field=%s", issue_id, field)
+
+
+def enqueue_activity_rows(*, rows: list[dict], comment: str = "") -> None:
+    """批量投递入口（BOARD-004 BR-05：出口统一单次投递 batch 载荷）。
+
+    ``rows`` 为 :func:`record_activity_row` 同款单行 kwargs（同批共享 epoch，
+    由批量入口生成）；broker 不可用时降级逐行同步直写（保「业务成功可追溯」
+    底线，与单行入口同口径）。
+    """
+    if not rows:
+        return
+    payload = {"batch": rows, "comment": comment}
+    try:
+        record_activity_batch.delay(payload)
+    except Exception:  # noqa: BLE001 —— 降级同步
+        record_activity_batch(payload)
+        logger.warning("activity.batch.dispatch_fallback_sync rows=%d", len(rows))

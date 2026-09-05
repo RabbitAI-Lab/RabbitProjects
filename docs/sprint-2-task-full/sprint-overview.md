@@ -5,8 +5,8 @@
 | 所属迭代 | Sprint 2 — 任务体系完善（第 4 周） |
 | 优先级 | P2（标准版完整级） |
 | 覆盖模块 | M4-TASK｜任务核心 |
-| 文档状态 | 已确认（Approved） |
-| 最后更新日期 | 2026-09-02 |
+| 文档状态 | 已实现（Implemented，2026-09-05） |
+| 最后更新日期 | 2026-09-05（实现完成） |
 | 上游依赖 | Sprint 0 全量；Sprint 1 的 `TASK-002`（`TASK-004` 的层级挂载入口与 `parent` 校验）、`TASK-003`（`TASK-008` 的列表列渲染与 `?property.` 筛选挂点、`TASK-009` 的 `archived` 参数落点；另经组合筛选器 `TASK-011`·Sprint 3 延续消费）、`PROJ-002`（`TASK-006` / `TASK-007` 的成员口径与候选集）、`AUTH-005`（`TASK-007` / `TASK-008` 的权限码门控）、`INFRA-004`（`TASK-007` / `TASK-010` 的信封与错误码基线） |
 | 下游消费 | `TASK-011` 组合筛选器、`GANTT-001` 甘特图、项目时间线与报表 |
 | 迭代周期 | 5 个工作日，固定预留 20% 缓冲 |
@@ -155,6 +155,21 @@ flowchart TB
 1. **功能验收**：§6 的 10 条验收标准逐条通过，覆盖递归层级（业务深度 ≤5）、依赖防环与流转拦截、工时估算与汇总、多执行人转交认领、12 类自定义字段、深拷贝 / 归档 / 恢复、全操作 Activity 时间线。
 2. **工程质量**：本迭代无未修复的 P0 / P1 级缺陷；深度校验（含移动子树高度校验）、环检测（含并发环构造）、复制事务、归档恢复、Activity 幂等重试与死信兜底等异常路径测试全部通过；20% 缓冲未被功能蔓延占用。
 3. **文档同步**：本迭代 7 份功能文档状态全部标记为「已实现」，验收结果与本概览一致；实现过程中对架构决策的偏离已回写对应 `architecture/` 文档或登记 ADR。架构文档是唯一事实源，文档编号与索引以 [`docs/README.md`](../README.md) §4 为准；发现架构文档自身矛盾（如 §3 注记的 dependency-graph 旧编号）时标注「架构文档待回改」，不得以临时实现替代架构决策。
+
+## 10.1 `Issue` 表结构冻结评审（2026-09-05，风险 #6 收口）
+
+Sprint-2 后 `issues` 表结构基线冻结（migration 0006 止，累计物理列见 `plane/db/models/issue.py`）：
+
+- 本迭代 DDL 净增 3 项：`estimate_minutes` 加列（TASK-006 受控例外）、`WorkLog` 与
+  `CustomFieldDefinition` 新表——其余五个任务零 DDL（层级/依赖/多执行人/复制归档/审计
+  全部消费 P0 预留结构与 `custom_fields` JSONB）；
+- **冻结承诺**：此后（Sprint 3+）`Issue` 新增属性一律进 `custom_fields` JSONB 或侧表，
+  不再加物理列（`dependency-graph.md` §5.2 结构冻结评审要求；TASK-011 组合筛选器、
+  GANTT-001 甘特图以本基线为下游契约）；
+- 冻结基线的索引：`idx_issue_parent` / `idx_issue_custom_fields`(GIN) /
+  `idx_issue_active_by_project`(偏) / `idx_issue_proj_state_sort` /
+  `uniq_issue_sequence_per_project`（全部 P0 预留，本迭代零新增物理索引；
+  TASK-008 表达式偏索引为运行时 CONCURRENTLY 创建不计入 migration）。
 
 ## 11. 相关文档
 

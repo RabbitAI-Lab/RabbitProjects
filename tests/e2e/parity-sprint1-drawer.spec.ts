@@ -65,13 +65,15 @@ test.describe("Sprint-1 Drawer UI parity（C.23/C.24/C.25/C.31/C.32/C.33）", ()
     }
   });
 
-  test("C.23 属性区七行标识齐全（状态/类型/优先级/负责人/标签/开始/截止）", async ({ page }) => {
+  test("C.23 属性区标识齐全（状态/类型/优先级/标签/开始/截止）+ C.49 执行人分区（负责人行升级）", async ({ page }) => {
     test.setTimeout(30_000);
     await loginDemo(page);
     await createProject(page);
     await createTaskAndOpenDrawer(page, "属性七行任务");
-    for (const label of ["状态", "类型", "优先级", "负责人", "标签", "开始", "截止"]) {
-      // C.23 清单行：七行属性 label + 行内编辑（data-sb-scope=drawer-prop-menu）
+    // Sprint-2 C.49【变更 · 基线=C.23】：负责人行升级为独立「执行人」分区（堆叠 + 编辑/认领），
+    // 属性区剩六行 + 执行人分区头（label 形态：执行人空态「未指派」label/按钮组）。
+    for (const label of ["状态", "类型", "优先级", "标签", "开始", "截止"]) {
+      // C.23 清单行：属性行 label + 行内编辑（data-sb-scope=drawer-prop-menu）
       await expect.soft(
         page.locator("aside label").filter({ hasText: label }).first(),
         `属性行「${label}」`,
@@ -81,6 +83,11 @@ test.describe("Sprint-1 Drawer UI parity（C.23/C.24/C.25/C.31/C.32/C.33）", ()
       page.locator('aside [data-sb-scope="drawer-prop-menu"]').first(),
       "行内编辑按钮（drawer-prop-menu）",
     ).toBeVisible();
+    // C.49 清单行：执行人分区头 + 空态「未指派」+「🖐 认领」+ [＋ 编辑]
+    await expect.soft(page.locator('aside [data-sb-scope="drawer-assignee-section"]'), "执行人分区").toBeVisible();
+    await expect.soft(page.locator('aside [data-sb-scope="drawer-assignee-empty"]'), "空态未指派").toBeVisible();
+    await expect.soft(page.locator('aside [data-sb-scope="drawer-claim"]'), "认领按钮").toBeVisible();
+    await expect.soft(page.locator('aside [data-sb-scope="drawer-assignee-edit"]'), "编辑入口").toBeVisible();
   });
 
   test("C.32 评论 Tab：输入框 + 计数 0/5000 + 发表按钮", async ({ page }) => {

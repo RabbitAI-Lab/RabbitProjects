@@ -122,7 +122,8 @@ test("C.1-C.8 全屏字段级 parity 扫描", async ({ page }) => {
   await page.locator("article").filter({ hasText: "Parity 任务" }).first().click();
   await expect.soft(page.locator("aside").getByText(/PRT-\d+/)).toBeVisible();
   await expect.soft(page.getByText("状态", { exact: true })).toBeVisible();
-  await expect.soft(page.getByText("负责人", { exact: true })).toBeVisible();
+  // Sprint-2 C.49【变更 · 基线=C.23】：抽屉负责人行升级为「执行人」分区（TASK-007 §3.1）
+  await expect.soft(page.getByText("执行人", { exact: true }).first()).toBeVisible();
   // C.23（TASK-002 §3.3）：七项属性将「截止时间」拆为 开始/截止 双字段
   await expect.soft(page.getByText("截止", { exact: true })).toBeVisible();
   await page.locator("aside").getByRole("button", { name: "关闭" }).click();

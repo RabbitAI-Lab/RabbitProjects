@@ -26,6 +26,10 @@ export default [
     route(":workspaceSlug/projects/:projectId/board", "routes/board.tsx"),
     route(":workspaceSlug/projects/:projectId/issues", "routes/issues-list.tsx"),
     route(":workspaceSlug/projects/:projectId/settings", "routes/project-settings.tsx"),
+    // Sprint-2（TASK-008 §3.1 / C.52）：项目设置 → 字段
+    route(":workspaceSlug/projects/:projectId/settings/fields", "routes/project-fields.tsx"),
+    // Sprint-2（TASK-010 §3.2 / C.62）：admin 死信补偿页（系统级顶层资源，不嵌 workspace）
+    route("admin/dead-letters", "routes/admin-dead-letters.tsx"),
     ...settingsRoutes,
     ...teamRoutes,
     ...workbenchRoutes,

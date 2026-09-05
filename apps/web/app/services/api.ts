@@ -1,14 +1,16 @@
 import { api } from "./axios";
 import type {
+  DeleteSubtreeResult,
   InviteResult,
   ProjectMember,
   ProjectSummary,
+  SubtreeData,
   WorkspaceInvite,
   WorkspaceMember,
   WorkspaceSummary,
 } from "@rp/types";
 
-export type { Issue, ProjectSummary, WorkspaceSummary, WorkspaceMember, ProjectMember, WorkspaceInvite, InviteResult } from "@rp/types";
+export type { Issue, ProjectSummary, WorkspaceSummary, WorkspaceMember, ProjectMember, WorkspaceInvite, InviteResult, SubtreeData, SubtreeNode, SubtreeRoot, SubtreeStats, SubtreeMeta, DeleteSubtreeResult } from "@rp/types";
 
 export interface MeEnvelope {
   user: { id: string; email: string; display_name: string; avatar_url: string | null; is_active: boolean };
@@ -87,7 +89,19 @@ export const ProjectAPI = {
 };
 
 export const IssueAPI = {
-  list: (slug: string, projectId: string, params: { ordering?: string; group_by?: string; per_page?: number } = {}) =>
+  list: (slug: string, projectId: string, params: {
+    ordering?: string; group_by?: string; per_page?: number;
+    /** TASK-004 §4.2.3：树形行级懒加载 */
+    parent_id?: string;
+    /** TASK-003 白名单排序参数（issue_query.apply_order；树形下仅同层兄弟有序） */
+    order_by?: string;
+    /** TASK-005 §4.2.5：只看被未完成前置阻塞的任务 */
+    blocked?: boolean;
+    /** TASK-009 §4.2.4：归档视图（默认排除 archived_at 非空） */
+    archived?: boolean;
+    /** TASK-003 白名单关键词搜索（关联/移动弹层目标搜索） */
+    q?: string;
+  } = {}) =>
     api.get(`workspaces/${slug}/projects/${projectId}/issues/`, { params }),
   create: (slug: string, projectId: string, payload: {
     name: string; state_id?: string; target_date?: string; assignee_ids?: string[]; description_html?: string;
@@ -100,16 +114,31 @@ export const IssueAPI = {
     state_id?: string; type_id?: string; priority?: string;
     assignee_ids?: string[]; label_ids?: string[]; parent_id?: string | null;
     start_date?: string | null; target_date?: string | null; sort_order?: number;
+    /** TASK-006 §4.2.3：估算（既有端点开放字段；≤525600 分钟） */
+    estimate_minutes?: number | null;
+    /** TASK-008 §4.2.4：自定义字段值（PATCH 合并语义；显式清空传 null） */
+    custom_fields?: Record<string, unknown>;
+    /** TASK-005 §4.2.4：迁入 completed 被拦截时的管理员强制通道（comment ≥5 字） */
+    force?: boolean; comment?: string;
   }) => api.patch(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/`, payload),
   del: (slug: string, projectId: string, issueId: string) =>
-    api.delete(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/`),
+    api.delete<DeleteSubtreeResult>(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/`),
   detail: (slug: string, projectId: string, issueId: string) =>
     api.get(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/`),
+  /** TASK-004 §4.2.2 `GET …/issues/{id}/subtree/`（CTE 整树；归档根 404；
+   *  stats 含根口径，TASK-006 §4.2.4 起另含 subtree_*_minutes）。 */
+  subtree: (slug: string, projectId: string, issueId: string) =>
+    api.get<SubtreeData>(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/subtree/`),
   /** TASK-002 §4.3.4-6 + COLLAB-001 §4.3 + FILE-001 §4.3 子资源路由。
    *  注意：activities 返回的是**裸数组**（分页信息在 meta.next_cursor），不是 `{results:[]}`。
    *  行内操作人是**平铺的 actor_id / actor_name**，不是嵌套 `actor` 对象。 */
   activities: (slug: string, projectId: string, issueId: string, params: { cursor?: string; per_page?: number } = {}) =>
     api.get<ActivityRow[]>(
+      `workspaces/${slug}/projects/${projectId}/issues/${issueId}/activities/`, { params }),
+  /** TASK-010 §4.2.1：epoch 组结构时间线（服务端预聚合，前端零聚合逻辑）。
+   *  ?field= / ?actor_id= 过滤；游标锚定 epoch（Base64 毫秒），组永不跨页。 */
+  activityGroups: (slug: string, projectId: string, issueId: string, params: { cursor?: string; field?: string; actor_id?: string; per_page?: number } = {}) =>
+    api.get<ActivityGroup[]>(
       `workspaces/${slug}/projects/${projectId}/issues/${issueId}/activities/`, { params }),
   subIssues: (slug: string, projectId: string, issueId: string) =>
     api.get<Array<{ id: string; issue_key: string; name: string; state_group: string; state_name: string }>>(
@@ -119,6 +148,17 @@ export const IssueAPI = {
       `workspaces/${slug}/projects/${projectId}/issues/${issueId}/sub-issues/`, payload),
   setLabels: (slug: string, projectId: string, issueId: string, labelIds: string[]) =>
     api.put(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/labels/`, { label_ids: labelIds }),
+  /** TASK-009 §4.2.1：复制（201 + Location；不承诺幂等）。 */
+  duplicate: (slug: string, projectId: string, issueId: string, payload: {
+    include_subtrees: boolean; include_assignees: boolean; include_labels: boolean;
+    include_custom_fields: boolean; include_dates: boolean;
+  }) => api.post<DuplicateResult>(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/duplicate/`, payload),
+  /** TASK-009 §4.2.2：归档（整树，动作幂等）。 */
+  archive: (slug: string, projectId: string, issueId: string) =>
+    api.post<ArchiveResult>(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/archive/`, {}),
+  /** TASK-009 §4.2.2：恢复（整树，动作幂等）。 */
+  unarchive: (slug: string, projectId: string, issueId: string) =>
+    api.delete<RestoreResult>(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/archive/`),
 };
 
 /** TASK-002 §4.3.1 项目标签管理端点（C.26）。 */
@@ -320,4 +360,202 @@ export const NotificationAPI = {
   unreadCount: () => api.get<{ count: number }>("users/me/notifications/unread-count/"),
   readAll: () => api.post("users/me/notifications/read-all/", {}),
   read: (id: string) => api.post(`users/me/notifications/${id}/read/`, {}),
+};
+
+/* ═══════════════ Sprint-2（TASK-005~010）═══════════════ */
+
+/** TASK-005 §4.2.1 `GET …/relations/` 行（契约冻结，GANTT-001 数据源）：
+ *  data[] 恒数组（50 上限天然有界，分页豁免）；related_issue 内联甘特连线必需字段。 */
+export type RelationType = "blocks" | "is_blocked_by" | "relates_to" | "duplicates";
+export interface RelationRow {
+  id: string;
+  issue_id: string;
+  related_issue_id: string;
+  relation_type: RelationType;
+  is_blocking: boolean;
+  related_issue: {
+    id: string;
+    issue_key: string;
+    name: string;
+    state_id: string | null;
+    state_group: string;
+    start_date: string | null;
+    target_date: string | null;
+  };
+}
+
+export const RelationAPI = {
+  /** 全部关联（创建时间倒序；三组由前端按 relation_type 分组渲染）。 */
+  list: (slug: string, projectId: string, issueId: string) =>
+    api.get<RelationRow[]>(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/relations/`),
+  /** 创建关联（成对两行；语义 = 当前任务 <relation_type> 目标任务）。 */
+  create: (slug: string, projectId: string, issueId: string, payload: { related_issue_id: string; relation_type: RelationType }) =>
+    api.post<{ id: string; mirror_id: string }>(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/relations/`, payload),
+  /** 删除关联（镜像行同事务删除）。 */
+  del: (slug: string, projectId: string, issueId: string, linkId: string) =>
+    api.delete(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/relations/${linkId}/`),
+};
+
+/** TASK-006 §4.2.1 工时记录行（POST 201 响应另含 issue_spent_minutes 实时聚合回传）。 */
+export interface WorkLogRow {
+  id: string;
+  issue_id: string;
+  actor_id: string;
+  worked_on: string;
+  minutes: number;
+  note: string;
+  created_at: string;
+  issue_spent_minutes?: number;
+}
+
+export const WorkLogAPI = {
+  /** 记录列表（筛选 + 游标；meta 另含 sum_minutes 服务端聚合）。 */
+  list: (slug: string, projectId: string, issueId: string, params: { per_page?: number; cursor?: string; mine?: boolean } = {}) =>
+    api.get<WorkLogRow[]>(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/worklogs/`, { params }),
+  /** 填报（仅可补填最近 30 天）。 */
+  create: (slug: string, projectId: string, issueId: string, payload: { minutes: number; worked_on: string; note?: string }) =>
+    api.post<WorkLogRow>(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/worklogs/`, payload),
+  /** 修改（本人 / PROJ_ADMIN）。 */
+  patch: (slug: string, projectId: string, issueId: string, logId: string, payload: { minutes?: number; worked_on?: string; note?: string }) =>
+    api.patch<WorkLogRow>(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/worklogs/${logId}/`, payload),
+  /** 删除（软删，本人 / PROJ_ADMIN）。 */
+  del: (slug: string, projectId: string, issueId: string, logId: string) =>
+    api.delete(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/worklogs/${logId}/`),
+};
+
+/** TASK-007 §4.2.1 PUT / claim 的响应（changes 回传让前端零本地 diff）。 */
+export interface AssigneeSyncResult {
+  issue_id: string;
+  assignee_ids: string[];
+  changes: {
+    added: Array<{ id: string; display_name: string }>;
+    removed: Array<{ id: string; display_name: string }>;
+  };
+}
+
+export const AssigneeAPI = {
+  /** 全量替换执行人集合（转交；可选 comment ≤500 字随通知发送）。 */
+  put: (slug: string, projectId: string, issueId: string, payload: { assignee_ids: string[]; comment?: string }) =>
+    api.put<AssigneeSyncResult>(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/assignees/`, payload),
+  /** 认领（空集合才可；已有执行人 409 RESOURCE_STATE_INVALID）。 */
+  claim: (slug: string, projectId: string, issueId: string) =>
+    api.post<AssigneeSyncResult>(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/assignees/claim/`, {}),
+  /** 自退（仅 user_id=自己；删他人属转交语义走 PUT）。 */
+  removeSelf: (slug: string, projectId: string, issueId: string, userId: string) =>
+    api.delete(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/assignees/${userId}/`),
+};
+
+/** TASK-008 §4.2.1 Schema API 的 custom[] 项（与管理 CRUD 响应同构，serialize_definition 单一序列化点）。 */
+export interface FieldOption {
+  label: string;
+  value: string;
+  color?: string;
+  sort_order?: number;
+}
+export interface CustomFieldDef {
+  id: string;
+  key: string;
+  name: string;
+  type: string;
+  required: boolean;
+  description: string;
+  scope: "project" | "global";
+  project_id: string | null;
+  sort_order: number;
+  default_value: unknown;
+  options: FieldOption[];
+  applicable_types: string[];
+  filterable: boolean;
+  sortable: boolean;
+  groupable: boolean;
+  indexed: boolean;
+  is_active?: boolean;
+}
+export interface FieldSchema {
+  builtin: Array<{ key: string; name: string; type: string; filterable: boolean; sortable: boolean; groupable: boolean }>;
+  custom: CustomFieldDef[];
+}
+
+export const FieldAPI = {
+  /** Schema API（ETag 协商缓存：定义变更即失效，未变 304）。 */
+  schema: (slug: string, projectId: string, params: { issue_type?: string } = {}) =>
+    api.get<FieldSchema>(`workspaces/${slug}/projects/${projectId}/field-schema/`, { params }),
+  /** 字段定义列表（管理页；?scope=all|global|project；meta.limits 含 50/10 上限）。 */
+  list: (slug: string, projectId: string, params: { scope?: "all" | "global" | "project" } = {}) =>
+    api.get<CustomFieldDef[]>(`workspaces/${slug}/projects/${projectId}/issue-properties/`, { params }),
+  /** 创建项目私有字段（201；field_key 须 cf_ 前缀 snake_case）。 */
+  create: (slug: string, projectId: string, payload: {
+    name: string; field_key: string; field_type: string; is_required?: boolean; is_indexed?: boolean;
+    description?: string; applicable_types?: string[]; options?: Array<{ label: string; value: string; color?: string; sort_order?: number }>;
+    default_value?: unknown;
+  }) => api.post<CustomFieldDef>(`workspaces/${slug}/projects/${projectId}/issue-properties/`, payload),
+  /** 编辑（BR-01/06：field_key / field_type 创建后不可变）。 */
+  patch: (slug: string, projectId: string, propertyId: string, payload: Partial<{
+    name: string; description: string; is_active: boolean; is_required: boolean; is_indexed: boolean;
+    options: Array<{ label: string; value: string; color?: string; sort_order?: number }>; applicable_types: string[]; default_value: unknown;
+  }>) => api.patch<CustomFieldDef>(`workspaces/${slug}/projects/${projectId}/issue-properties/${propertyId}/`, payload),
+  /** 删除（软删 + 异步清理 → 202 {task_id, affected_issues, status_url}）。 */
+  del: (slug: string, projectId: string, propertyId: string) =>
+    api.delete<{ task_id: string; state: string; affected_issues: number; status_url: string; field_key: string }>(
+      `workspaces/${slug}/projects/${projectId}/issue-properties/${propertyId}/`),
+  /** 拖拽排序（prev_id/next_id 浮点插值，BOARD-001 同算法）。 */
+  sortOrder: (slug: string, projectId: string, propertyId: string, payload: { prev_id?: string | null; next_id?: string | null }) =>
+    api.patch<{ id: string; field_key: string; sort_order: number }>(
+      `workspaces/${slug}/projects/${projectId}/issue-properties/${propertyId}/sort-order/`, payload),
+};
+
+/** TASK-009 §4.2.1 `POST …/duplicate/` 201 响应（连续号段 + 父子重建映射）。 */
+export interface DuplicateResult {
+  root: {
+    id: string;
+    issue_key: string;
+    name: string;
+    state_id: string;
+    parent_id: string | null;
+    source_issue_id: string;
+  };
+  copies: Array<{ source_id: string; id: string; issue_key: string; parent_id: string | null; name: string }>;
+  total_created: number;
+}
+export interface ArchiveResult { archived_count: number; archived_at: string }
+export interface RestoreResult { restored_count: number }
+
+/** TASK-010 §4.2.1 activities/ epoch 组结构（服务端预聚合；field_label 服务端解析）。
+ *  旧 ActivityRow（TASK-002 平铺行）保留给既有消费者，新时间线一律用本组结构。 */
+export interface ActivityItem {
+  field: string | null;
+  field_label: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  old_identifier: string | null;
+  new_identifier: string | null;
+}
+export interface ActivityGroup {
+  id: string;
+  epoch: number;
+  actor: { id: string | null; display_name: string | null };
+  verb: string;
+  comment: string | null;
+  created_at: string | null;
+  items: ActivityItem[];
+}
+
+/** TASK-010 §4.2.2 admin 死信补偿（系统级顶层资源，权限码 system.audit.read）。 */
+export interface DeadLetterRow {
+  id: string;
+  event_key: string;
+  queue: string;
+  error_summary: string;
+  retries: number;
+  first_failed_at: string;
+}
+
+export const DeadLetterAPI = {
+  list: (params: { per_page?: number } = {}) =>
+    api.get<DeadLetterRow[]>("activity-dead-letters/", { params }),
+  replay: (messageId: string) =>
+    api.post<{ message_id: string; replayed: boolean; dedup_skipped: boolean }>(`activity-dead-letters/${messageId}/replay/`, {}),
+  bulkReplay: (messageIds: string[]) =>
+    api.post<{ replayed: number; skipped: number }>("activity-dead-letters/bulk/", { message_ids: messageIds }),
+  discard: (messageId: string) => api.delete(`activity-dead-letters/${messageId}/`),
 };

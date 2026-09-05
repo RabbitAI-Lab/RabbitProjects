@@ -227,13 +227,19 @@ test.describe("Sprint-1 验收缺陷回归（评论头像 / 标签 / 子任务 /
     await expect(page.getByText("已保存")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole("button", { name: "修改优先级" })).toContainText("紧急");
 
-    // 负责人（后端只给 assignee_ids，前端要靠成员表解析姓名）
-    await page.getByRole("button", { name: "修改负责人" }).click();
-    await expect(page.getByRole("menu").filter({ hasText: "未分配" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "张三" })).toBeVisible({ timeout: 10_000 });
-    await page.getByRole("menuitem", { name: "张三" }).click();
-    await expect(page.getByText("已保存")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole("button", { name: "修改负责人" })).toContainText("张三");
+    // 执行人（Sprint-2 C.49【变更 · 基线=C.23 负责人行】：[＋ 编辑] 打开 AssigneePicker（C.50），
+    // 勾选成员 → PUT 全量集合 → 堆叠回读；替代原「修改负责人」行内下拉）
+    await page.locator('[data-sb-scope="drawer-assignee-edit"]').click();
+    const meRow = page.locator('[data-sb-scope="asg-list"] label').filter({ hasText: "（我）" }).first();
+    await meRow.locator("input[type=checkbox]").check();
+    await expect(page.locator('[data-sb-scope="asg-count"]')).toContainText("已选 1/10");
+    const putP = page.waitForResponse(
+      (r) => r.url().includes("/assignees/") && r.request().method() === "PUT",
+      { timeout: 15_000 },
+    );
+    await page.locator('[data-sb-scope="asg-save"]').click();
+    expect((await putP).status()).toBe(200);
+    await expect(page.locator('[data-sb-scope="drawer-assignee-section"] [data-sb-scope="avatar-stack"]')).toBeVisible({ timeout: 10_000 });
 
     // 开始 / 截止：真日期控件（此前是纯文本，连输入口都没有）
     await page.getByLabel("开始日期").fill("2026-09-01");
@@ -249,7 +255,8 @@ test.describe("Sprint-1 验收缺陷回归（评论头像 / 标签 / 子任务 /
     await expect(page.locator("aside")).toHaveCount(0);
     await openDrawer(page, "属性回归任务");
     await expect(page.getByRole("button", { name: "修改优先级" })).toContainText("紧急", { timeout: 10_000 });
-    await expect(page.getByRole("button", { name: "修改负责人" })).toContainText("张三");
+    // C.49：执行人堆叠仍在（回读口径从「修改负责人」按钮文本换成执行人分区堆叠）
+    await expect(page.locator('[data-sb-scope="drawer-assignee-section"] [data-sb-scope="avatar-stack"]')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByLabel("开始日期")).toHaveValue("2026-09-01");
     await expect(page.getByLabel("截止日期")).toHaveValue("2026-09-30");
   });

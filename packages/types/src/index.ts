@@ -148,6 +148,12 @@ export interface Issue {
   completed_sub_issues_count?: number;
   attachment_count?: number;
   archived_at?: string | null;
+  /** TASK-006 §4.2.3：估算（分钟；IssueSerializer 只读下发，写走 PATCH estimate_minutes）。 */
+  estimate_minutes?: number | null;
+  /** TASK-006：已耗（分钟；列表/详情 queryset annotate，缺省 0）。 */
+  spent_minutes?: number;
+  /** TASK-008 §4.2.4：自定义字段值（JSONB 整列透出；停用字段的值保留在响应中由 UI 过滤）。 */
+  custom_fields?: Record<string, unknown>;
   created_by: { id: UUID; name: string };
   created_at: string;
   updated_at: string;
@@ -182,6 +188,9 @@ export interface SubtreeStats {
   completed: number;
   cancelled: number;
   max_depth: number;
+  /** TASK-006 §4.2.4：stats 契约加字段（向后兼容）——子树口径工时汇总。 */
+  subtree_spent_minutes?: number;
+  subtree_estimate_minutes?: number;
 }
 
 export interface SubtreeData {

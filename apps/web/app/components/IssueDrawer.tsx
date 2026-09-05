@@ -1,23 +1,45 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AssigneeAPI,
   AttachmentAPI,
   CommentAPI,
+  FieldAPI,
   IssueAPI,
   IssueTypeAPI,
   LabelAPI,
   ProjectAPI,
   ProjectMemberAPI,
+  RelationAPI,
+  WorkLogAPI,
   unwrap,
-  type ActivityRow,
+  type ActivityGroup,
   type AttachmentRow,
   type CommentRow,
+  type CustomFieldDef,
   type DeleteSubtreeResult,
+  type RelationRow,
   type SubtreeData,
+  type WorkLogRow,
 } from "../services/api";
+import type { ApiError } from "../services/axios";
+import { useStores } from "../stores";
 import { StateBadge } from "./StateBadge";
 import { toast } from "./Toast";
 import { MentionPop, useMentionTrigger, type MentionCandidate } from "./MentionPop";
 import { IssueTreeDrawer } from "./IssueTreeDrawer";
+import {
+  AddRelationModal,
+  ArchiveConfirmDialog,
+  AssigneePickerModal,
+  AvatarStack,
+  BlockedCompleteDialog,
+  DuplicateDialog,
+  WorkLogDialog,
+  blockersFromError,
+  fmtMinutes,
+  initialOf,
+  type BlockerItem,
+} from "./issue-dialogs";
 import type { Issue } from "@rp/types";
 
 type DrawerTab = "desc" | "comments" | "activity" | "attachments";
@@ -32,11 +54,25 @@ const STATE_COLOR: Record<string, string> = {
   unstarted: "#9ca3af", started: "#3b82f6", completed: "#10b981", cancelled: "#f87171",
 };
 
-/** 头像首字母：按 Unicode 码点切（Array.from），避免 emoji / 代理对被 slice(0,1) 切成半个乱码字符。 */
-function initialOf(name?: string | null): string {
-  const s = (name ?? "").trim();
-  if (!s) return "?";
-  return Array.from(s)[0] ?? "?";
+/** C.61 日期分区头：今天 / 昨天 / M月d日（created_at 为 ISO 串）。 */
+function dayLabelOf(iso: string | null): string {
+  if (!iso) return "";
+  const d = iso.slice(0, 10);
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const yestTs = Date.now() - 86400_000;
+  const yest = new Date(yestTs);
+  const yesterday = `${yest.getFullYear()}-${pad(yest.getMonth() + 1)}-${pad(yest.getDate())}`;
+  if (d === today) return "今天";
+  if (d === yesterday) return "昨天";
+  return `${Number(d.slice(5, 7))}月${Number(d.slice(8, 10))}日`;
+}
+
+/** C.61 动作摘要兜底（组记录以 comment 为准；无 comment 时按 verb 归纳）。 */
+function verbLabel(verb: string): string {
+  const m: Record<string, string> = { created: "创建了任务", updated: "更新了任务", archived: "归档了任务", restored: "恢复了任务", duplicated: "由复制创建" };
+  return m[verb] ?? `动作：${verb}`;
 }
 
 /** C.23 属性行内编辑的下拉容器：占 grid 第 2 列但不占行高（h-0），菜单绝对定位浮在下方。 */
@@ -60,6 +96,151 @@ function MenuItem({ on, onClick, children }: { on?: boolean; onClick: () => void
   );
 }
 
+/** C.46 估算下拉：常用值 0.5h/1h/2h/4h/8h/16h/24h + 清除（自定义走「设估算」prompt 简化路径）。 */
+function EstimateMenu({ onPick }: { onPick: (minutes: number | null) => void }) {
+  const opts = [30, 60, 120, 240, 480, 960, 1440];
+  return (
+    <div role="menu" data-sb-scope="drawer-est-menu-list"
+      className="absolute left-0 top-8 z-10 min-w-[120px] bg-white border border-neutral-200 rounded-lg shadow-lg py-1">
+      {opts.map((m) => (
+        <button key={m} role="menuitem" onClick={() => onPick(m)} data-sb-scope="drawer-est-item"
+          className="w-full text-left px-3 h-8 text-[13px] font-mono hover:bg-neutral-50">{fmtMinutes(m)}</button>
+      ))}
+      <div className="h-px bg-neutral-100 my-1" />
+      <button role="menuitem" onClick={() => onPick(null)} className="w-full text-left px-3 h-8 text-[13px] text-neutral-400 hover:bg-neutral-50">清除估算</button>
+    </div>
+  );
+}
+
+/** C.55 控件映射（CONTROL_REGISTRY 类型→控件唯一映射，零字段硬编码）：
+ *  text/url/email/phone→Input / textarea→多行 / select→色块下拉 / multi_select→多选 chips /
+ *  number/currency→数字 / date→日期 / checkbox→开关 / member→成员选择。 */
+function CfRow({ field, value, editable, onSave, members }: {
+  field: CustomFieldDef;
+  value: unknown;
+  editable: boolean;
+  onSave: (v: unknown) => void;
+  members: Array<{ id: string; user: { id: string; display_name: string } }>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(value ?? ""));
+  const nameWithReq = (
+    <>
+      {field.name}{field.required && <span className="text-red-500 ml-0.5">*</span>}
+      {field.description && <span className="text-neutral-300 ml-1 cursor-help" title={field.description} aria-label={`${field.name} 帮助说明`}>?</span>}
+    </>
+  );
+  const commit = (v: unknown) => { setEditing(false); onSave(v); };
+
+  let control: React.ReactNode;
+  if (!editable || !editing) {
+    // 展示态（select=色块文本 / member=头像 / date=yyyy-MM-dd / currency=¥ / checkbox=开·关）
+    if (field.type === "checkbox") {
+      control = <span className={value ? "text-emerald-600" : "text-neutral-400"}>{value ? "已开启" : "已关闭"}</span>;
+    } else if (field.type === "select") {
+      const opt = field.options.find((o) => o.value === value);
+      control = value != null ? (
+        <span className="inline-flex items-center gap-1.5 text-[12px] text-neutral-600">
+          <span className="w-2 h-2 rounded-sm" style={{ background: opt?.color ?? "#999" }} />{opt?.label ?? String(value)}
+        </span>
+      ) : <span className="text-neutral-400">—</span>;
+    } else if (field.type === "multi_select") {
+      const vals = Array.isArray(value) ? value : value != null ? [value] : [];
+      control = vals.length ? (
+        <span className="inline-flex items-center gap-1.5 flex-wrap">
+          {vals.map((v) => {
+            const opt = field.options.find((o) => o.value === v);
+            return <span key={String(v)} className="inline-flex items-center gap-1 text-[12px] text-neutral-600"><span className="w-2 h-2 rounded-sm" style={{ background: opt?.color ?? "#999" }} />{opt?.label ?? String(v)}</span>;
+          })}
+        </span>
+      ) : <span className="text-neutral-400">—</span>;
+    } else if (field.type === "member") {
+      const m = members.find((x) => x.user.id === value);
+      control = m ? (
+        <span className="inline-flex items-center gap-1.5 text-[13px]">
+          <span className="w-5 h-5 rounded-full bg-neutral-200 text-neutral-700 text-[10px] font-semibold flex items-center justify-center" aria-hidden="true">{initialOf(m.user.display_name)}</span>
+          {m.user.display_name}
+        </span>
+      ) : <span className="text-neutral-400">—</span>;
+    } else if (field.type === "currency") {
+      control = value != null ? <span className="font-mono text-[13px]">¥{Number(value).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</span> : <span className="text-neutral-400">—</span>;
+    } else if (field.type === "date") {
+      control = value ? <span className="font-mono text-[13px]">{String(value)}</span> : <span className="text-neutral-400">—</span>;
+    } else {
+      control = value != null && value !== "" ? <span className="text-[13px]">{String(value)}</span> : <span className="text-neutral-400">—</span>;
+    }
+    control = editable ? (
+      <button className="text-left hover:bg-neutral-50 rounded px-1 -mx-1 min-w-0" data-sb-scope="drawer-cf-value"
+        onClick={() => { setDraft(String(value ?? "")); setEditing(true); }}>{control}</button>
+    ) : <span className="min-w-0">{control}</span>;
+  } else {
+    // 编辑态（按类型变形）
+    if (field.type === "checkbox") {
+      control = (
+        <select className="h-7 border border-neutral-300 rounded px-1.5 text-[13px]" data-sb-scope="drawer-cf-edit"
+          defaultValue={value ? "true" : "false"}
+          onChange={(e) => commit(e.target.value === "true")}>
+          <option value="true">已开启</option><option value="false">已关闭</option>
+        </select>
+      );
+    } else if (field.type === "select") {
+      control = (
+        <select className="h-7 border border-neutral-300 rounded px-1.5 text-[13px]" data-sb-scope="drawer-cf-edit"
+          defaultValue={value != null ? String(value) : ""}
+          onChange={(e) => commit(e.target.value || null)}>
+          <option value="">—</option>
+          {field.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      );
+    } else if (field.type === "multi_select") {
+      const cur = new Set(Array.isArray(value) ? (value as unknown[]) : []);
+      control = (
+        <div className="flex flex-col gap-0.5" data-sb-scope="drawer-cf-edit">
+          {field.options.map((o) => (
+            <label key={o.value} className="flex items-center gap-1.5 text-[12px]">
+              <input type="checkbox" className="accent-brand-500 w-3.5 h-3.5" defaultChecked={cur.has(o.value)}
+                onChange={(e) => {
+                  const next = new Set(cur);
+                  if (e.target.checked) next.add(o.value); else next.delete(o.value);
+                  commit(next.size ? Array.from(next) : null);
+                }} />
+              <span className="w-2 h-2 rounded-sm" style={{ background: o.color ?? "#999" }} />{o.label}
+            </label>
+          ))}
+        </div>
+      );
+    } else if (field.type === "member") {
+      control = (
+        <select className="h-7 border border-neutral-300 rounded px-1.5 text-[13px]" data-sb-scope="drawer-cf-edit"
+          defaultValue={value != null ? String(value) : ""}
+          onChange={(e) => commit(e.target.value || null)}>
+          <option value="">—</option>
+          {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.display_name}</option>)}
+        </select>
+      );
+    } else if (field.type === "date") {
+      control = <input type="date" className="h-7 border border-neutral-300 rounded px-1.5 text-[13px]" data-sb-scope="drawer-cf-edit"
+        defaultValue={value ? String(value) : ""} onBlur={(e) => commit(e.target.value || null)} />;
+    } else if (field.type === "number" || field.type === "currency") {
+      control = <input type="number" inputMode="decimal" className="h-7 border border-neutral-300 rounded px-1.5 text-[13px] w-[140px]" data-sb-scope="drawer-cf-edit"
+        defaultValue={draft} onBlur={(e) => commit(e.target.value === "" ? null : Number(e.target.value))} />;
+    } else if (field.type === "textarea") {
+      control = <textarea rows={2} className="border border-neutral-300 rounded p-1.5 text-[13px] w-full" data-sb-scope="drawer-cf-edit"
+        defaultValue={draft} onBlur={(e) => commit(e.target.value || null)} />;
+    } else {
+      control = <input type="text" className="h-7 border border-neutral-300 rounded px-1.5 text-[13px] w-full" data-sb-scope="drawer-cf-edit"
+        defaultValue={draft} onBlur={(e) => commit(e.target.value || null)} />;
+    }
+  }
+
+  return (
+    <div className="grid grid-cols-[80px_1fr] gap-x-2.5 items-center min-h-[34px] py-0.5">
+      <span className="text-[13px] text-neutral-400 truncate" title={field.name}>{nameWithReq}</span>
+      <span className="min-w-0">{control}</span>
+    </div>
+  );
+}
+
 /** 任务详情抽屉 720px（TASK-001 §3.3 + TASK-002 §3.2/§3.3/§3.6 + COLLAB-001 + FILE-001）。
  *  - Tab 条终态：「描述｜评论｜动态｜附件」四 Tab（ADR-0011 #1/#20）。
  *  - 属性区七行（状态 / 类型 / 优先级 / 负责人 / 标签 / 开始·截止）—— C.23。
@@ -72,10 +253,12 @@ function MenuItem({ on, onClick, children }: { on?: boolean; onClick: () => void
  *
  *  API 解包约定：CLAUDE.md §"测试脚本规范" — 所有响应统一通过 `unwrap<T>(r)` 取 `data`，
  *  不再用 `(r as any).data`。 */
-export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, layer = "z-50" }: {
+export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, layer = "z-50", onOpenIssue }: {
   issueId: string; slug: string; projectId: string; onClose: () => void; onChanged?: () => void;
   /** 层级：普通抽屉 z-50；从全屏树点开的节点抽屉要盖住树（z-[60]）→ z-[70]（TASK-004 §3.3） */
   layer?: string;
+  /** C.42 关联行跳转 / C.44 阻塞项跳转：不提供则抽屉内自查自开（嵌套换 issueId）。 */
+  onOpenIssue?: (issueId: string) => void;
 }) {
   const [issue, setIssue] = useState<Issue | null>(null);
   const [editing, setEditing] = useState(false);
@@ -100,7 +283,6 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
   const [uploadingFile, setUploadingFile] = useState(false);
   const [uploadPct, setUploadPct] = useState(0);
   const [comments, setComments] = useState<CommentRow[]>([]);
-  const [activities, setActivities] = useState<ActivityRow[]>([]);
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
   const [commentDraft, setCommentDraft] = useState("");
   const [newSubName, setNewSubName] = useState("");
@@ -117,10 +299,50 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
   const [labelsMenuOpen, setLabelsMenuOpen] = useState(false);
   /** C.23 属性行内编辑当前展开的下拉（状态 / 类型 / 优先级 / 负责人） */
   const [propMenu, setPropMenu] = useState<"state" | "type" | "priority" | "assignee" | null>(null);
-  const [activityPage, setActivityPage] = useState(1);
   const [activityHasMore, setActivityHasMore] = useState(false);
   const labelsMenuRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // ── Sprint-2（TASK-005~010）状态 ──
+  const stores = useStores();
+  /** AUTH-005 §4.5.1 有效项目角色：20=PROJ_ADMIN（强制完成/字段管理）、15+=CONTRIBUTOR（写）。 */
+  const myRole = stores.permission.effectiveProjectRole(projectId, slug);
+  const isAdmin = myRole >= 20;
+  const canWrite = myRole >= 15;
+  const myUserId = stores.session.user?.id ?? null;
+
+  /** C.42 关联三分区数据（relations_of 创建时间倒序；三组由前端按 relation_type 分组） */
+  const [relations, setRelations] = useState<RelationRow[]>([]);
+  const [linkOpen, setLinkOpen] = useState(false);
+  /** C.46 工时分区：估算/已耗/记录列表；⊕含子任务开关（默认本任务口径） */
+  const [worklogs, setWorklogs] = useState<WorkLogRow[]>([]);
+  const [wlDialog, setWlDialog] = useState<{ edit: WorkLogRow | null } | null>(null);
+  const [wlMenuRow, setWlMenuRow] = useState<string | null>(null);
+  const [wlScopeSelf, setWlScopeSelf] = useState(true);
+  const [wlSubtreeStats, setWlSubtreeStats] = useState<{ spent: number; est: number } | null>(null);
+  const [estMenuOpen, setEstMenuOpen] = useState(false);
+  /** C.49 执行人区 + C.50 转交弹层 */
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [asgMoreOpen, setAsgMoreOpen] = useState(false);
+  /** C.55 动态字段折叠区（field-schema / ETag 缓存语义取一次） */
+  const [fieldSchema, setFieldSchema] = useState<CustomFieldDef[] | null>(null);
+  const [cfError, setCfError] = useState(false);
+  const [cfMoreOpen, setCfMoreOpen] = useState(false);
+  /** C.57/C.58 复制与归档弹层 */
+  const [dupOpen, setDupOpen] = useState(false);
+  const [archOpen, setArchOpen] = useState(false);
+  const [archDescCount, setArchDescCount] = useState(0);
+  /** C.57 复制弹层的子树规模（subtree stats 口径缓存） */
+  const [dupSubCount, setDupSubCount] = useState<number | null>(null);
+  /** C.44 完成被拦截（详情状态菜单入口） */
+  const [blockedDlg, setBlockedDlg] = useState<{ issueName: string; blockers: BlockerItem[]; stateId: string } | null>(null);
+  /** C.61 动态 Tab：epoch 组时间线 + 双过滤器 + 按钮式加载更早 */
+  const [activityGroups, setActivityGroups] = useState<ActivityGroup[]>([]);
+  const [activityCursor, setActivityCursor] = useState<string | null>(null);
+  const [actFieldFilter, setActFieldFilter] = useState("");
+  const [actActorFilter, setActActorFilter] = useState("");
+  const [actFieldMenu, setActFieldMenu] = useState(false);
+  const [actActorMenu, setActActorMenu] = useState(false);
 
   // 候选池（C.33）：项目成员缓存（本文件内做最小占位实现：issue.assignee 视为 1 条；
   // 真实 PROJ-002 列表接入由后续 PR 补，本组件保持接口稳定）
@@ -140,6 +362,37 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
     return IssueAPI.detail(slug, projectId, issueId).then((r) => {
       setIssue(unwrap<Issue>(r));
     });
+  }
+  /** Sprint-2 分区数据（关联 + 工时记录；spent/estimate 随 issue detail 走）。 */
+  function refreshRelations() {
+    RelationAPI.list(slug, projectId, issueId)
+      .then((r) => setRelations(unwrap<RelationRow[]>(r) ?? []))
+      .catch(() => setRelations([]));
+  }
+  function refreshWorklogs() {
+    WorkLogAPI.list(slug, projectId, issueId, { per_page: 20 })
+      .then((r) => setWorklogs(unwrap<WorkLogRow[]>(r) ?? []))
+      .catch(() => setWorklogs([]));
+  }
+  /** ⊕含子任务口径（TASK-006 §4.2.4 subtree stats 加字段；归档根 404 → 次级行降级为 —）。 */
+  function refreshSubtreeWorklog() {
+    if (!issue || issue.archived_at) { setWlSubtreeStats(null); return; }
+    IssueAPI.subtree(slug, projectId, issueId)
+      .then((r) => {
+        const st = unwrap<SubtreeData>(r);
+        setWlSubtreeStats({
+          spent: st.stats?.subtree_spent_minutes ?? 0,
+          est: st.stats?.subtree_estimate_minutes ?? 0,
+        });
+      })
+      .catch(() => setWlSubtreeStats(null));
+  }
+  /** C.55 Schema（ETag 协商缓存；失败 → 内置字段 + 「自定义字段加载失败 · 重试」条）。 */
+  function refreshSchema() {
+    setCfError(false);
+    FieldAPI.schema(slug, projectId)
+      .then((r) => setFieldSchema(unwrap<{ custom: CustomFieldDef[] }>(r)?.custom ?? []))
+      .catch(() => { setFieldSchema([]); setCfError(true); });
   }
   useEffect(() => {
     const handle = setTimeout(() => { void refresh(); }, 0);
@@ -165,6 +418,11 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
     ProjectMemberAPI.list(slug, projectId, { per_page: 100 })
       .then((r) => setMembers(unwrap<typeof members>(r) ?? []))
       .catch(() => {});
+    // Sprint-2 分区数据：关联 / 工时 / 字段 Schema / 子树口径工时
+    refreshRelations();
+    refreshWorklogs();
+    refreshSubtreeWorklog();
+    refreshSchema();
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [issue?.id, slug, projectId, issueId]);
 
@@ -176,14 +434,7 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
         .catch(() => {});
     }
     if (tab === "activity") {
-      setActivityPage(1);
-      IssueAPI.activities(slug, projectId, issueId, { per_page: 30 })
-        .then((r) => {
-          // 响应是裸数组；分页游标在 meta.next_cursor（由 axios 拦截器挂到 r.meta）
-          setActivities(unwrap<typeof activities>(r) ?? []);
-          setActivityHasMore(Boolean((r as unknown as { meta?: { next_cursor?: string | null } }).meta?.next_cursor));
-        })
-        .catch(() => {});
+      loadActivityGroups();
     }
     if (tab === "attachments") {
       AttachmentAPI.list(slug, projectId, issueId)
@@ -242,8 +493,25 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
     return () => document.removeEventListener("mousedown", onDown, true);
   }, [propMenu]);
 
+  // Sprint-2 弹出层（估算下拉 / +N 执行人浮层 / 工时行菜单 / 动态过滤器）：点外即关（教训 #4 mousedown）
+  useEffect(() => {
+    if (!estMenuOpen && !asgMoreOpen && !wlMenuRow && !actFieldMenu && !actActorMenu) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      const inScope = t?.closest(
+        '[data-sb-scope="drawer-est-menu-list"],[data-sb-scope="drawer-est-set"],[data-sb-scope="drawer-est-menu"],[data-sb-scope="drawer-assignee-more"],[data-sb-scope="drawer-worklog-row-menu"],[data-sb-scope="drawer-worklog-menu"],[data-sb-scope="act-field-menu"],[data-sb-scope="act-field-toggle"],[data-sb-scope="act-actor-menu"],[data-sb-scope="act-actor-toggle"],[data-sb-scope="avatar-stack"]',
+      );
+      if (inScope) return;
+      setEstMenuOpen(false); setAsgMoreOpen(false); setWlMenuRow(null); setActFieldMenu(false); setActActorMenu(false);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [estMenuOpen, asgMoreOpen, wlMenuRow, actFieldMenu, actActorMenu]);
+
   /** C.23 属性行内编辑的统一落库：选中即提交，失败回滚并 toast（TASK-002 §3.7）。
-   *  返回是否成功，供乐观更新的控件（日期）决定要不要回滚。 */
+   *  返回是否成功，供乐观更新的控件（日期）决定要不要回滚。
+   *  TASK-005 §3.3：迁入 completed 被 409 RESOURCE_TRANSITION_BLOCKED 拦截时
+   *  不 toast，改弹 M-BLOCKED 对话框（详情入口；管理员可强制完成）。 */
   async function patchIssue(payload: Parameters<typeof IssueAPI.patch>[3], failMsg: string): Promise<boolean> {
     setPropMenu(null);
     if (!issue) return false;
@@ -252,6 +520,12 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
       await refresh(); saved();
       return true;
     } catch (e: unknown) {
+      const err = e as ApiError;
+      const targetState = payload.state_id ? states.find((s) => s.id === payload.state_id) : undefined;
+      if (err?.code === "RESOURCE_TRANSITION_BLOCKED" && targetState?.group === "completed") {
+        setBlockedDlg({ issueName: issue.name, blockers: blockersFromError(err), stateId: payload.state_id! });
+        return false;
+      }
       toast(e instanceof Error ? e.message : failMsg, "error");
       return false;
     }
@@ -409,16 +683,26 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
     }
   }
 
-  async function loadMoreActivities() {
-    const next = activityPage + 1;
-    IssueAPI.activities(slug, projectId, issueId, { per_page: 30 * next })
+  /** C.61 动态 Tab：epoch 组时间线（服务端预聚合；?field= / ?actor_id= 过滤；游标锚定 epoch）。 */
+  function loadActivityGroups(append = false) {
+    const params: { per_page?: number; field?: string; actor_id?: string; cursor?: string } = {};
+    if (actFieldFilter) params.field = actFieldFilter;
+    if (actActorFilter) params.actor_id = actActorFilter;
+    if (append && activityCursor) params.cursor = activityCursor;
+    IssueAPI.activityGroups(slug, projectId, issueId, params)
       .then((r) => {
-        setActivities(unwrap<typeof activities>(r) ?? []);
+        const rows = unwrap<ActivityGroup[]>(r) ?? [];
+        setActivityGroups((cur) => (append ? [...cur, ...rows] : rows));
+        setActivityCursor(((r as unknown as { meta?: { next_cursor?: string | null } }).meta?.next_cursor) ?? null);
         setActivityHasMore(Boolean((r as unknown as { meta?: { next_cursor?: string | null } }).meta?.next_cursor));
-        setActivityPage(next);
       })
       .catch(() => {});
   }
+  useEffect(() => {
+    if (tab !== "activity") return;
+    loadActivityGroups(false);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [actFieldFilter, actActorFilter, issueId, slug, projectId]);
 
   async function addSubIssue() {
     const name = newSubName.trim();
@@ -443,6 +727,118 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "更新标签失败";
       toast(msg, "error");
+    }
+  }
+
+  /** C.42 关联跳转 / C.57 副本查看 / C.44 阻塞项跳转：宿主提供回调则交宿主，否则嵌套抽屉自开。 */
+  function openNested(id: string) {
+    if (onOpenIssue) { onOpenIssue(id); return; }
+    setTreeNodeIssueId(id);
+  }
+
+  /** C.49 认领：点击即 POST 无需确认，乐观插入自己头像；409 STATE 已被认领 → Toast + 回读。 */
+  async function claimIssue() {
+    try {
+      await AssigneeAPI.claim(slug, projectId, issueId);
+      toast("已认领该任务", "ok");
+      await refresh(); onChanged?.();
+    } catch (e: unknown) {
+      const err = e as ApiError;
+      toast(err?.details?.[0]?.message ?? err?.message ?? "认领失败", "error");
+      await refresh();
+    }
+  }
+
+  /** C.49 退出任务（+N 浮层中自己行的次级动作；自退 DELETE assignees/{user_id}/）。 */
+  async function exitIssue() {
+    if (!myUserId) return;
+    try {
+      await AssigneeAPI.removeSelf(slug, projectId, issueId, myUserId);
+      toast("已退出任务");
+      await refresh(); onChanged?.();
+    } catch (e: unknown) {
+      const err = e as ApiError;
+      toast(err?.details?.[0]?.message ?? err?.message ?? "退出失败", "error");
+    }
+  }
+
+  /** C.42 关联删除（悬浮显现 ⓧ + 二次确认；镜像行同事务删除）。 */
+  async function delRelation(linkId: string) {
+    if (!confirm("删除该关联？")) return;
+    try {
+      await RelationAPI.del(slug, projectId, issueId, linkId);
+      toast("已删除关联", "ok");
+      refreshRelations(); onChanged?.();
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : "删除关联失败", "error");
+    }
+  }
+
+  /** C.46 估算下拉常用值（onBlur/选中即 PATCH estimate_minutes；0.5h 步进 + 自定义分钟）。 */
+  async function setEstimate(minutes: number | null) {
+    setEstMenuOpen(false);
+    try {
+      await IssueAPI.patch(slug, projectId, issueId, minutes == null ? { estimate_minutes: null } : { estimate_minutes: minutes });
+      await refresh(); saved();
+    } catch (e: unknown) {
+      const err = e as ApiError;
+      toast(err?.details?.[0]?.message ?? err?.message ?? "设置估算失败", "error");
+    }
+  }
+
+  /** C.55 动态字段值落库（PATCH 合并语义；显式清空传 null）。 */
+  async function setFieldValue(key: string, value: unknown) {
+    try {
+      await IssueAPI.patch(slug, projectId, issueId, { custom_fields: { [key]: value } });
+      await refresh(); saved();
+    } catch (e: unknown) {
+      const err = e as ApiError;
+      toast(err?.details?.[0]?.message ?? err?.message ?? "字段保存失败", "error");
+    }
+  }
+
+  /** C.58 归档入口：先取 subtree stats 后代数（含 0；subtree 对归档根 404 —— 此时不应进入）。 */
+  async function openArchiveConfirm() {
+    setArchDescCount(0);
+    setArchOpen(true);
+    try {
+      const r = await IssueAPI.subtree(slug, projectId, issueId);
+      const st = unwrap<SubtreeData>(r);
+      setArchDescCount(Math.max(0, (st.stats?.total ?? 1) - 1));
+    } catch { setArchDescCount(subIssues.length); }
+  }
+
+  /** C.57 打开复制弹层（subCount 取 subtree stats 口径，失败退直接子级数）。 */
+  async function openDuplicate() {
+    setDupOpen(true);
+    if (dupSubCount == null) {
+      try {
+        const r = await IssueAPI.subtree(slug, projectId, issueId);
+        const st = unwrap<SubtreeData>(r);
+        setDupSubCount(Math.max(0, (st.stats?.total ?? 1) - 1));
+      } catch { setDupSubCount(subIssues.length); }
+    }
+  }
+
+  /** C.60/C.58 恢复归档（整树，动作幂等）。 */
+  async function restoreArchive() {
+    try {
+      await IssueAPI.unarchive(slug, projectId, issueId);
+      toast("已恢复归档", "ok");
+      await refresh(); onChanged?.();
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : "恢复失败", "error");
+    }
+  }
+
+  /** C.46 工时记录删除（软删，本人 / PROJ_ADMIN）。 */
+  async function delWorklog(logId: string) {
+    try {
+      await WorkLogAPI.del(slug, projectId, issueId, logId);
+      toast("记录已删除", "ok");
+      refreshWorklogs(); await refresh(); onChanged?.();
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : "删除失败", "error");
     }
   }
 
@@ -471,12 +867,32 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
   const issueTypeName = types.find((t) => t.id === typeId)?.name ?? "—";
   const issueTypeColor = types.find((t) => t.id === typeId)?.color ?? "#9ca3af";
   // 后端只下发 assignee_ids（见 @rp/types 里 Issue.assignee 的 @deprecated 说明），
-  // 姓名必须拿成员表解析 —— 直接读 issue.assignee 会恒为「未分配」。
+  // 姓名必须拿成员表解析 —— 直接读 issue.assignee 会恒为「未分配」（C.49 堆叠呈现同源）。
   const assigneeIds = issue.assignee_ids ?? [];
-  const assigneeMember = members.find((m) => m.user.id === assigneeIds[0]) ?? null;
-  const assigneeName = assigneeMember?.user.display_name ?? (assigneeIds.length ? "…" : "未分配");
+  const nameOfMember = (uid: string) => members.find((m) => m.user.id === uid)?.user.display_name ?? "…";
+  const assigneeNames = assigneeIds.map(nameOfMember);
   const issueType = types.find((t) => t.id === typeId);
   const priority = issue.priority ?? null;
+
+  // ── C.42 关联三分组（固定顺序；空组渲染时过滤）──普通派生（`if (!issue) return null` 早返回之后不得再挂 hook）
+  const relGroups = {
+    pre: relations.filter((r) => r.relation_type === "is_blocked_by"),
+    post: relations.filter((r) => r.relation_type === "blocks"),
+    rel: relations.filter((r) => r.relation_type === "relates_to" || r.relation_type === "duplicates"),
+  };
+  const relTotal = relations.length;
+  /** C.43 已关联预判：搜索行内灰字「已关联」且不可选 */
+  const relLinkedIds = new Set(relations.map((r) => r.related_issue_id));
+
+  // ── C.46 工时派生（spent 由 issue detail 下发 annotate；子树口径取 subtree stats） ──
+  const spentTotal = (issue as unknown as { spent_minutes?: number }).spent_minutes ?? 0;
+  const wlCurrent = wlScopeSelf ? spentTotal : (wlSubtreeStats?.spent ?? spentTotal);
+  const wlPct = issue.estimate_minutes != null && issue.estimate_minutes > 0 ? Math.round((wlCurrent / issue.estimate_minutes) * 100) : 0;
+  const wlOver = issue.estimate_minutes != null && issue.estimate_minutes > 0 && wlPct > 100;
+
+  // ── C.55 动态字段（停用字段不渲染——数据在响应中，UI 过滤） ──
+  const activeFields = (fieldSchema ?? []).filter((f) => f.is_active !== false).sort((a, b) => a.sort_order - b.sort_order);
+  const cfValues = ((issue as unknown as { custom_fields?: Record<string, unknown> }).custom_fields ?? {}) as Record<string, unknown>;
 
   return (
     <div className={`fixed inset-0 ${layer} flex justify-end`}>
@@ -487,6 +903,10 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
           <button className="font-mono text-[13px] text-neutral-500 hover:text-brand-600"
             onClick={() => { navigator.clipboard?.writeText(issue.issue_key); toast(`已复制 ${issue.issue_key}`); }}
             title="点击复制编号">{issue.issue_key}</button>
+          {/* C.60：已归档徽标（头部状态旁） */}
+          {issue.archived_at && (
+            <span className="inline-flex items-center gap-1 text-[12px] text-neutral-400 bg-neutral-100 rounded px-1.5 py-0.5" data-sb-scope="drawer-arch-badge">🗄 已归档</span>
+          )}
           <div className="ml-auto flex items-center gap-1">
             <div className="relative" ref={menuRef} data-sb-scope="drawer-more-menu">
               <button aria-label="更多操作" onClick={() => setMenuOpen(!menuOpen)}
@@ -495,6 +915,20 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
               </button>
               {menuOpen && (
                 <div className="absolute top-9 right-0 w-[150px] bg-white border border-neutral-200 rounded-lg shadow-lg py-1 z-10">
+                  {/* C.57 入口：详情 ⋯ 菜单「创建副本」 */}
+                  {canWrite && !issue.archived_at && (
+                    <button data-sb-scope="drawer-menu-dup" className="w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50"
+                    onClick={() => { setMenuOpen(false); void openDuplicate(); }}>创建副本</button>
+                  )}
+                  {/* C.58 入口：详情 ⋯ → 归档任务 / 恢复 */}
+                  {canWrite && !issue.archived_at && (
+                    <button data-sb-scope="drawer-menu-archive" className="w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50"
+                    onClick={() => { setMenuOpen(false); void openArchiveConfirm(); }}>归档任务</button>
+                  )}
+                  {issue.archived_at && canWrite && (
+                    <button data-sb-scope="drawer-menu-restore" className="w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50"
+                    onClick={() => { setMenuOpen(false); void restoreArchive(); }}>恢复</button>
+                  )}
                   <button className="w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50" onClick={() => { navigator.clipboard?.writeText(location.origin + location.pathname + `?peekIssue=${issueId}`); toast("已复制链接"); setMenuOpen(false); }}>复制链接</button>
                   <button className="w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50" onClick={() => { navigator.clipboard?.writeText(issue.issue_key); toast(`已复制 ${issue.issue_key}`); setMenuOpen(false); }}>复制编号</button>
                   <div className="h-px bg-neutral-200 my-1" />
@@ -505,6 +939,19 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
             <button onClick={onClose} aria-label="关闭" className="w-7 h-7 flex items-center justify-center text-neutral-500 hover:text-neutral-900">✕</button>
           </div>
         </div>
+
+        {/* C.60 归档只读横幅：「已归档于 yyyy-MM-dd · [恢复]」顶部 role=status；编辑控件全部禁用 */}
+        {issue.archived_at && (
+          <div className="mx-5 mt-2.5 mb-0.5 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 px-3.5 py-2 text-[13px]"
+            role="status" data-sb-scope="drawer-arch-banner">
+            <span aria-hidden="true">🗄</span>
+            已归档于 {(issue.archived_at ?? "").slice(0, 10)}
+            {canWrite && (
+              <button className="text-brand-600 hover:text-brand-700" data-sb-scope="drawer-arch-restore"
+                onClick={() => void restoreArchive()}>恢复</button>
+            )}
+          </div>
+        )}
 
         {/* Tab 条（C.25 / C.31 / C.32）—— 四 Tab 全部可点 */}
         <div role="tablist" aria-label="任务详情视图" className="flex border-b border-neutral-200 px-5">
@@ -532,7 +979,7 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
 
           {tab === "desc" && (
             <>
-              {/* 标题（C.23） */}
+              {/* 标题（C.23；归档只读——C.60 编辑控件全部禁用） */}
               {editing ? (
                 <input autoFocus aria-label="任务标题" data-sb-scope="drawer-title-input"
                   className="w-full text-lg font-semibold border-b-2 border-brand-500 outline-none bg-transparent py-1"
@@ -540,8 +987,8 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
                   onBlur={saveTitle}
                   onKeyDown={(e) => { if (e.key === "Enter") saveTitle(); if (e.key === "Escape") setEditing(false); }} />
               ) : (
-                <h2 className="text-lg font-semibold py-1 cursor-text hover:bg-neutral-50 rounded -mx-2 px-2" title="点击编辑标题"
-                  onClick={() => { setTitleDraft(issue.name); setEditing(true); }}>{issue.name}</h2>
+                <h2 className={`text-lg font-semibold py-1 rounded -mx-2 px-2 ${issue.archived_at || !canWrite ? "" : "cursor-text hover:bg-neutral-50"}`} title={issue.archived_at ? "已归档，恢复后才能编辑" : "点击编辑标题"}
+                  onClick={() => { if (!issue.archived_at && canWrite) { setTitleDraft(issue.name); setEditing(true); } }}>{issue.name}</h2>
               )}
 
               {/* 描述编辑器（C.7 装饰外壳工具条常驻 —— ADR-0011） */}
@@ -642,38 +1089,8 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
                   ))}</PropMenu>
                 )}
 
-                <label className="text-[13px] text-neutral-500">负责人</label>
-                <button type="button" data-sb-scope="drawer-prop-menu" aria-label="修改负责人"
-                  onClick={() => setPropMenu(propMenu === "assignee" ? null : "assignee")}
-                  
-                  className="group justify-self-start inline-flex items-center gap-1.5 text-[13px] hover:bg-brand-50 hover:text-brand-600 border border-transparent hover:border-brand-200 rounded px-1.5 py-0.5 -mx-1 transition">
-                  {assigneeMember ? (
-                    <span className="w-5 h-5 rounded-full text-white text-[10px] font-semibold flex items-center justify-center"
-                      style={{ background: "#3b82f6" }} aria-hidden="true">
-                      {assigneeMember.user.display_name.slice(0, 1)}
-                    </span>
-                  ) : null}
-                  <span className={assigneeMember ? "" : "text-neutral-400"}>{assigneeName}</span>
-                  <span aria-hidden="true" className="text-neutral-400 text-[11px] group-hover:scale-110 transition">▾</span>
-                </button>
-                {propMenu === "assignee" && (
-                  <PropMenu>
-                    {members.map((m) => (
-                      <MenuItem key={m.id} on={assigneeIds.includes(m.user.id)}
-                        onClick={() => void patchIssue({ assignee_ids: [m.user.id] }, "更新负责人失败")}>
-                        <span className="w-5 h-5 rounded-full text-white text-[10px] font-semibold flex items-center justify-center"
-                          style={{ background: "#3b82f6" }} aria-hidden="true">
-                          {m.user.display_name.slice(0, 1)}
-                        </span>
-                        {m.user.display_name}
-                      </MenuItem>
-                    ))}
-                    <MenuItem on={assigneeIds.length === 0}
-                      onClick={() => void patchIssue({ assignee_ids: [] }, "更新负责人失败")}>
-                      <span className="text-neutral-400">未分配</span>
-                    </MenuItem>
-                  </PropMenu>
-                )}
+                {/* 负责人行已升级为独立「执行人」分区（C.49【变更 · 基线=C.23】，
+                    位于属性区与子任务区之间——O1 分区次序）；行内下拉菜单随之移除。 */}
 
                 <label className="text-[13px] text-neutral-500">标签</label>
                 <div className="relative" ref={labelsMenuRef} data-sb-scope="drawer-labels-menu">
@@ -746,6 +1163,70 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
                   }} />
               </div>
 
+              {/* 执行人区（C.49【变更 · 基线=C.23 负责人行】/ TASK-007 §3.1）：24px 头像堆叠 + 名称行 + [＋ 编辑] + 空态认领 */}
+              <div className="mt-5 border-t border-neutral-200 pt-3" data-sb-scope="drawer-assignee-section">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[13px] font-medium inline-flex items-center gap-1.5">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-neutral-500"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    执行人
+                  </span>
+                  <div className="ml-auto">
+                    {canWrite && !issue.archived_at && (
+                      <button onClick={() => setAssignOpen(true)} data-sb-scope="drawer-assignee-edit"
+                        className="h-[28px] px-2.5 border border-neutral-300 rounded-md text-[12px] text-neutral-600 hover:bg-neutral-50 inline-flex items-center gap-1">
+                        <span aria-hidden="true">＋</span> 编辑
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 min-h-[34px]" role="group"
+                  aria-label={`执行人 ${assigneeNames.length} 人${assigneeNames.length ? `：${assigneeNames.join("、")}` : ""}`}>
+                  {assigneeIds.length === 0 ? (
+                    /* C.49 空态：👤 未指派 虚线框 +「🖐 认领」（≥CONTRIBUTOR；点击即 POST 无需确认） */
+                    canWrite && !issue.archived_at ? (
+                      <span className="inline-flex items-center gap-2 border-[1.5px] border-dashed border-neutral-300 rounded-lg pl-1.5 pr-2.5 py-[3px] text-[12px] text-neutral-400" data-sb-scope="drawer-assignee-empty">
+                        <span aria-hidden="true">👤</span> 未指派
+                        <button onClick={() => void claimIssue()} aria-label="认领该任务" data-sb-scope="drawer-claim"
+                          className="h-[24px] px-2 bg-brand-500 text-white rounded-md text-[12px] inline-flex items-center gap-1 hover:bg-brand-600">
+                          <span aria-hidden="true">🖐</span> 认领
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="text-[12px] text-neutral-400" data-sb-scope="drawer-assignee-empty">未指派</span>
+                    )
+                  ) : (
+                    <>
+                      <AvatarStack names={assigneeNames} size={24} {...(assigneeNames.length > 3 ? { onMore: () => setAsgMoreOpen((v) => !v) } : {})} />
+                      <span className="text-[12px] text-neutral-500 truncate flex-1" title={assigneeNames.join("、")}>
+                        {assigneeNames.join("、")}{assigneeNames.length > 3 ? ` +${assigneeNames.length - 3} 人` : ""}
+                      </span>
+                    </>
+                  )}
+                  {/* C.49 +N 浮层：全部执行人 + 自己行「退出任务」 */}
+                  {asgMoreOpen && assigneeNames.length > 3 && (
+                    <div className="relative w-full" data-sb-scope="drawer-assignee-more">
+                      <div role="dialog" className="absolute left-0 top-0 z-10 w-full bg-white border border-neutral-200 rounded-lg shadow-lg py-1">
+                        {assigneeIds.map((id) => {
+                          const isMe = id === myUserId;
+                          return (
+                            <div key={id} className="flex items-center gap-2 px-3 h-9 text-[13px]">
+                              <span className="w-5 h-5 rounded-full text-white text-[10px] font-semibold flex items-center justify-center" style={{ background: "#3b82f6" }} aria-hidden="true">
+                                {initialOf(nameOfMember(id))}
+                              </span>
+                              <span className="flex-1">{nameOfMember(id)}{isMe ? "（我）" : ""}</span>
+                              {isMe && canWrite && !issue.archived_at && (
+                                <button onClick={() => void exitIssue()} data-sb-scope="drawer-assignee-exit"
+                                  className="text-[12px] text-neutral-500 hover:text-red-600">退出任务</button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* 子任务区（C.24 基线 + TASK-004 §3.4/C.41 升级）：分区头「子任务 ◔ x/y」+「＋」+ 前 20 条 +「查看全部 N 个 →」 */}
               <div className="mt-5 border-t border-neutral-200 pt-3" data-sb-scope="drawer-sub-section">
                 <div className="flex items-center gap-2 mb-2">
@@ -771,13 +1252,16 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
                   })()}
                   <div className="ml-auto flex items-center gap-1.5">
                     {subIssues.length > 20 && <span className="text-[12px] text-neutral-400">前 20 条</span>}
-                    <button
-                      onClick={() => subInputRef.current?.focus()}
-                      aria-label="添加子任务"
-                      data-sb-scope="drawer-sub-add"
-                      className="w-7 h-7 inline-flex items-center justify-center text-neutral-500 hover:bg-neutral-100 rounded-md"
-                    >＋</button>
-                    {subIssues.length > 0 && (
+                    {/* C.60/C.41 归档只读态：无「＋」与完成勾选；「查看整棵树」入口隐藏（subtree 对归档根 404） */}
+                    {canWrite && !issue.archived_at && (
+                      <button
+                        onClick={() => subInputRef.current?.focus()}
+                        aria-label="添加子任务"
+                        data-sb-scope="drawer-sub-add"
+                        className="w-7 h-7 inline-flex items-center justify-center text-neutral-500 hover:bg-neutral-100 rounded-md"
+                      >＋</button>
+                    )}
+                    {subIssues.length > 0 && !issue.archived_at && (
                       <button onClick={() => setTreeOpen(true)} data-sb-scope="drawer-sub-view-all"
                         className="text-[13px] text-brand-600 hover:text-brand-700">查看全部 {subIssues.length} 个 →</button>
                     )}
@@ -792,7 +1276,7 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
                         type="checkbox"
                         checked={s.state_group === "completed"}
                         aria-label={`完成子任务 ${s.name}`}
-                        disabled={togglingSubId === s.id}
+                        disabled={togglingSubId === s.id || Boolean(issue.archived_at) || !canWrite}
                         onChange={() => void toggleSub(s)}
                         className="accent-brand-500 w-[15px] h-[15px] shrink-0"
                       />
@@ -804,6 +1288,7 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
                   ))}
                 </ul>
                 {/* 添加行（C.24 文案沿用，R3 裁决）：回车保存；TASK-004 起多层可挂（深度 ≤5 由后端 409 兜底） */}
+                {canWrite && !issue.archived_at && (
                 <div className="flex items-center gap-1.5 border border-dashed border-neutral-300 h-8 mt-2 px-2.5 rounded-md text-neutral-500 focus-within:border-brand-500">
                   <span>+</span>
                   <input
@@ -816,6 +1301,234 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
                     onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSubIssue(); } }}
                   />
                 </div>
+                )}
+              </div>
+
+              {/* 关联分区（C.42 / TASK-005 §3.1）：三分组固定顺序；空组不渲染；计数 (N) ≥40 变 amber */}
+              <div className="mt-5 border-t border-neutral-200 pt-3" data-sb-scope="drawer-rel-section">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[13px] font-medium inline-flex items-center gap-1.5">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-neutral-500"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                    关联 {relTotal > 0 ? <span className={relTotal >= 40 ? "text-amber-700 font-semibold" : "text-neutral-400"}>({relTotal})</span> : <span className="text-neutral-400">—</span>}
+                  </span>
+                  {relTotal >= 40 && <span className="text-[12px] text-amber-700">接近 50 上限</span>}
+                  <div className="ml-auto">
+                    {canWrite && !issue.archived_at && (
+                      <button onClick={() => setLinkOpen(true)} data-sb-scope="drawer-rel-add"
+                        className="h-[28px] px-2.5 border border-neutral-300 rounded-md text-[12px] text-neutral-600 hover:bg-neutral-50 inline-flex items-center gap-1">
+                        <span aria-hidden="true">＋</span> 添加关联
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {/* C.42 空态：无任何关联收缩为一行「关联 — [+ 添加]」 */}
+                {relTotal === 0 ? (
+                  canWrite && !issue.archived_at ? (
+                    <div className="text-[13px] text-neutral-400">
+                      关联 — <button className="text-brand-600 hover:text-brand-700" onClick={() => setLinkOpen(true)} data-sb-scope="drawer-rel-add-inline">＋ 添加</button>
+                    </div>
+                  ) : <div className="text-[13px] text-neutral-400">关联 —</div>
+                ) : (
+                  <>
+                    {/* C.42 三分组：阻塞于此（前置）/ 阻塞（后置）/ 相关（relates+duplicates 合并，duplicates 加角标） */}
+                    {([
+                      { key: "pre", title: "阻塞于此（前置）", rows: relGroups.pre },
+                      { key: "post", title: "阻塞（后置）", rows: relGroups.post },
+                      { key: "rel", title: "相关", rows: relGroups.rel },
+                    ] as const).filter((g) => g.rows.length > 0).map((g) => (
+                      <div key={g.key} className="mb-2.5" role="group" aria-label={g.title} data-sb-scope="drawer-rel-group" data-group={g.key}>
+                        <div className="text-[12px] font-semibold text-neutral-600 mb-1">{g.title}</div>
+                        {g.rows.map((x) => {
+                          const unfinished = x.related_issue.state_group !== "completed" && x.related_issue.state_group !== "cancelled";
+                          return (
+                            <div key={x.id} className="flex items-center gap-2 min-h-8 px-2 rounded-md text-[13px] hover:bg-neutral-50 group/rel" data-sb-scope="drawer-rel-row" data-rel-id={x.id}>
+                              {/* C.42 阻塞语义强化：未完成前置 alert-triangle(amber)；已完成 check(green) */}
+                              {x.relation_type === "is_blocked_by" && (
+                                <span className={unfinished ? "text-amber-500" : "text-emerald-500"} aria-hidden="true">{unfinished ? "⚠" : "✓"}</span>
+                              )}
+                              <span className="font-mono text-[12px] text-neutral-400">{x.related_issue.issue_key}</span>
+                              <span className="flex-1 min-w-0 truncate">
+                                {x.related_issue.name}
+                                {x.relation_type === "duplicates" && <span className="ml-1.5 text-[11px] text-neutral-400 bg-neutral-100 rounded px-1.5" data-sb-scope="drawer-rel-dup-badge">重复于</span>}
+                              </span>
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: STATE_COLOR[x.related_issue.state_group] ?? "#9ca3af" }} aria-label={`状态 ${x.related_issue.state_group}`} />
+                              {/* C.42 跳转箭头：点击跳目标详情，保留返回栈（嵌套抽屉 / 宿主回调） */}
+                              <button aria-label={`打开 ${x.related_issue.name}`} title={x.related_issue.name}
+                                onClick={() => openNested(x.related_issue_id)}
+                                className="w-6 h-6 inline-flex items-center justify-center text-neutral-400 hover:text-brand-600">→</button>
+                              {canWrite && !issue.archived_at && (
+                                <button aria-label={`删除关联 ${x.related_issue.issue_key}`} data-sb-scope="drawer-rel-del"
+                                  onClick={() => void delRelation(x.id)}
+                                  className="opacity-0 group-hover/rel:opacity-100 w-6 h-6 inline-flex items-center justify-center text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded">✕</button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+
+              {/* 工时分区（C.46 / TASK-006 §3.1）：估算 + 已耗主数字 + ⊕含子任务开关 + 进度条 + 记录列表 */}
+              <div className="mt-5 border-t border-neutral-200 pt-3" data-sb-scope="drawer-worklog-section">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[13px] font-medium inline-flex items-center gap-1.5">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-neutral-500"><circle cx="12" cy="14" r="8"/><path d="M12 14l3-3M10 2h4"/></svg>
+                    工时
+                  </span>
+                  <div className="ml-auto">
+                    {canWrite && !issue.archived_at && (
+                      <button onClick={() => setWlDialog({ edit: null })} data-sb-scope="drawer-worklog-add"
+                        className="h-[28px] px-2.5 border border-neutral-300 rounded-md text-[12px] text-neutral-600 hover:bg-neutral-50 inline-flex items-center gap-1">
+                        <span aria-hidden="true">⏱</span> 记工时
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {/* C.46 空态：无估算无记录 → 分区一行「工时 — [⏱ 记工时]」；估算 placeholder「设估算」 */}
+                {spentTotal === 0 && issue.estimate_minutes == null && worklogs.length === 0 ? (
+                  /* C.46 空态：无估算无记录 → 分区一行「工时 — [设估算] [⏱ 记工时]」 */
+                  <div className="text-[13px] text-neutral-400 flex items-center gap-2">
+                    工时 —
+                    {canWrite && !issue.archived_at && (
+                      <span className="relative">
+                        <button onClick={() => setEstMenuOpen((v) => !v)} data-sb-scope="drawer-est-set"
+                          className="h-7 px-2.5 border border-neutral-300 rounded-md text-[13px] text-neutral-600 hover:bg-neutral-50">设估算</button>
+                        {estMenuOpen && <EstimateMenu onPick={(m) => void setEstimate(m)} />}
+                      </span>
+                    )}
+                    {canWrite && !issue.archived_at && <button className="text-brand-600 hover:text-brand-700" onClick={() => setWlDialog({ edit: null })} data-sb-scope="drawer-worklog-add-inline">⏱ 记工时</button>}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-[80px_1fr] gap-x-2.5 gap-y-1 items-center">
+                    <span className="text-[13px] text-neutral-400">估算</span>
+                    <span>
+                      {issue.estimate_minutes == null ? (
+                        canWrite && !issue.archived_at ? (
+                          <div className="relative">
+                            <button onClick={() => setEstMenuOpen((v) => !v)} data-sb-scope="drawer-est-set"
+                              className="h-7 px-2.5 border border-neutral-300 rounded-md text-[13px] text-neutral-600 hover:bg-neutral-50">设估算</button>
+                            {estMenuOpen && <EstimateMenu onPick={(m) => void setEstimate(m)} />}
+                          </div>
+                        ) : <span className="text-neutral-400">—</span>
+                      ) : (
+                        <div className="relative">
+                          <button onClick={() => setEstMenuOpen((v) => !v)} data-sb-scope="drawer-est-menu"
+                            className="h-7 px-2.5 border border-neutral-300 rounded-md text-[13px] text-neutral-600 hover:bg-neutral-50 inline-flex items-center gap-1 font-mono">
+                            {fmtMinutes(issue.estimate_minutes)} <span aria-hidden="true" className="text-neutral-400">▾</span>
+                          </button>
+                          {estMenuOpen && <EstimateMenu onPick={(m) => void setEstimate(m)} />}
+                        </div>
+                      )}
+                    </span>
+                    <span className="text-[13px] text-neutral-400">已耗</span>
+                    <span className="flex items-baseline gap-2.5 flex-wrap">
+                      {/* C.46 已耗主数字：fmtMinutes（1d=8h）；子树口径为次级行 */}
+                      <span className={`text-[22px] font-semibold tabular-nums ${wlOver ? "text-red-600" : ""}`} data-sb-scope="drawer-worklog-spent">
+                        {fmtMinutes(wlCurrent)}
+                      </span>
+                      {/* C.46 ⊕含子任务开关（默认本任务口径；切换显「本任务 X · 子树估算 Y」） */}
+                      {!issue.archived_at && (
+                        <label className="inline-flex items-center gap-1 text-[12px] text-neutral-400 cursor-pointer select-none">
+                          <input type="checkbox" className="accent-brand-500" checked={!wlScopeSelf}
+                            onChange={(e) => setWlScopeSelf(!e.target.checked)} data-sb-scope="drawer-worklog-scope" />
+                          ⊕含子任务
+                        </label>
+                      )}
+                      {!wlScopeSelf && (
+                        <span className="text-[12px] text-neutral-400">
+                          本任务 {fmtMinutes(spentTotal)} · 子树估算 {fmtMinutes(wlSubtreeStats?.est ?? null)}
+                        </span>
+                      )}
+                      {/* C.46 超耗红显：超耗 +X + aria-label「超出估算 N%」 */}
+                      {wlOver && (
+                        <span className="text-[12px] text-red-600" role="img" aria-label={`超出估算 ${wlPct - 100}%`} data-sb-scope="drawer-worklog-over">
+                          超耗 +{fmtMinutes(spentTotal - (issue.estimate_minutes ?? 0))}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                )}
+                {/* C.46 进度条：spent/estimate；estimate 空时隐藏；>100% 红色；role=progressbar */}
+                {issue.estimate_minutes != null && issue.estimate_minutes > 0 && (spentTotal > 0 || worklogs.length > 0) && (
+                  <div className="ml-[90px]">
+                    <div className="h-2 rounded bg-neutral-100 overflow-hidden mt-2" role="progressbar"
+                      aria-valuenow={spentTotal} aria-valuemin={0} aria-valuemax={issue.estimate_minutes}
+                      aria-label={`工时进度 ${wlPct}%`}>
+                      <div className={`h-full rounded transition-all ${wlOver ? "bg-red-500" : "bg-brand-500"}`} style={{ width: `${Math.min(100, wlPct)}%` }} />
+                    </div>
+                    <div className="text-[11px] text-neutral-400 mt-0.5">
+                      {wlPct}%{wlOver ? `（超出 ${wlPct - 100}%）` : ""}
+                    </div>
+                  </div>
+                )}
+                {/* C.46 记录列表：日期/人/时长/备注(truncate)；⋯ 菜单 编辑/删除（仅本人或 PROJ_ADMIN） */}
+                <div className="mt-2.5">
+                  {worklogs.length > 0 && <div className="text-[12px] font-semibold text-neutral-400 mb-1">▾ 记录（{worklogs.length}）</div>}
+                  {worklogs.length === 0 ? (
+                    <div className="text-[13px] text-neutral-400">暂无记录</div>
+                  ) : worklogs.map((w) => {
+                    const mine = w.actor_id === myUserId;
+                    const rowMenuAllowed = (mine || isAdmin) && canWrite && !issue.archived_at;
+                    return (
+                      <div key={w.id} className="flex items-center gap-2.5 min-h-[34px] px-1.5 rounded-md text-[13px] hover:bg-neutral-50 group/wl" data-sb-scope="drawer-worklog-row">
+                        <span className="font-mono text-[12px] text-neutral-400 w-[86px] shrink-0">{w.worked_on}</span>
+                        <span className="w-5 h-5 rounded-full bg-neutral-200 text-neutral-700 text-[10px] font-semibold flex items-center justify-center shrink-0" aria-hidden="true">{initialOf(nameOfMember(w.actor_id))}</span>
+                        <span className="w-[52px] shrink-0 truncate">{nameOfMember(w.actor_id)}</span>
+                        <span className="font-mono font-medium w-11 text-right shrink-0 tabular-nums">{fmtMinutes(w.minutes)}</span>
+                        <span className="flex-1 min-w-0 truncate text-neutral-400" title={w.note}>{w.note}</span>
+                        {rowMenuAllowed && (
+                          <span className="relative">
+                            <button aria-label="记录操作" data-sb-scope="drawer-worklog-menu"
+                              className="opacity-0 group-hover/wl:opacity-100 w-[26px] h-[26px] inline-flex items-center justify-center text-neutral-400 hover:text-neutral-700"
+                              onClick={() => setWlMenuRow(wlMenuRow === w.id ? null : w.id)}>⋯</button>
+                            {wlMenuRow === w.id && (
+                              <div role="menu" className="absolute right-0 top-6 z-10 w-[120px] bg-white border border-neutral-200 rounded-lg shadow-lg py-1" data-sb-scope="drawer-worklog-row-menu">
+                                <button role="menuitem" data-sb-scope="drawer-worklog-edit"
+                                  onClick={() => { setWlMenuRow(null); setWlDialog({ edit: w }); }}
+                                  className="w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50">编辑</button>
+                                <button role="menuitem" data-sb-scope="drawer-worklog-del"
+                                  onClick={() => { setWlMenuRow(null); void delWorklog(w.id); }}
+                                  className="w-full text-left px-3 h-8 text-[13px] text-red-600 hover:bg-red-50">删除</button>
+                              </div>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 动态字段区（C.55 / TASK-008 §3.4）：按 sort_order 渲染；超出首屏折叠「更多属性 ▾」 */}
+              <div className="mt-5 border-t border-neutral-200 pt-3" data-sb-scope="drawer-cf-section">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[13px] font-medium inline-flex items-center gap-1.5">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-neutral-500"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></svg>
+                    自定义字段
+                  </span>
+                </div>
+                {/* C.55 Schema 加载失败 → 内置字段 +「自定义字段加载失败 · 重试」条 */}
+                {cfError ? (
+                  <div className="text-[13px] text-neutral-500">
+                    自定义字段加载失败 · <button className="text-brand-600 hover:text-brand-700" onClick={() => refreshSchema()} data-sb-scope="drawer-cf-retry">重试</button>
+                  </div>
+                ) : activeFields.length === 0 ? (
+                  <div className="text-[13px] text-neutral-400">暂无自定义字段</div>
+                ) : (
+                  <>
+                    {(cfMoreOpen ? activeFields : activeFields.slice(0, 2)).map((f) => (
+                      <CfRow key={f.id} field={f} value={cfValues[f.key]} editable={canWrite && !issue.archived_at} onSave={(v) => void setFieldValue(f.key, v)} members={members} />
+                    ))}
+                    {activeFields.length > 2 && (
+                      <button className="text-brand-600 hover:text-brand-700 text-[13px] py-1" data-sb-scope="drawer-cf-more"
+                        onClick={() => setCfMoreOpen((v) => !v)}>
+                        {cfMoreOpen ? "收起属性 ▴" : `更多属性 ▾（${activeFields.length - 2}）`}
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
 
               {/* 元信息（C.6） */}
@@ -922,36 +1635,101 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
           )}
 
           {tab === "activity" && (
-            <div>
-              {/* 时间线聚合（C.25） */}
-              {activities.length === 0 ? (
-                <div className="text-[13px] text-neutral-500 py-8 text-center" data-sb-scope="drawer-activity-empty">暂无操作记录</div>
+            <div data-sb-scope="drawer-activity">
+              {/* C.61 过滤器：字段（全部▾）与操作人（⋯▾）双下拉；过滤态 URL 同源（本迭代不落 URL，菜单内选中态回显） */}
+              <div className="flex justify-end gap-2 pt-2.5 pb-1">
+                <div className="relative">
+                  <button className="h-7 px-2.5 border border-neutral-300 rounded-md text-[13px] text-neutral-600 hover:bg-neutral-50"
+                    aria-haspopup="menu" aria-label="字段过滤器" data-sb-scope="act-field-toggle"
+                    onClick={() => { setActFieldMenu((v) => !v); setActActorMenu(false); }}>
+                    {actFieldFilter || "全部"} ▾
+                  </button>
+                  {actFieldMenu && (
+                    <div role="menu" className="absolute right-0 top-8 z-10 w-[150px] bg-white border border-neutral-200 rounded-lg shadow-lg py-1" data-sb-scope="act-field-menu">
+                      {([["全部", ""], ["状态", "state"], ["优先级", "priority"], ["工时", "worklog"], ["关联", "relation"]] as Array<[string, string]>).map(([n, v]) => (
+                        <button key={n} role="menuitem" data-sb-scope="act-field-item"
+                          onClick={() => { setActFieldFilter(v); setActFieldMenu(false); }}
+                          className={`w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50 ${actFieldFilter === v ? "bg-brand-50 text-brand-600 font-medium" : ""}`}>{n}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="relative">
+                  <button className="h-7 px-2.5 border border-neutral-300 rounded-md text-[13px] text-neutral-600 hover:bg-neutral-50"
+                    aria-haspopup="menu" aria-label="操作人过滤器" data-sb-scope="act-actor-toggle"
+                    onClick={() => { setActActorMenu((v) => !v); setActFieldMenu(false); }}>
+                    ⋯ ▾
+                  </button>
+                  {actActorMenu && (
+                    <div role="menu" className="absolute right-0 top-8 z-10 w-[160px] bg-white border border-neutral-200 rounded-lg shadow-lg py-1" data-sb-scope="act-actor-menu">
+                      <button role="menuitem" data-sb-scope="act-actor-item"
+                        onClick={() => { setActActorFilter(""); setActActorMenu(false); }}
+                        className={`w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50 ${!actActorFilter ? "bg-brand-50 text-brand-600 font-medium" : ""}`}>全部操作人</button>
+                      {activityGroups.length > 0 && (
+                        <div className="h-px bg-neutral-100 my-1" />
+                      )}
+                      {/* 操作人候选 = 当前时间线里出现过的 actor（C.61 ⋯▾；含 ⚙系统） */}
+                      {Array.from(new Set(activityGroups.map((g) => g.actor?.display_name ?? "系统"))).map((n) => (
+                        <button key={n} role="menuitem" data-sb-scope="act-actor-item"
+                          onClick={() => { setActActorFilter(n); setActActorMenu(false); }}
+                          className={`w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50 ${actActorFilter === n ? "bg-brand-50 text-brand-600 font-medium" : ""}`}>{n}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* C.61 空态：暂无动态——第一次修改将出现在这里 */}
+              {activityGroups.length === 0 ? (
+                <div className="flex flex-col items-center gap-2 py-10 text-neutral-400" data-sb-scope="drawer-activity-empty">
+                  <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#d4d4d4" strokeWidth="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+                  <div className="text-[15px] font-semibold text-neutral-600">暂无动态——第一次修改将出现在这里</div>
+                </div>
               ) : (
                 <>
-                  <ol className="flex flex-col gap-2" data-sb-scope="drawer-activity-list">
-                    {activities.map((a) => (
-                      <li key={a.id} className="flex gap-2 text-[13px]">
-                        {/* 后端行内是平铺的 actor_name（不是嵌套 actor 对象），
-                            epoch 是毫秒浮点而非 ISO 串——旧代码两处都取错，导致恒显示「系 / 系统」 */}
-                        <span className="w-6 h-6 rounded-full bg-neutral-200 text-neutral-700 text-[10px] font-semibold flex items-center justify-center shrink-0" aria-hidden="true">
-                          {initialOf(a.actor_name)}
-                        </span>
-                        <div className="flex-1">
-                          <span className="text-neutral-900">{a.actor_name ?? "系统"}</span>
-                          <span className="text-neutral-500 ml-1.5">{a.verb}{a?.field ? ` ${a.field}` : ""}{a?.old_value != null && a?.new_value != null ? ` 从 ${a.old_value} 改为 ${a.new_value}` : ""}</span>
-                          <span className="ml-2 text-neutral-400 text-[12px]">{a.created_at?.slice(0, 16).replace("T", " ")}</span>
-                        </div>
-                      </li>
-                    ))}
+                  <ol className="flex flex-col" data-sb-scope="drawer-activity-list">
+                    {activityGroups.map((g, gi) => {
+                      const day = dayLabelOf(g.created_at);
+                      const prev = gi > 0 ? activityGroups[gi - 1] : undefined;
+                      const prevDay = prev ? dayLabelOf(prev.created_at) : null;
+                      const sys = !g.actor?.id;
+                      const actorName = g.actor?.display_name ?? "系统";
+                      return (
+                        <li key={g.id} aria-label={g.comment ?? g.verb}>
+                          {/* C.61 日期分区 sticky 头（今天 / 昨天 / M月d日） */}
+                          {day !== prevDay && (
+                            <div className="sticky top-0 bg-white text-[12px] text-neutral-400 border-b border-neutral-200 py-2.5 mt-2 first:mt-0 z-[1]" data-sb-scope="act-day">{day}</div>
+                          )}
+                          {/* C.61 epoch 组：组头行（时间 mono + 头像 + 操作者 + 动作摘要）+ 缩进字段行 */}
+                          <div className="relative ml-2 pl-5 border-l-2 border-neutral-200 py-2" data-sb-scope="act-group">
+                            <div className="flex items-center gap-2 text-[13px]">
+                              <span className="font-mono text-[12px] text-neutral-400 w-11 shrink-0">{(g.created_at ?? "").slice(11, 16)}</span>
+                              {sys ? (
+                                <span className="text-neutral-400" title="系统事件" aria-label="系统事件" data-sb-scope="act-sys-avatar">⚙系统</span>
+                              ) : (
+                                <span className="w-5 h-5 rounded-full bg-neutral-200 text-neutral-700 text-[10px] font-semibold flex items-center justify-center shrink-0" aria-hidden="true">{initialOf(actorName)}</span>
+                              )}
+                              <span className={`font-medium ${sys ? "text-neutral-400" : "text-neutral-900"}`}>{actorName}</span>
+                              <span className="text-neutral-600">{g.comment || verbLabel(g.verb)}</span>
+                            </div>
+                            {(g.items ?? []).map((it, i) => (
+                              <div key={i} className="flex flex-wrap items-baseline gap-2 pt-0.5 pl-[22px] text-[12.5px] text-neutral-400" data-sb-scope="act-field-row">
+                                <span className="text-neutral-600">{it.field_label ?? it.field}</span>
+                                {it.old_value != null && it.old_value !== "" ? <span className="line-through">{it.old_value}</span> : <span>—</span>}
+                                <span aria-hidden="true">→</span>
+                                <span className="font-semibold text-neutral-900">{it.new_value ?? "—"}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </li>
+                      );
+                    })}
                   </ol>
-                  {/* 游标 30 条/页 + 底部「── 加载更多 ──」 */}
+                  {/* C.61 按钮式「加载更早的动态」（审计翻阅场景，不做无限滚动）【R4】 */}
                   {activityHasMore && (
-                    <div className="text-center mt-3">
-                      <button
-                        onClick={() => void loadMoreActivities()}
-                        className="text-[13px] text-neutral-500 hover:text-neutral-900 px-4 py-1.5 border-t border-b border-dashed border-neutral-200"
-                        data-sb-scope="drawer-activity-more"
-                      >── 加载更多 ──</button>
+                    <div className="flex justify-center py-4">
+                      <button onClick={() => loadActivityGroups(true)} data-sb-scope="act-load-earlier"
+                        className="h-[28px] px-3 border border-neutral-300 rounded-md text-[13px] text-neutral-600 hover:bg-neutral-50">加载更早的动态</button>
                     </div>
                   )}
                 </>
@@ -1055,6 +1833,85 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
           layer="z-[70]"
           onClose={() => setTreeNodeIssueId(null)}
           onChanged={() => { void refresh(); onChanged?.(); }}
+        />
+      )}
+
+      {/* ── Sprint-2 弹层 ── */}
+      {/* M-LINK 添加关联（C.43） */}
+      {linkOpen && (
+        <AddRelationModal
+          slug={slug} projectId={projectId} issueId={issueId} issueName={issue.name}
+          excludedIds={relLinkedIds}
+          onClose={() => setLinkOpen(false)}
+          onCreated={() => { refreshRelations(); onChanged?.(); }}
+        />
+      )}
+      {/* M-WORKLOG 工时填报/编辑（C.47） */}
+      {wlDialog && (
+        <WorkLogDialog
+          slug={slug} projectId={projectId} issueId={issueId} issueName={issue.name}
+          edit={wlDialog.edit ? { id: wlDialog.edit.id, minutes: wlDialog.edit.minutes, worked_on: wlDialog.edit.worked_on, note: wlDialog.edit.note } : null}
+          onClose={() => setWlDialog(null)}
+          onSaved={() => { refreshWorklogs(); void refresh(); onChanged?.(); }}
+        />
+      )}
+      {/* M-ASSIGN 转交弹层（C.50） */}
+      {assignOpen && (
+        <AssigneePickerModal
+          slug={slug} projectId={projectId} issueId={issueId} issueName={issue.name}
+          currentIds={assigneeIds} myUserId={myUserId}
+          onClose={() => setAssignOpen(false)}
+          onSaved={() => { void refresh(); onChanged?.(); }}
+        />
+      )}
+      {/* M-DUP 复制选项（C.57） */}
+      {dupOpen && (
+        <DuplicateDialog
+          slug={slug} projectId={projectId} issueId={issueId}
+          subCount={dupSubCount ?? subIssues.length}
+          issue={{
+            issue_key: issue.issue_key, name: issue.name, assigneeIds,
+            labelCount: issueLabelIds.size,
+            cfCount: Object.keys(cfValues).filter((k) => cfValues[k] != null && cfValues[k] !== false && cfValues[k] !== "").length,
+            start: issue.start_date ?? null, target: issue.target_date ?? null,
+          }}
+          onClose={() => setDupOpen(false)}
+          onCreated={(newId) => { onChanged?.(); openNested(newId); }}
+        />
+      )}
+      {/* M-ARCH 归档确认 + 撤销 Toast（C.58） */}
+      {archOpen && (
+        <ArchiveConfirmDialog
+          slug={slug} projectId={projectId} issueId={issueId}
+          issueKey={issue.issue_key} issueName={issue.name}
+          descendantCount={archDescCount}
+          onClose={() => setArchOpen(false)}
+          onArchived={() => { onClose(); onChanged?.(); }}
+          onRestored={() => { onChanged?.(); }}
+        />
+      )}
+      {/* M-BLOCKED 完成被拦截（C.44；详情状态菜单入口，管理员可强制完成） */}
+      {blockedDlg && (
+        <BlockedCompleteDialog
+          issueName={blockedDlg.issueName}
+          blockers={blockedDlg.blockers}
+          isAdmin={isAdmin}
+          onClose={() => setBlockedDlg(null)}
+          onForce={async (comment) => {
+            try {
+              await IssueAPI.patch(slug, projectId, issueId, { state_id: blockedDlg.stateId, force: true, comment });
+              toast("已强制完成（管理员通道）· 已记录说明", "warning");
+              setBlockedDlg(null);
+              await refresh(); saved(); onChanged?.();
+            } catch (e: unknown) {
+              const err = e as ApiError;
+              toast(err?.details?.[0]?.message ?? err?.message ?? "强制完成失败", "error");
+            }
+          }}
+          onJump={(b) => {
+            const hit = relations.find((r) => r.related_issue.issue_key === b.issue_key);
+            if (hit) openNested(hit.related_issue_id);
+          }}
         />
       )}
 

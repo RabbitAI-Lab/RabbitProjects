@@ -5,8 +5,20 @@ import { ProjectSidebar } from "../components/ProjectSidebar";
 import { IssueDrawer } from "../components/IssueDrawer";
 import { NewTaskModal } from "../components/NewTaskModal";
 import { StateBadge } from "../components/StateBadge";
-import { IssueAPI, ProjectAPI, unwrap } from "../services/api";
+import { AvatarStack, fmtMinutes } from "../components/issue-dialogs";
+import {
+  AssigneeAPI,
+  FieldAPI,
+  IssueAPI,
+  ProjectAPI,
+  ProjectMemberAPI,
+  RelationAPI,
+  unwrap,
+  type CustomFieldDef,
+  type RelationRow,
+} from "../services/api";
 import type { ApiError } from "../services/axios";
+import { useStores } from "../stores";
 import { toast } from "../components/Toast";
 import { LabelsAdminModal } from "./labels-admin";
 import type { Issue, SubtreeData } from "@rp/types";
@@ -30,6 +42,82 @@ tr.row-dragging td{opacity:.5}
 `;
 
 type ExpandPhase = "loading" | "loaded" | "error";
+
+/** C.51 快速指派浮层：单人快速选择（CONTRIBUTOR+ 可选；COMMENTER/VIEWER 灰显标注）。 */
+function QuickAssignPop({ members, onPick }: {
+  members: Array<{ id: string; user: { id: string; display_name: string; email: string }; role: number }>;
+  onPick: (userId: string) => void;
+}) {
+  const assignable = members.filter((m) => m.role >= 15);
+  return (
+    <div role="menu" data-sb-scope="list-quick-assign-pop" aria-label="快速指派候选"
+      className="absolute left-0 top-6 z-30 w-[240px] bg-white border border-neutral-200 rounded-lg shadow-lg py-1 max-h-[240px] overflow-y-auto">
+      {assignable.length === 0 ? (
+        <div className="px-3 py-2 text-[13px] text-neutral-400">无可指派成员</div>
+      ) : assignable.map((m) => (
+        <button key={m.id} role="menuitem" data-sb-scope="list-quick-assign-item"
+          onClick={(e) => { e.stopPropagation(); onPick(m.user.id); }}
+          className="w-full text-left px-3 h-9 text-[13px] hover:bg-neutral-50 flex items-center gap-2">
+          <span className="w-5 h-5 rounded-full text-white text-[10px] font-semibold flex items-center justify-center shrink-0"
+            style={{ background: "#3b82f6" }} aria-hidden="true">{Array.from(m.user.display_name)[0]}</span>
+          <span className="flex-1 truncate">{m.user.display_name}</span>
+          <span className="text-[11px] text-neutral-400 font-mono">{m.user.email}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** C.56 动态列值渲染（select=色块文本 / member=头像 / date=yyyy-MM-dd / currency=¥ / multi=chips 前 2+N）。 */
+function CfCell({ field, value, nameOf }: {
+  field: CustomFieldDef | undefined;
+  value: unknown;
+  nameOf: (uid: string) => string;
+}) {
+  if (value == null || value === false || value === "") return <span className="text-neutral-400">—</span>;
+  if (!field) return <span className="text-[12px] text-neutral-600 truncate">{String(value)}</span>;
+  if (field.type === "select") {
+    const opt = field.options.find((o) => o.value === value);
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[12px] text-neutral-600">
+        <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: opt?.color ?? "#999" }} />
+        {opt?.label ?? String(value)}
+      </span>
+    );
+  }
+  if (field.type === "multi_select") {
+    const vals = Array.isArray(value) ? value : [value];
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        {vals.slice(0, 2).map((v) => {
+          const opt = field.options.find((o) => o.value === v);
+          return (
+            <span key={String(v)} className="inline-flex items-center gap-1 text-[12px] text-neutral-600">
+              <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: opt?.color ?? "#999" }} />{opt?.label ?? String(v)}
+            </span>
+          );
+        })}
+        {vals.length > 2 && <span className="text-neutral-400">+{vals.length - 2}</span>}
+      </span>
+    );
+  }
+  if (field.type === "member") {
+    const name = nameOf(String(value));
+    return (
+      <span className="inline-flex items-center gap-1 text-[12px]">
+        <span className="w-5 h-5 rounded-full bg-neutral-200 text-neutral-700 text-[10px] font-semibold flex items-center justify-center" aria-hidden="true">{Array.from(name)[0]}</span>
+      </span>
+    );
+  }
+  if (field.type === "currency") {
+    return <span className="font-mono text-[12px]">¥{Number(value).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</span>;
+  }
+  if (field.type === "date") return <span className="font-mono text-[12px]">{String(value)}</span>;
+  if (field.type === "checkbox") {
+    return <span className={value ? "text-emerald-600" : "text-neutral-400"}>{value ? "开" : "关"}</span>;
+  }
+  return <span className="text-[12px] text-neutral-600 truncate">{String(value)}</span>;
+}
 
 export default function IssuesList() {
   const { workspaceSlug, projectId } = useParams<{ workspaceSlug: string; projectId: string }>();
@@ -72,6 +160,27 @@ export default function IssuesList() {
   const [moveSearch, setMoveSearch] = useState("");
   /** 响应式断点（§3.7：<768px 拖拽禁用，改行菜单） */
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
+
+  // ── Sprint-2 列表新增（TASK-005/006/007/008/009 §3.3/§3.4/§3.5）──
+  const stores = useStores();
+  const myRole = stores.permission.effectiveProjectRole(projectId, workspaceSlug);
+  const canWrite = myRole >= 15;
+  /** C.51 成员表（头像堆叠姓名解析 + 快速指派候选） */
+  const [members, setMembers] = useState<Array<{ id: string; user: { id: string; display_name: string; email: string }; role: number }>>([]);
+  /** C.56 动态列：Schema 自定义字段 + 已选列（localStorage 持久化） */
+  const [cfDefs, setCfDefs] = useState<CustomFieldDef[]>([]);
+  const [cfCols, setCfCols] = useState<string[]>([]);
+  /** C.48 工时列开关（默认开启，列选择器内切换） */
+  const [wlColumn, setWlColumn] = useState(true);
+  const [colMenuOpen, setColMenuOpen] = useState(false);
+  /** C.45 依赖图标数据：id -> { blocked, count }（可见行 relations 聚合） */
+  const [relInfo, setRelInfo] = useState<Record<string, { blocked: boolean; count: number }>>({});
+  /** C.45 ?blocked 只看被阻塞（Chip 回显） */
+  const [blockedFilter, setBlockedFilter] = useState(false);
+  /** C.59 归档视图开关（?archived=true 反向查） */
+  const [archivedView, setArchivedView] = useState(false);
+  /** C.51 快速指派浮层（行悬浮头像区 → 单人快速选择） */
+  const [quickAssignFor, setQuickAssignFor] = useState<string | null>(null);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
@@ -127,8 +236,13 @@ export default function IssuesList() {
   async function load() {
     try {
       const [iRes, pRes] = await Promise.all([
-        // 排序参数名是 order_by（issue_query.apply_order 白名单）；树形模式下仅同层兄弟有序
-        IssueAPI.list(workspaceSlug!, projectId!, { order_by: "sort_order" }),
+        // 排序参数名是 order_by（issue_query.apply_order 白名单）；树形模式下仅同层兄弟有序。
+        // C.45 ?blocked / C.59 ?archived 为服务端筛选白名单参数（TASK-005 §4.2.5 / TASK-009 §4.2.4）。
+        IssueAPI.list(workspaceSlug!, projectId!, {
+          order_by: "sort_order",
+          ...(blockedFilter ? { blocked: true } : {}),
+          ...(archivedView ? { archived: true } : {}),
+        }),
         ProjectAPI.detail(workspaceSlug!, projectId!),
       ]);
       setIssues(((iRes as unknown as { data: Issue[] }).data));
@@ -146,7 +260,84 @@ export default function IssuesList() {
     const handle = setTimeout(() => { void load(); }, 0);
     return () => clearTimeout(handle);
     // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceSlug, projectId, blockedFilter, archivedView]);
+
+  // 成员表 + 字段 Schema（C.51 / C.56）：进入页面取一次
+  useEffect(() => {
+    ProjectMemberAPI.list(workspaceSlug!, projectId!, { per_page: 100 })
+      .then((r) => setMembers(unwrap<typeof members>(r) ?? []))
+      .catch(() => {});
+    FieldAPI.schema(workspaceSlug!, projectId!)
+      .then((r) => setCfDefs(unwrap<{ custom: CustomFieldDef[] }>(r)?.custom ?? []))
+      .catch(() => setCfDefs([]));
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceSlug, projectId]);
+  // 列选择持久化（C.56：工时列 + 自定义列）
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`issue-list:cols:${projectId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { wl?: boolean; cf?: string[] };
+        if (typeof parsed.wl === "boolean") setWlColumn(parsed.wl);
+        if (Array.isArray(parsed.cf)) setCfCols(parsed.cf.filter((k) => k.startsWith("cf_")));
+      }
+    } catch { /* 私有模式 */ }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+  useEffect(() => {
+    try { localStorage.setItem(`issue-list:cols:${projectId}`, JSON.stringify({ wl: wlColumn, cf: cfCols })); } catch { /* ignore */ }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [wlColumn, cfCols, projectId]);
+
+  /** C.45 依赖图标：可见行 relations 聚合（bounded：前 60 行；50/任务上限天然有界）。
+   *  blocked = 存在未完成前置（is_blocked_by 且目标未完成/取消）；count = 任意关联数。 */
+  const relTickRef = useRef(0);
+  function loadRelationInfo(ids: string[]) {
+    const bounded = ids.filter((id) => !id.startsWith("temp-")).slice(0, 60);
+    if (!bounded.length) return;
+    const tick = ++relTickRef.current;
+    Promise.allSettled(bounded.map((id) => RelationAPI.list(workspaceSlug!, projectId!, id).then((r) => ({ id, rows: unwrap<RelationRow[]>(r) ?? [] }))))
+      .then((results) => {
+        if (tick !== relTickRef.current) return; // 过期响应丢弃
+        const next: Record<string, { blocked: boolean; count: number }> = {};
+        for (const res of results) {
+          if (res.status !== "fulfilled") continue;
+          const rows = res.value.rows;
+          next[res.value.id] = {
+            blocked: rows.some((x) => x.relation_type === "is_blocked_by"
+              && x.related_issue.state_group !== "completed" && x.related_issue.state_group !== "cancelled"),
+            count: rows.length,
+          };
+        }
+        setRelInfo(next);
+      });
+  }
+  const nameOf = (uid: string) => members.find((m) => m.user.id === uid)?.user.display_name ?? "…";
+  /** C.51 认领（空集合才可；点击即 POST 无需确认） */
+  async function claimRow(id: string) {
+    try {
+      await AssigneeAPI.claim(workspaceSlug!, projectId!, id);
+      toast("已认领该任务", "ok");
+      await load();
+    } catch (e: unknown) {
+      const err = e as ApiError;
+      toast(err?.details?.[0]?.message ?? err?.message ?? "认领失败", "error");
+    }
+  }
+  /** C.51 快速指派（单人快速选择 → PUT 全量集合追加） */
+  async function quickAssign(issueId: string, userId: string) {
+    setQuickAssignFor(null);
+    const cur = (issueById.get(issueId)?.assignee_ids ?? []);
+    if (cur.includes(userId)) return;
+    try {
+      await AssigneeAPI.put(workspaceSlug!, projectId!, issueId, { assignee_ids: [...cur, userId] });
+      toast("执行人已更新", "ok");
+      await load();
+    } catch (e: unknown) {
+      const err = e as ApiError;
+      toast(err?.details?.[0]?.message ?? err?.message ?? "指派失败", "error");
+    }
+  }
   const [sp, setSp] = useSearchParams();
   const peekId = sp.get("peekIssue");
   function openPeek(id: string) { if (id.startsWith("temp-")) return; setSp((prev) => { const n = new URLSearchParams(prev); n.set("peekIssue", id); return n; }, { preventScrollReset: true }); }
@@ -159,7 +350,12 @@ export default function IssuesList() {
     Object.values(childrenByParent).flat().forEach((i) => m.set(i.id, i));
     return m;
   }, [issues, childrenByParent]);
-  const roots = useMemo(() => issues.filter((i) => !i.parent_id), [issues]);
+  /** C.59 归档视图：后端 ?archived=true 为「含归档」超集（T9-12 契约），UI 按原型口径只显示归档行。 */
+  const listedIssues = useMemo(
+    () => (archivedView ? issues.filter((i) => i.archived_at) : issues),
+    [issues, archivedView],
+  );
+  const roots = useMemo(() => listedIssues.filter((i) => !i.parent_id), [listedIssues]);
   const hasKids = (it: Issue) => (it.sub_issues_count ?? 0) > 0 || (childrenByParent[it.id]?.length ?? 0) > 0;
   const isExpanded = (it: Issue) => Boolean(childrenByParent[it.id]?.length) && !collapsed.has(it.id);
 
@@ -176,6 +372,7 @@ export default function IssuesList() {
     walk(roots, 1);
     return out;
   }, [roots, childrenByParent, collapsed]);
+
 
   /** 已加载子树内的后代集合（移动候选排除自身与后代，C.63；后端仍有 CTE 兜底） */
   function descendantsLoaded(id: string): Set<string> {
@@ -368,11 +565,16 @@ export default function IssuesList() {
     const from = issueById.get(fromId);
     const payload: Parameters<typeof IssueAPI.patch>[3] = { sort_order: newSort };
     if (from && (from.parent_id ?? "") !== parentId) payload.parent_id = parentId === "" ? null : parentId;
+    const oldParent = from?.parent_id ?? null;
     try {
       await IssueAPI.patch(workspaceSlug!, projectId!, fromId, payload);
       toast("已调整顺序");
       await load();
+      // 目标层与旧父缓存都刷新：跨父移动时旧行残留会导致 React duplicate key
       if (childrenByParent[parentId] || parentId === "") await loadChildren(parentId, true);
+      if (oldParent && oldParent !== (parentId === "" ? null : parentId) && childrenByParent[oldParent]) {
+        await loadChildren(oldParent, true).catch(() => {});
+      }
     } catch (e: unknown) {
       toast(e instanceof Error ? e.message : "调整顺序失败", "error");
     }
@@ -466,15 +668,17 @@ export default function IssuesList() {
   }, [roots, childrenByParent, openSet, collapsed, expandState]);
 
   // 弹层/菜单外点击关闭（CLAUDE.md 教训 #4：mousedown 阶段 + closest 判 scope）
-  useEffect(() => {    if (!expandMenuOpen && rowMenuFor == null) return;
+  useEffect(() => {    if (!expandMenuOpen && rowMenuFor == null && !colMenuOpen && quickAssignFor == null) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as HTMLElement | null;
       if (expandMenuOpen && !t?.closest('[data-sb-scope="tree-expand-dd"]')) setExpandMenuOpen(false);
       if (rowMenuFor != null && !t?.closest('[data-sb-scope="tree-row-menu-wrap"]')) setRowMenuFor(null);
+      if (colMenuOpen && !t?.closest('[data-sb-scope="list-cols-dd"]')) setColMenuOpen(false);
+      if (quickAssignFor != null && !t?.closest('[data-sb-scope="list-quick-assign-pop"]') && !t?.closest('[data-sb-scope="list-quick-assign"]') && !t?.closest('[data-sb-scope="list-unassigned"]')) setQuickAssignFor(null);
     };
     document.addEventListener("mousedown", onDown, true);
     return () => document.removeEventListener("mousedown", onDown, true);
-  }, [expandMenuOpen, rowMenuFor]);
+  }, [expandMenuOpen, rowMenuFor, colMenuOpen, quickAssignFor]);
 
   // 确认弹层 Esc 取消（C.39：聚焦陷阱，Esc 取消并还原）
   useEffect(() => {
@@ -487,17 +691,24 @@ export default function IssuesList() {
   // 服务端筛选参数（占位 — 当前接口未全量接；保留 UI 入口，未来由 IssueAPI.list 透传）
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q && chips.length === 0) return issues;
-    return issues.filter((it) => {
+    if (!q && chips.length === 0) return listedIssues;
+    return listedIssues.filter((it) => {
       if (q && !(it.name.toLowerCase().includes(q) || it.issue_key.toLowerCase().includes(q))) return false;
       for (const c of chips) {
         if (c.k === "state" && it.state_name !== c.v) return false;
       }
       return true;
     });
-  }, [issues, search, chips]);
+  }, [listedIssues, search, chips]);
   /** 筛选态走平铺（全局视角）；清空筛选回到树形（§3.1 排序语义：树形 order_by 仅同层兄弟） */
   const filterActive = Boolean(search.trim() || chips.length);
+
+  /** C.45 依赖图标：可见行变化时拉取 relations 聚合（过期响应丢弃）。 */
+  useEffect(() => {
+    const ids = filterActive ? filtered.map((i) => i.id) : visibleRows.map((r) => r.it.id);
+    loadRelationInfo(ids);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleRows, filtered, filterActive]);
 
   const total = issues.length;
 
@@ -557,7 +768,7 @@ export default function IssuesList() {
           aria-level={depth}
           aria-expanded={kids ? exp : undefined}
           tabIndex={0}
-          className={`group cursor-pointer hover:bg-neutral-50 ${isTemp ? "opacity-60" : ""} ${cycleIds.includes(it.id) ? "cycle-flash" : ""} ${draggingId === it.id ? "row-dragging" : ""}`}
+          className={`group cursor-pointer hover:bg-neutral-50 ${isTemp ? "opacity-60" : ""} ${it.archived_at ? "opacity-60 hover:opacity-85" : ""} ${cycleIds.includes(it.id) ? "cycle-flash" : ""} ${draggingId === it.id ? "row-dragging" : ""}`}
           onClick={() => openPeek(it.id)}
           onKeyDown={onRowKeyDown}
           onDragOver={tree && !isMobile ? (e) => onRowDragOver(e, it) : undefined}
@@ -593,6 +804,25 @@ export default function IssuesList() {
           </td>
           <td className={`px-3 py-2.5 border-b border-neutral-100 text-[13px] relative ${tree && depth > 1 ? "border-l border-neutral-200" : ""}`}>
             <span className="flex items-center gap-1 min-w-0">
+              {/* C.45 列表行依赖图标：标题左侧 12px link/alert 图标（存在任意关联时；被阻塞 amber） */}
+              {(relInfo[it.id]?.count ?? 0) > 0 && (
+                <span
+                  className={relInfo[it.id]?.blocked ? "text-amber-500" : "text-neutral-400"}
+                  title={relInfo[it.id]?.blocked ? "被未完成前置阻塞" : "存在关联"}
+                  aria-label={relInfo[it.id]?.blocked ? "被未完成前置阻塞" : "存在关联"}
+                  data-sb-scope="list-rel-icon"
+                >
+                  {!isTemp && (relInfo[it.id]?.blocked
+                    ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>
+                    : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>)}
+                </span>
+              )}
+              {/* C.59 归档行：archive 图标（带文本 tooltip） */}
+              {it.archived_at && (
+                <span className="text-neutral-400" title="已归档" aria-label="已归档" data-sb-scope="list-arch-icon">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/></svg>
+                </span>
+              )}
               <span className={`truncate ${tree && depth === 1 ? "font-medium" : ""}`}>{it.name}</span>
               {isTemp && <span className="ml-1 font-mono text-[11px] text-neutral-400">…</span>}
               {/* 行悬浮「＋」（C.37/C.38）：第 5 层不渲染（前端预判，E2E-04） */}
@@ -651,7 +881,58 @@ export default function IssuesList() {
             )}
           </td>
           <td className="px-3 py-2.5 border-b border-neutral-100"><StateBadge group={it.state_group ?? "unstarted"} name={it.state_name ?? "—"} /></td>
-          <td className="px-3 py-2.5 border-b border-neutral-100 text-[13px]">{it.assignee ? it.assignee.name : <span className="text-neutral-400">—</span>}</td>
+          {/* C.51 列表负责人列：20px 头像堆叠；空显示「未指派」neutral 徽标（可点开快速指派）；悬浮「🖐」认领 */}
+          <td className="px-3 py-2.5 border-b border-neutral-100">
+            {it.assignee_ids && it.assignee_ids.length > 0 ? (
+              <span className="inline-flex items-center gap-1 group/av flex-nowrap whitespace-nowrap">
+                <AvatarStack names={it.assignee_ids.map(nameOf)} size={20} />
+                {canWrite && !it.archived_at && (
+                  <span className="relative">
+                    <button
+                      data-sb-scope="list-quick-assign"
+                      aria-label={`快速指派 ${it.name}`}
+                      className="opacity-0 group-hover/av:opacity-100 transition-opacity w-5 h-5 rounded inline-flex items-center justify-center text-neutral-400 hover:bg-brand-50 hover:text-brand-600 text-[12px] shrink-0"
+                      onClick={(e) => { e.stopPropagation(); setQuickAssignFor(quickAssignFor === it.id ? null : it.id); }}
+                    >＋</button>
+                    {quickAssignFor === it.id && (
+                      <QuickAssignPop members={members} onPick={(uid) => void quickAssign(it.id, uid)} />
+                    )}
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 group/av flex-nowrap whitespace-nowrap">
+                <button
+                  className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-0.5 text-[12px] text-neutral-500 hover:bg-neutral-200 shrink-0"
+                  aria-label="未指派"
+                  data-sb-scope="list-unassigned"
+                  onClick={(e) => { e.stopPropagation(); if (canWrite && !it.archived_at) setQuickAssignFor(quickAssignFor === it.id ? null : it.id); }}
+                >未指派</button>
+                {canWrite && !it.archived_at && !isTemp && (
+                  <>
+                    <button
+                      data-sb-scope="list-claim"
+                      aria-label="认领该任务"
+                      title="认领该任务"
+                      className="opacity-0 group-hover/av:opacity-100 transition-opacity w-6 h-6 rounded inline-flex items-center justify-center text-neutral-400 hover:bg-brand-50 hover:text-brand-600 shrink-0"
+                      onClick={(e) => { e.stopPropagation(); void claimRow(it.id); }}
+                    >🖐</button>
+                    <span className="relative">
+                      <button
+                        data-sb-scope="list-quick-assign"
+                        aria-label={`快速指派 ${it.name}`}
+                        className="opacity-0 group-hover/av:opacity-100 transition-opacity w-5 h-5 rounded inline-flex items-center justify-center text-neutral-400 hover:bg-brand-50 hover:text-brand-600 text-[12px] shrink-0"
+                        onClick={(e) => { e.stopPropagation(); setQuickAssignFor(quickAssignFor === it.id ? null : it.id); }}
+                      >＋</button>
+                      {quickAssignFor === it.id && (
+                        <QuickAssignPop members={members} onPick={(uid) => void quickAssign(it.id, uid)} />
+                      )}
+                    </span>
+                  </>
+                )}
+              </span>
+            )}
+          </td>
           <td className="px-3 py-2.5 border-b border-neutral-100 text-[13px]">
             {it.target_date ? (
               overdue
@@ -659,6 +940,34 @@ export default function IssuesList() {
                 : <span className="font-mono text-xs text-neutral-500">{it.target_date}</span>
             ) : <span className="text-neutral-400">—</span>}
           </td>
+          {/* C.48 工时列：⏱ 5.5/8h；超耗红；无估算仅 ⏱ 5.5h；无记录灰显 — */}
+          {wlColumn && (
+            <td className="px-3 py-2.5 border-b border-neutral-100 w-[96px]" data-sb-scope="list-wl-cell">
+              {(() => {
+                const spent = it.spent_minutes ?? 0;
+                const est = it.estimate_minutes ?? null;
+                if (!spent && est == null) return <span className="text-neutral-400">—</span>;
+                const over = est != null && spent > est;
+                return (
+                  <span className={`inline-flex items-center gap-1 text-[12px] tabular-nums ${over ? "text-red-600" : "text-neutral-600"}`}
+                    title={est != null ? `估算 ${fmtMinutes(est)}` : undefined}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="14" r="8"/><path d="M12 14l3-3M10 2h4"/></svg>
+                    {est != null ? `${fmtMinutes(spent)}/${fmtMinutes(est)}` : fmtMinutes(spent)}
+                  </span>
+                );
+              })()}
+            </td>
+          )}
+          {/* C.56 动态列值渲染：select=色块文本 / member=头像 / date=yyyy-MM-dd / currency=¥ / multi=chips 前 2+N */}
+          {cfCols.map((key) => {
+            const f = cfDefs.find((d) => d.key === key);
+            const v = ((it as unknown as { custom_fields?: Record<string, unknown> }).custom_fields ?? {})[key];
+            return (
+              <td key={key} className="px-3 py-2.5 border-b border-neutral-100 w-[110px]" data-sb-scope="list-cf-cell">
+                <CfCell field={f} value={v} nameOf={nameOf} />
+              </td>
+            );
+          })}
           {/* 子任务进度列（C.37：独立列 88px；直接子级口径 annotate；无子级 —） */}
           <td className="px-3 py-2.5 border-b border-neutral-100 w-[88px]">
             {y > 0 ? (
@@ -676,7 +985,7 @@ export default function IssuesList() {
         {/* 行内快速加子任务输入行（C.38：目标行下方插入，缩进对齐目标行子级） */}
         {tree && quickSubOf === it.id && (
           <tr data-sb-scope="tree-quick-sub-row">
-            <td colSpan={6} className="border-b border-neutral-100 py-1">
+            <td colSpan={6 + (wlColumn ? 1 : 0) + cfCols.length} className="border-b border-neutral-100 py-1">
               <div className="flex items-center gap-2 h-[34px] px-2.5 my-1 border border-dashed border-neutral-300 rounded-md text-neutral-500 focus-within:border-brand-500 focus-within:bg-white transition-colors"
                 style={{ marginLeft: depth * 20 }}>
                 <span className="text-[13px]">＋</span>
@@ -717,8 +1026,59 @@ export default function IssuesList() {
           <div className="h-[53px] border-b border-neutral-200 flex items-center gap-2 px-5 bg-white shrink-0">
             <div><span className="text-[15px] font-semibold">任务列表</span>
               <span className="text-[13px] text-neutral-500 ml-2">{total} 个任务</span></div>
+            {/* C.59 归档视图入口：列表工具条「显示已归档」→ ?archived=true（URL 同源由 load 参数承载） */}
+            <button
+              onClick={() => setArchivedView((v) => !v)}
+              data-sb-scope="list-archived-toggle"
+              aria-pressed={archivedView}
+              className={`ml-auto h-[34px] px-2.5 inline-flex items-center gap-1.5 border rounded-md text-[13px] ${archivedView ? "border-brand-500 text-brand-600 bg-brand-50" : "border-neutral-300 text-neutral-700 hover:bg-neutral-50"}`}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/></svg>
+              显示已归档
+            </button>
+            {/* C.45 ?blocked 筛选：只看被阻塞任务（Chip 回显） */}
+            <button
+              onClick={() => setBlockedFilter((v) => !v)}
+              data-sb-scope="list-blocked-toggle"
+              aria-pressed={blockedFilter}
+              className={`h-[34px] px-2.5 inline-flex items-center gap-1.5 border rounded-md text-[13px] ${blockedFilter ? "border-amber-400 text-amber-700 bg-amber-50" : "border-neutral-300 text-neutral-700 hover:bg-neutral-50"}`}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>
+              只看被阻塞
+            </button>
+            {/* C.56 列选择器：「列」菜单（工时开关 + 全部自定义字段） */}
+            <div className="relative" data-sb-scope="list-cols-dd">
+              <button
+                aria-haspopup="menu" aria-label="列选择器"
+                onClick={() => setColMenuOpen((v) => !v)}
+                data-sb-scope="list-cols-toggle"
+                className="h-[34px] px-2.5 inline-flex items-center gap-1.5 border border-neutral-300 rounded-md text-[13px] text-neutral-700 hover:bg-neutral-50"
+              >列 ▾</button>
+              {colMenuOpen && (
+                <div role="menu" data-sb-scope="list-cols-menu" aria-label="列选择"
+                  className="absolute top-[38px] right-0 z-20 w-[220px] bg-white border border-neutral-200 rounded-lg shadow-lg py-1 max-h-[300px] overflow-y-auto">
+                  <button role="menuitem" onClick={() => setWlColumn((v) => !v)} data-sb-scope="list-cols-wl"
+                    className="w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50 flex items-center gap-2">
+                    <span className={`w-3.5 h-3.5 rounded border inline-flex items-center justify-center text-[10px] ${wlColumn ? "bg-brand-500 border-brand-500 text-white" : "border-neutral-300"}`}>{wlColumn ? "✓" : ""}</span>
+                    工时
+                  </button>
+                  <div className="h-px bg-neutral-100 my-1" />
+                  {cfDefs.filter((d) => d.is_active !== false).map((d) => {
+                    const on = cfCols.includes(d.key);
+                    return (
+                      <button key={d.id} role="menuitem" data-sb-scope="list-cols-cf"
+                        onClick={() => setCfCols((cur) => (on ? cur.filter((k) => k !== d.key) : [...cur, d.key]))}
+                        className="w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50 flex items-center gap-2">
+                        <span className={`w-3.5 h-3.5 rounded border inline-flex items-center justify-center text-[10px] ${on ? "bg-brand-500 border-brand-500 text-white" : "border-neutral-300"}`}>{on ? "✓" : ""}</span>
+                        {d.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             {/* 「⊕ 展开 ▾」下拉（C.37：三项） */}
-            <div className="relative ml-auto" data-sb-scope="tree-expand-dd">
+            <div className="relative" data-sb-scope="tree-expand-dd">
               <button
                 aria-haspopup="menu"
                 aria-label="展开控制"
@@ -779,6 +1139,24 @@ export default function IssuesList() {
                 <button onClick={() => setChips([])} className="text-[12px] text-neutral-500 hover:text-brand-600">清空全部</button>
               </div>
             )}
+            {/* C.45/C.59 筛选 Chip 行：被阻塞 = true / 已归档视图 + 命中计数 */}
+            {(blockedFilter || archivedView) && (
+              <div className="flex items-center flex-wrap gap-1.5 px-5 pb-2 text-[12px]" aria-label="已选筛选条件" data-sb-scope="list-chiprow">
+                {blockedFilter && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-0.5">
+                    被阻塞 = true
+                    <button aria-label="移除筛选：被阻塞" onClick={() => setBlockedFilter(false)} className="text-neutral-500 hover:text-red-500">✕</button>
+                  </span>
+                )}
+                {archivedView && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-0.5">
+                    🗄 已归档视图
+                    <button aria-label="移除筛选：已归档" onClick={() => setArchivedView(false)} className="text-neutral-500 hover:text-red-500">✕</button>
+                  </span>
+                )}
+                <span className="ml-auto text-neutral-400">{filtered.length} / {total} 个任务</span>
+              </div>
+            )}
           </div>
           <div className="flex-1 overflow-y-auto p-5">
             <div className="flex items-center gap-1.5 border border-dashed border-neutral-300 h-[38px] px-3 rounded-md mb-3.5 text-neutral-500 focus-within:border-brand-500 focus-within:bg-white">
@@ -789,19 +1167,35 @@ export default function IssuesList() {
               <span className="text-xs">Enter 创建</span>
             </div>
             {filtered.length === 0 ? (
+              /* C.59 归档视图空态：「没有已归档的任务」（归档的任务会出现在这里） */
               <div className="flex flex-col items-center gap-2 py-12 text-neutral-500">
                 <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#d4d4d4" strokeWidth="2"><rect width="8" height="4" x="8" y="2" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4M12 16h4M8 11h.01M8 16h.01"/></svg>
-                <div className="text-[15px] font-semibold text-neutral-700">{total === 0 ? "暂无任务" : "没有符合当前筛选的任务"}</div>
-                <div className="text-[13px]">{total === 0 ? "创建第一个任务开始工作" : "尝试调整或清空筛选"}</div>
-                <button onClick={() => { if (total === 0) setShowTaskModal(true); else { setSearch(""); setChips([]); } }} className="mt-2 inline-flex h-[34px] items-center gap-1.5 px-3.5 bg-brand-500 text-white rounded-md font-medium">
-                  {total === 0 ? "+ 创建任务" : "清空全部"}
-                </button>
+                <div className="text-[15px] font-semibold text-neutral-700" data-sb-scope="list-empty-title">
+                  {archivedView && total === 0 ? "没有已归档的任务" : total === 0 ? "暂无任务" : "没有符合当前筛选的任务"}
+                </div>
+                <div className="text-[13px]">
+                  {archivedView && total === 0 ? "归档的任务会出现在这里" : total === 0 ? "创建第一个任务开始工作" : "尝试调整或清空筛选"}
+                </div>
+                {!archivedView && (
+                  <button onClick={() => { if (total === 0) setShowTaskModal(true); else { setSearch(""); setChips([]); } }} className="mt-2 inline-flex h-[34px] items-center gap-1.5 px-3.5 bg-brand-500 text-white rounded-md font-medium">
+                    {total === 0 ? "+ 创建任务" : "清空全部"}
+                  </button>
+                )}
               </div>
             ) : (
               <table className="w-full border-collapse" role="tree" aria-label="任务树">
                 <thead><tr>
-                    {["编号", "标题", "状态", "负责人", "截止时间", "子任务"].map((h, i) => (
-                      <th key={h} className={`text-left px-3 py-2 border-b border-neutral-200 text-[11px] font-semibold text-neutral-400 uppercase tracking-wider ${(["w-24", "", "w-[120px]", "w-[110px]", "w-[130px]", "w-[88px]"] as const)[i] ?? ""}`}>{h}</th>
+                    {[
+                      ["编号", "w-24"], ["标题", ""], ["状态", "w-[120px]"], ["负责人", "w-[110px]"], ["截止时间", "w-[130px]"],
+                      ...(wlColumn ? [["工时", "w-[96px]"]] : []),
+                      ...cfCols.map((key) => {
+                        const f = cfDefs.find((d) => d.key === key);
+                        return [f?.name ?? key, "w-[110px]"] as [string, string];
+                      }),
+                      ["子任务", "w-[88px]"],
+                    ].map(([h, w]) => (
+                      <th key={h} data-sb-scope={h === "工时" ? "list-wl-th" : undefined}
+                        className={`text-left px-3 py-2 border-b border-neutral-200 text-[11px] font-semibold text-neutral-400 uppercase tracking-wider ${w}`}>{h}</th>
                     ))}
                   </tr></thead>
                 <tbody>

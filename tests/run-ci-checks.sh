@@ -175,3 +175,15 @@ for f in pathlib.Path('tests/e2e').glob('*.spec.ts'):
             bad.append(f'{f.name}: {title[:40]}')
 sys.exit(1 if bad else 0)
 SCAN"
+
+# ── api-ci 平价（TC-API-CI-*，与 .github/workflows/api-ci.yml 三步逐条对齐）──
+# 根因登记：CI 的 ruff/mypy/pytest 只在 GitHub 跑且从未绿过（mypy exclude 正则非法 +
+# django-stubs 缺依赖 + pytest 0 用例），本地电池从未执行同 cwd 的同命令——
+# "门禁存在但从未跑绿"等于装饰。此三条让本地电池与 CI 逐字平价。
+API_CI_ENV="DATABASE_URL=postgresql://rp:rp@localhost:5432/rabbit_projects SECRET_KEY=dev"
+check TC-API-CI-001 "api-ci 平价：ruff（apps/api cwd）" \
+  "cd apps/api && uv run --project . ruff check . ; cd - >/dev/null"
+check TC-API-CI-002 "api-ci 平价：mypy plane 全绿" \
+  "cd apps/api && env $API_CI_ENV uv run --project . mypy plane 2>&1 | grep -q 'Success: no issues found' ; cd - >/dev/null"
+check TC-API-CI-003 "api-ci 平价：pytest 可收集且全过" \
+  "cd apps/api && env $API_CI_ENV uv run --project . pytest -q 2>&1 | grep -E 'passed' | grep -qv -e 'no tests ran' -e 'error' ; cd - >/dev/null"

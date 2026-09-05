@@ -35,8 +35,8 @@ python3 tests/jmeter/sprint-0-flow.py [http://localhost:8000]   # 10 步（10a �
 python3 tests/jmeter/sprint-1-flow.py [http://localhost:8000]   # 信封 C1 / 权限快照 / sort_order / 搜索收藏归档 / 隔离
 python3 tests/jmeter/api-full-coverage.py                       # 端点 × 方法 × 正负例 契约矩阵
 
-# 2) L1/L2 静态检查（45 条命令断言：INFRA/AUTH3/TASK/BOARD + sprint-1 的信封/权限矩阵集合断言）
-bash tests/run-ci-checks.sh
+# 2) L1/L2 静态检查（含 api-ci 平价三件套：与 .github/workflows/api-ci.yml 同 cwd 同命令）
+bash tests/run-ci-checks.sh   # ruff/mypy/pytest 必须在 apps/api 目录跑（uv run --project 不变 cwd）
 
 # 3) Playwright e2e（web dev server 需已在 3001；API 在 8000）
 E2E_NO_SERVER=1 pnpm exec playwright test   # auth.spec.ts + coverage.spec.ts + interactions.spec.ts + parity.spec.ts

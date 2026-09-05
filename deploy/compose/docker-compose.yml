@@ -230,9 +230,17 @@ services:
     environment:
       LIVE_PORT: 3000
       API_INTERNAL_URL: http://api:8000
+      # COLLAB-004：事件订阅（rp:events，BR-09）+ 票据验签公钥（§9.5）+
+      # 服务间复核密钥（§9.7）。缺省为空时 live 进程 env 校验 fail-fast
+      # （启动日志指引 scripts/gen_live_keys.sh 生成后写入根 .env）。
+      REDIS_URL: redis://redis:6379/0
+      LIVE_JWT_PUBLIC_KEY: ${LIVE_JWT_PUBLIC_KEY:-}
+      INTERNAL_KEY: ${INTERNAL_KEY:-}
+      LIVE_HEARTBEAT: ${LIVE_HEARTBEAT:-25}
     ports: ["${LIVE_PORT:-3000}:3000"]
     depends_on:
       api: { condition: service_healthy }
+      redis: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 10s

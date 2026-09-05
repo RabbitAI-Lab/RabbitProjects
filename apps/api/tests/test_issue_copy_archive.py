@@ -33,7 +33,7 @@ def test_deep_copy_id_map_and_options(env):
     owner, proj = env
     root = _issue(proj, "R", seq=1)
     mid = _issue(proj, "M", parent=root, seq=2)
-    leaf = _issue(proj, "L", parent=mid, seq=3)
+    _issue(proj, "L", parent=mid, seq=3)
     out = duplicate_issue(issue_id=root.id, actor_id=owner.id)
     new_root = out["root"]
     assert out["total_created"] == 3
@@ -68,8 +68,9 @@ def test_deep_copy_rollback_on_failure(env, monkeypatch):
 def test_archive_keeps_first_timestamp_and_idempotent(env):
     """BR-10：首次归档时间不可变；重复归档 count=0。"""
     owner, proj = env
-    from django.utils import timezone
     import datetime
+
+    from django.utils import timezone
     root = _issue(proj, "R", seq=1)
     sub = _issue(proj, "S", parent=root, seq=2)
     Issue.objects.filter(pk=root.id).update(

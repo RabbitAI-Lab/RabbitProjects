@@ -214,7 +214,15 @@ def fanout_comment(*, comment_id: str, issue_id: str, actor,
         return 0
     # bulk_create + ignore_conflicts：worker 重投零重复（BR-08）
     Notification.objects.bulk_create(rows, ignore_conflicts=True)
+    _publish_realtime(rows)  # COLLAB-004 T3-11：notification.created → user 房间
     return len(rows)
+
+
+def _publish_realtime(rows: list[Notification]) -> None:
+    """实时扇出挂点（尽力而为，内部吞异常）——delayed import 防循环依赖。"""
+    from plane.bgtasks.event_publisher import publish_notifications_created
+
+    publish_notifications_created(rows)
 
 
 def fanout_issue_event(*, event: str, issue_id: str, actor,
@@ -259,6 +267,7 @@ def fanout_issue_event(*, event: str, issue_id: str, actor,
     if not rows:
         return 0
     Notification.objects.bulk_create(rows, ignore_conflicts=True)
+    _publish_realtime(rows)  # COLLAB-004 T3-11：notification.created → user 房间
     return len(rows)
 
 
@@ -322,6 +331,7 @@ def fanout_issue_event_batch(*, event: str, issue_ids: list[str], actor,
     if not rows:
         return 0
     Notification.objects.bulk_create(rows, ignore_conflicts=True)
+    _publish_realtime(rows)  # COLLAB-004 T3-11：notification.created → user 房间
     return len(rows)
 
 

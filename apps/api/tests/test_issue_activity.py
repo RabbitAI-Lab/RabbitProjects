@@ -1,9 +1,11 @@
 """TASK-010 审计单元测试（diff builder / Worker 三层幂等 / 死信元数据推导）。"""
 from __future__ import annotations
 
-import pytest
 import uuid as uuid_mod
 
+import pytest
+
+from plane.bgtasks.issue_activity import build_event_key, issue_activity
 from plane.db.models import Issue, IssueActivity, Project, User, Workspace
 from plane.db.services.activity_builder import (
     DESCRIPTION_MARKER,
@@ -11,7 +13,6 @@ from plane.db.services.activity_builder import (
     build_activities,
     clip,
 )
-from plane.bgtasks.issue_activity import build_event_key, issue_activity
 
 pytestmark = pytest.mark.django_db
 
@@ -82,6 +83,7 @@ def test_worker_lock_conflict_retries(env):
 def test_dead_letter_metadata_retries_inference():
     """§4.3.4：MaxRetriesExceededError → max_retries；其余 → 0。"""
     from celery.exceptions import MaxRetriesExceededError
+
     from plane.bgtasks.activity_dlq import DLQ_KEY_PREFIX, dlq_client, record_dead_letter
 
     class FakeTask:

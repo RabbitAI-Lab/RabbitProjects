@@ -106,6 +106,7 @@ FEATURE_MODULES = (
     "issue_views",      # BOARD-003 保存的视图（views/ CRUD 五端点）
     "activity_stream",  # COLLAB-003 项目动态流（合流 + 折叠 + 组感知游标）
     "issue_bulk",       # BOARD-004 任务批量操作（bulk/ + bulk/archive/ + bulk/preview/）
+    "realtime",         # COLLAB-004 live 实时票据（换票 / 续签 / verify-rooms 内部复核）
 )
 
 for _name in FEATURE_MODULES:

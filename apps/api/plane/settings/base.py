@@ -144,8 +144,21 @@ CORS_EXPOSE_HEADERS = [
 
 # ── 数据层 / 队列 / 对象存储（变量名与 INFRA-002 compose 对齐）──
 REDIS_URL = env("REDIS_URL", "redis://localhost:6379/0")
-CELERY_BROKER_URL = env("CELERY_BROKER_URL", "amqp://guest:guest@localhost:5672//")
+CELERY_BROKER_URL = env("CELERY_BROKER_URL", "amqp://rp:rp@localhost:5672//")
 CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", REDIS_URL.replace("/0", "/1"))
+
+# ── Sprint-3 COLLAB-004 实时票据（api-conventions.md §9.5/§9.7）──────────
+# LIVE_JWT_PRIVATE_KEY：RS256 私钥 PEM（仅 api 持有，签发票据）。支持两种形态：
+# 真实多行（.env 引号包裹）或单行 ``\n`` 转义（消费方 normalize_pem 归一）。
+LIVE_JWT_PRIVATE_KEY = env("LIVE_JWT_PRIVATE_KEY", "")
+# LIVE_JWT_PUBLIC_KEY：RS256 公钥 PEM（live 容器注入，验签 only——被攻破也无法伪造）。
+LIVE_JWT_PUBLIC_KEY = env("LIVE_JWT_PUBLIC_KEY", "")
+# 业务事件票据有效期（秒，COLLAB-004 BR-02；90s 静默续签留 30s 轮换余量）。
+LIVE_TICKET_TTL = int(env("LIVE_TICKET_TTL", "120") or 120)
+# 心跳间隔（秒，BR-04；live 侧同名变量消费，60s 无 pong 断开）。
+LIVE_HEARTBEAT = int(env("LIVE_HEARTBEAT", "25") or 25)
+# INTERNAL_KEY：live→api 服务间共享密钥（X-Internal-Key，§9.7；verify-rooms 复核用）。
+INTERNAL_KEY = env("INTERNAL_KEY", "")
 AWS_S3_ENDPOINT_URL = env("AWS_S3_ENDPOINT_URL", "http://localhost:9000")
 AWS_ACCESS_KEY_ID = env("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY", "")

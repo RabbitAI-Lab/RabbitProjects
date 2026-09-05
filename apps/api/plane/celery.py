@@ -20,6 +20,7 @@ app = Celery(
         "plane.account.tasks",           # 密码重置邮件（sprint-1 历史遗漏，worker 侧 unregistered 修复）
         "plane.bgtasks.asset_cleanup",
         "plane.bgtasks.comments",
+        "plane.bgtasks.event_publisher",   # COLLAB-004 T3-11：实时事件扇出（rp:events）
         "plane.bgtasks.field_cleanup",     # TASK-008：删除字段值清理 / 视图剔除
         "plane.bgtasks.field_index",       # TASK-008：表达式偏索引 CONCURRENTLY 建/删
         "plane.bgtasks.issue_assignee",

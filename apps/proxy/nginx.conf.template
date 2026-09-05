@@ -42,6 +42,11 @@ http {
             proxy_redirect off;
         }
 
+        # COLLAB-004 §4.2（api-conventions.md §9.7 第二道防线）：服务间内部端点
+        # （live→api verify-rooms 复核）不面向用户流量——proxy 不路由该前缀，
+        # 仅 compose 内网可达；^~ 最长前缀匹配优先于下方 /api/。
+        location ^~ /api/v1/internal/ { return 404; }
+
         location ^~ /api/ {
             limit_req zone=api_zone burst=60 nodelay;
             proxy_pass http://api_upstream;
@@ -62,6 +67,8 @@ http {
             proxy_set_header Connection $connection_upgrade;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
+            # COLLAB-004 BR-04 心跳窗口：服务端 25s ping / 60s pong 容忍——读超时
+            # 须 ≥75s 才不会在两跳心跳间掐断长连接；3600s 覆盖（P3 Hocuspocus 同宿主复用）。
             proxy_read_timeout 3600s;
             proxy_send_timeout 3600s;
             proxy_buffering off;

@@ -216,3 +216,112 @@ export interface ApiEnvelope<T> {
   data: T;
   meta: Record<string, unknown> | null;
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// COLLAB-004 实时通道契约（§2.3 事件协议 / §2.5 关闭码 / §1.3 房间模型）
+// —— 前端 RealtimeClient / LiveEventBus（Phase 3）与 apps/live 共用的唯一口径。
+// ─────────────────────────────────────────────────────────────────────
+
+/** 六类核心事件名（§2.3 表；与 api 侧 EVENT_MAP 对齐） */
+export type LiveEventName =
+  | "issue.updated"
+  | "issue.state.changed"
+  | "board.moved"
+  | "comment.created"
+  | "activity.created"
+  | "notification.created";
+
+/** 全部下行事件名（含连接确认与 presence，非业务六类） */
+export type LiveServerEventName = LiveEventName | "connected" | "presence.joined" | "presence.left";
+
+/** 房间名构造（§1.3：project / issue / user 三类；订阅条件在换票时校验） */
+export const liveRoom = {
+  project: (projectId: UUID) => `project:${projectId}` as const,
+  issue: (issueId: UUID) => `issue:${issueId}` as const,
+  user: (userId: UUID) => `user:${userId}` as const,
+} as const;
+
+/** WS 关闭码（§2.5 异常表；前端按码选择重换票 / 退避重连 / 提示） */
+export const LIVE_CLOSE_CODES = {
+  /** 重复连接：每用户全局第 6 条连接踢最旧（BR-12） */
+  DUP_SESSION: 4000,
+  /** 票据无效/过期：重换票 ≤ 2 次后降级（BR-01） */
+  TOKEN_INVALID: 4001,
+  /** 权限失效：60s 复核被踢出全部房间（BR-03） */
+  FORBIDDEN: 4003,
+  /** 心跳超时：60s 无 pong 服务端清理（BR-04） */
+  HEARTBEAT_TIMEOUT: 4004,
+} as const;
+
+/** 事件信封公共字段（§1.4；seq 房间级单调递增、重启归零，仅乱序提示用）。
+ *  connected 确认帧与 presence 帧不隶属单一房间，room 可缺省。 */
+export interface LiveEnvelope<P = Record<string, unknown>> {
+  event: LiveServerEventName;
+  seq: number;
+  room?: string;
+  payload: P;
+  occurred_at: string;
+}
+
+/** payload.actor_id：操作者用户 ID（live 据此跳过本人连接——BR-08 不回显） */
+export interface LiveActorPayload {
+  actor_id: UUID | null;
+}
+
+export interface IssueUpdatedPayload extends LiveActorPayload {
+  issue_id: UUID;
+  /** 实体 updated_at（ISO）——前端比对本地版本，旧于等于本地忽略（BR-07） */
+  version: string;
+  /** 变更域提示（字段族），定向 patch 范围选择依据 */
+  brief: string;
+  /** 批量操作时逐实体附带（同批共享 epoch 同值；单条不携带，BR-15） */
+  batch_id?: number;
+}
+
+export interface IssueStateChangedPayload extends IssueUpdatedPayload {
+  from_group: StateGroup | null;
+  to_group: StateGroup | null;
+}
+
+export interface BoardMovedPayload extends LiveActorPayload {
+  issue_id: UUID;
+  from_group: StateGroup | null;
+  to_group: StateGroup | null;
+  /** 目标列排序版本（该列最近一次 sort_order 写入时刻，§2.3 注 3） */
+  column_version: string;
+  batch_id?: number;
+}
+
+export interface CommentCreatedPayload extends LiveActorPayload {
+  comment_id: UUID;
+  issue_id: UUID;
+}
+
+export interface ActivityCreatedPayload extends LiveActorPayload {
+  issue_id: UUID;
+  /** 动态流水位锚（COLLAB-003 stream_cursor 形态 `{created_at}:{id}`）——按水位增量拉取正文 */
+  stream_cursor: string;
+  occurred_at: string;
+}
+
+export interface NotificationCreatedPayload {
+  notification_id: UUID;
+  unread_delta: number;
+}
+
+/** 连接确认载荷（§2.1：握手成功即下发房间集与心跳间隔） */
+export interface ConnectedPayload {
+  rooms: string[];
+  ws: string;
+  heartbeat: number;
+}
+
+/** presence 广播载荷（BR-11：user 摘要 ≤200B，仅 project 房间） */
+export interface PresencePayload {
+  room: string;
+  user: {
+    id: UUID;
+    display_name: string;
+  };
+}
+

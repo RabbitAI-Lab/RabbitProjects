@@ -8,8 +8,6 @@ tests/jmeter/sprint-2-flow.py TASK-005 段。
 """
 from __future__ import annotations
 
-import uuid
-
 import pytest
 
 from plane.db.models import Issue, Project, User, Workspace
@@ -108,7 +106,7 @@ def test_deep_chain_120_not_flagged(owner):
     """
     proj = _project(owner)
     nodes = [_issue(proj, f"N{i}") for i in range(30)]  # 30 层已覆盖 > 业务深度直觉
-    for prev, nxt in zip(nodes, nodes[1:]):
+    for prev, nxt in zip(nodes, nodes[1:], strict=False):
         create_relation(issue_id=prev.id, related_issue_id=nxt.id,
                         relation_type="blocks", actor_id=owner.id)
     # 尾部再加一条不闭合的边：末端 → 首端之外的独立节点
@@ -156,10 +154,10 @@ def test_transition_blocked_and_force_channel(owner):
     with pytest.raises(PermissionError):
         assert_completable(issue=b, to_state=done, force=True, is_admin=False)
     # force 管理员 → 放行
-    assert_completable(issue=b, to_state=done, force=True, is_admin=True) is None
+    assert assert_completable(issue=b, to_state=done, force=True, is_admin=True) is None
     # 前置完成后不再阻塞
     a.state = done
     a.save(update_fields=["state"])
-    assert_completable(issue=b, to_state=done, force=False, is_admin=False) is None
+    assert assert_completable(issue=b, to_state=done, force=False, is_admin=False) is None
     # 非 completed 目标不触发（改标题/排序不经过此钩子）
-    assert_completable(issue=b, to_state=todo, force=False, is_admin=False) is None
+    assert assert_completable(issue=b, to_state=todo, force=False, is_admin=False) is None

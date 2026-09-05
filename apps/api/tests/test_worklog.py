@@ -42,6 +42,7 @@ def test_window_and_minutes_validation(env):
     with pytest.raises(WorklogValidationError):
         log_work(issue=issue, actor_id=owner.id, minutes=1441, worked_on=_d(0))
     from datetime import timedelta as _td
+
     from django.utils import timezone as _tz
     with pytest.raises(WorklogValidationError):  # 未来日期（UT-15）
         log_work(issue=issue, actor_id=owner.id, minutes=30,
@@ -77,7 +78,7 @@ def test_owner_only_edit(env):
 def test_subtree_summary_no_join_amplification(env):
     """UT-09 同源：多笔工时不得放大 estimate（规格 SQL 偏差 ADR-0014 的锚定）。"""
     owner, proj, issue = env
-    sub = Issue.objects.create(name="S", project=proj, parent=issue, sequence_id=2,
+    Issue.objects.create(name="S", project=proj, parent=issue, sequence_id=2,
                                sort_order=200, created_by=owner, estimate_minutes=120)
     for i in range(3):
         log_work(issue=issue, actor_id=owner.id, minutes=60, worked_on=_d(i))

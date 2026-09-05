@@ -17,6 +17,8 @@ dependencies = [
     "django-stubs>=6.1.0",
     "redis>=8.1.0",
     "pillow>=12.3.0",
+    "pyjwt>=2.10,<3",
+    "cryptography>=43",
 ]
 
 [dependency-groups]

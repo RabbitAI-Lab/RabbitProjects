@@ -113,7 +113,7 @@
 | boto3 | `1.3x.x` | S3 客户端（生成预签名 URL、生命周期策略） | 官方 SDK，MinIO 与 S3 通用 |
 | django-storages | `1.14.x` | Django 存储后端抽象 | 统一本地/MinIO/S3 三种后端，切换仅改环境变量 |
 | Pillow | `12.x` | 图片处理（头像裁剪、缩略图、水印） | 企业版文件水印能力依赖；Sprint-3 起实际锁入 `apps/api`（评论图片 `?variant=thumb` 480px webp 缩略，`COLLAB-002` §2.3）——登记版本 11.x 从未安装，按实际解析版本 12.3.0 修订（2026-09-06） |
-| PyJWT | `2.10.x` | JWT 签发与校验（live 服务鉴权票据、OAuth id_token） | live 服务需校验 Django 签发的短时效协同票据 |
+| PyJWT | `2.13.x` | JWT 签发与校验（live 服务鉴权票据、OAuth id_token） | live 服务需校验 Django 签发的短时效协同票据；Sprint-3 起实际锁入 `apps/api`（RS256 业务事件票据 + cryptography 50.x，`COLLAB-004` §4.1.1）——登记版本 2.10.x 从未安装，按 uv 实际解析 2.13.0 修订（2026-09-06） |
 | argon2-cffi | `23.x` | 密码哈希 | Django 密码哈希器优先使用 Argon2id（优于默认 PBKDF2），满足「密码加密存储」与企业合规要求 |
 | gunicorn | `23.x` | WSGI 生产服务器 | 与 Plane 一致；多 worker 进程模型，配合 `gthread` 应对 IO 密集场景 |
 | uvicorn + ASGI（预留） | `0.3x.x` | 异步端点承载（SSE 通知流） | P2 阶段按需启用，仅用于长连接端点 |
@@ -355,3 +355,4 @@ Renovate 开 PR（按 §1.2 窗口调度）
 | 2026-08-31 | 1.0 | 初版：确认全栈技术选型与版本锁定，完成 Plane / Ones 对标分析 | 架构组 |
 | 2026-09-05 | 1.1 | Sprint-3 回改（T3-01）：§4 apps/live 版本表补 `jsonwebtoken ^9.0.x`（RS256 票据验签）与 `ioredis 5.x`（Redis 订阅客户端）；`ws 8.18.x` 原已登记、注明 Sprint 3 业务事件通道复用 | 架构组 |
 | 2026-09-06 | 1.2 | Sprint-3（T3-05）：Pillow 实际锁入 `apps/api`（评论图片缩略变体），登记版本 11.x→12.x 修订（11.x 从未安装，按 uv 实际解析 12.3.0） | 架构组 |
+| 2026-09-06 | 1.3 | Sprint-3（T3-09）：PyJWT 实际锁入 `apps/api`（RS256 票据签发，连带 cryptography 50.x），登记版本 2.10.x→2.13.x 修订（2.10.x 从未安装） | 架构组 |

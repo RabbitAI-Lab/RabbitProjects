@@ -23,6 +23,7 @@ from django.utils.html import strip_tags
 
 from plane.app.comments.sanitize import extract_mention_ids, sanitize_comment
 from plane.base.exception import AppException
+from plane.bgtasks.event_publisher import publish_comment_created
 from plane.db.models import FileAsset, IssueComment
 from plane.db.models.roles import ProjectRole
 
@@ -191,6 +192,12 @@ class CommentService:
             )
             transaction.on_commit(
                 lambda: _safe_delay(_get_notify_task(), str(comment.id), str(issue.id))
+            )
+            # COLLAB-004 T3-11：comment.created 实时扇出（issue + project 摘要房间）
+            transaction.on_commit(
+                lambda: publish_comment_created(
+                    comment_id=str(comment.id), issue_id=str(issue.id),
+                    project_id=str(issue.project_id), actor_id=str(actor.id))
             )
         return comment, {
             "mention_ids": sorted(mentions),

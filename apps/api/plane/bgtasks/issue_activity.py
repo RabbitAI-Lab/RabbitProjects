@@ -118,20 +118,34 @@ def _write_activity_row(
     *, issue_id: str, actor_id: str | None, verb: str, epoch: float,
     field: str | None = None, old_value: str | None = None, new_value: str | None = None,
     old_identifier: str | None = None, new_identifier: str | None = None,
-    comment: str = "",
+    comment: str = "", batch: bool = False,
 ) -> None:
-    """行级幂等基座（BOARD-004 提取为模块级共享）：全键 exists 跳过后单行落库。"""
+    """行级幂等基座（BOARD-004 提取为模块级共享）：全键 exists 跳过后单行落库。
+
+    COLLAB-004 T3-11 Worker 尾部扇出：落库成功即按 field 映射发布实时事件
+    （issue.updated / issue.state.changed / board.moved + activity.created 水位锚），
+    ``batch=True`` 时逐实体附 payload.batch_id=epoch（BR-15）。扇出尽力而为——
+    内部吞异常，不阻断落库；重复投递（exists 命中）不重发。
+    """
+    from plane.bgtasks.event_publisher import publish_activity_events
+
     actor_uuid = uuid.UUID(actor_id) if actor_id else None
     if IssueActivity.objects.filter(
         issue_id=issue_id, actor_id=actor_uuid, verb=verb, epoch=epoch,
         field=field, old_identifier=old_identifier, new_identifier=new_identifier,
     ).exists():
         return
-    IssueActivity.objects.create(
+    row = IssueActivity.objects.create(
         issue_id=issue_id, actor_id=actor_uuid, verb=verb, field=field,
         old_value=old_value, new_value=new_value,
         old_identifier=old_identifier, new_identifier=new_identifier,
         comment=comment or "", epoch=epoch)
+    publish_activity_events(
+        issue_id=issue_id, actor_id=actor_id, verb=verb, field=field,
+        activity_id=str(row.id), activity_created_at=row.created_at,
+        old_identifier=str(old_identifier) if old_identifier else None,
+        new_identifier=str(new_identifier) if new_identifier else None,
+        batch_id=epoch if batch else None)
 
 
 @shared_task(bind=True, max_retries=3, retry_backoff=True)
@@ -147,7 +161,8 @@ def record_activity_batch(self, payload: dict) -> None:
     fallback_comment = payload.get("comment") or ""
     try:
         for row in payload.get("batch") or []:
-            _write_activity_row(**{**row, "comment": row.get("comment") or fallback_comment})
+            _write_activity_row(**{**row, "comment": row.get("comment") or fallback_comment},
+                                batch=True)
     except Exception as exc:  # noqa: BLE001 —— TASK-010 DLQ 兜底
         raise self.retry(countdown=4**self.request.retries, exc=exc) from exc
 

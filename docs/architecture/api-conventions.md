@@ -766,6 +766,9 @@ GET .../issues/?ordering=-priority,target_date,-created_at
 | `INVALID_DATE_RANGE` | 日期区间逻辑错误 |
 | `RETRY_AFTER` | 限流场景下承载等待秒数 |
 | `DEPTH` | 层级深度越限（Sprint-2 TASK-004 §4.2.1 登记：`RESOURCE_LIMIT_EXCEEDED` 的字段级子码，创建与移动子树共用） |
+| `CYCLE` | 循环依赖（Sprint-2 TASK-005 §4.2.2 登记：`RESOURCE_CIRCULAR_DEPENDENCY` 的字段级子码，message 携带人类可读依赖链/环路径） |
+| `BLOCKED_BY` | 未完成前置拦截迁入 completed（Sprint-2 TASK-005 §4.2.4 登记：`RESOURCE_TRANSITION_BLOCKED` 的字段级子码，`details[]` 携带结构化 `issue_key`） |
+| `LIMIT` | 关联/执行人数等集合上限（Sprint-2 TASK-005/007 登记：`RESOURCE_LIMIT_EXCEEDED` 的字段级子码） |
 
 ### 8.9 前端消费范式
 
@@ -783,7 +786,7 @@ export const ErrorCode = {
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 
-export type ApiFieldError = { field: string; code: string; message: string };
+export type ApiFieldError = { field: string; code: string; message: string; issue_key?: string };
 export type ApiError = {
   status: "error";
   error: {

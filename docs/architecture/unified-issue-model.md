@@ -971,6 +971,13 @@ def build_activities(issue: Issue, before: dict, after: dict, actor_id: uuid.UUI
 
 ### 2.11 IssueLink — 工作项关联
 
+> **并发串行化补记（Sprint-2 TASK-005 §4.3.2 回写）**：关联创建的「查重 → 环检测 →
+> 成对写入」临界区必须以项目级 advisory lock（§3 序列号生成同款锁空间，
+> `acquire_project_lock`）串行化——READ COMMITTED 下环检测 CTE 看不到并发事务
+> 未提交的新边，两条长链并发合围会双双通过检测后落库成环；该锁同时关闭镜像
+> 方向并发双建窗口（`uniq_issue_relation` 仅兜底完全相同的三元组）。关系创建为
+> 低频操作（单项目 <1 QPS），串行化无吞吐顾虑。
+
 ```python
 class IssueLink(BaseModel):
     """工作项关联 —— 依赖 / 阻塞 / 相关 / 重复

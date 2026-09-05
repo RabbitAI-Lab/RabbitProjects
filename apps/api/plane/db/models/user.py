@@ -10,7 +10,7 @@ class UserManager(BaseUserManager):
             raise ValueError("邮箱不能为空")
         email = self.normalize_email(email).strip().lower()
         user = self.model(email=email, **extra)
-        user.set_password(password)
+        user.set_password(password)  # type: ignore[attr-defined]  # stub 对自引用泛型 _T 不收敛
         user.save(using=self._db)
         return user
 
@@ -25,7 +25,7 @@ class User(AbstractUser):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     email = models.EmailField(max_length=254, unique=True, db_index=True, verbose_name="邮箱")
-    username = None
+    username = None  # type: ignore[assignment]  # 邮箱登录（AUTH-001）
     display_name = models.CharField(max_length=150, verbose_name="显示名")
     avatar_url = models.URLField(max_length=800, blank=True, verbose_name="头像地址")
     is_active = models.BooleanField(default=True, db_index=True, verbose_name="是否启用")
@@ -45,7 +45,7 @@ class User(AbstractUser):
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []
-    objects = UserManager()
+    objects = UserManager()  # type: ignore[misc,assignment]  # 自定义 Manager 覆盖 AbstractUser 默认
 
     class Meta:
         db_table = "users"

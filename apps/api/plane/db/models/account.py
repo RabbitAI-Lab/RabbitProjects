@@ -4,6 +4,7 @@
 """
 import hashlib
 import secrets
+from datetime import timedelta
 
 from django.db import models
 from django.utils import timezone
@@ -70,7 +71,7 @@ class PasswordResetToken(BaseModel):
         cls.objects.create(
             user=user,
             token_hash=hashlib.sha256(token.encode()).hexdigest(),
-            expires_at=timezone.now() + timezone.timedelta(minutes=cls.TTL_MINUTES),
+            expires_at=timezone.now() + timedelta(minutes=cls.TTL_MINUTES),
             requested_ip=ip,
             created_by=user,
             updated_by=user,

@@ -84,7 +84,7 @@ class Issue(BaseModel):
                 name="uniq_issue_sequence_per_project",
             ),
             models.CheckConstraint(
-                check=models.Q(start_date__isnull=True)
+                check=models.Q(start_date__isnull=True)  # type: ignore[call-arg]  # Django 5.1 起 check→condition，暂用旧名（运行时兼容）
                 | models.Q(target_date__isnull=True)
                 | models.Q(start_date__lte=models.F("target_date")),
                 name="chk_issue_start_before_target",
@@ -203,7 +203,8 @@ class IssueLink(BaseModel):
                 condition=models.Q(deleted_at__isnull=True),
                 name="uniq_issue_relation",
             ),
-            models.CheckConstraint(check=~models.Q(issue=models.F("related_issue")), name="chk_issue_link_no_self"),
+            models.CheckConstraint(check=~models.Q(issue=models.F("related_issue")),  # type: ignore[call-arg]
+                name="chk_issue_link_no_self"),
         ]
         indexes = [
             models.Index(fields=["issue", "relation_type"], name="idx_link_issue_type"),

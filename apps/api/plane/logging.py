@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from typing import Any
 
 import structlog
 
@@ -30,7 +31,7 @@ def _redact(logger, method_name, event_dict):
 
 
 def configure_logging(debug: bool = False) -> None:
-    shared = [
+    shared: list[Any] = [
         structlog.contextvars.merge_contextvars,        # request_id / user_id 自动合入
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,

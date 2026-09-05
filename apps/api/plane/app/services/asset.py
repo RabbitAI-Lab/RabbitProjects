@@ -15,6 +15,7 @@ MinIO 预签名直传三步流的业务编排层。MinIO SDK 封装在 ``plane.s
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -123,7 +124,7 @@ class AssetService:
                 message="对象存储暂时不可用，请稍后重试",
             ) from exc
         upload_url = _rewrite_to_uploads_prefix(upload_url)
-        expires_at = timezone.now() + timezone.timedelta(seconds=storage.DEFAULT_PRESIGN_EXPIRES)
+        expires_at = timezone.now() + timedelta(seconds=storage.DEFAULT_PRESIGN_EXPIRES)
         return {
             "asset_id": str(asset.id),
             "upload_url": upload_url,

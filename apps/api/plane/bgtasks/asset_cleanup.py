@@ -85,6 +85,6 @@ def purge_deleted_assets(self) -> dict:
                 asset.storage_path,
             )
             continue
-        asset.delete(hard=True)
+        asset.delete()  # 实例删除=硬删；软删走 soft_delete()
         purged += 1
     return {"purged": purged, "failed": failed}

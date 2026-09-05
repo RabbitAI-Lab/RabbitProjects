@@ -50,10 +50,11 @@ def envelope_exception_handler(exc: Exception, context: dict[str, Any]) -> Respo
     response = drf_exception_handler(exc, context)
 
     # ── 第 1 步：AppException（BusinessError）──
-    if getattr(exc, "error_code", None):
+    app_code = getattr(exc, "error_code", None)
+    if app_code:
         response = Response(status=getattr(exc, "http_status", status.HTTP_400_BAD_REQUEST))
         response.data = _error_body(
-            exc.error_code, request_id,
+            app_code, request_id,
             message=getattr(exc, "detail_message", None),
             details=getattr(exc, "extra_details", None),
             doc_url=getattr(exc, "doc_url", None),
@@ -162,14 +163,14 @@ def envelope_exception_handler(exc: Exception, context: dict[str, Any]) -> Respo
 def _error_body(code: str, request_id: str, *, message: str | None = None,
                 details: list[dict] | None = None,
                 doc_url: str | None = None) -> dict:
-    body = {"status": "error", "error": {"code": code,
-                                         "message": message or DEFAULT_MESSAGES.get(code, "请求失败"),
-                                         "request_id": request_id}}
+    err: dict = {"code": code,
+                "message": message or DEFAULT_MESSAGES.get(code, "请求失败"),
+                "request_id": request_id}
     if details:
-        body["error"]["details"] = details[:20]        # BR 截断上限
+        err["details"] = details[:20]                  # BR 截断上限
     if doc_url:
-        body["error"]["doc_url"] = doc_url
-    return body
+        err["doc_url"] = doc_url
+    return {"status": "error", "error": err}
 
 
 def _flatten_validation_detail(detail, prefix: str = "") -> list[dict]:

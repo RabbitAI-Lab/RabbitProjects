@@ -37,18 +37,19 @@ def _member_ids_for_issue(issue: Issue) -> set[str]:
             project=issue.project, is_active=True, deleted_at__isnull=True,
         ).values_list("member_id", flat=True)
     )
-    ws_admins = set(
-        issue.project.workspace.workspace_member
+    ws_admins = {
+        str(uid) for uid in issue.project.workspace.workspace_member
         .filter(role__gte=WorkspaceRole.ADMIN, is_active=True, deleted_at__isnull=True)
         .values_list("member_id", flat=True)
-    )
-    return members | ws_admins
+    }
+    return {str(m) for m in members} | ws_admins
 
 
 def _assignee_ids(issue: Issue) -> set[str]:
-    return set(
+    return {
+        str(uid) for uid in
         IssueAssignee.objects.filter(issue=issue).values_list("assignee_id", flat=True)
-    )
+    }
 
 
 def _title_for(event: str, *, actor_name: str, issue_key: str, summary: str = "") -> str:

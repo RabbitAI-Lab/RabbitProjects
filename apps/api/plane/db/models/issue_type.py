@@ -19,7 +19,7 @@ class IssueType(BaseModel):
     class Meta(BaseModel.Meta):
         db_table = "issue_types"
         verbose_name = "任务类型"
-        ordering = ("sort_order", "created_at")
+        ordering = ("sort_order", "created_at")  # type: ignore[assignment]  # stub 声明过窄
         constraints = [
             models.UniqueConstraint(
                 fields=["workspace", "name"],

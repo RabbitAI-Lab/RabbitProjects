@@ -65,11 +65,11 @@ class ProjectMemberService:
                                          "message": f"单次最多添加 {MAX_BATCH_MEMBERS} 名成员"}])
 
         # 一次取数：空间 active 成员 + 既有项目成员 + 项目成员总数
-        workspace_members = dict(
-            WorkspaceMember.objects.filter(
+        workspace_members: dict[str, int] = {
+            str(mid): role for mid, role in WorkspaceMember.objects.filter(
                 workspace=project.workspace, is_active=True, deleted_at__isnull=True
             ).values_list("member_id", "role")
-        )
+        }
         existing = set(
             ProjectMember.objects.filter(
                 project=project, is_active=True, deleted_at__isnull=True

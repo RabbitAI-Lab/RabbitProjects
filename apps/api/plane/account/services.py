@@ -17,6 +17,7 @@ import hashlib
 import logging
 import secrets
 from collections.abc import Iterable
+from datetime import timedelta
 
 from django.contrib.auth import password_validation
 from django.contrib.auth.hashers import check_password
@@ -281,7 +282,7 @@ class AvatarService:
 
         key = f"avatar/{user.id}/{secrets.token_urlsafe(16)}.webp"
         asset = FileAsset.objects.create(
-            workspace_id=None,
+            workspace_id=None,  # type: ignore[misc]  # FK null=True：头像无工作空间归属
             project_id=None,
             entity_type=FileAsset.EntityType.AVATAR,
             entity_id=user.id,
@@ -314,7 +315,7 @@ class AvatarService:
             ) from exc
         # 把 MinIO 端点 host 改写为同源 /uploads/ 前缀（Nginx 反代，FILE-001 §4.7）
         upload_url = _rewrite_to_uploads_prefix(upload_url)
-        expires_at = timezone.now() + timezone.timedelta(seconds=storage.DEFAULT_PRESIGN_EXPIRES)
+        expires_at = timezone.now() + timedelta(seconds=storage.DEFAULT_PRESIGN_EXPIRES)
         return {
             "asset_id": str(asset.id),
             "upload_url": upload_url,
@@ -388,7 +389,7 @@ class AvatarService:
             )
             User.objects.filter(pk=user.pk).update(
                 avatar_url=avatar_url,
-                updated_by=user,
+                updated_at=timezone.now(),  # User 不继承 BaseModel，无 updated_by 字段
             )
         user.refresh_from_db()
         return _avatar_url_payload(user, asset.storage_path, avatar_url=avatar_url)

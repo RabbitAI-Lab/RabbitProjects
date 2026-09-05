@@ -10,6 +10,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --project apps/api
-      - run: uv run --project apps/api ruff check .
-      - run: uv run --project apps/api mypy plane
-      - run: uv run --project apps/api pytest
+      # uv run --project 不改变工作目录；ruff/mypy/pytest 必须在 apps/api 下执行
+      # （否则 mypy 找不到 plane 包、pytest 读不到 pyproject 的 DJANGO_SETTINGS_MODULE）
+      - run: uv run ruff check .
+        working-directory: apps/api
+      - run: uv run mypy plane
+        working-directory: apps/api
+      - run: uv run pytest -q
+        working-directory: apps/api

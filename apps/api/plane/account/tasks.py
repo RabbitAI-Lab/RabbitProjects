@@ -109,6 +109,6 @@ def cleanup_avatar_orphan_assets() -> int:
                 "avatar_cleanup.remove_failed key=%s will_retry", asset.storage_path,
             )
             continue
-        asset.delete(hard=True)
+        asset.delete()  # 实例删除=硬删；软删走 soft_delete()
         removed += 1
     return removed

@@ -28,8 +28,8 @@ def deliver_reset_email(*, user_id: str, token: str) -> bool:
         return False
 
     subject = "重置你的 RabbitProjects 密码"
-    link = f"{settings.WEB_BASE_URL}/reset-password?token={quote(token)}" if hasattr(settings, "WEB_BASE_URL") else \
-        f"/reset-password?token={quote(token)}"
+    base = getattr(settings, "WEB_BASE_URL", "")
+    link = f"{base}/reset-password?token={quote(token)}" if base else f"/reset-password?token={quote(token)}"
     body = (
         f"你在 {timezone_str()} 申请了密码重置。\n"
         f"30 分钟内有效，点击重置：{link}\n"

@@ -6,8 +6,8 @@
 | 所属迭代 | Sprint 3：高级视图 + 实时协作（第 5 周） |
 | 优先级 | P2（标准版完整级） |
 | 所属模块 | M8-COLLAB｜实时协作与通知 |
-| 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
+| 文档状态 | 已实现（Implemented，2026-09-06） |
+| 最后更新日期 | 2026-09-06 |
 | 上游依据 | `docs/需求文档.md` §3.8（项目动态流、任务动态时间线）、§8.2 协作通知 P2 列 |
 | 前置依赖 | **`TASK-010`（全操作留痕管道——本视图是其首个跨任务消费方）**、`TASK-002~009`（各事件源已埋点）、`COLLAB-001`（IssueComment 表与评论时间线合并渲染）、`PROJ-002`（项目成员域 = 动态可见域） |
 | 下游依赖 | `COLLAB-004`（WebSocket `activity.created` 实时增量——事件名以 `COLLAB-004` §2.3 事件表登记的 `activity.created` 为准（与 `comment.created` / `notification.created` 同构、`TASK-010` 动词表含 `created`）：推送仅携带新 `stream_cursor` 水位，增量数据仍经本端点拉取）、`RPT-002`（P2 末项目统计消费同源事件）、`INTG-002`（P2 末 Webhook 事件源）、`AUTH-010`（P3 全站审计视图复用聚合端点模式） |

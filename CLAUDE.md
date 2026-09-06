@@ -36,6 +36,8 @@ python3 tests/jmeter/sprint-1-flow.py [http://localhost:8000]   # 信封 C1 / �
 python3 tests/jmeter/api-full-coverage.py                       # 端点 × 方法 × 正负例 契约矩阵
 python3 tests/jmeter/sprint-2-flow.py                          # sprint-2 七段（T4~T10，168 断言）
 python3 tests/jmeter/sprint-2-bench.py                         # 性能门禁（10 万数据集，五项 P95；跑完清数据）
+python3 tests/jmeter/sprint-3-flow.py                          # sprint-3 六段（视图/批量/评论/活动流/实时/筛选，214 断言）
+python3 tests/jmeter/sprint-3-bench.py                         # sprint-3 性能门禁四项（跑完清数据；重跑需等清理完成或手动 purge）
 # ⚠ sprint-2-flow 前置：常驻 worker（Activity 异步化后 T8-42 与时间线断言依赖消费；
 # 启动：cd apps/api && DATABASE_URL=… SECRET_KEY=dev CELERY_BROKER_URL=amqp://guest:guest@localhost:5672// \
 #   REDIS_URL=redis://localhost:6379/0 uv run celery -A plane worker -Q activity,celery --concurrency=2 &）
@@ -77,14 +79,20 @@ PG schema 准备（Django migrate 在 PG 上有已知问题，见下面"坑"）�
 16. **bench 数据集是 dev 库的大负载**：sprint-2-bench.py 会灌 10 万行（跑完手工清理 s2bench%/BNZ 项目数据，否则全局查询与 e2e 变慢）；复跑幂等（自动清理旧数据集）。
 
 13. **网关 `/uploads/` 反代是附件直传的必经环节**：presign 返回的是同源 `/uploads/<bucket>/<key>?X-Amz-…`，缺 Nginx `location ^~ /uploads/`（生产）或 Vite `/uploads` proxy（dev）就会静默 404；且必须 `Host $proxy_host` / `changeOrigin: true`，因为 SigV4 把 host 纳入签名，透传浏览器 Host 会让 MinIO 判签名不匹配。
+17. **turbo 不透传任意 env**：live 票据公钥等已在 `turbo.json` 的 `globalPassThroughEnv` 声明——`LIVE_JWT_PUBLIC_KEY=… INTERNAL_KEY=… REDIS_URL=… pnpm dev` 一条命令即可带起全栈（密钥经 `scripts/gen_live_keys.sh` 生成于 `deploy/keys/`，已 gitignore）。
+18. **pytest 直连共享 dev PG**：断言禁止全表 `count()`（主栈 e2e/API 会直写库污染基数），一律 filter 到本测试作用域再计数（`test_comment_thread` 教训）。
+19. **vite dev 对 linked 包（`@rp/shared-state` 等）的 dist 有缓存**：包变更后需重启 dev server，否则 e2e 跑到旧代码。
+20. **celery 多代 worker 并存会静默分食投递**（现象：批量 Activity 约半数丢失）：跑 gate 前用 `celery -A plane inspect registered` 确认无旧进程（新代码应含 `event_publisher` / `record_activity_batch`），`ps aux | grep celery` 清残留集群。
 
 ## 文档体系（改代码前先读对应文档）
 
 - `docs/architecture/`（7 份）：技术栈/目录/API 规范/数据模型/权限——全局约束
 - `docs/sprint-N-*/`：每个功能一份规格文档（含 §3 UI 规格、§4 API 契约）；sprint-0 有 `test-cases.md`
+- `docs/sprint-3-acceptance/`：Sprint-3 验收视频契约（`SCENARIOS.md` 十四幕用户路径录制）
 - `docs/adr/`：实现偏差登记——实现与文档不一致时**先登记再继续**
   - ADR-0001（Sprint 0 偏差，8 项）｜ADR-0010（UI parity 五步纪律）
   - ADR-0011（Sprint 1 跨文档 UI 矛盾裁决，20 项定稿）｜ADR-0012（Sprint 1 实现偏差，A~E 五类）
+  - ADR-0017（Sprint-3 上游服务共享 epoch 签名扩展）｜ADR-0018（用户偏好存储 `users/me/settings/` 补建）｜ADR-0019（Sprint-3 COLLAB-002 实现偏差）｜ADR-0020（Sprint-3 偏差汇总收口 + 门禁口径）
 - `docs/design/sprint-0-hifi-prototype.html`：Sprint 0 冻结原型
 - `docs/design/sprint-1-hifi-prototype.html`：**Sprint 1 冻结原型（FROZEN 2026-09-04）**，前端实现的视觉/交互验收基准；头部含冻结记录（审计范围 / 误报复核 / 实补 8 项缺口）
 - `docs/plan/文档质量评审状态.md`：文档评审 master 记录

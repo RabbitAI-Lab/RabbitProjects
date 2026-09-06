@@ -6,8 +6,8 @@
 | 所属迭代 | Sprint 3：高级视图 + 实时协作（第 5 周） |
 | 优先级 | P2（标准版完整级 · **实时层的奠基迭代**） |
 | 所属模块 | M8-COLLAB｜实时协作与通知 |
-| 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-02 |
+| 文档状态 | 已实现（Implemented，2026-09-06） |
+| 最后更新日期 | 2026-09-06 |
 | 上游依据 | `docs/需求文档.md` §3.8（实时消息推送、多人实时协同编辑、实时看板/任务数据同步）、§8.2 协作通知 P2 列；§五（live 按项目/实体隔离房间、精准推送） |
 | 前置依赖 | **`INFRA-002`（live 服务容器：Express + ws，`/live` 经 proxy WebSocket upgrade，`API_INTERNAL_URL`/`REDIS_URL` 注入，healthcheck `/health`）**、`COLLAB-001`（Notification 模型与轮询降级通道）、`COLLAB-003`（`stream_cursor` 水位契约）、`TASK-010`（事件管道与 Worker 尾部扇出挂点）、`INFRA-004`（信封与错误码） |
 | 下游依赖 | `BOARD-003`（同列拖拽的远端顺序修正消费 `board.moved`——其 R1 版未列该消费挂点，**上游待登记**，事件契约以本文 §2.3 为准）、`BOARD-004`（批量变更逐实体复用 `issue.updated`/`issue.state.changed` 并附 `batch_id`——其 BR-15 声明的「`COLLAB-004` 待登记」由本文 §2.3 注落地）、`GANTT-001`（甘特实时刷新）、P3 协同编辑（Hocuspocus 复用 live 进程与票据体系——本文档不实现 Yjs）、`INTG-002`（Webhook 与推送共用事件源） |
@@ -189,7 +189,7 @@ flowchart TD
 | BR-08 | 事件不回显给操作者本人连接（`actor_id == sub` 跳过）——自己的乐观更新已就位 | live 广播过滤 | — |
 | BR-09 | api→live 唯一通道 Redis Pub/Sub（channel `rp:events`）；**禁止 live 直连 PostgreSQL**（保持 live 无状态可横扩） | 架构约束 | — |
 | BR-10 | 降级判定：连接失败累计 30s 或 `/health` 探测失败 → 前端切轮询（`COLLAB-001` 通道）+ 顶部横幅「实时同步暂停」；恢复自动切回且补偿拉取 | 前端 | — |
-| BR-11 | presence 仅项目房间：进出广播 `presence.joined/left`（user 摘要 ≤200B）；「正在编辑」细粒度状态 P3 协同再上 | live | — |
+| BR-11 | presence 仅项目房间：进出广播 `presence.joined/left`（user 摘要 ≤200B。勘误 2026-09-06（ADR-0020）：实现载荷最小化为 `{user: {id}}`，`display_name` / 头像由前端按成员域缓存水合——「摘要 ≤200B」以最小载荷满足）；「正在编辑」细粒度状态 P3 协同再上 | live | — |
 | BR-12 | 每用户全局并发 WS 连接 ≤ 5（多标签页，按票据 `sub` 跨 workspace 全局计数）；**同 `client_tab_id` 重连为幂等替换**（踢同键旧连接，不占新额度）；超出 5 时新连接踢最旧(4000 DUP_SESSION) | live | 断开旧连接 |
 | BR-13 | live 事件速率保护：单房间广播 > 200 msg/s 时聚合节流（100ms 窗口合批同类事件，`seq` 取最大）——批量拖拽 50 卡只广播聚合后若干包；`BOARD-004` 批量操作的逐实体 `issue.*` 事件同经此 100ms 合批通道收敛（`batch_id` 保留，§2.3 注 2） | live | — |
 | BR-14 | 全链路可观测：连接数/房间数/事件速率/断开原因码结构化日志（`INFRA-004` JSON 格式），`/health` 附 `connections/rooms` 指标 | live | — |
@@ -201,7 +201,8 @@ flowchart TD
 | 票据无效/过期 | 验签失败/exp 过期 | 无感重换票（≤2 次）后降级 | close | 4001 TOKEN_INVALID |
 | 权限失效（被移出） | 周期复核失败 | 断开 + 数据刷新后 404 导出 | 踢出房间 | 4003 FORBIDDEN |
 | 心跳超时 | 60s 无 pong / 2 次 ping 超时 | 无感重连 | 服务端清理连接 | 4004 HEARTBEAT_TIMEOUT |
-| 重复连接 | 第 6 个标签页 | 最旧标签页断开提示「已在别处建立连接」 | 踢旧 | 4000 DUP_SESSION |
+| 同键重连替换 | 同 `client_tab_id` 重连（BR-12 幂等替换） | 旧连接静默退场（不弹提示） | 踢同键旧连接（正常生命周期） | 1000 + code `REPLACED`（勘误 2026-09-06（ADR-0020）：与 4000 区分——1000 REPLACED 为同键幂等替换、前端不视为异常；4000 DUP_SESSION 专用于超限踢旧） |
+| 重复连接 | 第 6 个标签页（超出 BR-12 全局 ≤5） | 最旧标签页断开提示「已在别处建立连接」 | 踢旧 | 4000 DUP_SESSION |
 | live 宕机 | 健康探测失败 | 横幅 + 轮询模式 | api 侧无感知（Redis 发布无订阅者，事件自然丢弃） | `SERVER_LIVE_SERVICE_UNAVAILABLE`（HTTP 探测端点） |
 | 事件风暴 | 房间 > 200 msg/s | 无感（合批） | 节流聚合（BR-13） | — |
 | Redis 断连 | live↔Redis 失败 | 事件停达（轮询兜底） | live 健康置 FAIL → `/health` 503 | — |
@@ -236,7 +237,7 @@ flowchart TD
 
 | 元素 | 规格 |
 | --- | --- |
-| 头像列 | 项目房间 presence 集（≤7 + `+N`）；hover 弹成员卡（在线态 + 所在视图提示「正在看板」） |
+| 头像列 | 项目房间 presence 集（≤7 + `+N`）；hover 弹成员卡（在线态 + 所在视图提示「正在看板」）。勘误 2026-09-06（ADR-0020）：presence 载荷最小化 `{user: {id}}`，姓名 / 头像由前端按成员域缓存水合（缓存未命中触发一次成员拉取）——BR-11 同注 |
 | 连接指示 | 三态圆点 + 文案（正常隐藏文案）；点击弹连接详情（房间/延迟/重连次数） |
 | 降级横幅 | `realtime 暂停 · 已切换为定时刷新` 常驻黄条（可关）；恢复自动撤除 |
 

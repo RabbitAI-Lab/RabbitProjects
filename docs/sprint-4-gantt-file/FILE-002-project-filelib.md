@@ -7,7 +7,7 @@
 | 优先级 | P2（标准版完整级 · **文件体系的骨架**） |
 | 所属模块 | M7-FILE｜文件资源管理 |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-03 |
+| 最后更新日期 | 2026-09-06 |
 | 上游依赖 | `FILE-001`（预签名直传三步、`FileAsset` 多态模型与 §1.4 协议锁定、`ALLOWED_EXTS` 扩展名白名单、abandoned/purge 清理任务——本文扩展方式见 §1.7 演进登记）、`INFRA-002`（MinIO 对象存储与桶策略、pg_trgm 扩展）、`PROJ-002`（成员与角色）、`AUTH-005`（权限门控）、`TASK-010`（Activity 管道） |
 | 下游消费 | **`FILE-003`（分片续传 / 预览 / 多版本——直接扩展本骨架）**、`FILE-004`（分享与权限）、`FILE-005`（P3 Wiki）、`INTG-001`（GitHub 附件挂接）、`COLLAB-002`（评论图片引用，`comment_image` 挂载 `FILE-001` 通道） |
 | 上游依据 | `docs/需求文档.md` §3.7（项目文件夹创建、多层级目录管理、文件下载重命名移动删除、文件权限管控）、§8.2 文件管理 P2 列 |
@@ -472,6 +472,8 @@ operations = [
 | 13 | `DELETE` | `…/files/{asset_id}/purge/` | 回收站彻底删除（硬删行 + 引用计数判定删对象，BR-06；不可恢复） | `file.delete`（仅 PROJ_ADMIN 收紧） | `200` |
 | 14 | `POST` | `…/files/{asset_id}/complete/` | 完成确认（三步第三步，§2.1 时序消费）：HEAD 校验对象存在与大小 → `status=uploaded`；**幂等**——重复调用对已 `uploaded` 行直接 200（协议复用 `FILE-001` §4.3.2 `AssetService.complete`；`FILE-003` §1.6 第 4 条在此接线版本行） | `file.upload` | `200` |
 
+> **P4 FILE-006 策略钩子（download-url 签发处）**：#7 `download-url` 现行直签**原对象**预签名（5 分钟）；当 FILE-006 有效策略 `watermark=preview_and_download` 或 `download=desensitized` 命中时，本端点签发前经 FILE-006 §4.2 策略钩子**改签水印/脱敏衍生件对象键**——URL 形态与 5 分钟时效不变，仅换目标键（`BR-03` 禁下载拒发 / `BR-04` 脱敏的下载侧落地机制见 FILE-006 §4.2；策略零配置时零开销直通，FILE-006 BR-12 零回归）。（来源：FILE-006 §4.2「下载件路由」行，P4 批次 2026-09-06 登记）
+
 #### 4.2.1 `GET …/folders/{folder_id}/files/` — 目录文件列表
 
 **请求**
@@ -631,6 +633,8 @@ def purge_deleted_assets() -> dict:
         asset.delete(hard=True)                              # 元数据硬删（purged 终态）
     ...
 ```
+
+> **P4 FILE-006 合规策略豁免/顺延登记**：本分支（每日 02:30 软删 30 天期满）删对象/删行前按 `FILE-006` §4.4 有效策略豁免或顺延——①活动 Legal Hold 文件（LegalHold 表存在性派生）**整行跳过**（`FILE-006` BR-07，Hold 期间不清理）；②有效 `retention_days > 30` 天或永久保留的文件**跳过本基线硬删**，管辖权顺延移交 `FILE-006` §4.3 留存策略流（每日 04:20，到期物理删对象、行保留 `purged_at`）；③`purged_at` 已置的行（留存策略流已物理清除、行保留作审计锚点）**同样跳过，不得被本基线硬删收回**。两条 purge 流以「基线豁免 + `purged_at` 跳过」互斥，不重复清理、不互相回收对方管辖行（「purged 五态终态 vs `purged_at` 时间戳」语义边界见 `FILE-006` §2.4）。（来源：FILE-006 §2.4 对账登记，P4 批次 2026-09-06 登记）
 
 #### 4.3.4 配额判定（含在途预留）
 

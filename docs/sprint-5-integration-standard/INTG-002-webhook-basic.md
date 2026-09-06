@@ -7,7 +7,7 @@
 | 优先级 | P2（标准版完整级） |
 | 所属模块 | M9-INTG｜第三方工具集成 |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
+| 最后更新日期 | 2026-09-06（P4 批次跨文档回改：§2.3 补登 `report.snapshot` + 挂载域声明） |
 | 上游依赖 | **[`api-conventions.md`](../architecture/api-conventions.md) §13.3（出站 Webhook 规范——本文档是其首个落地方，一字不差执行）**、`TASK-010`（Activity 管道的 `dispatch_events` 扇出挂点——`issue.*` 事件源）、`COLLAB-002`（评论管道——`comment.created` 事件源，独立挂点）、`PROJ-003`（项目生命周期——`project.*` 事件源，独立挂点）、`COLLAB-001`（通知通道——停用告警复用）、`INFRA-002`（出网策略 / Celery 独立队列）、`INFRA-004`（错误码与信封） |
 | 下游消费 | P3 签名校验增强（批量回调/高级配置归 `INTG-004` OpenAPI 体系）、P4 应用市场（Webhook 为其事件底座） |
 | 上游依据 | `docs/需求文档.md` §3.9（简单 Webhook）、§8.2 第三方集成 P2 列（P2=简单 Webhook；签名校验归 P3 只读开放 API 侧） |
@@ -151,6 +151,9 @@ flowchart LR
 | `project.activated` | 项目启用（**`PROJ-003` §2.2**：draft → active 迁移；独立挂点直调 `dispatch_events`，不经 Activity） | `{id, identifier, name, status, transitioned_at}`（`status` 取目标态） | — |
 | `project.closed` | 项目关闭（**`PROJ-003` §2.2**：active / archived → closed 迁移；独立挂点直调 `dispatch_events`，不经 Activity） | `{id, identifier, name, status, transitioned_at}`（`status` 取目标态） | — |
 | `webhook.ping` | 管理页「发送测试」按钮（`POST /webhooks/{id}/ping/` 直接派发，不经 Activity） | `{endpoint_id, message: "pong"}` | — |
+| `report.snapshot` | 报表订阅快照渲染完成推送（**`RPT-005` §4.4 订阅快照任务 `deliver_subscription`**：webhook 渠道经 `dispatch_events` 直调扇出——独立挂点、不经 Activity，PROJ-003 先例；daily 09:00 / weekly 周一到点派发，见 §2.3 下方补登注） | `{report, image_url, highlights}`（`report` 为报表名；`image_url` 为 MinIO 预签名 URL（TTL 86400s），PNG 渲染失败降级置 `null` 改投纯数据摘要（RPT-005 UT-14）；`highlights` 为摘要数字） | — |
+
+> **`report.snapshot` 补登（P4 批次跨文档回改）**：按 `RPT-005` BR-08 登记补入上表，事件闭集由 12 种扩至 13 种（本文其余小节「12 种」计数引用不在本批回改范围）。**挂载域：工作空间级事件挂载扩展**——报表/订阅为工作空间级对象（报表无项目归属），`INTG-002` 订阅面现为项目级端点（BR-01，工作空间级端点列为其 P3 评估项），扩展随本补登声明。来源：RPT-005/p4 BR-08（P4 批次 2026-09-06 登记）
 
 > **project.\* 补登 3 种（PROJ-003 待回改同步——落地期与本表同步完成）**：`project.created` / `project.activated` / `project.closed` 按 `PROJ-003` §2.2 登记补入本表，与既有 `project.archived` / `project.restored` 共 5 类 `project.*` 事件；`payload.data` 字段最小集统一为 `{id, identifier, name, status, transitioned_at}`（`status` 为 `PROJ-003` 新增字段——`project.created` 取初态 `draft|active`，其余迁移取目标态）。该补登在 `PROJ-003` 侧登记为架构文档待回改项（README §4 裁决）。
 

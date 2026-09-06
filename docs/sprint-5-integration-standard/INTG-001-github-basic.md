@@ -7,7 +7,7 @@
 | 优先级 | P2（标准版完整级 · **系统首个双向外部集成**） |
 | 所属模块 | M9-INTG｜第三方工具集成 |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
+| 最后更新日期 | 2026-09-06（P4 批次跨文档回改：§4.1.1 补 INTG-003 演进注记） |
 | 上游依赖 | `TASK-001/002`（Issue 创建与属性管道）、**`TASK-005`（流转路径——合并自动改状态的唯一通道）**、`TASK-010`（Activity 留痕）、`INFRA-002`（出网策略 / Celery / Redis）、`INFRA-004`（信封与错误码） |
 | 下游消费 | `INTG-002`（Webhook——集成事件同为其事件源之一）、`INTG-003`（P4 Slack/Zoom——复用安装与凭据体系）、`TASK-015`（P4 基线对比外部引用） |
 | 上游依据 | `docs/需求文档.md` §3.9.1（绑定仓库、自动同步 PR/Issue/Commit、Issue 自动转任务、任务关联 PR、PR 合并自动更新任务状态）、§8.2 第三方集成 P2 列 |
@@ -373,6 +373,8 @@ class IntegrationInstallation(BaseModel):
                          name="idx_install_repo"),
         ]
 ```
+
+> **P4 演进注记（由 INTG-003 P4 迁移引入）**：本表被 Slack/Zoom 复用为统一安装载体（INTG-003 §4.1 演进登记），随之发生结构演进——① `Provider` 枚举扩 `SLACK` / `ZOOM`（其登记 ①）；② `installation_id` 加 `null=True`（Slack/Zoom 行空置，其登记 ②）；③ `project` / `repository_full_name` / `repository_node_id` 三列可空化（其登记 ⑤——上文实文中三列为 GitHub 语义非空列，而 Slack 安装是 workspace 级、Zoom 走实例级，两级行对三列均无合法值，不演进则首次插入即撞 NOT NULL）；④ GitHub 侧补偿：唯一约束 `uniq_binding_project_repo_active` 与 `chk_repo_name` CheckConstraint 改 `condition=Q(provider="github")` 条件约束补偿（与既有 `deleted_at` 存活条件叠加）。既有 GitHub 行零数据迁移。来源：INTG-003/p4 §4.1（P4 批次 2026-09-06 登记）
 
 ```python
 # Issue 既有模型点亮（unified-issue-model §7.1 预留说明的落地）：

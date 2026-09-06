@@ -5,7 +5,7 @@
 | 文档编号 | ARCH-001 |
 | 所属层级 | 跨迭代架构决策（Cross-Iteration Architecture Decision） |
 | 文档状态 | 已确认（Approved）· 变更需走 ADR 流程 |
-| 最后更新日期 | 2026-08-31 |
+| 最后更新日期 | 2026-09-06 |
 | 适用范围 | 全仓库（apps/* 与 packages/* 全部子项目），P0 ~ P4 全部迭代 |
 | 上游依据 | `docs/需求文档.md` §1.2 技术栈固定、§五 核心技术能力与约束、§8.3 POC 范围 |
 | 对标基线 | Plane 开源版 master 分支（https://github.com/makeplane/plane） |
@@ -76,6 +76,8 @@
 | date-fns | `4.1.x` | 日期计算与格式化 | 甘特图/迭代/工时大量日期运算；Tree-shakable，不可变 API，体积远小于 moment |
 | clsx + tailwind-merge | `2.1.x` / `3.x` | className 合并 | 组件库变体样式合并的事实标准（`cn()` 工具函数） |
 | Storybook | `8.x` | `@rp/ui` 组件文档与视觉回归 | 组件库独立开发与评审载体，Vite builder 与主应用共享构建配置 |
+| htmldiff-js | P4 引入，版本随立项定稿 | Wiki 页面版本对比 diff 渲染（新增绿底 / 删除红划线） | 双版本 HTML 拉取后纯前端渲染；FILE-005（s9，2026-09-06 回改登记） |
+| ELK.js | P4 引入，版本随立项定稿 | 项目集依赖关系图分层布局（跨项目边虚线 +「外部」徽标，>100 节点提示过滤） | 纯前端布局引擎，无 React 绑定负担；PROJ-004（s9，2026-09-06 回改登记） |
 
 ### 2.1 SWR 与 MobX 的职责边界（架构约束）
 
@@ -122,6 +124,16 @@
 | sentry-sdk | `2.x` | 错误监控（可选，私有化部署可指向自托管 Sentry） | 全局异常捕获落地到可观测平台 |
 | structlog | `24.x` | 结构化日志（JSON 输出） | 日志持久化与合规审计要求，便于 ELK/Loki 采集 |
 | drf-spectacular | `0.28.x` | OpenAPI 3 文档自动生成 | Open API 能力（企业版）与前端类型生成的上游 |
+| python3-saml | `1.16.x`（AUTH-009 登记基线，随 s8 立项定稿） | SAML 2.0 SP 全流程（AuthnRequest 生成 / ACS 断言消费 / SP 元数据 / XMLsec 验签），SSO SAML 连接 | OneLogin 开源 SDK 事实标准，需系统库 `xmlsec1`；AUTH-009 §1.4（s8，2026-09-06 回改登记） |
+| authlib | `1.3.x`（AUTH-009 登记基线，随 s8 立项定稿） | OIDC RP 全流程（authorizeURL / token 交换 / JWKS 拉取与 id_token 验签 / PKCE），SSO OIDC 连接 | 声明式客户端，避免手写协议层；AUTH-009 §1.4（s8，2026-09-06 回改登记） |
+| cryptography | `43.x+`（uv 实际解析已锁 50.x——§10 记录 1.3，满足区间；AUTH-009 原登记 42.x） | ①SSO IdP `client_secret` / SP 私钥 Fernet 对称加密落库（KMS 主密钥走环境变量）；②私有化 License RSA 签名验签（INFRA-006 §4.5） | 直接 import `cryptography.fernet` / `hazmat`，不引入 `django-fernet-fields` 等维护停滞的第三方封装；AUTH-009（s8）+ INFRA-006 §4.10（p4），2026-09-06 回改登记 |
+| PgBouncer | `1.22.x`（P4 引入，版本随立项定稿） | PostgreSQL transaction pooling 连接池（web 每 Pod max 20 连接、总连接预算 < PG `max_connections` 70%；rw/ro 双池支撑读写分离路由） | INFRA-006 §4.3/§4.10（p4，2026-09-06 回改登记）；部署组件形态见 §8.1 |
+| LLM SDK | P4 引入，版本随立项定稿 | AI 网关（`plane/ai/gateway.py`）对接 LLM 供应商（生成式能力统一出口） | AI-001（p4，2026-09-06 回改登记）；具体 SDK 选型随 P4 立项定稿 |
+| pgvector | P4 引入，版本随立项定稿 | PostgreSQL 向量扩展：任务重复识别 embedding 余弦 Top-K 相似检索（阈值 0.82） | AI-001 §4.2（p4，2026-09-06 回改登记）；扩展启用与向量表随 `plane/ai` 应用迁移登记 |
+| bge embedding | P4 引入，版本随立项定稿 | 自部署 embedding 模型（bge-large，私有化与 SaaS 同模，避免双模型漂移） | AI-001（p4，2026-09-06 回改登记） |
+| LightGBM | P4 引入，版本随立项定稿 | 任务风险评分梯度提升树（小数据可训、SHAP 贡献度可解释、CPU 批量推理，降级友好） | AI-001（p4，2026-09-06 回改登记） |
+| django-prometheus | 随 Django 5 兼容最新稳定（P4 引入） | web/worker 应用指标导出（`/metrics`，Prometheus 抓取与 HPA 指标链数据源） | INFRA-006 §4.6/§4.10（p4，2026-09-06 回改登记）；部署组件形态见 §8.1 |
+| prometheus-rabbitmq-exporter | 最新稳定（P4 引入） | RabbitMQ 队列深度指标（`rabbitmq_queue_messages_ready`，worker HPA 扩容数据源） | INFRA-006 §4.2/§4.10（p4，2026-09-06 回改登记）；部署组件形态见 §8.1 |
 
 ### 3.1 认证方案说明
 
@@ -244,7 +256,7 @@
 **差异 3：RabbitMQ 作为唯一 Celery broker**
 
 - 决策：`CELERY_BROKER_URL` 指向 RabbitMQ；`CELERY_RESULT_BACKEND` 指向 Redis/Valkey（result 可丢，追求读写性能）。
-- 配套约束：所有 Celery 任务必须幂等（`acks_late=True` + 手动 ack 场景下可能重复投递）；每个队列配置 DLX 死信队列，失败任务进入 `*.dlq` 便于人工介入；队列按优先级拆分（`notifications` / `webhooks` / `reports` / `imports`），避免长任务阻塞实时通知。
+- 配套约束：所有 Celery 任务必须幂等（`acks_late=True` + 手动 ack 场景下可能重复投递）；每个队列配置 DLX 死信队列，失败任务进入 `*.dlq` 便于人工介入；队列按优先级拆分（`notifications` / `webhooks` / `reports` / `imports`；后续增补：`workflow` 审批异步——WF-002/s7、`ai_embed` AI 向量化——AI-001/p4、`report_render` Playwright 订阅渲染（并发 ≤ 2）——RPT-005/p4，均 2026-09-06 回改登记），避免长任务阻塞实时通知。
 
 ---
 
@@ -314,6 +326,25 @@ Ones 的 ONESQL 提供了极强的跨实体查询表达力，代价是：①学�
 - `apps/api/.python-version` 写入 `3.12`，`pyproject.toml` 声明 `requires-python = ">=3.12,<3.13"`。
 - `package.json#packageManager` 固定 pnpm 精确版本，Corepack 自动对齐，杜绝「本地 pnpm 版本不同导致 lockfile 抖动」。
 
+### 8.1 P4 部署基建依赖（INFRA-006 §4.10，2026-09-06 回改登记）
+
+P4 双形态部署（SaaS 高可用集群 / 大客户私有化）引入的基建与交付组件。版本为 INFRA-006 建议基线，P4 立项时定稿；应用侧 Python 依赖面（PgBouncer 接入、django-prometheus、prometheus-rabbitmq-exporter、cryptography）已登记 §3，Playwright 服务端渲染见 §6.2 `report_render` 队列说明，此处不重复。
+
+| 组件 | 版本（建议基线） | 用途 | 适用形态 |
+| --- | --- | --- | --- |
+| k3s | `v1.30.x+` | 私有化交付 K8s 发行版（单节点起步，HA 档 3 节点） | 私有化 |
+| Helm | `v3.14.x+` | 双形态统一交付封装（Chart 落位 `deploy/k8s/chart/`，INFRA-006 §4.1） | 双形态 |
+| PgBouncer | `1.22.x` | transaction pooling 连接池组件（应用侧接入见 §3；连接治理 INFRA-006 §4.3） | 双形态 |
+| Prometheus | `v2.5x` | Metrics 采集与告警规则（INFRA-006 §2.5） | 双形态 |
+| Alertmanager | `v0.27.x` | 告警分级路由（P1 电话 / P2 IM / P3 日报） | 双形态 |
+| Grafana | `11.x` | 大盘与 SLA 月报数据源（INFRA-006 §3.2） | 双形态 |
+| Loki | `3.x` | 结构化日志聚合（`request_id` 检索） | 双形态 |
+| Tempo | `2.6.x` | Trace 存储与查询（INFRA-006 §2.5） | 双形态 |
+| OpenTelemetry（SDK + Collector） | SDK 最新稳定 / Collector `0.10x` | Trace 采集导出（采样率 10%） | 双形态 |
+| Sealed Secrets（kubeseal） | `v0.27.x` | 私有化密文交付（INFRA-006 BR-05） | 私有化 |
+| prometheus-adapter（或等价自定义指标 API 组件） | 最新稳定 | HPA 自定义指标（`http_requests_per_second` / 队列深度）聚合供给（INFRA-006 §4.2 指标链最后一环） | SaaS＋私有化 HA（标准档无 HPA 不涉及） |
+| Playwright（服务端） | 与 §5 E2E 用 Playwright 主版本对齐（Python 绑定），P4 引入、版本随立项定稿 | 订阅报表 PNG 服务端 headless Chromium 渲染（`report_render` 队列，并发 ≤ 2，RPT-005 §4.4） | 双形态 |
+
 ---
 
 ## 9. 依赖治理与升级流程
@@ -356,3 +387,4 @@ Renovate 开 PR（按 §1.2 窗口调度）
 | 2026-09-05 | 1.1 | Sprint-3 回改（T3-01）：§4 apps/live 版本表补 `jsonwebtoken ^9.0.x`（RS256 票据验签）与 `ioredis 5.x`（Redis 订阅客户端）；`ws 8.18.x` 原已登记、注明 Sprint 3 业务事件通道复用 | 架构组 |
 | 2026-09-06 | 1.2 | Sprint-3（T3-05）：Pillow 实际锁入 `apps/api`（评论图片缩略变体），登记版本 11.x→12.x 修订（11.x 从未安装，按 uv 实际解析 12.3.0） | 架构组 |
 | 2026-09-06 | 1.3 | Sprint-3（T3-09）：PyJWT 实际锁入 `apps/api`（RS256 票据签发，连带 cryptography 50.x），登记版本 2.10.x→2.13.x 修订（2.10.x 从未安装） | 架构组 |
+| 2026-09-06 | 1.4 | 架构文档专项回改批次：§2 补 `htmldiff-js`（FILE-005，s9）/ `ELK.js`（PROJ-004，s9）；§3 补 SSO 依赖 `python3-saml` / `authlib` / `cryptography`（AUTH-009，s8），连接池 `PgBouncer` 与指标导出 `django-prometheus` / `prometheus-rabbitmq-exporter`、私有化验签 `cryptography 43.x+`（INFRA-006，p4），AI 依赖 `LLM SDK` / `pgvector` / `bge embedding` / `LightGBM`（AI-001，p4）；§6.2 队列拆分清单增补 `workflow`（WF-002，s7）/ `ai_embed`（AI-001，p4）/ `report_render`（RPT-005，p4）；新增 §8.1「P4 部署基建依赖」（INFRA-006 §4.10，p4） | 架构组 |

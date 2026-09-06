@@ -5,7 +5,7 @@
 | 文档编号 | ARCH-002 |
 | 所属层级 | 跨迭代架构决策（Cross-Iteration Architecture Decision） |
 | 文档状态 | 已确认（Approved）· 目录结构变更需走 ADR 流程 |
-| 最后更新日期 | 2026-08-31 |
+| 最后更新日期 | 2026-09-06 |
 | 适用范围 | 全仓库结构、包命名、依赖方向、构建管道、环境变量 |
 | 上游依据 | `docs/需求文档.md` §1.2（pnpm workspace + Turborepo，apps/ + packages/）、§8.3 POC 交付项 |
 | 对标基线 | Plane 开源版 master 分支仓库结构 |
@@ -109,6 +109,9 @@ project-root/
 │   │   │   │   └── test.py           # 测试（内存/独立库）
 │   │   │   ├── db/                   # 数据层
 │   │   │   │   ├── models/           # 全部 Django Model，按域拆文件
+│   │   │   │   │   ├── file_compliance.py   # 合规策略 / 法律保留 / DLP 规则（FILE-006/p4，2026-09-06 回改）
+│   │   │   │   │   └── directory.py         # LDAP / SCIM 目录通道配置（AUTH-011/p4，2026-09-06 回改）
+│   │   │   │   ├── services/         # 领域服务层：file_permission.py（FILE-002）/ upload_session.py（FILE-003）/ file_compliance.py（FILE-006），2026-09-06 补登记
 │   │   │   │   ├── migrations/       # Django migrations（提交入库，禁止手动改历史）
 │   │   │   │   └── mixins/           # AuditModel（created_by/updated_by/时间戳）、SoftDelete
 │   │   │   ├── app/                  # 面向 Web UI 的内部 API（Session 认证）
@@ -124,9 +127,15 @@ project-root/
 │   │   │   ├── space/                # 面向 apps/space 的匿名只读 API
 │   │   │   ├── authentication/       # 自研认证：Session / Token / OAuth2 / SSO(P3)
 │   │   │   ├── bgtasks/              # Celery 任务（通知、Webhook、导入导出、报表预聚合）
+│   │   │   │   ├── compliance_tasks.py   # 合规清扫 / 留存 purge（FILE-006/p4，2026-09-06 回改）
+│   │   │   │   └── slack_sync.py         # Slack 出站投递 / 目录同步（INTG-003/p4，2026-09-06 回改）
 │   │   │   ├── workflow/             # 工作流引擎与审批（状态机、条件规则、流转校验）
 │   │   │   ├── analytics/            # 报表聚合查询与缓存
 │   │   │   ├── license/              # 企业版许可校验（P3）
+│   │   │   ├── governance/           # 租户治理引擎：配额 / 风控 / 授权工单 / 处置（P4，AUTH-012，2026-09-06 回改）
+│   │   │   ├── ai/                   # AI 能力独立应用（P4，AI-001，2026-09-06 回改；随 INSTALLED_APPS 增补启用）
+│   │   │   │   ├── models.py         # AiQuotaCounter / IssueRiskScore / AiFeedback（0001_initial，含 pgvector 向量表与扩展启用）
+│   │   │   │   └── gateway.py        # LLM 供应商网关封装
 │   │   │   ├── middleware/           # 请求 ID、审计上下文、限流（INFRA-001 §4.11）
 │   │   │   ├── utils/                # 字段选择/展开 mixin（INFRA-001 §4.11）—— 异常处理/分页器见 base/
 │   │   │   ├── base/                 # 框架层：error_codes 注册表 / handlers（异常处理）/ response / middleware（六件套）/ request_context（INFRA-004 §1.3，sprint-1 命名收口；详见 ADR-0012 A2）
@@ -246,7 +255,8 @@ project-root/
 │   │   ├── docker-compose.yml        # 本地开发全套编排（11 服务）
 │   │   ├── docker-compose.prod.yml   # 生产覆盖层（镜像 digest、副本、资源限制）
 │   │   └── docker-compose.ci.yml     # CI 用最小依赖（db/redis/mq/minio）
-│   ├── k8s/                          # Helm chart（P2 引入）
+│   ├── k8s/                          # K8s 原生清单基线（INFRA-005 §4.5.2，P2 引入）
+│   │   └── chart/                    # Helm Chart 封装（原生清单模板化，P4 引入，INFRA-006，2026-09-06 回改）
 │   └── scripts/
 │       ├── backup-db.sh              # 自动数据备份（P2）
 │       └── restore-db.sh
@@ -807,3 +817,4 @@ REDIS_URL=redis://redis:6379/0
 | 日期 | 版本 | 变更内容 | 责任人 |
 | --- | --- | --- | --- |
 | 2026-08-31 | 1.0 | 初版：确立 apps/ + packages/ 结构、workspace 与 Turbo 管道、依赖方向规则、环境变量策略，完成与 Plane 仓库结构的对标 | 架构组 |
+| 2026-09-06 | 1.1 | 架构文档专项回改批次：§2 目录树增补 `plane/governance/`（AUTH-012/p4）、`plane/ai/` 含 models/gateway/0001_initial 并注明 INSTALLED_APPS 增补（AI-001/p4）、`db/models/file_compliance.py` 与 `bgtasks/compliance_tasks.py`（FILE-006/p4）、`db/models/directory.py`（AUTH-011/p4）与 `bgtasks/slack_sync.py`（INTG-003/p4）、`db/services/` 子目录（FILE-002/003/006 先例补登记）、`deploy/k8s/chart/` 子目录（INFRA-006/p4 Chart 封装；`deploy/k8s/` 基线口径修订为 INFRA-005 §4.5.2 原生清单） | 架构组 |

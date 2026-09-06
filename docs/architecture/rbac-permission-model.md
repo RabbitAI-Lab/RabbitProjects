@@ -226,6 +226,8 @@ class SystemAdmin(BaseModel):
         indexes = [models.Index(fields=["user", "is_active"])]
 ```
 
+> **P4 拟增列 `is_tenant_ops`**：`SystemAdmin` 增「租户治理运营授权位」布尔列（P4 migration 交付），`system.tenant.manage`（§8.3）要求 `SYSTEM_ADMIN` 且 `is_tenant_ops=True`；tenant_ops 授权组成员名单以附录 B 登记记录为权威载体，随附录 B 登记流程定稿（AUTH-012 §4.4 注记与本节互为引用）。来源：AUTH-012（P4 批次 2026-09-06 附录 B 登记）。
+
 **为什么单独建表而不在 `User` 上加 `is_system_admin` 布尔位**：
 1. 系统管理员的授予需要审计（谁授予、何时授予），布尔位承载不了。
 2. 单独表使「系统管理员集合」可被独立缓存（体量极小，常驻 Redis），避免每次鉴权都触碰 `User` 表。
@@ -769,7 +771,7 @@ def custom_exception_handler(exc, context):
 | 末位 Owner/Admin 保护（§7.2） | 403 | `PERM_LAST_OWNER` |
 | Guest 角色上限（§7.3） | 403 | `PERM_GUEST_LIMIT` |
 | 无权知晓其存在（第三层过滤） | 404 | `RESOURCE_NOT_FOUND` |
-| IP 白名单拦截（§11.5） | 403 | `IP_NOT_ALLOWED` |
+| IP 白名单拦截（§11.5） | 403 | `PERM_IP_NOT_ALLOWED` |
 
 **一致性校验（CI 关卡）**：新增单元测试遍历权限矩阵，断言每个 `PermissionKey` 都同时存在
 （1）前端矩阵条目、（2）后端矩阵条目、（3）至少一个引用它的 DRF Permission 类或 `@require_permission` 装饰器。
@@ -871,6 +873,8 @@ class IssueManager(models.Manager.from_queryset(IssueQuerySet)):
 | `Notification` | `filter(receiver=user)`（天然行级隔离） |
 | `Workflow` / `Approval` | 委托 `Project` |
 | `AuditLog` | 仅 `SystemAdmin` 与 `WS_OWNER`/`WS_ADMIN`（限本 workspace） |
+
+> **P4 增补 `tenant_id`**：`audit_log` 增补 `tenant_id` 列——列 DDL 由 AUTH-012 迁移交付（不建 FK，沿用审计表零外键原则）；审计 recorder 的 `record()` 载荷同步增补 `tenant_id` 写入（AUTH-010 承接）；存量数据与未治理工作空间的过渡期按 `workspace → tenant` 映射回填兜底，`tenant_id=NULL` 保留「未治理」语义（私有化实例恒 NULL）。来源：AUTH-012（P4 批次 2026-09-06 附录 B 登记）。
 
 ### 6.3 ViewSet 强制注入
 
@@ -1014,6 +1018,12 @@ if ws_role is not None and ws_role >= WorkspaceRole.ADMIN:
 | AuditLog（P3） | read | `audit.read` | ✅ | ✅ | ❌ | ❌ |
 | Integration | manage（OAuth 绑定） | `integration.manage` | ✅ | ✅ | ❌ | ❌ |
 | Billing | manage | `billing.manage` | ✅ | ✅ | ❌ | ❌ |
+| SSO Connection | manage（IdP 配置/强制开关） | `workspace.sso.manage` | ✅ | ❌ | ❌ | ❌ |
+| Directory Sync | manage（LDAP/SCIM 同步） | `directory.manage` | ✅ | ✅ | ❌ | ❌ |
+| File Compliance | manage（合规策略/法律 Hold/DLP 规则） | `file.compliance.manage` | ✅ | ✅ | ❌ | ❌ |
+| AI | invoke（能力调用/反馈/配额水位） | `ai.invoke` | ✅ | ✅ | ✅ | ❌ |
+| AI | manage（授权签署/台账/能力开关） | `ai.manage` | ✅ | ✅ | ❌ | ❌ |
+| Security L2 Ticket | approve（L2 越界工单客户批准/驳回） | `security.l2.approve` | ✅ | ✅ | ❌ | ❌ |
 | Wiki（P3，与 Project 统一权限） | read | `wiki.read` | ✅ | ✅ | ✅ | ⚠️ 仅授权空间 |
 | Wiki（P3） | update | `wiki.update` | ✅ | ✅ | ✅ | ❌ |
 | Wiki（P3） | manage（权限/模板） | `wiki.manage` | ✅ | ✅ | ❌ | ❌ |
@@ -1077,6 +1087,7 @@ if ws_role is not None and ws_role >= WorkspaceRole.ADMIN:
 | Workflow（P3） | manage（画布/流转规则） | `workflow.manage` | ✅ | ❌ | ❌ | ❌ |
 | Approval（P3） | act（审批/驳回） | `approval.act` | ⚠️ 需为审批节点指定人 | ⚠️ 需为审批节点指定人 | ❌ | ❌ |
 | Approval（P3） | withdraw（撤回） | `approval.withdraw` | ✅ | ⚠️ 仅本人提交 | ❌ | ❌ |
+| Approval（P3） | read（审批记录只读，开放 API scope） | `approval.read` | ✅ | ✅ | ✅ | ✅ |
 | Automation（P3） | manage（自动化规则） | `automation.manage` | ✅ | ❌ | ❌ | ❌ |
 | Notification | read（本人通知） | `notification.read` | ✅ | ✅ | ✅ | ✅ |
 | Notification（P3） | setting_manage（项目通知策略） | `notification.setting.manage` | ✅ | ❌ | ❌ | ❌ |
@@ -1096,6 +1107,7 @@ if ws_role is not None and ws_role >= WorkspaceRole.ADMIN:
 | Integration Whitelist | manage | `system.integration.manage` | ✅ | ❌ |
 | AuditLog（全站） | read / export | `system.audit.read` | ✅ | ❌ |
 | Workspace（全站） | list / force_delete | `system.workspace.manage` | ✅ | ❌ |
+| Tenant（P4，平台治理） | manage（租户配额/冻结/边界报告/L2 书面确认/申诉复核） | `system.tenant.manage` | ⚠️ 需 `is_tenant_ops=True` | ❌ |
 | Backup（P3） | create / restore | `system.backup.manage` | ✅ | ❌ |
 | Feature Flag（P3） | manage（功能开关/租户配置） | `system.flag.manage` | ✅ | ❌ |
 | IP Whitelist（P3） | manage | `system.ip.manage` | ✅ | ❌ |
@@ -1124,7 +1136,7 @@ if ws_role is not None and ws_role >= WorkspaceRole.ADMIN:
 | **P0** | 基础三级角色（系统管理员 / 团队管理员 / 普通用户）；登录态拦截；最小数据隔离（用户仅可见自己创建或参与的团队/项目/任务） | `AUTH-001` `AUTH-002` `AUTH-003` `INFRA-003` | Sprint 0 |
 | **P1** | 按钮级权限控制（`usePermission` / `PermissionGate` / MobX 权限 Store）；后端接口二次鉴权（DRF Permission 体系 + 统一 403 `PERM_DENIED`）；工作空间 4 角色与项目 4 角色落地 | `AUTH-004` `AUTH-005` `AUTH-006` `TEAM-004` `PROJ-003` | Sprint 1 |
 | **P2** | 数据库行级隔离（`accessible_by` 全模型收口 + `BaseViewSet` 强制注入 + CI 静态检查）；项目成员权限分配；账号禁用/启用；层级保护规则全量落地 | `AUTH-007` `TEAM-005` `PROJ-005` | Sprint 2 |
-| **P3** | 自定义角色组；细粒度资源权限；字段级权限；部门组织架构；SSO 单点登录；私密项目隔离；Issue Type 级权限；Project 与 Wiki 统一权限模型 | `AUTH-008` `TEAM-007` `PROJ-006` `WF-003` `WF-006` `FILE-007` | Sprint 8 |
+| **P3** | 自定义角色组；细粒度资源权限；字段级权限；部门组织架构；SSO 单点登录；私密项目隔离；Issue Type 级权限；Project 与 Wiki 统一权限模型 | `AUTH-008` `TEAM-007` `PROJ-006` `WF-003` `WF-006` `FILE-005` | Sprint 8 |
 | **P4** | LDAP / SCIM 账号同步；全量操作审计日志；敏感操作告警；权限变更溯源；IP 白名单；接口风控限流；多租户隔离 | `AUTH-009` `INFRA-006` | 第 13 周起 |
 
 **P0 必须确定的扩展策略**（否则后续迭代需要破坏性迁移）：
@@ -1239,7 +1251,7 @@ class IssuePermission(ProjectPermission):
 
 **Ones 做法**：Project 与 Wiki 使用同一套角色与权限模型，用户在项目中的角色自动决定其在关联 Wiki 空间中的权限，无需重复配置。
 
-**本系统 P3 吸收**：`FILE-007` 的 Wiki 知识库不建独立权限体系，`WikiPage.accessible_by(user)` 直接委托上游：
+**本系统 P3 吸收**：`FILE-005` 的 Wiki 知识库不建独立权限体系（原文误引「FILE-007」，2026-09-06 按 FILE-005 评审登记修正——FILE-005 为 Wiki 实文，FILE-007 未占用），`WikiPage.accessible_by(user)` 直接委托上游：
 
 ```python
 class WikiPageQuerySet(AccessibleQuerySetMixin, models.QuerySet):
@@ -1269,7 +1281,7 @@ class IPWhitelistMiddleware:
         if cidrs and not ip_in_cidrs(client_ip(request), cidrs):
             return JsonResponse(
                 {"status": "error",
-                 "error": {"code": "IP_NOT_ALLOWED",
+                 "error": {"code": "PERM_IP_NOT_ALLOWED",
                            "message": "当前网络环境不允许访问",
                            "details": [], "request_id": get_request_id(request)}},
                 status=403,
@@ -1277,7 +1289,7 @@ class IPWhitelistMiddleware:
         return self.get_response(request)
 ```
 
-刻意与 `PERM_DENIED` 区分错误码（`IP_NOT_ALLOWED`），便于前端给出「请连接公司网络」而非「无权限」的提示。
+刻意与 `PERM_DENIED` 区分错误码（`PERM_IP_NOT_ALLOWED`），便于前端给出「请连接公司网络」而非「无权限」的提示。错误码统一采用 [`api-conventions.md`](./api-conventions.md) §8.3 注册口径 `PERM_IP_NOT_ALLOWED`（本文旧写法 `IP_NOT_ALLOWED` 系分歧旧名，2026-09-06 统一，统一后以 api-conventions §8.3 为准）。来源：INTG-004 BR-11（P4 批次 2026-09-06 附录 B 登记）。
 
 ### 11.6 吸收范围与不吸收的部分
 
@@ -1287,7 +1299,7 @@ class IPWhitelistMiddleware:
 | 字段级权限 | ✅ 吸收 | P3 | `FieldPermission`，三层同步落地 |
 | Issue Type 级权限 | ✅ 吸收 | P3 | `IssueTypePermission`，与 `TASK-013` 契合 |
 | Project / Wiki 统一权限 | ✅ 吸收 | P3 | Wiki 委托项目可见性，不建独立体系 |
-| IP 白名单 | ✅ 吸收 | P3 | 独立错误码 `IP_NOT_ALLOWED` |
+| IP 白名单 | ✅ 吸收 | P3 | 独立错误码 `PERM_IP_NOT_ALLOWED` |
 | 权限继承与部门授权 | ✅ 吸收 | P3 | `Department` 物化路径 + 部门批量授权 |
 | 完全自由的权限项勾选 | ❌ 不吸收 | —— | 与整数等级体系冲突，会使层级保护规则失效；改用基线 + 覆盖 |
 | 独立的 Wiki 权限体系 | ❌ 不吸收 | —— | 违背统一权限模型，维护成本高于收益 |
@@ -1329,3 +1341,25 @@ sequenceDiagram
 5. 前端所有入口用 `<PermissionGate>` 或 `usePermission` 包裹。
 6. 补 CI 一致性测试用例：权限 Key 在前端矩阵、后端矩阵、Permission 引用三处齐备。
 7. 补越权测试：非成员 / 低权限成员 / 跨工作空间三种身份分别断言 403 或 404。
+
+### B.1 新增权限码登记记录（P4 批次 2026-09-06）
+
+以下 8 个新增权限码按上述七步流程完成登记：矩阵行已落入 §8.1 / §8.2 / §8.3；七步中的代码侧落地项（`permission.ts` 定义、前端 `<PermissionGate>` 包裹、三处一致性 CI、越权测试）随各来源文档对应迭代交付，以各来源文档 §7 用例清单为验收基准。本表为登记完成的架构侧权威记录。
+
+| 权限 Key | 矩阵落位 | 角色口径（按来源实文） | 语义要点 | 来源 |
+| --- | --- | --- | --- | --- |
+| `workspace.sso.manage` | §8.1 | 仅 WS_OWNER ✅；WS_ADMIN / WS_MEMBER / WS_GUEST ❌ | IdentityProvider（IdP 配置 / 强制 SSO 开关）为新增受管控资源；配置读取与全部写操作同码——IdP 配置含全体成员认证入口，WS_ADMIN 亦不可见 / 不可改 | 来源：AUTH-009（P4 批次 2026-09-06 附录 B 登记） |
+| `ai.invoke` | §8.1 | WS_OWNER / WS_ADMIN / WS_MEMBER ✅；WS_GUEST ❌ | AI 能力调用与反馈（summary / similar / risk-score / draft / feedback / quota 六端点）；Guest 不触发数据出域与配额消耗；项目内结果按 `issue.read` 可见性过滤 | 来源：AI-001（P4 批次 2026-09-06 附录 B 登记） |
+| `ai.manage` | §8.1 | WS_OWNER / WS_ADMIN ✅；WS_MEMBER / WS_GUEST ❌ | AI 治理动作：授权查看 / 签署 / 撤销（consent）、台账读取与导出（ledger）、能力开关 | 来源：AI-001（P4 批次 2026-09-06 附录 B 登记） |
+| `directory.manage` | §8.1 | WS_OWNER / WS_ADMIN ✅；WS_MEMBER / WS_GUEST ❌ | 目录同步 / SCIM 管理面（通道配置、同步 / 干跑、台账、待办裁决、映射保护开关、SCIM Token）；角色映射对齐同表 `department.manage`，WS_MEMBER 直调 403 `PERM_WORKSPACE_ADMIN_REQUIRED` | 来源：AUTH-011（P4 批次 2026-09-06 附录 B 登记） |
+| `file.compliance.manage` | §8.1 | WS_OWNER / WS_ADMIN ✅；WS_MEMBER / WS_GUEST ❌ | 合规策略（空间 / 项目 / 文件夹 / 文件四级）、法律 Hold、DLP 规则写操作；Hold 双人确认系流程约束而非权限码拆分 | 来源：FILE-006（P4 批次 2026-09-06 附录 B 登记） |
+| `approval.read` | §8.2 | PROJ_ADMIN / PROJ_CONTRIBUTOR / PROJ_COMMENTER / PROJ_VIEWER 全 ✅ | 审批记录只读（开放 API `approvals:read` scope 的 RBAC 映射码）；读口径沿用既有「项目成员可查本项目审批业务记录」（WF-006）与实例详情 GET 面向全项目角色（WF-002 IT-09） | 来源：INTG-004（P4 批次 2026-09-06 附录 B 登记） |
+| `system.tenant.manage` | §8.3 | SYSTEM_ADMIN ⚠️ 需 `SystemAdmin.is_tenant_ops=True`（§3.3 P4 拟增列）；其他所有角色 ❌ | 平台租户治理端点（`/api/v1/instances/`：租户列表 / 配额 / 冻结 / 边界报告 / L2 书面确认 / 申诉复核）；tenant_ops 授权组成员名单以本登记记录为权威载体 | 来源：AUTH-012（P4 批次 2026-09-06 附录 B 登记） |
+| `security.l2.approve` | §8.1 | WS_OWNER / WS_ADMIN ✅；WS_MEMBER / WS_GUEST ❌ | L2 越界工单客户侧批准 / 驳回（`POST /api/v1/workspaces/{slug}/security/l2-tickets/{id}/approval/`） | 来源：AUTH-012（P4 批次 2026-09-06 附录 B 登记） |
+
+同批次附带登记（非权限码，随本表归档）：
+
+1. §3.3 `SystemAdmin` P4 拟增列 `is_tenant_ops`，随本附录 B 登记流程定稿。来源：AUTH-012（P4 批次 2026-09-06 附录 B 登记）。
+2. 审计 recorder `record()` 载荷增补 `tenant_id` 写入（列 DDL 由 AUTH-012 迁移交付，过渡期 workspace → tenant 映射回填兜底），见 §6.2 注。来源：AUTH-012（P4 批次 2026-09-06 附录 B 登记）。
+3. 错误码 `IP_NOT_ALLOWED` 统一为 api-conventions §8.3 注册码 `PERM_IP_NOT_ALLOWED`（§5.5 / §11.5 / §11.6 三处），统一后以 api-conventions §8.3 为准。来源：INTG-004 BR-11（P4 批次 2026-09-06 附录 B 登记）。
+4. §9 / §11.4「Wiki 文档 FILE-007」修正为 FILE-005（Wiki 实文为 sprint-9 `FILE-005`，FILE-007 未占用）。来源：FILE-005 评审登记（P4 批次 2026-09-06 附录 B 登记）。

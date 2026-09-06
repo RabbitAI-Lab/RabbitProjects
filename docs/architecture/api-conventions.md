@@ -145,10 +145,12 @@ GET    .../issues/{issue_id}/transitions/available/             当前可用流�
 GET|POST      .../projects/{project_id}/views/                  自定义视图（Saved View）
 GET|POST      .../projects/{project_id}/cycles/                 迭代
 POST          .../cycles/{cycle_id}/issues/                     迭代关联工作项
-GET|POST      .../projects/{project_id}/modules/                模块 / 项目集
+GET|POST      .../projects/{project_id}/modules/                模块（Module）
 GET|POST      .../projects/{project_id}/pages/                  协作文档
 POST          .../pages/{page_id}/collab-token/                 换取 live 协同票据
 ```
+
+> 术语口径（来源：`PROJ-004` §1.4 注记，P4 批次 2026-09-06 登记）：`modules/` 端点承载「模块（Module）」；项目集为 Portfolio（独立资源，端点见 `PROJ-004` §4.6），二者非同一资源，术语以 `docs/README.md` §4 索引为准。
 
 认证与账户：
 
@@ -662,7 +664,7 @@ GET .../issues/?ordering=-priority,target_date,-created_at
 | `AUTH_ACCOUNT_DISABLED` | 401 | 账号被管理员禁用 | 提示联系管理员，不再重试 |
 | `AUTH_EMAIL_NOT_VERIFIED` | 401 | 邮箱未验证且实例要求验证 | 引导重发验证邮件 |
 | `AUTH_MFA_REQUIRED` | 401 | 需二次验证（P3） | 跳转 MFA 输入 |
-| `AUTH_SSO_REQUIRED` | 401 | 实例强制 SSO，禁止密码登录（P3） | 跳转 IdP |
+| `AUTH_SSO_REQUIRED` | 401 | 实例强制 SSO，禁止密码登录（P3）。**Workspace 级强制 SSO 场景分流**：密码校验通过后、建会话前被 Workspace 级策略拒绝属「已认证但策略拒绝」，返回 403 `PERM_SSO_REQUIRED`（新码按 rbac 附录 B 登记，见 rbac 批次同步；来源：`AUTH-009` §2.4 状态码裁定，P4 批次 2026-09-06 登记），本行 401 仅保留实例级未认证语义 | 跳转 IdP |
 | `AUTH_PASSWORD_RESET_INVALID` | 400 | 重置令牌无效或已使用 | 引导重新发起重置 |
 | `AUTH_PASSWORD_RESET_EXPIRED` | 400 | 重置令牌过期 | 同上 |
 | `AUTH_TOO_MANY_ATTEMPTS` | 429 | 登录失败次数超限，账号临时锁定 | 展示剩余锁定时间 |
@@ -691,7 +693,7 @@ GET .../issues/?ordering=-priority,target_date,-created_at
 | `PERM_APPROVAL_NOT_ASSIGNEE` | 403 | 非审批节点指定审批人 | 隐藏审批操作区 |
 | `PERM_LICENSE_REQUIRED` | 403 | 企业版功能但当前许可不含该能力 | 展示升级引导 |
 | `PERM_SEAT_LIMIT_EXCEEDED` | 403 | 席位数超出许可 | 展示席位管理入口 |
-| `PERM_IP_NOT_ALLOWED` | 403 | 不在实例 IP 白名单内（P3） | 提示网络环境限制 |
+| `PERM_IP_NOT_ALLOWED` | 403 | 不在实例级 / 凭证级（API Key 绑定 CIDR）IP 白名单内（P3 基线为实例级；凭证级扩宽来源：`INTG-004` BR-11，P4 批次 2026-09-06 登记） | 提示网络环境限制 |
 | `PERM_TOKEN_SCOPE_INSUFFICIENT` | 403 | API Key 的 scope 不覆盖本次操作 | 提示重建具备所需 scope 的 Key |
 
 ### 8.4 校验错误（VALIDATION_*）→ 400
@@ -724,7 +726,7 @@ GET .../issues/?ordering=-priority,target_date,-created_at
 | `RESOURCE_STATE_INVALID` | 409 | 资源当前状态不允许该操作（如归档项目下创建工作项） | 提示当前状态限制 |
 | `RESOURCE_TRANSITION_INVALID` | 409 | 工作流不存在该状态流转路径 | 刷新可用流转列表 |
 | `RESOURCE_TRANSITION_BLOCKED` | 409 | 流转被约束拦截（前置任务未完成等） | `details` 列出阻塞原因与阻塞项 ID |
-| `RESOURCE_CIRCULAR_DEPENDENCY` | 409 | 任务依赖/父子关系构成环 | `details` 给出环路径 |
+| `RESOURCE_CIRCULAR_DEPENDENCY` | 409 | 任务依赖/父子关系构成环；公式字段依赖环（来源：`TASK-014` BR-02，P4 批次 2026-09-06 登记——复用同码，字段级子码 `CYCLE`） | `details` 给出环路径 |
 | `RESOURCE_IN_USE` | 409 | 被引用的资源不可删除（状态下仍有工作项、标签仍被使用） | 提示先迁移引用，`details` 给出引用数量 |
 | `RESOURCE_LIMIT_EXCEEDED` | 409 | 触达数量上限（单项目自定义字段数、子任务层级深度） | 提示上限值 |
 | `RESOURCE_LOCKED` | 409 | 资源被锁定（文档锁定编辑、任务基线锁定字段） | 界面切只读并显示锁定人 |
@@ -749,7 +751,7 @@ GET .../issues/?ordering=-priority,target_date,-created_at
 | 错误码 | HTTP | 触发场景 |
 | --- | --- | --- |
 | `RATE_LIMIT_EXCEEDED` | 429 | 超出 §7 配额 |
-| `QUOTA_STORAGE_EXCEEDED` | 409 | 工作空间存储配额耗尽 |
+| `QUOTA_STORAGE_EXCEEDED` | 409 | 工作空间/租户层存储配额耗尽（两层模型：WS 层先行判定、租户层聚合判定为硬上限，任一层超限拒绝上传，`details.message` 注明层级；来源：`AUTH-012` BR-02/§2.3，P4 批次 2026-09-06 登记） |
 | `QUOTA_MEMBER_EXCEEDED` | 409 | 成员数超出许可 |
 | `QUOTA_PROJECT_EXCEEDED` | 409 | 项目数超出套餐限制 |
 | `QUOTA_AI_EXCEEDED` | 409 | AI 能力租户日配额耗尽（按 SKU 分项配额） | 提示次日重置或升级（P4 `AI-001` 注册） |
@@ -773,8 +775,13 @@ GET .../issues/?ordering=-priority,target_date,-created_at
 | `DEPTH` | 层级深度越限（Sprint-2 TASK-004 §4.2.1 登记：`RESOURCE_LIMIT_EXCEEDED` 的字段级子码，创建与移动子树共用） |
 | `CYCLE` | 循环依赖（Sprint-2 TASK-005 §4.2.2 登记：`RESOURCE_CIRCULAR_DEPENDENCY` 的字段级子码，message 携带人类可读依赖链/环路径） |
 | `BLOCKED_BY` | 未完成前置拦截迁入 completed（Sprint-2 TASK-005 §4.2.4 登记：`RESOURCE_TRANSITION_BLOCKED` 的字段级子码，`details[]` 携带结构化 `issue_key`） |
-| `LIMIT` | 关联/执行人数等集合上限（Sprint-2 TASK-005/007 登记：`RESOURCE_LIMIT_EXCEEDED` 的字段级子码） |
+| `LIMIT` | 关联/执行人数等集合上限（Sprint-2 TASK-005/007 登记：`RESOURCE_LIMIT_EXCEEDED` 的字段级子码）；亦可复用于 `VALIDATION_CUSTOM_FIELD_INVALID`（值域超限——来源：`TASK-014` BR-08，P4 批次 2026-09-06 登记：跨项目关联数上限 `max_links` 超限场景，援引本表 `PERM_DENIED` 跨母码复用范式） |
 | `STATE` | 资源当前状态不允许该操作（Sprint-2 TASK-007 §2.4 登记：`RESOURCE_STATE_INVALID` 的字段级子码——已归档任务集合变更 / 重复认领等；TASK-009 归档写保护沿用） |
+| `IN_USE` | 被引用资源不可删除的计数子码（来源：`PROJ-004` BR-11，P4 批次 2026-09-06 登记：`RESOURCE_IN_USE` 的字段级子码——删除非空项目集时 `details[]` 按 `children` / `projects` 字段分别给出子节点与挂载项目计数） |
+| `SSO_LOGIN_URL` | 载值子码：强制 SSO 拦截响应携带 IdP 登录地址（来源：`AUTH-009` §4.2，P4 批次 2026-09-06 登记：`PERM_SSO_REQUIRED` 的 `details[]` 子码，`field=sso_login_url`，对标 `RETRY_AFTER` 载值范式） |
+| `SSO_TXN_INVALID` | SSO 认领事务 Cookie（`sso_txn`）缺失 / 过期 / 签名无效（来源：`AUTH-009` §4.2，P4 批次 2026-09-06 登记：`AUTH_INVALID_CREDENTIALS` 的字段级子码，与密码错误区分以引导重新发起 SSO 登录而非重试密码） |
+| `TEST_REQUIRED` | 前置校验动作未完成（来源：`AUTH-009` BR-04，P4 批次 2026-09-06 登记：`RESOURCE_STATE_INVALID` 的字段级子码——启用 SSO 前未通过「测试连接」干跑，`field=is_enabled`） |
+| `OWNER_BINDING_REQUIRED` | 前置绑定条件不满足（来源：`AUTH-009` BR-05，P4 批次 2026-09-06 登记：`RESOURCE_STATE_INVALID` 的字段级子码——开启强制 SSO 前 WS_OWNER 的 SSO 绑定数为 0，防组织自锁，`field=enforce_sso`） |
 
 ### 8.9 前端消费范式
 
@@ -850,7 +857,8 @@ axios 拦截器的统一分派策略：
 
 ### 9.4 OAuth 2.0（第三方应用）
 
-- 支持授权类型：**Authorization Code + PKCE**（唯一推荐）、`refresh_token`。**不支持** implicit 与 password grant（已被 OAuth 2.1 弃用）。
+- 支持授权类型：**Authorization Code + PKCE**（唯一推荐）、`refresh_token`、**`client_credentials`**（机器对机器的服务间授权，P4 批次 2026-09-06 增补登记，来源：`INTG-004` §2.5 基线扩展）。**不支持** implicit 与 password grant（已被 OAuth 2.1 弃用）。
+- `client_credentials`（服务间授权，来源：`INTG-004` §2.5/BR-10，P4 批次 2026-09-06 登记）：经既有 `POST /api/v1/oauth/token/` 携 `grant_type=client_credentials` 换取应用服务账号 token（不新增端点）；仅签发 access_token（1 小时），refresh 不适用；权限 = 应用绑定服务账号权限 ∩ 应用 scope（`INTG-004` BR-01 交集同源）；应用在每个安装空间生成影子服务账号（`is_bot=True`，昵称 = 应用名），权限由安装者授予、离职免疫；吊销 = 管理员停用应用。
 - 端点：
 
 ```
@@ -1385,3 +1393,4 @@ GET  /api/v1/tasks/{task_id}/                    → 200
 | --- | --- | --- | --- |
 | 2026-08-31 | 1.0 | 初版：确立 URL / 方法 / 响应格式 / 分页 / 查询 / 限流 / 错误码 / 认证 / DRF 实现全套规范，完成与 Plane API 及 Ones Open API 的对标分析 | 架构组 |
 | 2026-09-05 | 1.1 | Sprint-3 回改（T3-01）：§2.5 补登记 `issues/bulk/` 端点族（`bulk/archive/`、`bulk/preview/`，批量创建行标注 P2 排除归 P4）；§8.8 补 `PERM_DENIED` 项级子码；§9.5 补业务事件票据 90s 续签与 collab-token 30 分钟续签的区分；新增 §9.7 服务间内部认证（X-Internal-Key）；§13.2 补 `entity_type` 选填参数（`comment_image`）与 `?variant=thumb` 缩略变体 | 架构组 |
+| 2026-09-06 | 1.2 | 架构文档专项回改批次（各 sprint 评审轮「api-conventions 待回改」项统一回改；来源 PROJ-004 / AUTH-009 / AUTH-012 / INTG-004 / TASK-014）：§2.5 Module 术语消解（模块 ≠ 项目集，术语以 docs/README.md §4 为准）；§8.2 补注 Workspace 级强制 SSO 分流至 403 `PERM_SSO_REQUIRED`；§8.3 `PERM_IP_NOT_ALLOWED` 触发场景扩宽凭证级 IP 白名单；§8.5 `RESOURCE_CIRCULAR_DEPENDENCY` 增公式字段依赖环场景；§8.7 `QUOTA_STORAGE_EXCEEDED` 扩宽为工作空间/租户两层存储配额；§8.8 补登 `IN_USE` / `SSO_LOGIN_URL` / `SSO_TXN_INVALID` / `TEST_REQUIRED` / `OWNER_BINDING_REQUIRED` 子码并登记 `LIMIT` 跨母码复用；§9.4 增补 `client_credentials` 授权类型 | 架构组 |

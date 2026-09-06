@@ -7,7 +7,7 @@
 | 优先级 | P3（企业版核心级 · 组织治理三问之「做过什么」） |
 | 所属模块 | M1-AUTH｜账号与权限 |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-05（R1 修复 10 项：幂等三层去重时序重排（落库为锚）、分区表复合主键 + 分区键唯一约束、哈希链 advisory lock 串行化、导出改 MinIO 预签名、信封重写、分页契约对齐 §6.3、分号修饰符筛选 + 索引补齐、dg §1.3 / rbac §9 待回改登记、六键敏感黑名单（补 webhook_url）、实例级端点 §4.2.1 完整契约；R2 复评 PASS 10/9.5×4 一次过） |
+| 最后更新日期 | 2026-09-06（P4 批次跨文档回改：§1.3 事件注册表补登 9 个新 action、§4.3 recorder 增补 `tenant_id` 写入说明；R1 修复 10 项：幂等三层去重时序重排（落库为锚）、分区表复合主键 + 分区键唯一约束、哈希链 advisory lock 串行化、导出改 MinIO 预签名、信封重写、分页契约对齐 §6.3、分号修饰符筛选 + 索引补齐、dg §1.3 / rbac §9 待回改登记、六键敏感黑名单（补 webhook_url）、实例级端点 §4.2.1 完整契约；R2 复评 PASS 10/9.5×4 一次过） |
 | 上游依赖 | `TASK-010`（Activity 幂等管道范式——本审计写入对齐其「落库成功为幂等锚点 + 三层去重 + 显式 DLX 死信」时序，worker/死信/重放机制同款复刻）、`AUTH-007/008/009`（组织/角色/SSO 事件源，编号以 README §4 为准——AUTH-009 = SSO）、`WF-006`（审批留痕经 `approval.audit` 总线消息汇入，载荷自包含零回查） |
 | 下游消费 | P4 合规（告警规则、留存策略扩展）、`AUTH-012`（多租户风控溯源）、安全评审材料 |
 | 上游依据 | `docs/需求文档.md` §3.1 企业版专属（全站操作审计日志）、§8.2 权限 P3 列 |
@@ -70,6 +70,14 @@ flowchart LR
 | `detail` | JSONB 差量（如 `{"role": {"from": "VIEWER", "to": "ADMIN"}}`），**键名黑名单过滤**：`password/secret/token/assertion/private_key/webhook_url` 命中即整键剔除（BR-11） |
 | `ip / user_agent` | 来源指纹 |
 | `workspace_id` | 租户边界（检索与导出的强制过滤）；`NULL` = 系统级事件（仅实例级端点可见，§4.2.1） |
+
+**事件注册表补登（P4 演进回改）**——以下 9 个新 action 随 P4 源文档登记进注册表（BR-05：新事件须注册、CI 校验），与上文事件域并行生效：
+
+| category | action | 触发源 | 说明 |
+| --- | --- | --- | --- |
+| `member` | `directory_created` / `directory_updated` / `directory_disabled` / `directory_restored` | `AUTH-011` 目录同步生命周期（LDAP/SCIM 开通/变更/禁用/复活各一条；经 `record()` 写入，actor=`system` 系统主体，快照 `display_name=目录同步`） | 来源：AUTH-011/p4（P4 批次 2026-09-06 登记） |
+| `file` | `preview` / `download` / `share.create` / `purge`（`FILE-006` 记法 `file.preview` / `file.download` / `file.share.create` / `file.purge`） | `FILE-006` 合规留痕（BR-08 审计四事件：含文件 ID、策略快照、IP） | 来源：FILE-006/p4（P4 批次 2026-09-06 登记） |
+| `file` | `watermark_failed` | `FILE-006` 水印降级审计（水印合成失败 → 预览降级放行纯衍生件 + 告警；其 §4.2 / UT-13） | 来源：FILE-006/p4（P4 批次 2026-09-06 登记） |
 
 ### 1.4 范围边界
 
@@ -485,6 +493,8 @@ def record(event_key: str, *, category: str, action: str,
     }
     transaction.on_commit(lambda: audit_record.delay(payload))           # BR-09
 ```
+
+> **`tenant_id` 写入说明（recorder 行为增补，P4 回改）**：多租户治理（`AUTH-012`）下 recorder 埋点与 `record()` 载荷增补 `tenant_id` 字段——随 `workspace_id` 一并解析写入（`AUTH-012` 风控 ingest 直读依赖）；`audit_log` 的 `tenant_id` 列 DDL 本体在 `AUTH-012` §4.1（由其 P4 迁移交付：RunSQL 加列 + `idx_audit_tenant` 索引 + `TENANT_GOVERNANCE_ENABLED` 门控回填），本文只补 recorder 行为说明、不重复 DDL；过渡期以 workspace→tenant 映射兜底（随 Workspace 回填同源映射；未治理实例保持 `tenant_id=NULL`）。来源：AUTH-012/p4（P4 批次 2026-09-06 登记）
 
 ```python
 # apps/api/plane/bgtasks/audit_record.py

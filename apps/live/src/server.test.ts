@@ -184,6 +184,62 @@ describe("事件扇出（不回显 / 房间隔离）", () => {
     expect(left.payload.user).toEqual({ id: second });
     a.ws.close();
   });
+
+  it("file 房间：file.version.created 扇出可达（FILE-003 §4.4 rooms = project + file）", async () => {
+    const projectId = uuid();
+    const assetId = uuid();
+    const sub = uuid();
+    // 票据声明 file:{asset_id}（第四类房间，订阅条件在 api 换票时校验）
+    const c = await connect(signTicket(keys, {
+      sub, clientTabId: "t-file",
+      rooms: [`project:${projectId}`, `file:${assetId}`, `user:${sub}`],
+    }));
+    const connected = await nextFrame(c.frames, "connected");
+    expect(connected.payload.rooms).toContain(`file:${assetId}`);
+
+    server.dispatcher.handleRaw(JSON.stringify({
+      event: "file.version.created",
+      rooms: [`project:${projectId}`, `file:${assetId}`],
+      payload: {
+        asset_id: assetId, version_number: 2, actor_id: uuid(),
+        source_version_number: 1,
+      },
+      occurred_at: "2026-09-06T10:00:00.000Z",
+    }));
+
+    await nextFrame(c.frames, "file.version.created", 1000);
+    // rooms 双投（project + file）：file 房间帧显式取
+    const frames = c.frames.filter((f) => f.event === "file.version.created");
+    expect(frames.map((f) => f.room).sort()).toEqual(
+      [`file:${assetId}`, `project:${projectId}`].sort(),
+    );
+    const fileFrame = frames.find((f) => f.room === `file:${assetId}`);
+    if (!fileFrame) throw new Error("file room frame missing");
+    expect(fileFrame.seq).toBeGreaterThan(0);
+    expect(fileFrame.payload.asset_id).toBe(assetId);
+    expect(fileFrame.payload.version_number).toBe(2);
+    expect(fileFrame.payload.source_version_number).toBe(1);
+    c.ws.close();
+  });
+
+  it("file 房间隔离：未订阅该 file 房间的连接收不到 file 域事件", async () => {
+    const assetId = uuid();
+    const sub = uuid();
+    const outside = await connect(signTicket(keys, {
+      sub, clientTabId: "t-out",
+      rooms: [`project:${uuid()}`, `user:${sub}`],
+    }));
+    await nextFrame(outside.frames, "connected");
+    server.dispatcher.handleRaw(JSON.stringify({
+      event: "file.share.created",
+      rooms: [`file:${assetId}`],
+      payload: { share_id: uuid(), asset_id: assetId, actor_id: null },
+      occurred_at: "t",
+    }));
+    await new Promise((r) => setTimeout(r, 120));
+    expect(outside.frames.filter((f) => f.event === "file.share.created")).toHaveLength(0);
+    outside.ws.close();
+  });
 });
 
 describe("连接生命周期（BR-12 / BR-03）", () => {

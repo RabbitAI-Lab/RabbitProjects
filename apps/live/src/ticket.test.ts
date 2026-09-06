@@ -78,6 +78,36 @@ describe("verifyTicket 声明一致性（BR-01 强校验）", () => {
   });
 });
 
+describe("verifyTicket 第四类房间 file:{asset_id}（FILE-003 §4.4）", () => {
+  it("file:{asset_id} 房间声明通过（订阅条件在 api 换票时校验，live 仅验形态）", () => {
+    const sub = uuid();
+    const assetId = uuid();
+    const token = signTicket(keys, {
+      sub,
+      rooms: [`project:${uuid()}`, `file:${assetId}`, `user:${sub}`],
+    });
+    const claims = verifyTicket(token, keys.publicKey);
+    expect(claims).not.toBeNull();
+    expect(claims?.rooms).toContain(`file:${assetId}`);
+  });
+
+  it("file 房间非 UUID 拒绝（与 project/issue 同形态闸）", () => {
+    const sub = uuid();
+    expect(verifyTicket(
+      signTicket(keys, { sub, rooms: ["file:not-a-uuid", `user:${sub}`] }),
+      keys.publicKey,
+    )).toBeNull();
+  });
+
+  it("file 房间不豁免 user:{sub} 恒附契约（缺本人房间仍拒绝）", () => {
+    const sub = uuid();
+    expect(verifyTicket(
+      signTicket(keys, { sub, rooms: [`file:${uuid()}`] }),
+      keys.publicKey,
+    )).toBeNull();
+  });
+});
+
 describe("verifyTicket 房间上限（UT-03 边界）", () => {
   it("声明 11 房间拒绝；10 房间（含 user:{sub}）通过", () => {
     const sub = uuid();

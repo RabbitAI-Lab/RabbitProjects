@@ -26,6 +26,8 @@ from rest_framework.test import APIClient
 from plane.bgtasks import event_publisher
 from plane.bgtasks.issue_activity import record_activity_row
 from plane.db.models import (
+    FileAsset,
+    FileFolder,
     Issue,
     Project,
     ProjectMember,
@@ -342,6 +344,158 @@ class TestVerifyRooms:
         resp = APIClient().post(self.URL, {"tickets": [{"rooms": ["project:x"]}]},
                                 format="json", HTTP_X_INTERNAL_KEY="test-internal-key")
         assert resp.status_code == 400
+
+
+# ────────────────────────────────────────────────────────────────
+# T4-08 file:{asset_id} 第四类房间（FILE-003 §4.4；订阅条件 =
+# file.read + 文件可见性 can_view_file 单入口，FILE-002 §4.3.1）
+# ────────────────────────────────────────────────────────────────
+def _mk_library_file(env, *, visibility="all", project=None, name="规格.pdf"):
+    """直建文件库资产（复用 test_file_library._mk_file 形态，最小字段）。"""
+    from plane.base.middleware import ulid_new
+
+    proj = project or env["proj"]
+    # 根层同层同名唯一（BR-01）：目录名取随机后缀防同测试内互撞
+    folder = FileFolder.objects.create(
+        project=proj, parent=None, name=f"F-{uuid_mod.uuid4().hex[:8]}",
+        visibility="all",
+        created_by=env["owner"], updated_by=env["owner"],
+    )
+    ext = ".pdf"
+    return FileAsset.objects.create(
+        workspace=env["ws"], project=proj,
+        entity_type=FileAsset.EntityType.PROJECT_FILE,
+        entity_id=folder.id, folder=folder,
+        attributes={"name": name, "size": 2048, "mime": "application/pdf", "ext": ext},
+        size=2048,
+        storage_path=f"{env['ws'].id}/{proj.id}/project_file/{folder.id}/{ulid_new()}{ext}",
+        status=FileAsset.Status.UPLOADED, uploaded_by=env["owner"],
+        visibility=visibility, allowed_members=[],
+        created_by=env["owner"], updated_by=env["owner"],
+    )
+
+
+class TestFileRooms:
+    """file_rooms 换票 / 续签 / verify-rooms 三端（FILE-003 §4.4 房间模型扩展）。"""
+
+    def test_file_room_in_ticket(self, rt_settings, env):
+        """可见文件（all 态，VIEWER 成员）→ rooms 含 file:{asset_id}（issue 之序、user 之前）。"""
+        asset = _mk_library_file(env)
+        resp = _client(env["viewer"]).post(_token_url(env), {
+            "client_tab_id": "tab-f",
+            "issue_rooms": [str(env["issue"].id)],
+            "file_rooms": [str(asset.id)],
+        }, format="json")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["rooms"] == [
+            f"project:{env['proj'].id}",
+            f"issue:{env['issue'].id}",
+            f"file:{asset.id}",
+            f"user:{env['viewer'].id}",
+        ]
+        claims = pyjwt.decode(data["token"], PUB_PEM, algorithms=["RS256"])
+        assert claims["rooms"] == data["rooms"]
+
+    def test_invisible_file_rejects_whole_ticket_403(self, rt_settings, env):
+        """admins 态文件对 VIEWER 不可见 → 403 PERM_DENIED 拒整票（对齐 issue 语义）。"""
+        hidden = _mk_library_file(env, visibility="admins")
+        resp = _client(env["viewer"]).post(_token_url(env), {
+            "client_tab_id": "tab-h", "file_rooms": [str(hidden.id)],
+        }, format="json")
+        assert resp.status_code == 403
+        assert resp.json()["error"]["code"] == "PERM_DENIED"
+
+    def test_foreign_project_file_rejects_403(self, rt_settings, env):
+        """他项目文件（即使 owner 本人可读）不入本票据项目域 → 403。"""
+        foreign = _mk_library_file(env, project=env["other_proj"])
+        resp = _client(env["owner"]).post(_token_url(env), {
+            "client_tab_id": "tab-x", "file_rooms": [str(foreign.id)],
+        }, format="json")
+        assert resp.status_code == 403
+        assert resp.json()["error"]["code"] == "PERM_DENIED"
+
+    def test_admin_sees_admins_visibility_file(self, rt_settings, env):
+        """admins 态文件对项目管理员（owner 隐式 ADMIN）可订。"""
+        hidden = _mk_library_file(env, visibility="admins")
+        resp = _client(env["owner"]).post(_token_url(env), {
+            "client_tab_id": "tab-a", "file_rooms": [str(hidden.id)],
+        }, format="json")
+        assert resp.status_code == 200
+        assert f"file:{hidden.id}" in resp.json()["data"]["rooms"]
+
+    def test_issue_plus_file_combined_cap(self, rt_settings, env):
+        """issue 8 + file 1 = 11 rooms → 400 VALIDATION_INVALID_PARAM（合并上限）。"""
+        asset = _mk_library_file(env)
+        ids = [str(env["issue"].id)]
+        for i in range(100, 107):  # 共 8 个 issue
+            ids.append(str(Issue.objects.create(
+                name=f"T{i}", project=env["proj"], state=env["todo"],
+                sequence_id=i, sort_order=i * 100, created_by=env["owner"]).id))
+        resp = _client(env["owner"]).post(_token_url(env), {
+            "client_tab_id": "tab-cap2", "issue_rooms": ids,
+            "file_rooms": [str(asset.id)],
+        }, format="json")
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "VALIDATION_INVALID_PARAM"
+
+    def test_renew_keeps_and_revalidates_file_rooms(self, rt_settings, env):
+        """续签缺省沿用旧票 file 房间并重校验；收紧可见性后 → 403。"""
+        asset = _mk_library_file(env)
+        first = _client(env["viewer"]).post(_token_url(env), {
+            "client_tab_id": "tab-rf", "file_rooms": [str(asset.id)],
+        }, format="json").json()["data"]
+        assert f"file:{asset.id}" in first["rooms"]
+
+        # 缺省续签：file 房间沿用且仍可见
+        renewed = _client(env["viewer"]).post(
+            "/api/v1/users/me/realtime-token/renew/",
+            {"token": first["token"], "client_tab_id": "tab-rf"},
+            format="json")
+        assert renewed.status_code == 200
+        assert f"file:{asset.id}" in renewed.json()["data"]["rooms"]
+
+        # 可见性收紧（all → admins）后：VIEWER 续签 403（file 房间失效重校验）
+        asset.visibility = "admins"
+        asset.save(update_fields=["visibility", "updated_at"])
+        tightened = _client(env["viewer"]).post(
+            "/api/v1/users/me/realtime-token/renew/",
+            {"token": first["token"], "client_tab_id": "tab-rf"},
+            format="json")
+        assert tightened.status_code == 403
+
+    def test_verify_rooms_file_visibility(self, rt_settings, env):
+        """复核：可见 file 房间有效；不可见（admins 态对 VIEWER）/ 软删文件失效。"""
+        visible = _mk_library_file(env)
+        hidden = _mk_library_file(env, visibility="admins")
+        deleted = _mk_library_file(env)
+        deleted.deleted_at = timezone.now()
+        deleted.save(update_fields=["deleted_at", "updated_at"])
+        resp = APIClient().post(
+            "/api/v1/internal/realtime/verify-rooms/",
+            {"tickets": [{
+                "sub": str(env["viewer"].id),
+                "rooms": [f"file:{visible.id}", f"file:{hidden.id}",
+                          f"file:{deleted.id}", f"user:{env['viewer'].id}"],
+            }]}, format="json", HTTP_X_INTERNAL_KEY="test-internal-key")
+        assert resp.status_code == 200
+        invalid = resp.json()["data"]["invalid"]
+        assert invalid == [{
+            "sub": str(env["viewer"].id),
+            "rooms": [f"file:{hidden.id}", f"file:{deleted.id}"],
+        }]
+
+    def test_verify_rooms_file_invalid_uuid(self, rt_settings, env):
+        """file:not-a-uuid → 失效（形态闸）。"""
+        resp = APIClient().post(
+            "/api/v1/internal/realtime/verify-rooms/",
+            {"tickets": [{
+                "sub": str(env["owner"].id),
+                "rooms": ["file:not-a-uuid"],
+            }]}, format="json", HTTP_X_INTERNAL_KEY="test-internal-key")
+        assert resp.json()["data"]["invalid"] == [
+            {"sub": str(env["owner"].id), "rooms": ["file:not-a-uuid"]},
+        ]
 
 
 # ────────────────────────────────────────────────────────────────

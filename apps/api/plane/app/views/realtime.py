@@ -7,8 +7,10 @@
 
 换票 rooms 由服务端装配（§4.2.1：前端声明「我在哪」，服务端裁决「你能听哪」）；
 issue 不可见 → 403 PERM_DENIED 拒整票（存在性隐藏不适用于换票——任务房间本就以
-可见为前提）。verify-rooms 仅内网：proxy 对 /api/v1/internal/ 前缀不路由（第二道
-防线），本端点再以 X-Internal-Key 收口（缺失/不符 403 PERM_DENIED）。
+可见为前提）。file_rooms（FILE-003 §4.4 第四类房间 file:{asset_id}）同拒整票
+语义：file.read + can_view_file 单入口裁决。verify-rooms 仅内网：proxy 对
+/api/v1/internal/ 前缀不路由（第二道防线），本端点再以 X-Internal-Key 收口
+（缺失/不符 403 PERM_DENIED）。
 """
 from __future__ import annotations
 
@@ -47,8 +49,9 @@ def _validate_client_tab_id(raw) -> str:
     return value
 
 
-def _validate_issue_rooms(raw, *, field: str = "issue_rooms") -> list[str]:
-    """issue_rooms 列表校验：可省略（= []），元素须为 UUID 字符串。"""
+def _validate_issue_rooms(raw, *, field: str = "issue_rooms",
+                          label: str = "任务") -> list[str]:
+    """issue_rooms / file_rooms 列表校验：可省略（= []），元素须为 UUID 字符串。"""
     if raw is None:
         return []
     if not isinstance(raw, list):
@@ -56,7 +59,7 @@ def _validate_issue_rooms(raw, *, field: str = "issue_rooms") -> list[str]:
             "VALIDATION_INVALID_PARAM",
             message="请求参数不合法",
             details=[{"field": field, "code": "INVALID",
-                      "message": "issue_rooms 须为任务 ID 数组"}],
+                      "message": f"{field} 须为{label} ID 数组"}],
         )
     ids: list[str] = []
     for item in raw:
@@ -67,12 +70,12 @@ def _validate_issue_rooms(raw, *, field: str = "issue_rooms") -> list[str]:
                 "VALIDATION_INVALID_PARAM",
                 message="请求参数不合法",
                 details=[{"field": field, "code": "INVALID",
-                          "message": f"非法任务 ID：{item!s:.64}"}],
+                          "message": f"非法{label} ID：{item!s:.64}"}],
             ) from None
     if len(ids) > MAX_ROOMS_PER_TICKET - 2:
         raise AppException(
             "VALIDATION_INVALID_PARAM",
-            message="任务房间数超过上限",
+            message="请求参数不合法",
             details=[{"field": field, "code": "LIMIT",
                       "message": f"单张票据 rooms 声明上限 {MAX_ROOMS_PER_TICKET}"}],
         )
@@ -94,17 +97,23 @@ class RealtimeTokenView(APIView):
         body = request.data or {}
         client_tab_id = _validate_client_tab_id(body.get("client_tab_id"))
         issue_ids = _validate_issue_rooms(body.get("issue_rooms"))
+        # file_rooms（FILE-003 §4.4 第四类房间）：预览抽屉/版本面板上下文声明的
+        # 文件资产——可见性在 service 侧 can_view_file 单入口裁决。
+        file_ids = _validate_issue_rooms(body.get("file_rooms"), field="file_rooms",
+                                         label="文件")
         return success_response(issue_realtime_token(
             user=request.user, project=project,
             issue_ids=issue_ids, client_tab_id=client_tab_id,
+            file_asset_ids=file_ids,
         ))
 
 
 class RealtimeTokenRenewView(APIView):
     """POST /api/v1/users/me/realtime-token/renew/ —— 旧 jti 轮换续签（BR-02）。
 
-    请求体与换票同构（§4.2.1 注）：``{token, client_tab_id, issue_rooms?}``——
-    issue_rooms 缺省 = 沿用旧票房间集；携带则以清单为准（增删均重走可见性校验）。
+    请求体与换票同构（§4.2.1 注）：``{token, client_tab_id, issue_rooms?,
+    file_rooms?}``——issue_rooms / file_rooms 缺省 = 沿用旧票房间集；携带则以清单
+    为准（增删均重走可见性校验）。
     """
 
     permission_classes = [IsAuthenticated]
@@ -123,9 +132,14 @@ class RealtimeTokenRenewView(APIView):
         issue_rooms = None
         if "issue_rooms" in body:
             issue_rooms = _validate_issue_rooms(body.get("issue_rooms"))
+        file_rooms = None
+        if "file_rooms" in body:
+            file_rooms = _validate_issue_rooms(
+                body.get("file_rooms"), field="file_rooms", label="文件")
         return success_response(renew_realtime_token(
             user=request.user, old_token=old_token,
             client_tab_id=client_tab_id, issue_rooms=issue_rooms,
+            file_rooms=file_rooms,
         ))
 
 

@@ -173,4 +173,24 @@ describe("EventDispatcher（UT-04 不回显 / UT-05 载荷红线）", () => {
       ["project:p1", 1], ["issue:i1", 1], ["project:p1", 2],
     ]);
   });
+
+  it("file 域事件扇出到 file:{asset_id} 房间（FILE-003 §4.4：rooms = project + file）", () => {
+    const registry = new RoomRegistry();
+    const subscriber = makeConn(registry, "u1", "u1:t", ["file:a1", "user:u1"]);
+    makeConn(registry, "u2", "u2:t", ["project:p1"]); // 不在 file 房间：收 project 侧即可
+    const dispatcher = new EventDispatcher(registry, log);
+    dispatcher.handleRaw(JSON.stringify({
+      event: "file.version.created",
+      rooms: ["project:p1", "file:a1"],
+      payload: { asset_id: "a1", version_number: 3, actor_id: "u9" },
+      occurred_at: "t",
+    }));
+    const frames = (subscriber.ws as ReturnType<typeof mockWs>).sent
+      .map((f) => JSON.parse(f));
+    expect(frames).toHaveLength(1); // 只收 file 房间帧（未订 project:p1）
+    expect(frames[0].event).toBe("file.version.created");
+    expect(frames[0].room).toBe("file:a1");
+    expect(frames[0].seq).toBe(1);
+    expect(frames[0].payload.version_number).toBe(3);
+  });
 });

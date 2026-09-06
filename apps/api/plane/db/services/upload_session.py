@@ -429,8 +429,14 @@ def _enqueue_evict(asset_id: str) -> None:
         logger.warning("evict_enqueue_failed asset=%s err=%s", asset_id, exc)
 
 
+@transaction.atomic
 def rollback(*, asset: FileAsset, target: FileVersion, actor) -> FileVersion:
-    """回滚 = 新版本行复用目标对象（零拷贝，BR-09）——历史只增不删。"""
+    """回滚 = 新版本行复用目标对象（零拷贝，BR-09）——历史只增不删。
+
+    atomic 与 complete 同规（本模块 175/307 行同款装饰）：_new_version 内
+    select_for_update 在无事务上下文（dev runserver autocommit）会抛
+    TransactionManagementError——pytest 因 TestCase 事务包裹而掩盖此路径。
+    """
     return _new_version(
         asset,
         SimpleNamespace(

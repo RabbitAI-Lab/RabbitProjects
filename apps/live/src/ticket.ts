@@ -3,8 +3,10 @@
  *  - live 只持公钥（RS256 verify only）——被攻破也无法伪造票据（UT-02）；
  *  - algorithms 锁死 ["RS256"]：alg=none / HS256 混淆 / 无签名一律拒（UT-01）；
  *  - clockTolerance 5s：api/live 容器时钟微小漂移容忍；
- *  - rooms 声明与 sub 一致性强校验（BR-01）：房间名三类形态合法、上限 10、
+ *  - rooms 声明与 sub 一致性强校验（BR-01）：房间名四类形态合法、上限 10、
  *    user 房间必须恰为 user:{sub}、ws 声明必须以 {sub}: 开头。
+ *  - 第四类房间 file:{asset_id}（FILE-003 §4.4 登记，COLLAB-004 §1.3 补登）：
+ *    订阅条件（file.read + 文件可见性）在 api 侧换票时校验，live 仅验形态。
  */
 import jwt from "jsonwebtoken";
 
@@ -20,7 +22,7 @@ export interface TicketClaims {
 
 export const MAX_ROOMS_PER_TICKET = 10;
 
-const ROOM_PATTERN = /^(project|issue|user):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const ROOM_PATTERN = /^(project|issue|file|user):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** 从 upgrade URL 提取票据（/live/connect?token=…）。 */

@@ -10,8 +10,9 @@ channel ``rp:events``。语义：
     对端「晚一轮 SWR 拉取收敛」，拉取兜底保数据正确；
   - rooms 由业务侧给定（挂点 helper ``publish_for_issue`` 等收口，业务代码一行调用）。
 
-EVENT_MAP 为六类事件契约的**单一口径**（§2.3 事件协议表；与 packages/types 的
-``LiveEventName`` 常量跨端对齐）。
+EVENT_MAP 为事件契约的**单一口径**（§2.3 事件协议表核心六类 + file 域五事件
+——FILE-003 §4.4 / FILE-004 BR-13 登记；与 packages/types 的 ``LiveEventName``
+常量跨端对齐）。
 """
 from __future__ import annotations
 

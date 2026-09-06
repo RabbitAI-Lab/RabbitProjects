@@ -55,8 +55,11 @@ P1/P2 至今的一切数据视图都是**拉**模式：列表 60s SWR、通知 3
 | 项目房间 | `project:{project_id}` | `project.read`（VIEWER+） | 看板、列表、动态流、项目设置 |
 | 任务房间 | `issue:{issue_id}` | 任务可见（同详情权限） | 任务详情 Drawer、评论、动态 Tab |
 | 个人房间 | `user:{user_id}` | 本人（票据 sub 即本人，恒可订） | 通知铃铛、工作台卡片 |
+| 文件房间（**补登 2026-09-06，Sprint-4 T4-08**） | `file:{asset_id}` | `file.read`（VIEWER+）+ 文件可见性（`can_view_file` 单入口——`FILE-002` §4.3.1 三态可见性，评审红线禁止各处自行实现） | 预览抽屉（PreviewDrawer）、版本面板（VersionPanel）、分享管理（ShareManageDialog） |
 
 规则：**一个连接可同时加入多个房间**（票据声明「当前页面上下文」：项目 + 打开的任务 + 本人）；路由切换即换票重订（旧房间自动退出）——房间生命周期与页面上下文严格同构，杜绝「离开页面还在收事件」的幽灵订阅。
+
+> **第四类房间补登来源（上游待回改收口）**：`file:{asset_id}` 房间与 `file.*` 事件以 [`FILE-003`](../sprint-4-gantt-file/FILE-003-preview-version.md) §4.4 事件登记表为权威契约（其原文：「房间类型扩展：其 §1.3 房间模型现为封闭三类……本表 `file` 房间为其外新增的第四类，属协议扩展，需在其 §1.3/§2.3 一并登记」），`file.share.*` 三事件来自 [`FILE-004`](../sprint-4-gantt-file/FILE-004-share-permission.md) BR-13（同房间模型）；本回改为 `sprint-4` 概览 §9 风险 6 登记项的收口（「上游待回改」处置范式同 ADR-0017）。订阅条件在 api 换票端点裁决（换票请求体 `file_rooms` 声明、`can_view_file` 单入口校验、不可见 403 拒整票——对齐 issue 房间语义），live 仅验房间名形态；60s 周期复核（BR-03）与续签对 file 房间同规则重校验。既有三类房间语义不变。
 
 ### 1.4 关键约定二：事件载荷最小化（提示语义）
 
@@ -174,6 +177,21 @@ flowchart TD
 2. **`batch_id`（可选，仅 `issue.updated` / `issue.state.changed` 携带）**：批量操作（`BOARD-004`）触发时逐实体附带，值 = 该批共享 `epoch` 同值（毫秒时间戳）；单条操作不携带该字段。对端按 `batch_id` 将同批事件聚合为单条 Toast（「张三 批量更新了 12 个任务」）而非逐条弹窗。本条即 `BOARD-004` BR-15 所声明「`batch_id` 载荷扩展待 `COLLAB-004` 登记」的**落地登记**：**不新增 `batch` 事件类型**——批量变更逐实体复用既有事件类型，经 BR-13 的 **100ms 合批通道**（`throttleAggregate`）收敛为一次网络批（合批后 `seq` 取最大、`batch_id` 保留）；对端聚合提示沿用 `COLLAB-001` 批量通知的归并范式（每 issue 各一行、携带 `merged_count`）。
 3. **`column_version`（`board.moved` 专用）**：目标列的排序版本 = 该列最近一次 `sort_order` 写入时间（受影响任务集的最大 `updated_at`，ISO 8601 时间戳）。前端与本地列版本比对，旧于等于本地即忽略（§1.4 `version` 比对规则的「列粒度」形态，防同列并发拖拽的乱序重排）。
 4. **`board.moved` 消费归属**：同列拖拽的远端顺序修正由 `BOARD-003` 前端消费（含 §3.2 本地拖拽保护）——其 R1 版未列该消费挂点，**上游待登记**；`BOARD-004` 批量操作**不**产生 `board.moved`（批量变更逐实体走 `issue.*` 事件，见注 2）。
+
+**file 域五事件补登（2026-09-06，Sprint-4 T4-08）**——事件名 / 载荷 / 房间以 [`FILE-003`](../sprint-4-gantt-file/FILE-003-preview-version.md) §4.4 事件登记表为权威（上游待回改收口，`sprint-4` 概览 §9 风险 6；`file.share.*` 三事件来源 [`FILE-004`](../sprint-4-gantt-file/FILE-004-share-permission.md) BR-13）。信封与 §1.4 提示语义红线（≤2KB、全量实体禁入）、BR-08 不回显、BR-13 合批、seq 房间级递增全部沿用本协议既有口径：
+
+| event | room | 触发（事件源） | payload 要点 | 前端定向动作 |
+| --- | --- | --- | --- | --- |
+| `file.version.created` | project + file | 新版本落库 / 回滚（on_commit，`FILE-003` BR-13） | asset_id / version_number / actor_id / source_version_number（回滚时携带） | `VersionPanel` mutate；动态流按水位增量拉取 |
+| `file.transcode.completed` | project + file | 转码 / 缩略 / 封面帧任务成功（含冷清理后重生成，`FILE-003` BR-11） | asset_id / derivative_kind | 排队态预览自动刷新（202 → 就绪渲染） |
+| `file.share.created` | project + file | 分享创建（`FILE-004` BR-13；内部视角——匿名访问路径**不投递**，防刷屏） | share_id / asset_id / actor_id | 分享管理列表刷新 |
+| `file.share.revoked` | project + file | 分享吊销（`FILE-004` BR-13） | share_id / asset_id / actor_id | 分享管理列表刷新 / 失效提示 |
+| `file.share.extended` | project + file | 分享延期（`FILE-004` BR-13） | share_id / asset_id / actor_id | 分享管理列表刷新（有效期） |
+
+补登注：
+
+5. **房间与扇出**：`file` 房间 = `file:{asset_id}` 第四类房间（§1.3 补登行）；五事件 rooms 恒为 `[project:{project_id}, file:{asset_id}]` 双投（项目房间承载文件库列表/动态流侧刷新，file 房间承载预览抽屉/版本面板定向刷新）。api 侧投递收口在 `EVENT_MAP` 单一口径（`bgtasks/event_publisher.py`），live 侧房间名形态闸扩展为四类（`project|issue|file|user`）。
+6. **命名纪律**（沿用本表注 1 对 `activity.appended` 的驳回逻辑）：`file.version.created` / `file.transcode.completed` / `file.share.created|revoked|extended` 均为 `<resource>.<action>` 动词过去式，与 `issue.updated` / `comment.created` 同构——不另造 `version_added` / `transcode_done` 式命名（`FILE-003` §4.4 命名纪律原文）。动态流条目走 `COLLAB-003` 管道、WebSocket 事件走本协议通道——两链路同源 `on_commit`。
 
 ### 2.4 业务规则表
 

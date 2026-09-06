@@ -4,8 +4,12 @@
   - ``issue_realtime_token``  换票：rooms 由服务端按可见性裁决（§4.2.1——前端声明
     位置、服务端裁决权限），RS256 私钥仅 api 持有，TTL LIVE_TICKET_TTL（默认 120s）；
   - ``renew_realtime_token``  续签：旧 jti 轮换（BR-02 90s 静默续签）；房间集以旧票
-    为准，请求可增删 issue_rooms 重走可见性校验；
+    为准，请求可增删 issue_rooms / file_rooms 重走可见性校验；
   - ``verify_rooms``  live 周期复核（BR-03）：批量校验 {sub, rooms} → 仅返失效项。
+
+房间四类（§1.3 + FILE-003 §4.4 第四类补登）：project / issue / file / user——
+file:{asset_id} 订阅条件 = file.read + 文件可见性（can_view_file 单入口，
+FILE-002 §4.3.1）。
 
 claims 契约（§4.1.1）：sub / rooms[]（≤10）/ ws={sub}:{client_tab_id}（BR-12 去重
 与重连幂等键）/ iat / exp / jti。验签端（live）只持公钥，algorithms 锁 RS256。
@@ -77,7 +81,7 @@ def renew_after_seconds() -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 房间可见性（换票时校验，§1.3 订阅规则表）
+# 房间可见性（换票时校验，§1.3 订阅规则表；file 第四类房间 FILE-003 §4.4）
 # ─────────────────────────────────────────────────────────────────────
 def project_room(project_id) -> str:
     return f"project:{project_id}"
@@ -85,6 +89,13 @@ def project_room(project_id) -> str:
 
 def issue_room(issue_id) -> str:
     return f"issue:{issue_id}"
+
+
+def file_room(asset_id) -> str:
+    """file:{asset_id} 第四类房间（FILE-003 §4.4 登记）：订阅条件 =
+    file.read + 文件可见性——可见性判定复用 can_view_file 单入口
+    （FILE-002 §4.3.1 BR-08，评审红线禁止各处自行实现）。"""
+    return f"file:{asset_id}"
 
 
 def user_room(user_id) -> str:
@@ -122,23 +133,47 @@ def _visible_issue_ids(user, project_id, issue_ids: list[str]) -> set[str]:
     return {str(i) for i in found}
 
 
+def _visible_file_assets(user, project_id, asset_ids: list[str]) -> list:
+    """文件房间可见性（FILE-003 §4.4）：资产存活、属于本票据项目域，且过
+    ``can_view_file`` 单入口（FILE-002 §4.3.1 三态可见性）。
+
+    调用方已过 project.read 闸（file.read = VIEWER+，rbac §8.2 同级）；角色
+    一次求值逐对象复用（目录树批量剪枝同范式，避免 N+1）。
+    """
+    from plane.db.models import FileAsset
+    from plane.db.services.file_permission import can_view_file, effective_project_role
+
+    ids = [str(a) for a in asset_ids]
+    if not ids:
+        return []
+    role = effective_project_role(user, project_id)
+    assets = FileAsset.objects.filter(
+        id__in=ids, project_id=project_id, deleted_at__isnull=True,
+    ).only("id", "project_id", "visibility", "allowed_members")
+    return [a for a in assets if can_view_file(user, a, role=role)]
+
+
 # ─────────────────────────────────────────────────────────────────────
 # 签发 / 续签
 # ─────────────────────────────────────────────────────────────────────
 def issue_realtime_token(
     *, user, project: Project, issue_ids: list[str], client_tab_id: str,
+    file_asset_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """换票（§4.2.1）：rooms 服务端装配——project:{pid} 恒附 + issue 逐个可见性
-    校验（不可见 → 403 PERM_DENIED 拒整票：存在性隐藏不适用于换票）+ user 恒附。
+    校验（不可见 → 403 PERM_DENIED 拒整票：存在性隐藏不适用于换票）+ file 逐个
+    可见性校验（FILE-003 §4.4，同拒整票语义）+ user 恒附。
     """
-    if len(issue_ids) > MAX_ROOMS_PER_TICKET - 2:
+    file_ids = [str(a) for a in (file_asset_ids or [])]
+    if len(issue_ids) + len(file_ids) > MAX_ROOMS_PER_TICKET - 2:
         issue_cap = MAX_ROOMS_PER_TICKET - 2
         raise AppException(
             "VALIDATION_INVALID_PARAM",
-            message="任务房间数超过上限",
+            message="任务/文件房间数超过上限",
             details=[{
                 "field": "issue_rooms", "code": "LIMIT",
-                "message": f"单张票据 rooms 声明上限 {MAX_ROOMS_PER_TICKET}（issue_rooms ≤ {issue_cap}）",
+                "message": f"单张票据 rooms 声明上限 {MAX_ROOMS_PER_TICKET}"
+                           f"（issue_rooms + file_rooms ≤ {issue_cap}）",
             }],
         )
     visible = _visible_issue_ids(user, project.id, issue_ids)
@@ -150,9 +185,19 @@ def issue_realtime_token(
                 details=[{"field": "issue_rooms", "code": "PERM_DENIED",
                           "message": f"任务 {iid} 不可访问"}],
             )
+    visible_files = {str(a.id) for a in _visible_file_assets(user, project.id, file_ids)}
+    for aid in file_ids:
+        if aid not in visible_files:
+            raise AppException(
+                "PERM_DENIED",
+                message="该文件不可访问，换票被拒绝",
+                details=[{"field": "file_rooms", "code": "PERM_DENIED",
+                          "message": f"文件 {aid} 不可访问"}],
+            )
     rooms = (
         [project_room(project.id)]
         + [issue_room(iid) for iid in issue_ids]
+        + [file_room(aid) for aid in file_ids]
         + [user_room(user.id)]
     )
     return _issue_claims(user_id=user.id, rooms=rooms, client_tab_id=client_tab_id)
@@ -161,13 +206,14 @@ def issue_realtime_token(
 def renew_realtime_token(
     *, user, old_token: str, client_tab_id: str,
     issue_rooms: list[str] | None = None,
+    file_rooms: list[str] | None = None,
 ) -> dict[str, Any]:
     """续签（§4.2 #2，BR-02 旧 jti 轮换）。
 
     - 旧票验签（公钥 + exp）：无效/过期 → 401 AUTH_TOKEN_EXPIRED（前端重换票）；
     - sub 必须是本人（他票续签拒绝 PERM_DENIED）；
-    - 房间集以旧票为准；请求携带 issue_rooms 时增删重走可见性校验
-      （删 = 旧票 issue 房间不在新清单；增 = 新清单多出的逐个校验）；
+    - 房间集以旧票为准；请求携带 issue_rooms / file_rooms 时增删重走可见性
+      校验（删 = 旧票对应房间不在新清单；增 = 新清单多出的逐个校验）；
     - 新 jti、新 exp——旧票到期自然失效，jti 轮换可追踪。
     """
     try:
@@ -188,20 +234,25 @@ def renew_realtime_token(
     if not project_ids:
         raise AppException("AUTH_TOKEN_EXPIRED", message="实时票据缺少项目房间声明") from None
 
-    # 房间集推导：project / user 房间沿用旧票；issue 房间按请求增删。
+    # 房间集推导：project / user 房间沿用旧票；issue / file 房间按请求增删。
     base_project_rooms = [r for r in old_rooms if r.startswith("project:")]
     user_room_old = user_room(user.id)
     if issue_rooms is None:
         issue_ids = [r.split(":", 1)[1] for r in old_rooms if r.startswith("issue:")]
     else:
-        if len(issue_rooms) > MAX_ROOMS_PER_TICKET - 2:
-            raise AppException(
-                "VALIDATION_INVALID_PARAM",
-                message="任务房间数超过上限",
-                details=[{"field": "issue_rooms", "code": "LIMIT",
-                          "message": f"issue_rooms ≤ {MAX_ROOMS_PER_TICKET - 2}"}],
-            )
         issue_ids = [str(i) for i in issue_rooms]
+    if file_rooms is None:
+        file_ids = [r.split(":", 1)[1] for r in old_rooms if r.startswith("file:")]
+    else:
+        file_ids = [str(a) for a in file_rooms]
+    if len(issue_ids) + len(file_ids) > MAX_ROOMS_PER_TICKET - 2:
+        raise AppException(
+            "VALIDATION_INVALID_PARAM",
+            message="任务/文件房间数超过上限",
+            details=[{"field": "issue_rooms", "code": "LIMIT",
+                      "message": f"issue_rooms + file_rooms "
+                                 f"≤ {MAX_ROOMS_PER_TICKET - 2}"}],
+        )
 
     # issue 可见性重校验（对首个 project 域——多 project 域仅换票端点支持，
     # 续签房间集以旧票为准，issue 增删只在该域内进行）。
@@ -217,9 +268,20 @@ def renew_realtime_token(
                 details=[{"field": "issue_rooms", "code": "PERM_DENIED",
                           "message": f"任务 {iid} 不可访问"}],
             )
+    # file 可见性重校验（FILE-003 §4.4：file.read + can_view_file，同 project 域）
+    visible_files = {str(a.id) for a in _visible_file_assets(user, pid, file_ids)}
+    for aid in file_ids:
+        if aid not in visible_files:
+            raise AppException(
+                "PERM_DENIED",
+                message="该文件不可访问，续签被拒绝",
+                details=[{"field": "file_rooms", "code": "PERM_DENIED",
+                          "message": f"文件 {aid} 不可访问"}],
+            )
     rooms = (
         base_project_rooms
         + [issue_room(iid) for iid in issue_ids]
+        + [file_room(aid) for aid in file_ids]
         + [user_room_old]
     )
     return _issue_claims(user_id=user.id, rooms=rooms, client_tab_id=client_tab_id)
@@ -259,6 +321,8 @@ def verify_rooms(tickets: list[dict[str, Any]]) -> list[dict[str, Any]]:
       - ``user:{sub}`` 恒有效（本人房间，票据 sub 即本人）；
       - ``project:{pid}`` → project.read 重校验（WS_ADMIN+ / active 成员）；
       - ``issue:{iid}`` → 任务可见性重校验（存活 + 所属项目可读）；
+      - ``file:{aid}`` → 文件可见性重校验（FILE-003 §4.4：存活 +
+        ``can_view_file`` 单入口——三态可见性与项目成员资格内嵌其中）；
       - sub 解析不到用户（已注销/伪造）→ 其非 user 房间全部失效。
     """
     invalid: list[dict[str, Any]] = []
@@ -298,6 +362,16 @@ def _room_still_valid(sub: str, room: str) -> bool:
             id=rid, deleted_at__isnull=True,
         ).only("project_id").first()
         return issue is not None and _user_can_read_project(user, issue.project_id)
+    if kind == "file":
+        if not _is_uuid(rid):
+            return False
+        from plane.db.models import FileAsset
+        from plane.db.services.file_permission import can_view_file
+
+        asset = FileAsset.objects.filter(
+            id=rid, deleted_at__isnull=True,
+        ).only("project_id", "visibility", "allowed_members").first()
+        return asset is not None and can_view_file(user, asset)
     return False
 
 

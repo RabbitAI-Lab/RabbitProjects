@@ -222,22 +222,31 @@ export interface ApiEnvelope<T> {
 // —— 前端 RealtimeClient / LiveEventBus（Phase 3）与 apps/live 共用的唯一口径。
 // ─────────────────────────────────────────────────────────────────────
 
-/** 六类核心事件名（§2.3 表；与 api 侧 EVENT_MAP 对齐） */
+/** 业务事件名（§2.3 表核心六类 + file 域五事件补登；与 api 侧 EVENT_MAP 对齐） */
 export type LiveEventName =
   | "issue.updated"
   | "issue.state.changed"
   | "board.moved"
   | "comment.created"
   | "activity.created"
-  | "notification.created";
+  | "notification.created"
+  // ── file 域五事件（Sprint-4 FILE-003 §4.4 / FILE-004 BR-13 登记，
+  //    COLLAB-004 §2.3 补登；rooms = project + file:{asset_id}）──
+  | "file.version.created"
+  | "file.transcode.completed"
+  | "file.share.created"
+  | "file.share.revoked"
+  | "file.share.extended";
 
 /** 全部下行事件名（含连接确认与 presence，非业务六类） */
 export type LiveServerEventName = LiveEventName | "connected" | "presence.joined" | "presence.left";
 
-/** 房间名构造（§1.3：project / issue / user 三类；订阅条件在换票时校验） */
+/** 房间名构造（§1.3：project / issue / user 三类 + file 第四类（FILE-003 §4.4
+ *  登记，订阅条件在换票时校验）；file 房间订阅条件 = file.read + 文件可见性） */
 export const liveRoom = {
   project: (projectId: UUID) => `project:${projectId}` as const,
   issue: (issueId: UUID) => `issue:${issueId}` as const,
+  file: (assetId: UUID) => `file:${assetId}` as const,
   user: (userId: UUID) => `user:${userId}` as const,
 } as const;
 

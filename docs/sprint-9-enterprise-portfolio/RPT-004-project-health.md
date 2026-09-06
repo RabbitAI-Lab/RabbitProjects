@@ -11,7 +11,7 @@
 | 上游依赖 | `RPT-002`（项目统计口径基座 `issue_stats_base()`）；`RPT-003`（速率/燃尽趋势；**Cycle 时间盒**——进度维度时间锚）；`TASK-013`（`WorkLogSummary` 负载快照——**同源复用，不另建聚合**；`ProjectWorklogConfig.weekly_capacity_minutes` 负载分母唯一配置源；可见性按其 BR-14「报表读/台账管理面分码分工」对齐）；`TASK-005`（阻塞统计）；`WF-002`（审批滞留可计入阻塞维度，可选信号） |
 | 下游消费 | P4 `RPT-005`（大屏数据源）；`PROJ-004`（项目集健康度聚合复用评分卡函数） |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-05（R2 修复：信封 status 字符串化 + request_id 移出 meta、配置权限码改 `project.setting.manage`、负载分母单源对齐 TASK-013、示例数值按冻结公式全量重算、`_blocked_dim` ORM 方向修正、HealthConfig 模型补全、band 扩容 insufficient、下钻时点锚定声明） |
+| 最后更新日期 | 2026-09-05（R2 修复：信封 status 字符串化 + request_id 移出 meta、配置权限码改 `project.setting.manage`、负载分母单源对齐 TASK-013、示例数值按冻结公式全量重算、`_blocked_dim` ORM 方向修正、HealthConfig 模型补全、band 扩容 insufficient、下钻时点锚定声明。R2 复评 PASS 后随手收口：drilldown/trend/workload-export 三端点补 `projects/{id}/` 项目作用域 + export 窗口必填、BR-08 可见性语序消歧（持码=全员/未持码=仅自己）、compute() 同事务取数落为显式 transaction.atomic 要求、SQL #2 补归档过滤与 RPT-002 下沉待回改登记、capacity_minutes 单项目/项目集双形态声明、as_of 字面量与 RPT-002 时间戳区分） |
 
 ---
 
@@ -99,7 +99,7 @@ flowchart TB
 | BR-05 | 工时偏差仅统计 `estimate_minutes > 0` 的任务；样本 <3 时该维度显示「样本不足」不参与总评；进度维度另需项目存在活跃 Cycle，无活跃 Cycle 时同样按样本不足处理——以上剔除后权重按比例重归一 | 聚合服务 | — |
 | BR-06 | 负载率 = `total_minutes / ProjectWorklogConfig.weekly_capacity_minutes`（默认 2400=40h，可配 1800~3600 即 30-60h）——**分母唯一配置源裁定**：字段归属 TASK-013 `project_worklog_configs` 表（其 §4.2 归属裁定），本文档为消费方，`HealthConfig` 不设同义键；容量范围校验随其 `worklog-config` PATCH 端点（`chk_worklog_weekly_capacity_range`） | 项目配置（TASK-013 承载） | —（容量越界由 TASK-013 端点拒绝） |
 | BR-07 | 负载热力数据源 = `WorkLogSummary`（TASK-013），人×周矩阵；`from/to` 必填（自然周周一）、跨度 ≤12 周（TASK-013 台账端点同款声明，越界 `400 VALIDATION_INVALID_PARAM`）；项目集级 = 项目集合过滤（`PROJ-004` `descendant_projects` 复用），负载率逐项目按各自容量折算 | 聚合服务 | `400 VALIDATION_INVALID_PARAM`（窗口越界） |
-| BR-08 | 负载可见性——与 TASK-013 BR-14「**报表读与台账管理面分码分工**」对齐（两文档口径以该 BR 为准，本文不另设第二套）：负载热力为报表读面，持 `report.read`（rbac §8.2 项目级四角色默认全持；P3 自定义角色裁剪后未持者）仅见自己，持码者见项目全员；工时审批/台账管理面仍归 `worklog.approve`（TASK-013，本文不复用）；CSV 导出同 TASK-013 需 `report.export`；项目集级需 WS 成员 + 项目集可见 | Permission | `403 PERM_DENIED` |
+| BR-08 | 负载可见性——与 TASK-013 BR-14「**报表读与台账管理面分码分工**」对齐（两文档口径以该 BR 为准，本文不另设第二套）：负载热力为报表读面，**持 `report.read` 者见项目全员**（rbac §8.2 项目级四角色默认全持），**未持码者（P3 自定义角色裁剪）仅见自己**；工时审批/台账管理面仍归 `worklog.approve`（TASK-013，本文不复用）；CSV 导出同 TASK-013 需 `report.export`；项目集级需 WS 成员 + 项目集可见 | Permission | `403 PERM_DENIED` |
 | BR-09 | 导出：PNG 前端渲染（复用 GANTT-002 管线）；CSV 服务端流式（明细清单）；`report.export` 权限 + 审计挂接（`AUTH-010`） | Permission | `403 PERM_DENIED` |
 | BR-10 | 项目无任务 / 全部维度样本不足：总评为 `null` 且 `band: "insufficient"`（「数据不足」独立分档，而非 0 分——0 分=红是误判）；部分维度可用时按可用维度重归一计算（BR-05） | 聚合服务 | — |
 | BR-11 | 阻塞率口径含跨项目边（`PROJ-004` BR-07 软策略不改变统计——**拦截软、统计硬**，外部阻塞也是风险）：镜像行判定不加 `related_issue__project` 过滤，仅外层任务限本项目 | 聚合服务 | — |
@@ -114,7 +114,7 @@ sequenceDiagram
     FE->>API: GET …/reports/workload/?from=&to=
     API->>WLS: SELECT project, actor, week_start, total_minutes<br/>WHERE project IN (…) AND week BETWEEN …<br/>（idx_wls_project_week）＋各项目 weekly_capacity_minutes<br/>（ProjectWorklogConfig，BR-06 分母唯一源）
     WLS-->>API: ≤ 50人×12周 = 600 行
-    API-->>FE: 200 人×周矩阵 + 负载率 + 分档色标<br/>meta.capacity_minutes 下发（TASK-013 台账同款）
+    API-->>FE: 200 人×周矩阵 + 负载率 + 分档色标<br/>meta.capacity_minutes 下发（TASK-013 台账同款；<br/>单项目视图=标量，项目集视图=per-project 映射，BR-07 逐项目折算）
     Note over FE: 与 TASK-013 台账页同色系（分母同为 weekly_capacity_minutes）：<br/>0-60% 绿 / 60-90% 蓝 / 90-100% 橙 / >100% 红
 ```
 
@@ -273,6 +273,9 @@ from plane.db.models import Cycle, IssueLink, ProjectWorklogConfig, WorkLog     
 class HealthReportService:
     def compute(self, project, day, cfg) -> HealthSnapshot:
         """BR-01：四维全部复用既有基座取数——零独立统计 SQL。
+        BR-04①：dims 与 drilldown_count 的取数语句必须包在同一个
+        transaction.atomic() 内执行（READ COMMITTED 下独立语句各见各的快照，
+        不包事务则同事务口径承诺落空——UT-09 断言对象）。
         数值链：value 四舍五入两位小数 → score = 冻结公式(value) 四舍五入整数
         → total = Σ(score×weight) 保留一位小数（示例见 §3.1 注）。"""
         base = issue_stats_base(project_id=project.id)         # RPT-002 口径单源（Issue QuerySet，非聚合行）
@@ -285,8 +288,9 @@ class HealthReportService:
             effort_n=Count("id", filter=open_q() & Q(estimate_minutes__gt=0)),
             est=Coalesce(Sum("estimate_minutes", filter=open_q() & Q(estimate_minutes__gt=0)), 0),
         )
-        spent = (WorkLog.objects                               # SQL #2：工时聚合（RPT-002 worklog SQL 同款第二条）
+        spent = (WorkLog.objects                               # SQL #2：工时聚合（RPT-002 worklog SQL 同款第二条；该 SQL 待 RPT-002 下沉共享函数——RPT-002 文档待回改登记）
                  .filter(issue__project=project, deleted_at__isnull=True,
+                         issue__archived_at__isnull=True,      # 与分母基座对称：归档任务不计入工时偏差
                          issue__state__group__in=["unstarted", "started"],
                          issue__estimate_minutes__gt=0)
                  .aggregate(s=Coalesce(Sum("minutes"), 0))["s"])
@@ -388,11 +392,11 @@ def health_daily_snapshot():
 | 方法 | 路径 | 说明 | 权限 |
 | --- | --- | --- | --- |
 | GET | `…/projects/{id}/reports/health/` | 当前评分卡（最新快照 + 7 日趋势） | `report.read` |
-| GET | `…/reports/health/drilldown/?dimension=&cursor=` | 维度下钻清单（BR-04，实时口径，`meta.as_of="realtime"`） | `report.read` |
-| GET | `…/reports/health/trend/?days=30` | 总评趋势序列 | `report.read` |
+| GET | `…/projects/{id}/reports/health/drilldown/?dimension=&cursor=` | 维度下钻清单（BR-04，实时口径，`meta.as_of="realtime"` 字面量标记——区别于 RPT-002 §4.3 `as_of` 的 ISO 时间戳） | `report.read` |
+| GET | `…/projects/{id}/reports/health/trend/?days=30` | 总评趋势序列 | `report.read` |
 | GET/PATCH | `…/projects/{id}/reports/health/config/` | 阈值/权重配置（BR-02；负载容量**不在本端点**——归 TASK-013 `worklog-config`，BR-06） | `project.setting.manage`（rbac §8.2，PROJ_ADMIN） |
 | GET | `…/projects/{id}/reports/workload/?from=&to=` | 负载热力矩阵（窗口校验 BR-07：周一起始、跨度 ≤12 周；`meta.capacity_minutes` 下发） | BR-08 |
-| GET | `…/reports/workload/export/?format=csv` | 负载 CSV 导出 | `report.export` |
+| GET | `…/projects/{id}/reports/workload/export/?from=&to=&format=csv` | 负载 CSV 导出（`from/to` 必填，BR-07 窗口校验同款） | `report.export` |
 
 **① `GET …/reports/health/` 响应（200）**（信封 `status` 为字符串、详情端点 `meta` 可省略——api-conventions §4.1；`request_id` 仅出现在错误信封 `error` 内，§4.2；示例数值与 §3.1 同一数据集，可复算）：
 
@@ -424,7 +428,7 @@ def health_daily_snapshot():
 | workload 窗口越界（非周一/跨度 >12 周） | 400 | `VALIDATION_INVALID_PARAM` | `details.field=from/to`（BR-07） |
 | 配置写无权限 | 403 | `PERM_DENIED` | 所需权限码 `project.setting.manage` |
 | 无 `report.export` 导出 | 403 | `PERM_DENIED` | 所需权限码 `report.export` |
-| 成员查他人负载明细 | 403 | `PERM_DENIED` | BR-08 |
+| 成员查他人负载明细（被自定义角色裁剪未持码者） | 403 | `PERM_DENIED` | BR-08 |
 | 数据不足（新项目） | 200 | — | `total_score: null, band: "insufficient"`（BR-10） |
 
 ### 4.4 前端实现
@@ -452,7 +456,7 @@ class HealthReportStore {
 | 前端要点 | 方案 |
 | --- | --- |
 | 评分卡 | 四维卡片 + 总评仪表；下钻抽屉游标分页（复用列表组件） |
-| 热力图 | ECharts heatmap；悬停 cell 显示周工时 + 跳台账锚点 |
+| 热力图 | recharts 热力图（tech-stack §2 锁定图表库，与 RPT-003 同栈）；悬停 cell 显示周工时 + 跳台账锚点 |
 | 导出 | PNG html-to-image 2x（GANTT-002 管线）；CSV 走服务端流式 |
 | 数据不足 | 「数据不足」空态卡（BR-10），不显示 0 分红 |
 
@@ -473,7 +477,7 @@ class HealthReportStore {
 | UT-07 | 配置变更不影响历史快照（config_snapshot 隔离） | BR-02 |
 | UT-08 | 负载率计算与容量可配（1800/2400/3600） | 除数 = `ProjectWorklogConfig.weekly_capacity_minutes`（HealthConfig 无同义键） |
 | UT-09 | 快照内 dims 与 drilldown_count 同事务计数；下钻端点响应带 `meta.as_of="realtime"` | BR-04 两层锚定 |
-| UT-10 | 负载权限：成员仅自己 / report.read 全员 | 403/200 |
+| UT-10 | 负载权限：未持码成员（自定义角色裁剪）仅自己 / 持 report.read 者全员 | 403/200 |
 
 ### 5.2 集成测试（IT）
 

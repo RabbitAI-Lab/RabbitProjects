@@ -8,10 +8,10 @@
 | 优先级 | P3（企业版核心 · 企业版 V1.0 组成部分） |
 | 工作量估算 | 后端 3.0 人日（组合树 1 + 里程碑 0.5 + 跨项目依赖放开 1 + 汇总 0.5）｜前端 3.0 人日（组合面板 1.5 + 依赖连线图 1 + 里程碑视图 0.5）｜测试 1.5 人日 |
 | 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md)（§2.11 IssueLink）、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md)、[`api-conventions.md`](../architecture/api-conventions.md) |
-| 上游依赖 | `PROJ-001/003`（项目生命周期）；`TASK-005`（IssueLink 成对存储与无环约束——**BR-02 同项目限制在本迭代放开为「同工作空间可跨项目」**）；`TASK-013`（工时台账——资源汇总数据源） |
+| 上游依赖 | `PROJ-003`（项目生命周期 draft/active/archived/closed 四态，dependency-graph §4 记载）；`AUTH-008`（自定义角色与细粒度资源权限——读面行级裁剪依 rbac §6 `accessible_by`，dependency-graph §4 记载）；`TASK-005`（IssueLink 成对存储与无环约束——**BR-02 同项目限制在本迭代放开为「同工作空间可跨项目」**）；`TASK-013`（工时台账——资源汇总数据源；非 dg 文档级依赖，BR-12 资源矩阵的硬数据前提，不要求 dg 回改） |
 | 下游消费 | P4 资源统一调度、项目集级工作流；`RPT-004`（健康度可按项目集聚合） |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-05（R2 修复：响应信封对齐 api-conventions §4、BLOCKER_SQL 按上游 TASK-005 语义重写并逐行对齐别名、深度超限改 409（子码 `DEPTH`，api-conventions §8.8 已注册）、`Portfolio.manager` 数据模型落地 BR-03、blocked_external 方向与字段名修正、DELETE 去请求体、响应示例补齐、BR-10 用例与 P95 门槛、四主体越权用例、UT-01 断言对齐、端点/约束计数修正） |
+| 最后更新日期 | 2026-09-05（R1 修复：响应信封对齐 api-conventions §4、BLOCKER_SQL 按上游 TASK-005 语义重写并逐行对齐别名、深度超限改 409（子码 `DEPTH`，api-conventions §8.8 已注册）、`Portfolio.manager` 数据模型落地 BR-03、blocked_external 方向与字段名修正、DELETE 去请求体、响应示例补齐、BR-10 用例与 P95 门槛、四主体越权用例、UT-01 断言对齐、端点/约束计数修正。R2 修复：新增 BR-14 读面可见性过滤并对齐 rbac §2.2 角色语义（GUEST 403 / MEMBER 可见性裁剪）、里程碑编辑端点补齐、根组合重名 COALESCE 表达式唯一索引、示例数值三方对齐（65%）、QA-001 引用 §2.3、CYCLE 子码改「已注册」、上游依赖补 AUTH-008、挂载叶子口径统一。R3 修复：§4.3 聚合服务落实 BR-14（`descendant_projects` 增加 actor 入参与 rbac `accessible_by` 求交并注明服务层求交原因，progress/resource_matrix/risk_list 经其收窄，milestone_progress 补 actor 可见性收窄、系统上下文缺省全集）、`uniq_portfolio_name_per_parent` 补 workspace 列（跨空间允许同名根组合）、`uniq_milestone_issue` 补软删 condition（端点表「删贡献项」行同步标注软删）、UT-09 错误码对齐 `RESOURCE_CIRCULAR_DEPENDENCY`+`CYCLE`、上游依赖 PROJ-003 补 dg §4 出处括注、TASK-013 加非 dg 性质注、BR-10 补 `PERM_PROJECT_CLOSED`（api-conventions §8.3 已注册，UT-13 双态断言）、BR-02 并入挂载叶子口径（新增 UT-16 + 错误矩阵行）、IT-06 扩五主体补非工作空间成员 404、示例 weeks 对齐风险卡快照日、matrix 补截断标注、§3.3 补 500 边界数依据。R4 复评 PASS（9.5×5）后随手收口：milestone_progress 拆 keyword-only 双模式（读面 actor 必填/for_system 仅 beat 全集，防漏传泄露）、BR-13 补与 RPT-002 完成率双口径关系说明、BR-09 保险丝措辞对齐 TASK-005、BR-02 补已挂项目节点不变式、端点表 {pid}/{id} 记法统一） |
 
 ---
 
@@ -25,7 +25,7 @@
 
 ### 1.2 目标
 
-1. **项目集组合树**：`Portfolio` 自引用树（深度 ≤3：组合 → 项目集 → 子项目集），项目可挂载到项目集节点；一个项目至多属于一个项目集。
+1. **项目集组合树**：`Portfolio` 自引用树（深度 ≤3：组合 → 项目集 → 子项目集），项目仅可挂载到**叶子节点**（§4.2/迭代概览 §9 同口径）；一个项目至多属于一个项目集。
 2. **里程碑**：`PortfolioMilestone` 跨项目对齐点（如「9-30 全量联调」），聚合各项目向其贡献的任务完成度，延期预警。
 3. **跨项目依赖**：放开 `TASK-005` 的同项目限制至同工作空间；跨项目依赖**仅可视化与统计，不参与单项目流转拦截**（上下文不同，硬拦易误伤——迭代概览 §5 决策）。
 4. **汇总面板**：项目集级进度（按 state.group 加权）、资源汇总（消费 `TASK-013` 工时快照）、风险列表（逾期/阻塞/里程碑偏差）。
@@ -53,7 +53,7 @@
 | 依赖 | 内容 | 阻塞原因 |
 | --- | --- | --- |
 | `TASK-005` | IssueLink 成对存储（INVERSE_MAP）、无环 CTE、成对删除 | 跨项目放开复用全部机制，仅放宽 BR-02 校验 |
-| `PROJ-003` | 项目生命周期状态机（active/archived） | 归档项目可挂项目集但只读 |
+| `PROJ-003` | 项目生命周期状态机（draft/active/archived/closed 四态） | 归档/关闭项目可挂项目集但只读 |
 | `TASK-013` | `WorkLogSummary` 人×周快照 | 资源汇总卡数据源 |
 | `TASK-004` | 子树进度上卷（`completed_sub_issues_count`） | 项目级进度聚合范式复用 |
 
@@ -83,28 +83,31 @@ flowchart TB
         P1 --> M1["里程碑: 9-30 全量联调"]
         M1 -.贡献项.-> T1["APP-88 联调用例"]
         M1 -.贡献项.-> T2["GW-41 网关验收"]
-        T1 ==跨项目 blocks==> T3["APP-102 发布"]
         T2 ==跨项目 blocks==> T1
+        T2 ==跨项目 blocks==> T3["APP-102 发布"]
     end
 ```
+
+> 图注：图示为局部示例——APP-102 的第二个外部阻塞源 `GW-52` 见 §4.6 ② `risks`；同项目 blocks 边不在项目集依赖图中重复展开（§3.3）。
 
 ### 2.2 业务规则（BR）
 
 | 编号 | 规则 | 强制层 | 违约响应 |
 | --- | --- | --- | --- |
 | BR-01 | `Portfolio` 树深度 ≤3（组合 L1 → 项目集 L2 → 子项目集 L3）；禁止成环（parent 链检查同 TASK-004 `_is_descendant` CTE） | Service + CTE | `409 RESOURCE_LIMIT_EXCEEDED`（超深，details 子码 `DEPTH`——api-conventions §8.8 已注册条目，与 TASK-004 层级深度越限同码）/ `409 RESOURCE_CIRCULAR_DEPENDENCY`（成环） |
-| BR-02 | 一个项目至多挂一个项目集节点；迁移挂载需原目标双权限 | DB 唯一约束（project_id 部分唯一） | `409 RESOURCE_ALREADY_EXISTS` |
-| BR-03 | 项目集/里程碑管理需 WS 级权限（WS_ADMIN+）**或**项目集 `manager`（数据支撑：`Portfolio.manager` 外键，§4.2；节点祖先链上的 manager 同样放行——深度 ≤3 至多回溯 2 跳）；只读对全部 WS 成员开放 | Permission（对象级旁路，同 rbac §5.3 `has_object_permission` 模式） | `403 PERM_ROLE_INSUFFICIENT` |
+| BR-02 | 一个项目至多挂一个项目集节点；项目仅可挂载**叶子节点**（§1.2/§4.2 docstring 同口径，UT-16）；迁移挂载需原目标双权限；已挂项目的节点不再新增子节点（保持「项目挂叶子」不变式，违反时 BR-11 删除守卫兜底迁移） | DB 唯一约束（project_id 部分唯一）+ Service 叶子校验（目标节点子节点存在性） | `409 RESOURCE_ALREADY_EXISTS`；非叶子挂载 400 `VALIDATION_INVALID_PARAM`（api-conventions §8.4 已注册） |
+| BR-03 | 项目集/里程碑**管理**需 WS_ADMIN+ **或**项目集 `manager`（数据支撑：`Portfolio.manager` 外键，§4.2；节点祖先链上的 manager 同样放行——深度 ≤3 至多回溯 2 跳）；**读面**（组合树/summary/里程碑/依赖图）对 WS_MEMBER+ 开放，WS_GUEST 无工作空间级浏览权返回 403（rbac §2.2），可见性裁剪见 BR-14 | Permission（对象级旁路，同 rbac §5.3 `has_object_permission` 模式） | `403 PERM_ROLE_INSUFFICIENT` |
 | BR-04 | 里程碑 `target_date` 必填；贡献项任务须属于项目集下任一项目（直接/间接子节点） | Serializer | `400 VALIDATION_ERROR` + `DOES_NOT_EXIST` |
 | BR-05 | 里程碑完成度 = 贡献项中 `state.group ∈ {completed}` 的加权比例（权重 = 任务 `estimate_minutes`，无预估按 1 计） | 聚合服务 | — |
 | BR-06 | 里程碑延期预警：`target_date` 前 7 天完成度 <100% → 每日一条预警至项目集 `manager` 收件箱（`manager` 为空回退通知 WS_ADMIN+，幂等键含日期）；逾期后转「已延期」红标 | Celery beat + SETNX | — |
 | BR-07 | **跨项目依赖不参与流转拦截**：`TASK-005` 完成守卫仅统计**同项目** blocks 边；跨项目边在任务详情/依赖图展示「外部依赖」标记并计入风险统计 | 引擎守卫 SQL 加项目过滤 | — |
 | BR-08 | 跨项目关联放开范围 = 同工作空间；两端项目均须对操作者可见；跨项目边创建需**源项目** `issue.update` | Permission + Service | `404 RESOURCE_NOT_FOUND`（存在性隐藏）/ `403 PERM_DENIED` |
-| BR-09 | 跨项目边的无环检测范围扩展到同工作空间全图（CTE 沿 blocks 边，深度守卫 `CTE_GUARD_DEPTH=100` 不变） | Service | `409 RESOURCE_CIRCULAR_DEPENDENCY` |
-| BR-10 | 归档项目在组合树中保留只读（写保护复用 PROJ-003 `PERM_PROJECT_ARCHIVED` 守卫，组合树不绕过）；项目归档不影响项目集统计（历史数据照常聚合） | Service | 写归档项目内资源 `403 PERM_PROJECT_ARCHIVED` |
+| BR-09 | 跨项目边的无环检测范围扩展到同工作空间全图（CTE 沿 blocks 边，`CTE_GUARD_DEPTH=100` 保险丝语义承袭上游不变——TASK-005 BR-05：仅作脏数据告警线，非业务深度限制） | Service | `409 RESOURCE_CIRCULAR_DEPENDENCY` |
+| BR-10 | 归档（archived）与关闭（closed）项目在组合树中保留只读（写保护复用 PROJ-003 状态守卫，组合树不绕过）；项目归档不影响项目集统计（历史数据照常聚合） | Service | 写归档项目内资源 `403 PERM_PROJECT_ARCHIVED`；写关闭项目内资源 `403 PERM_PROJECT_CLOSED`（api-conventions §8.3 已注册，Sprint 5 `PROJ-003`） |
 | BR-11 | 删除非空项目集（下挂项目或子节点）须先迁移内容 | Service | `409 RESOURCE_IN_USE` + `details` 计数 |
 | BR-12 | 资源汇总卡数据源 = `TASK-013` `WorkLogSummary`（按项目集下项目集合过滤，人×周聚合为「人×项目」矩阵）；不另建聚合表 | 聚合服务 | — |
-| BR-13 | 项目集级进度 = 下挂项目进度加权平均（权重 = 项目未取消任务数）；项目进度 = 任务 state.group 完成比例（承 TASK-004 上卷语义） | 聚合服务 | — |
+| BR-13 | 项目集级进度 = 下挂项目进度加权平均（权重 = 项目未取消任务数）；项目进度 = 任务 state.group 完成比例（承 TASK-004 上卷语义）。**与 RPT-002 完成率的口径关系**：本表以根任务（`parent__isnull=True`）为基座避免子任务重复计数，RPT-002 以全部未归档任务为基座——子任务分布不均时两处数值可不同，属显式双口径而非缺陷（§6 防争议条款） | 聚合服务 | — |
+| BR-14 | **读面可见性过滤**：summary/资源矩阵/风险列表/依赖图仅聚合操作者 `accessible_by`（rbac §6 行级 Manager）可见的项目，BR-13 加权在可见集合上计算（WS_ADMIN+ 可见全部）；组合树节点结构全量返回，节点 `project_count` 仅计可见项目。与 BR-08「双项目可见」同一哲学（服务层落点见 §4.3 `descendant_projects(actor)`，IT-06） | QuerySet 行级过滤（`accessible_by`）＋ 服务层显式求交（§4.3） | — |
 
 ### 2.3 跨项目依赖放开方案（对 TASK-005 的增量）
 
@@ -139,8 +142,8 @@ flowchart LR
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ ◈ 电商平台 2.0 · 项目集                     [里程碑] [依赖图] [成员] [设置] │
 ├──────────────────────────────────────────────────────────────────────────┤
-│ ┌─ 整体进度 ──────────┐ ┌─ 资源（近 4 周）─┐ ┌─ 风险 (4) ──────────────┐ │
-│ │ ▓▓▓▓▓▓▓▓▓░░░░░ 62% │ │ 李骁   App  30h   │ │ ⚠ GW-41 逾期 3 天        │ │
+│ ┌─ 整体进度 ──────────┐ ┌─ 资源（近 4 周）─┐ ┌─ 风险 (3) ──────────────┐ │
+│ │ ▓▓▓▓▓▓▓▓▓░░░░░ 65% │ │ 李骁   App  30h   │ │ ⚠ GW-41 逾期 3 天        │ │
 │ │ App 重构    ███ 71% │ │        网关 12h   │ │ ⚠ 里程碑「全量联调」      │ │
 │ │ 中台网关    ██░ 48% │ │ 王思远 网关 26h   │ │   完成度 55%，剩 7 天    │ │
 │ │ 数据迁移    ███ 80% │ │ 陈默   迁移 22h   │ │ ⚠ APP-102 被 2 个外部    │ │
@@ -155,6 +158,8 @@ flowchart LR
 │ 数据迁移     ●活跃   80%    45     0     陈默       昨天 · 双写验证        │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
+
+> 注：面板数值按操作者可见项目聚合（BR-14）；示例为 WS_ADMIN 视角全集——overall 65% = (71%×128 + 48%×86 + 80%×45) / 259（权重 = 未取消任务数，BR-13）。
 
 ### 3.2 里程碑视图
 
@@ -173,7 +178,7 @@ flowchart LR
 
 ### 3.3 依赖关系图
 
-项目集级依赖图（仅跨项目边 + 关键同项目边）：节点 = 任务卡片（编号+标题+项目色标），边 = 依赖箭头（跨项目边虚线 + 「外部」徽标）；支持按项目集下项目过滤、点击节点跳转任务。100 节点内 SVG 渲染，超出提示先过滤。
+项目集级依赖图（仅跨项目边 + 关键同项目边）：节点 = 任务卡片（编号+标题+项目色标），边 = 依赖箭头（跨项目边虚线 + 「外部」徽标）；支持按项目集下项目过滤、点击节点跳转任务。100 节点内 SVG 渲染，超出提示先过滤。规模有界依据（§5.2 门禁「≤100 节点 / 500 边」的出处）：单任务直接关联数受 TASK-005 BR-08 上限 50 约束（正反合并计数），100 节点的典型项目集子图边数为 500 量级，前端按此阈值提示过滤。
 
 ### 3.4 任务详情的外部依赖展示
 
@@ -243,9 +248,16 @@ class Portfolio(BaseModel):
     class Meta(BaseModel.Meta):
         db_table = "portfolios"
         constraints = [
-            models.UniqueConstraint(fields=["parent", "name"],
-                                    condition=models.Q(deleted_at__isnull=True),
-                                    name="uniq_portfolio_name_per_parent"),
+            # parent 为 NULL 时普通 (parent, name) 唯一约束不判重（PG NULL ≠ NULL），
+            # 用 COALESCE 表达式把根组合的 parent 归一到零值 UUID；叠加 workspace 列——
+            # 根组合归一值若全表共享，跨工作空间将不能有同名根组合，故同空间内判重（保证
+            # 同空间根组合不同名，跨空间允许同名）；非根节点已由 parent 隐含 workspace，不受影响
+            models.UniqueConstraint(
+                "workspace",
+                models.functions.Coalesce("parent", models.Value(uuid.UUID("00000000-0000-0000-0000-000000000000"))),
+                "name",
+                condition=models.Q(deleted_at__isnull=True),
+                name="uniq_portfolio_name_per_parent"),
             models.CheckConstraint(check=models.Q(depth__gte=1, depth__lte=3),
                                    name="chk_portfolio_depth"),
         ]
@@ -298,6 +310,7 @@ class MilestoneItem(BaseModel):
     class Meta(BaseModel.Meta):
         db_table = "milestone_items"
         constraints = [models.UniqueConstraint(fields=["milestone", "issue"],
+                                               condition=models.Q(deleted_at__isnull=True),
                                                name="uniq_milestone_issue")]
 ```
 
@@ -305,16 +318,24 @@ class MilestoneItem(BaseModel):
 
 ```python
 class PortfolioService:
-    def descendant_projects(self, portfolio_id) -> list[UUID]:
-        """项目集下全部项目（经 CTE 展开子节点 + 挂载表）——面板/里程碑共用入口"""
-        return Project.objects.filter(
+    # BR-14 强制层落点说明：rbac §6.3 的行级 Manager（BaseViewSet 强制注入）以 get_queryset() 为入口，
+    # 只天然覆盖 Portfolio 主行；summary/资源矩阵/风险列表/依赖图跨 Project/Issue/WorkLogSummary
+    # 多表聚合，QuerySet 注入覆盖不到——行级收口在服务层显式完成：统一经
+    # descendant_projects(actor, …) 与 Project.objects.accessible_by(actor) 求交，
+    # 读面聚合不出现全集口径（IT-06 / BR-14）
+
+    def descendant_projects(self, actor, portfolio_id) -> list[UUID]:
+        """项目集下 actor 可见项目（CTE 展开子节点 + 挂载表，再与 rbac §6 accessible_by 求交）
+        ——面板/里程碑读面共用入口（唯一定义，BR-14）"""
+        return Project.objects.accessible_by(actor).filter(
             portfolio_mount__portfolio_id__in=self._subtree_ids(portfolio_id),
             deleted_at__isnull=True).values_list("id", flat=True)
 
-    def progress(self, portfolio_id) -> PortfolioProgress:
-        """BR-13：项目进度 = completed/(total - cancelled)；项目集 = 按未取消任务数加权"""
+    def progress(self, actor, portfolio_id) -> PortfolioProgress:
+        """BR-13：项目进度 = completed/(total - cancelled)；项目集 = 按未取消任务数加权
+        （项目集经 descendant_projects(actor, …) 收窄至可见项目，BR-14）"""
         rows = (
-            Issue.objects.filter(project_id__in=self.descendant_projects(portfolio_id),
+            Issue.objects.filter(project_id__in=self.descendant_projects(actor, portfolio_id),
                                  deleted_at__isnull=True, parent__isnull=True)
             .values("project_id")
             .annotate(total=Count("id", filter=~Q(state__group="cancelled")),
@@ -326,27 +347,38 @@ class PortfolioService:
             by_project=[{"project_id": r["project_id"],
                          "ratio": r["done"] / (r["total"] or 1)} for r in rows])
 
-    def milestone_progress(self, milestone_id) -> float:
-        """BR-05：Σ(已完成贡献项 weight) / Σ(weight)"""
-        agg = MilestoneItem.objects.filter(milestone_id=milestone_id).aggregate(
+    def milestone_progress(self, milestone_id, *, for_system=False, actor=None) -> float:
+        """BR-05：Σ(已完成贡献项 weight) / Σ(weight)。
+        读面调用（§4.6 里程碑列表「含完成度」）必须显式传 actor：按 BR-14 收窄，
+        完成度仅计 actor 可见项目的贡献项——漏传会把跨项目贡献项完成度泄露给不可见读者
+        （keyword-only + for_system 门，防止读面静默落入全集缺省，R4 复评 MINOR）；
+        for_system=True（仅限 §4.5 BR-06 预警 beat）：全集口径——通知 manager 的完成度
+        不应随单个读者视角波动，此时忽略 actor"""
+        qs = MilestoneItem.objects.filter(milestone_id=milestone_id)
+        if actor is not None:
+            portfolio_id = PortfolioMilestone.objects.get(pk=milestone_id).portfolio_id
+            qs = qs.filter(issue__project_id__in=self.descendant_projects(actor, portfolio_id))
+        agg = qs.aggregate(
             total=Coalesce(Sum("weight"), 0),
             done=Coalesce(Sum("weight", filter=Q(issue__state__group="completed")), 0))
         return agg["done"] / agg["total"] if agg["total"] else 0.0
 
-    def resource_matrix(self, portfolio_id, from_week, to_week):
-        """BR-12：消费 TASK-013 快照，人×项目矩阵——不扫明细表"""
+    def resource_matrix(self, actor, portfolio_id, from_week, to_week):
+        """BR-12：消费 TASK-013 快照，人×项目矩阵——不扫明细表
+        （项目集经 descendant_projects(actor, …) 收窄，BR-14）"""
         return (
             WorkLogSummary.objects.filter(
-                project_id__in=self.descendant_projects(portfolio_id),
+                project_id__in=self.descendant_projects(actor, portfolio_id),
                 week_start__range=(from_week, to_week))
             .values("actor_id", "project_id")
             .annotate(minutes=Sum("total_minutes"))
         )
 
-    def risk_list(self, portfolio_id) -> list[Risk]:
+    def risk_list(self, actor, portfolio_id) -> list[Risk]:
         """风险三源：逾期任务、被外部依赖阻塞任务、里程碑偏差（BR-06 判定同源）。
-        「外部依赖」= 阻塞源任务属另一项目（同项目集内跨项目也算，与 BR-07「跨项目边」同义）"""
-        projects = self.descendant_projects(portfolio_id)
+        「外部依赖」= 阻塞源任务属另一项目（同项目集内跨项目也算，与 BR-07「跨项目边」同义）；
+        项目集经 descendant_projects(actor, …) 收窄（BR-14）"""
+        projects = self.descendant_projects(actor, portfolio_id)
         overdue = Issue.objects.filter(project_id__in=projects, target_date__lt=timezone.localdate(),
                                        deleted_at__isnull=True).exclude(
             state__group__in=["completed", "cancelled"])
@@ -401,10 +433,13 @@ class PortfolioService:
 def milestone_due_alerts():
     """Celery beat 每日 09:00：BR-06 前 7 天每日一条（幂等键含日期），逾期转红标"""
     today = timezone.localdate()
+    # 扫描窗 30 天仅约束预警发送（超窗里程碑不再发新预警，避免陈年里程碑噪音）；
+    # 「已延期」红标为读时派生口径（BR-06），不受扫描窗影响
     for ms in PortfolioMilestone.objects.filter(
             completed_at__isnull=True, target_date__gte=today - timedelta(days=30),
             deleted_at__isnull=True).select_related("portfolio"):
-        progress = PortfolioService().milestone_progress(ms.id)
+        # for_system=True：BR-06 系统任务走全集口径（§4.3 milestone_progress 唯一合法全集入口）
+        progress = PortfolioService().milestone_progress(ms.id, for_system=True)
         if progress >= 1.0:
             continue
         days_left = (ms.target_date - today).days
@@ -418,15 +453,16 @@ def milestone_due_alerts():
 
 | 方法 | 路径 | 说明 | 权限 |
 | --- | --- | --- | --- |
-| GET/POST | `/api/v1/workspaces/{slug}/portfolios/` | 组合树列表（嵌套）/ 新建节点 | 读：WS 成员；写：WS_ADMIN+ 或项目集 manager（BR-03） |
+| GET/POST | `/api/v1/workspaces/{slug}/portfolios/` | 组合树列表（嵌套）/ 新建节点 | 读：WS_MEMBER+（WS_GUEST 403，BR-03/BR-14）；写：WS_ADMIN+ 或项目集 manager（BR-03） |
 | GET/PATCH/DELETE | `…/portfolios/{id}/` | 详情/改/删（BR-11 非空阻断；DELETE 不带请求体，api-conventions §3.1） | 同上 |
 | POST | `…/portfolios/{id}/projects/` | 挂载项目（请求体 `{project_id}`，BR-02） | 双端权限 |
 | DELETE | `…/portfolios/{id}/projects/{project_id}/` | 卸载项目（无请求体，删除目标由路径承载） | 双端权限 |
-| GET | `…/portfolios/{id}/summary/` | 汇总面板（进度+资源+风险三卡一次返回） | WS 成员 |
-| GET/POST | `…/portfolios/{id}/milestones/` | 里程碑列表（含完成度）/ 新建 | 读：WS 成员；写：BR-03 同上 |
-| POST | `…/portfolios/{pid}/milestones/{milestone_id}/items/` | 增贡献项（请求体 `{issue_id}`，BR-04） | BR-03 同上 |
-| DELETE | `…/portfolios/{pid}/milestones/{milestone_id}/items/{item_id}/` | 删贡献项（无请求体） | BR-03 同上 |
-| GET | `…/portfolios/{id}/dependency-graph/` | 依赖图载荷（节点+边，跨项目边标记） | WS 成员 |
+| GET | `…/portfolios/{id}/summary/` | 汇总面板（进度+资源+风险三卡一次返回） | WS_MEMBER+（BR-14 可见性过滤） |
+| GET/POST | `…/portfolios/{id}/milestones/` | 里程碑列表（含完成度）/ 新建 | 读：WS_MEMBER+（BR-14）；写：BR-03 同上 |
+| GET/PATCH/DELETE | `…/portfolios/{id}/milestones/{milestone_id}/` | 详情/编辑（`completed_at` 显式置位·清除，§3.2「已完成」态的唯一置位路径）/删（软删） | 读：WS_MEMBER+（BR-14）；写：BR-03 同上 |
+| POST | `…/portfolios/{id}/milestones/{milestone_id}/items/` | 增贡献项（请求体 `{issue_id}`，BR-04） | BR-03 同上 |
+| DELETE | `…/portfolios/{id}/milestones/{milestone_id}/items/{item_id}/` | 删贡献项（无请求体，软删——`uniq_milestone_issue` 的 condition 同步放行同名重建） | BR-03 同上 |
+| GET | `…/portfolios/{id}/dependency-graph/` | 依赖图载荷（节点+边，跨项目边标记） | WS_MEMBER+（BR-14 可见性过滤） |
 
 > 分页与排序遵循 api-conventions §5.4/§6.3：里程碑等列表端点接入游标分页（`per_page` 默认/上限 100），排序用 `?ordering=`（白名单 `name` / `target_date` / `created_at`，默认 `-created_at,-id`）；组合树端点整树返回（深度 ≤3、节点有界，游标分页显式豁免，同 TASK-005 `relations/` 模式），`meta.count` 为根节点数。
 
@@ -469,14 +505,15 @@ def milestone_due_alerts():
     "portfolio": { "id": "3a9e1f4b-7c2d-4a6e-b8f0-5d1c3e7a9b2d", "name": "电商平台 2.0",
                     "manager_id": "9c8b7a6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d" },
     "progress": {
-      "overall": 0.62,
+      "overall": 0.65,
       "by_project": [
         { "project_id": "1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e", "identifier": "APP", "ratio": 0.71 },
-        { "project_id": "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f", "identifier": "GW", "ratio": 0.48 }
+        { "project_id": "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f", "identifier": "GW", "ratio": 0.48 },
+        { "project_id": "3d4e5f6a-7b8c-4d9e-0f1a-2b3c4d5e6f7a", "identifier": "DM", "ratio": 0.80 }
       ]
     },
     "resource": {
-      "weeks": ["2026-08-10", "2026-08-17", "2026-08-24", "2026-08-31"],
+      "weeks": ["2026-08-31", "2026-09-07", "2026-09-14", "2026-09-21"],
       "matrix": [
         { "actor": "李骁", "cells": { "APP": 1800, "GW": 720 } }
       ]
@@ -489,6 +526,8 @@ def milestone_due_alerts():
   }
 }
 ```
+
+> 示意截断说明：`resource.matrix` 仅示首行——王思远 / 陈默各行及「…」省略（全量按「人×项目」逐行展开，同 §3.1 资源卡 3 人）；`resource.weeks` 为 `WorkLogSummary.week_start`（周一），取近 4 个完整周，末位 `2026-09-21` 与风险卡同快照窗口（里程碑 target 09-30、「剩 7 天」→ 快照约 09-23，落在 09-21 起始周内）。
 
 **③ `DELETE …/portfolios/{id}/` 失败响应（409，非空项目集，BR-11）**：
 
@@ -514,8 +553,9 @@ def milestone_due_alerts():
 | 场景 | HTTP | code | details |
 | --- | --- | --- | --- |
 | 树深度 >3 | 409 | `RESOURCE_LIMIT_EXCEEDED` | `[{"field": "parent_id", "code": "DEPTH", "message": "组合树深度上限 3"}]`（子码 `DEPTH` 为 api-conventions §8.8 已注册条目，同 TASK-004） |
-| 父链成环 | 409 | `RESOURCE_CIRCULAR_DEPENDENCY` | `parent_id` / 子码 `CYCLE` / 环路径（`CYCLE` 同 TASK-005 §2.5 待登记，架构文档待回改） |
+| 父链成环 | 409 | `RESOURCE_CIRCULAR_DEPENDENCY` | `parent_id` / 子码 `CYCLE` / 环路径（子码 `CYCLE` 已注册——api-conventions §8.8，TASK-005 §4.2.2 登记） |
 | 项目重复挂载 | 409 | `RESOURCE_ALREADY_EXISTS` | `project_id` / 子码 `UNIQUE` / 当前挂载点 |
+| 挂载目标非叶子节点 | 400 | `VALIDATION_INVALID_PARAM` | `portfolio_id` / 子码 `INVALID` / 「项目仅可挂载叶子节点」（BR-02，api-conventions §8.4 已注册） |
 | 删除非空项目集 | 409 | `RESOURCE_IN_USE` | `children`/`projects` / 子码 `IN_USE` / 计数（见 ③ 示例） |
 | 跨工作空间关联 | 400 | `VALIDATION_ERROR` | `related_issue_id` / 子码 `DOES_NOT_EXIST` |
 | 不可见目标项目 | 404 | `RESOURCE_NOT_FOUND` | 存在性隐藏（无 details） |
@@ -545,7 +585,7 @@ class PortfolioStore {
 
 | 前端要点 | 方案 |
 | --- | --- |
-| 依赖图 | ELK.js 分层布局；跨项目边虚线 + 「外部」徽标；>100 节点提示过滤 |
+| 依赖图 | ELK.js 分层布局（tech-stack 待回改登记：ELK.js 前端依赖未入 tech-stack §2，按其 §9 新增依赖流程补登）；跨项目边虚线 + 「外部」徽标；>100 节点提示过滤 |
 | 面板三卡 | 单次 `summary/` 载荷渲染；风险卡可点击直达任务/里程碑 |
 | 外部依赖分组 | 任务详情 `relations` 按内联 `related_issue.target_project` 是否为本项目分桶渲染（跨项目边虚线，§2.3） |
 
@@ -565,13 +605,14 @@ class PortfolioStore {
 | UT-06 | `milestone_progress`：权重快照语义（estimate 后续变更不影响） | 完成度不变 |
 | UT-07 | 跨项目边创建：同工作空间放行/跨空间拒绝/不可见 404 | 三路径 |
 | UT-08 | `assert_completable` 加项目过滤：跨项目 blocks 不拦截完成 | 同项目拦截行为不变（TASK-005 回归） |
-| UT-09 | 跨项目环检测：A(p1) blocks B(p2) blocks A(p1) | 409 `CIRCULAR` |
+| UT-09 | 跨项目环检测：A(p1) blocks B(p2) blocks A(p1) | 409 `RESOURCE_CIRCULAR_DEPENDENCY` + 子码 `CYCLE`（与 §4.6 ④ 错误矩阵同一矩阵） |
 | UT-10 | 资源矩阵聚合与 TASK-013 快照对账 | 逐 cell 一致 |
 | UT-11 | 里程碑预警幂等：同日重复跑 beat 只一条 | SETNX 生效 |
 | UT-12 | 贡献项项目归属校验（非项目集内任务） | 400 `DOES_NOT_EXIST` |
-| UT-13 | BR-10 归档项目写保护：组合树/项目集视图内写归档项目内任务 | 403 `PERM_PROJECT_ARCHIVED`（PROJ-003 守卫不因组合树上下文绕过） |
+| UT-13 | BR-10 归档/关闭项目写保护：组合树/项目集视图内分别写归档、关闭项目内任务 | 归档 403 `PERM_PROJECT_ARCHIVED`、关闭 403 `PERM_PROJECT_CLOSED` 双态断言（PROJ-003 守卫不因组合树上下文绕过，api-conventions §8.3） |
 | UT-14 | BR-10 归档项目统计：项目归档后项目集进度/资源矩阵仍聚合其历史数据 | 与归档前口径一致 |
 | UT-15 | BR-03 对象级判定三路径：项目集 manager / 祖先链 manager（≤2 跳）/ 非 manager | 放行 / 放行 / 403 `PERM_ROLE_INSUFFICIENT` |
+| UT-16 | BR-02 叶子口径：挂载到含子节点的项目集节点 | 400 `VALIDATION_INVALID_PARAM`（details.field=`portfolio_id`，§4.6 ④ 同行） |
 
 ### 5.2 集成测试（IT）
 
@@ -582,10 +623,10 @@ class PortfolioStore {
 | IT-03 | 跨项目边下 TASK-005 守卫回归：同项目 blocks 仍硬拦 | 行为快照一致 |
 | IT-04 | 里程碑 T-7 预警：每日一条、完成度达 100% 后停止 | 通知计数正确 |
 | IT-05 | 挂载/迁移/卸载项目的权限矩阵（双端权限） | 403/200 路径正确 |
-| IT-06 | BR-03 四主体越权矩阵（组合树写端点）：WS_ADMIN+ / 项目集 manager / WS_MEMBER / WS_GUEST（只读） | 前两者 2xx；后两者均 403 `PERM_ROLE_INSUFFICIENT`（负向用例） |
+| IT-06 | BR-03/BR-14 五主体矩阵（api-conventions §14 四主体 + 项目集 manager，写端点 + 读端点各一）：WS_ADMIN+ / 项目集 manager / WS_MEMBER / WS_GUEST / 非工作空间成员 | 写：前两者 2xx，WS_MEMBER/WS_GUEST 403 `PERM_ROLE_INSUFFICIENT`，非成员 404 存在性隐藏；读：前三者 200（WS_MEMBER 载荷仅含其 accessible_by 项目的贡献——§4.3 `descendant_projects(actor)` 求交，BR-14），WS_GUEST 403，非成员 404（负向用例） |
 | IT-07 | 性能门禁压测：`summary/` 与 `dependency-graph/` 在 perf-heavy 数据集跑压（见下方门禁登记） | P95 均达标 |
 
-> **性能门禁（P95，登记口径对齐 QA-001 §2.2 基准矩阵）**：`GET …/portfolios/{id}/summary/` < 300ms（perf-heavy：项目集下 3 项目合计 1 万任务 + 近 4 周工时快照；summary 单载荷聚合进度/资源/风险三源，较单项目 stats（RPT-002 <200ms）放宽一档）；`GET …/portfolios/{id}/dependency-graph/` < 200ms（perf-heavy：同工作空间 1 万任务，项目集子图 ≤100 节点 / 500 边——§3.3 有界）。出处锚定本文 §5.2（IT-07）；补登后由 QA-001 §2.2 的收录口径（其 UT-07 一致性守卫）同步纳入压测基准矩阵。
+> **性能门禁（P95，登记口径对齐 QA-001 §2.3 压测回归基准矩阵）**：`GET …/portfolios/{id}/summary/` < 300ms（perf-heavy：项目集下 3 项目合计 1 万任务 + 近 4 周工时快照；summary 单载荷聚合进度/资源/风险三源，较单项目 stats（RPT-002 <200ms）放宽一档）；`GET …/portfolios/{id}/dependency-graph/` < 200ms（perf-heavy：同工作空间 1 万任务，项目集子图 ≤100 节点 / 500 边——§3.3 有界）。出处锚定本文 §5.2（IT-07）；补登后由 QA-001 §2.3 的收录口径（其 UT-07 一致性守卫）同步纳入压测基准矩阵。
 
 ### 5.3 E2E
 
@@ -617,9 +658,9 @@ class PortfolioStore {
 | 类别 | 交付物 |
 | --- | --- |
 | Model / Migration | `portfolios` / `portfolio_projects` / `portfolio_milestones` / `milestone_items` 四表 + 4 命名约束 + 3 索引（`idx_portfolio_ws_parent` / `idx_pm_portfolio_target` / `target_date` db_index） |
-| 后端 | `PortfolioService`（子树展开/进度/里程碑完成度/资源矩阵/风险列表）、TASK-005 跨项目放开 diff（校验 + 守卫 SQL）、`milestone_due_alerts` beat 任务、9 组端点（§4.6 表 9 条路径） |
+| 后端 | `PortfolioService`（子树展开/进度/里程碑完成度/资源矩阵/风险列表）、TASK-005 跨项目放开 diff（校验 + 守卫 SQL）、`milestone_due_alerts` beat 任务 + `notify_milestone_risk` 通知任务、10 组端点（§4.6 表 10 条路径） |
 | 前端 | 组合树导航、汇总面板三卡、里程碑视图、依赖关系图（ELK 布局）、任务详情外部依赖分组 |
-| 测试 | UT-01~15、IT-01~07、E2E-01~04 |
+| 测试 | UT-01~16、IT-01~07、E2E-01~04 |
 
 ### 7.2 可操作演示的验收标准
 

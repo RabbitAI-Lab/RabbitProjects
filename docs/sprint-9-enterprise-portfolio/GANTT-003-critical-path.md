@@ -11,7 +11,7 @@
 | 上游依赖 | `GANTT-001`（甘特视口查询与渲染基座）；`GANTT-002`（拖拽改期管线——CPM 重算挂点）；`TASK-005`（blocks 依赖图无环约束——CPM 的前提）；`PROJ-004`（跨项目边**不参与** CPM 的边界） |
 | 下游消费 | P4 关键路径锁定、P4 `AI-001`（自动调优建议数据源）；`RPT-004`（阻塞率维度可消费关键链统计） |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-05 |
+| 最后更新日期 | 2026-09-05（R2 复评 PASS 后随手收口：`newly_critical` 补「存在旧行」守卫（首算/新建即关键不误报 BR-09）+ UT-18/19/20、BR-08 论证句收窄、§3.1 RBT-155 float=-3 对齐、UT-07 去「抛错」、`is_critical` 去冗余 db_index、autoretry_for 配套、视口过滤谓词与 anchor_today 辨析、recompute 202 响应体引用 §13.1、WF-005 依赖边语义说明、cpm.updated 待回改标注） |
 
 ---
 
@@ -103,13 +103,15 @@ flowchart TB
 | BR-05 | 正推锚点：未开始任务 `ES = max(全部前置 EF, 今日)`——已过计划开始但未开始的任务从今日起算（反映真实剩余工期，不美化）；今日锚点仅是**下限**，计划开始晚于今日的未来任务仍从计划开始起算。已开始未完成任务不叠加今日锚点（`ES = max(前置 EF, start_date)`） | CPM 服务 | — |
 | BR-06 | 逆推锚点：`LF = min(后继 LS, 项目目标完工日)`；项目目标完工日存于预警配置（BR-14），未设时取 `max(target_date)` | CPM 服务 | — |
 | BR-07 | 计算结果不落业务表：`IssueCPMCache`（项目 × 任务 → ES/EF/LS/LF/float/is_critical + `computed_at` + `input_hash`）；`input_hash` = SHA-256(任务日期集 `start_date/target_date/completed_at` ∪ blocks 边集 ∪ 项目目标完工日 ∪ **`anchor_today`**) 取前 32 位 hex——**预警锚点日入指纹**，跨日必失配；每日 beat 重算（§4.3，WF-003 §4.4 beat 扫描同范式）兜底无触发日，指纹命中即复用、不跨日漂移 | CPM 服务 + 缓存表 | — |
-| BR-08 | 预警一（关键逾期）：关键任务（`float ≤ 0`，含负浮动）`target_date < 今日` 且未完成 → 每日一条至负责人+项目经理（幂等键含日期）。负浮动任务（目标日击穿）必然满足本条件，保证预警真实可触发 | beat + SETNX | — |
+| BR-08 | 预警一（关键逾期）：关键任务（`float ≤ 0`，含负浮动）`target_date < 今日` 且未完成 → 每日一条至负责人+项目经理（幂等键含日期）。**已逾期的负浮动任务必命中本条件**（负浮动可经后继约束/项目目标日传播到 `target_date ≥ 今日` 的任务，该子集由 BR-09 转移预警覆盖），保证预警真实可触发 | beat + SETNX | — |
 | BR-09 | 预警二（浮动耗尽）：重算后任务由非关键转关键（`float > 0` → `≤ 0`，含转负浮动）→ 即时一条至负责人+项目经理（幂等键含 input_hash） | 重算钩子 + SETNX | — |
 | BR-10 | 重算触发：改期（GANTT-002 拖拽）、日期/依赖变更、任务完成/新建 → `on_commit` 增量重算；**批量操作合并为一次**（debounce 60s 窗口内同项目合并）；每日 beat 重算见 BR-07 | Celery | — |
 | BR-11 | 1 万节点 < 300ms：拓扑排序 Kahn 算法 O(V+E)，纯内存计算；超限项目（>2 万节点）降级为「仅关键链近似」（最长路启发式）并在响应标注 `approximate: true` | CPM 服务 | — |
 | BR-12 | 已完成任务按状态分档：作为历史锚点保留在图中——`ES` 取计划 `start_date`、`EF` 取**实际完成日**（`completed_at` 折算项目时区日期；`completed_at` 仅首次完成时写入，保留首次完成时间，unified-issue-model §2.8），作为后继正推的输入；**不做 `EF = ES + duration` 递推**；不参与关键链标注（`is_critical` 恒 false）与预警；取消任务剔除 | CPM 服务 | — |
 | BR-13 | 权限：CPM 数据随甘特可读（`gantt.read`，VIEWER+，rbac §8.2）；预警配置写 `project.setting.manage`（PROJ_ADMIN+，rbac §8.2 已注册码） | Permission | `403 PERM_ROLE_INSUFFICIENT` |
 | BR-14 | 预警配置持久化于 `CPMAlertConfig`（项目域，每项目一行：逾期/浮动耗尽开关 + 项目目标完工日，§4.2 模型）；未建配置时全部取默认值（§3.3） | CPM 服务 | — |
+
+> **依赖边说明（dg §4 记边，编号按 README §4 消解——裁决 A/G）**：dg 记载本项上游含「预警走自动化规则」边——该能力按 README §4 为 **WF-003 自动化规则引擎**（dg 字面作 WF-005，系 dg §1.3 WF-002~006 编号错位所致，s7/s8 已登记待回改）。本文 BR-08/BR-09 直连 COLLAB-001 收件箱是**内置默认通道**，不依赖 WF-003；自动化规则订阅转发预警为用户可选增强路径，不构成本文契约前置。
 
 ### 2.3 重算触发时序
 
@@ -126,7 +128,7 @@ sequenceDiagram
     Note over Q: 60s 窗口内同项目多次触发合并为一次（BR-10）
     Q->>C: 重算（input_hash 不同才真算，BR-07）
     C->>C: 拓扑正推/逆推 → float → 关键链
-    alt 有任务转关键（float→0）
+    alt 有任务转关键（float→≤0）
         C->>N: 浮动耗尽预警（BR-09，幂等）
     end
     C-->>G: 缓存刷新（IssueCPMCache）
@@ -147,7 +149,7 @@ sequenceDiagram
 │ ──────────────────────────────────────────────────────────────────────── │
 │ RBT-141 网关    ▓▓▓▓▓▓▓▓                              float=0 🔴关键     │
 │ RBT-150 压测        ▄▄▄▄▄                           float=3（余量░░░）   │
-│ RBT-155 联调           ▓▓▓▓▓▓▓▓▓▓                     float=0 🔴关键 ⚓    │
+│ RBT-155 联调           ▓▓▓▓▓▓▓▓▓▓                     float=-3 🔴关键 ⚓   │
 │ RBT-160 上线                        ▓▓▓▓            float=0 🔴关键      │
 │ ──────────────────────────────────────────────────────────────────────── │
 │ ▓▓=关键任务（红描边）  ▄▄=普通任务  ░░░=浮动余量条  ⚓=有外部前置（不进CPM） │
@@ -159,7 +161,7 @@ sequenceDiagram
 
 ```
 ┌────────────────────────────────────────────┐
-│ 计划分析（CPM · 09-01 06:00 计算）           │
+│ 计划分析（CPM · 09-01 09:00 计算）           │
 │ ────────────────────────────────────────── │
 │ 最早: 09-03 → 09-08   最晚: 09-06 → 09-11   │
 │ 浮动时间: 3 天                               │
@@ -274,7 +276,7 @@ class IssueCPMCache(BaseModel):
     ls = models.DateField(verbose_name="最晚开始")
     lf = models.DateField(verbose_name="最晚完成")
     float_days = models.IntegerField(verbose_name="浮动天数")
-    is_critical = models.BooleanField(default=False, db_index=True, verbose_name="是否关键")
+    is_critical = models.BooleanField(default=False, verbose_name="是否关键")  # 布尔低区分度，查询走 idx_cpm_critical 复合索引
     has_external_preds = models.BooleanField(default=False, verbose_name="有外部前置（BR-03）")
     input_hash = models.CharField(max_length=32, verbose_name="输入指纹")
     computed_at = models.DateTimeField(auto_now=True, verbose_name="计算时间")
@@ -286,7 +288,7 @@ class IssueCPMCache(BaseModel):
         indexes = [models.Index(fields=["project", "is_critical"], name="idx_cpm_critical")]
 
 
-@shared_task(queue="reports", max_retries=3, retry_backoff=True)
+@shared_task(queue="reports", max_retries=3, autoretry_for=(Exception,), retry_backoff=True)
 def cpm_recompute(project_id: str):
     """BR-10：改期/依赖/完成触发，on_commit 调用；同项目 60s debounce 合并"""
     if not cache.set(f"cpm:run:{project_id}", "1", timeout=60, nx=True):
@@ -301,8 +303,13 @@ def cpm_recompute(project_id: str):
                                               if config else None))     # BR-06
     if old_hash == result.input_hash:
         return                                                # BR-07：指纹命中零写（含同日重入）
-    newly_critical = [r for r in result.rows
-                      if r.is_critical and not ((o := old.get(r.issue_id)) and o.is_critical)]
+    # BR-09「转移」判定必须有旧行可比：old_hash is None（部署日首算/缓存重建）整批跳过；
+    # 新建即关键的任务同样无旧行、不算「由非关键转关键」——否则首算会全量误报（R2 修复）
+    newly_critical = ([r for r in result.rows
+                       if r.is_critical
+                       and (o := old.get(r.issue_id)) is not None
+                       and not o.is_critical]
+                      if old_hash is not None else [])
     bulk_upsert_cpm_rows(project_id, result)                  # delete+insert 同事务
     if config and not config.float_consumed_alert_enabled:    # BR-09/14：开关关闭不预警
         return
@@ -343,7 +350,7 @@ def cpm_daily_maintenance():
 | 方法 | 路径 | 说明 | 权限 |
 | --- | --- | --- | --- |
 | GET | `…/projects/{project_id}/gantt/critical-path/?viewport_start=&viewport_end=` | CPM 数据（视口参数与 GANTT-001 冻结契约同名同语义；含 float/critical/external 标记） | `gantt.read`（项目成员，rbac §8.2） |
-| POST | `…/projects/{project_id}/gantt/critical-path/recompute/` | 手动触发重算（返回 202；幂等 debounce） | `gantt.read`（项目成员） |
+| POST | `…/projects/{project_id}/gantt/critical-path/recompute/` | 手动触发重算（返回 202，响应体遵循 api-conventions §13.1 `{task_id, state, status_url}`；幂等 debounce） | `gantt.read`（项目成员） |
 | GET/PATCH | `…/projects/{project_id}/gantt/cpm-config/` | 预警开关 + 项目目标完工日（BR-06/13/14，模型 §4.2 `CPMAlertConfig`） | 读：`gantt.read`；写：`project.setting.manage`（PROJ_ADMIN+，rbac §8.2 已注册码） |
 
 **端点级限流**：`critical-path/`（GET）与 `recompute/`（POST）为高 CPU 端点，自带 DRF throttle **10 请求/分钟/用户**（api-conventions §7.1 L3 端点限流 + §7.2「报表聚合端点」行；GANTT-002 `overdue-summary` §4.2.1 契约要点 4 同款「本文自带端点级 throttle」范式），超限 `429 RATE_LIMIT_EXCEEDED` + `Retry-After`。限流与 debounce（BR-10）正交：debounce 是触发窗口内的透明合并（用户无感），限流是对客户端请求频率的硬约束。
@@ -380,7 +387,8 @@ GET /api/v1/workspaces/acme/projects/7b3e9c1a-…/gantt/critical-path/?viewport_
 
 1. 行字段对齐 GANTT-001 §4.2.1 行契约：`id` 为任务主键（UUID v4）、`issue_key` 为服务端拼接编号（`{project.identifier}-{sequence_id}`，unified-issue-model §2.8）——不下发 `issue_id`/`sequence` 裸列；
 2. `float_days` 可为负（负浮动定义见 §1.4）：示例 RBT-155 目标完工日早于正推最早完成 3 天，`float_days = -3` 且 `is_critical = true`——`is_critical` 判定恒为 `float_days ≤ 0`；
-3. `meta` 只承载业务旁路信息（`anchor_today`/`viewport`）；`request_id` 仅出现在错误对象的 `error.request_id` 内（api-conventions §4），成功信封不携带。
+3. `meta` 只承载业务旁路信息（`anchor_today`/`viewport`）；`request_id` 仅出现在错误对象的 `error.request_id` 内（api-conventions §4），成功信封不携带；
+4. **视口仅过滤下发行集**：CPM 恒按项目全图计算（BR-01），响应行按 GANTT-001 同款视口相交谓词裁剪（单边 NULL = 无穷端），`is_critical`/`float_days` 判定不受视口裁剪影响；`meta.anchor_today`（CPM 预警锚点日，入 BR-07 指纹）与 GANTT-001 `meta.today`（视口今日）语义不同源，数值同为服务端当日。
 
 **② 错误响应矩阵**（信封与 `details: [{field, code, message}]` 结构遵循 api-conventions §4.2）：
 
@@ -427,7 +435,7 @@ class CriticalPathStore {
 | 关键链高亮 | 任务条红描边 + 依赖连线过滤加粗（仅两端皆关键的边）；图层开关不触发重查（纯渲染层） |
 | 浮动余量条 | 任务条尾端延伸半透明段（`float_days × dayWidth`） |
 | ⚓ 外部约束徽标 | `has_external_preds` → 徽标 + tooltip 外部前置列表（`PROJ-004` relations 数据） |
-| 刷新策略 | GANTT-002 改期成功后 60s 轮询一次（debounce 窗口对齐）；`COLLAB-004` WS 频道后续推 `cpm.updated` 事件即 refetch |
+| 刷新策略 | GANTT-002 改期成功后 60s 轮询一次（debounce 窗口对齐）；`COLLAB-004` WS 频道后续推 `cpm.updated` 事件即 refetch（COLLAB-004 事件登记待回改：`cpm.updated` 为本迭代前向声明） |
 
 ---
 
@@ -443,7 +451,7 @@ class CriticalPathStore {
 | UT-04 | 逆推锚点：有/无项目目标完工日两配置 | BR-06 |
 | UT-05 | 缺日期任务剔除；已完成任务作历史锚点不参与关键标注 | BR-04/12 |
 | UT-06 | 跨项目边不进计算 + `has_external_preds` 标记 | BR-03 |
-| UT-07 | 防御性环检测：构造环 → 抛错记日志不阻断 | BR-02 |
+| UT-07 | 防御性环检测：构造环 → 内部记 ERROR 日志并跳过该项目计算，**不抛出**、不阻断用户 | BR-02 |
 | UT-08 | `input_hash` 稳定性：同输入同指纹；日期/边/项目目标日变更指纹变；**跨日 anchor_today 变更指纹必变** | BR-07 |
 | UT-09 | debounce 合并：60s 内 5 次触发仅 1 次真算 | 计数正确 |
 | UT-10 | 浮动耗尽预警：重算后 float→≤0 任务触发且幂等 | BR-09 |
@@ -454,6 +462,9 @@ class CriticalPathStore {
 | UT-15 | 参数非法：`viewport_start > viewport_end` → 400 `VALIDATION_INVALID_PARAM` + `details` 指向 `viewport_start` | api-conventions §8.4 |
 | UT-16 | cpm-config 权限矩阵：PROJ_ADMIN 写 200；PROJ_CONTRIBUTOR / COMMENTER / VIEWER 写 403 `PERM_ROLE_INSUFFICIENT`；非成员 404 | BR-13 |
 | UT-17 | 端点限流：同一用户 60s 内第 11 次请求 `critical-path/` → 429 `RATE_LIMIT_EXCEEDED` + `Retry-After`（10/min·user；GANTT-002 UT-17 范式） | api-conventions §7.2 |
+| UT-18 | 首算不触发 BR-09：空缓存（部署日/缓存重建后）首次计算产出关键任务 → 零预警（old_hash=None 整批跳过） | BR-09「转移」需旧行可比 |
+| UT-19 | 新建即关键不触发 BR-09：新建任务入图即为关键（无旧行）→ 零预警；既有非关键任务转关键 → 恰一条 | BR-09 转移语义 |
+| UT-20 | 预警开关关闭：`overdue_alert_enabled=false` 时 beat 不发逾期预警、`float_consumed_alert_enabled=false` 时重算不发浮动耗尽预警 | BR-14 分支 |
 
 ### 5.2 集成测试（IT）
 
@@ -497,7 +508,7 @@ class CriticalPathStore {
 | Model / Migration | `cpm_alert_config` 表（1 唯一约束，预警配置 BR-14）+ `issue_cpm_cache` 表（1 唯一约束 + 1 索引，BR-07） |
 | 后端 | `CPMEngine`（Kahn 拓扑 + 两遍扫描 + 防御性环检测）、`cpm_recompute`（debounce 合并 + input_hash 短路）、`cpm_daily_maintenance` 每日 beat（重算 + 关键逾期扫描，§4.3）、3 组端点 |
 | 前端 | 关键链高亮图层、浮动余量条、⚓ 外部约束徽标、任务详情计划分析卡、预警配置页 |
-| 测试 | UT-01~17、IT-01~05、E2E-01~04 |
+| 测试 | UT-01~20、IT-01~05、E2E-01~04 |
 
 ### 7.2 可操作演示的验收标准
 

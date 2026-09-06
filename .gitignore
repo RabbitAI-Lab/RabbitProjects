@@ -24,8 +24,9 @@ test-results/
 playwright-report/
 playwright/.cache/
 
-# 验收/演示录屏产物（webm 体积大，不进库；本地保留在 docs/sprint-2-acceptance/videos/）
+# 验收/演示录屏产物（webm 体积大，不进库；本地保留在 docs/sprint-*-acceptance/videos/）
 docs/sprint-2-acceptance/videos/
+docs/sprint-3-acceptance/videos/
 *.webm
 
 # CodeGraph 本地代码索引（.codegraph/ 仅本机，不进库）

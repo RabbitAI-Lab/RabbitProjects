@@ -30,6 +30,9 @@ RabbitProjects · Sprint 4 高保真可交互原型（单文件自包含，无�
   · 冻结后勘误 2（2026-09-06，用户走查发现）：视图条右端「视图菜单 ⋯」tooltip 朝上
     弹出被 .pmain{overflow:hidden} 裁切顶缘——挂 tip-up 类改朝下；顺带修正文件树
     「目录操作 ⋯」的无效属性 data-tip-class="tip-up"（选择器认类不认属性）为真类。
+  · 冻结后勘误 3（2026-09-06，用户走查发现）：依赖连线起点悬空不接任务条——x1 公式
+    误用「终点偏移 + 条宽」（右缘上多加一遍跨度，blocks 4 天线悬空 144px、跨度越大
+    越远）；改为与 barHTML 同构「起点偏移 + 条宽」，四线端点实测 gap 全 0。
   · 下游基准：本文件冻结后即为 Sprint-4 前端实现的视觉/交互验收基准；UI 表面
     清单随实现批次登记为 docs/sprint-0-poc/test-cases.md 附录 C.98+（ADR-0010 ①，
     每行标 GANTT-00X §3.x / FILE-00X §3.x 出处）。
@@ -586,7 +589,9 @@ function relLinesHTML(rows){
   if(a==null||b==null)continue;
   const A=ISSUES.find(x=>x.id===rel.from),B=ISSUES.find(x=>x.id===rel.to);
   if(!A||!B)continue;
-  const x1=dX(A.end??A.start??RANGE0)+(days(A.start??A.end,A.end??A.start)+1)*GRAN[S.gran].ppd;
+  // 起点挂 A 条右缘——几何与 barHTML 同构（起点偏移 + 条宽）；开放端条按已有边算
+  const aw=Math.max(days(A.start??A.end,A.end??A.start)+1,1)*GRAN[S.gran].ppd;
+  const x1=dX(A.start??A.end??RANGE0)+aw;
   const y1=rowTop(a)+18;
   const x2=dX(B.start??B.end??RANGE0),y2=rowTop(b)+18;
   const mx=(x1+x2)/2;

@@ -50,6 +50,11 @@ EVENT_MAP: dict[str, Callable[[dict[str, Any]], list[str]]] = {
     #    房间——live 侧消费由 T4-08 接线；api 侧 on_commit 投递本任务交付）──
     "file.version.created": lambda p: [f"project:{p['project_id']}", f"file:{p['asset_id']}"],
     "file.transcode.completed": lambda p: [f"project:{p['project_id']}", f"file:{p['asset_id']}"],
+    # ── FILE-004 BR-13：分享生命周期三事件（同 file 域房间模型；创建/吊销/延期
+    #    入内部视角，匿名访问**不入**——防匿名刷接口刷屏事件流）──
+    "file.share.created": lambda p: [f"project:{p['project_id']}", f"file:{p['asset_id']}"],
+    "file.share.revoked": lambda p: [f"project:{p['project_id']}", f"file:{p['asset_id']}"],
+    "file.share.extended": lambda p: [f"project:{p['project_id']}", f"file:{p['asset_id']}"],
 }
 
 
@@ -239,6 +244,24 @@ def publish_file_transcode_completed(*, project_id: str, asset_id: str,
         EVENT_MAP["file.transcode.completed"]({
             "project_id": str(project_id), "asset_id": str(asset_id)}),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# file.share 域挂点 helper（FILE-004 BR-13；on_commit 调用收口）
+# ─────────────────────────────────────────────────────────────────────
+def publish_share_event(event: str, *, project_id: str, asset_id: str,
+                        share_id: str, actor_id: str | None,
+                        extra: dict[str, Any] | None = None) -> None:
+    """分享生命周期事件（created / revoked / extended）——内部视角专用，
+    匿名访问路径（meta/unlock/content）**不投递**（BR-13 防刷屏）。"""
+    payload: dict[str, Any] = {
+        "share_id": str(share_id),
+        "asset_id": str(asset_id),
+        "actor_id": actor_id and str(actor_id),
+    }
+    payload.update(extra or {})
+    dispatch_event(event, payload, EVENT_MAP[event]({
+        "project_id": str(project_id), "asset_id": str(asset_id)}))
 
 
 # ─────────────────────────────────────────────────────────────────────

@@ -9,4 +9,6 @@ urlpatterns = [
     # /api/v1/ 内部 API · /api/v1/public/ 公开 · /god-mode/api/ 实例管理（INFRA-003 起挂载）
     path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/v1/", include(("plane.app.urls", "app"), namespace="app")),
+    # space 公开分组（FILE-004 首个落地：文件分享匿名面）
+    path("api/v1/public/", include(("plane.space.urls", "space"), namespace="space")),
 ]

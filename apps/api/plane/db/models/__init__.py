@@ -4,6 +4,7 @@ from .base import BaseModel, SoftDeleteManager, SoftDeleteQuerySet
 from .comment import CommentReaction, IssueComment
 from .custom_field import CustomFieldDefinition
 from .file import FileFolder, FileVersion, UploadSession
+from .file_share import FileShareAccess, FileShareLink
 from .issue import Issue, IssueActivity, IssueAssignee, IssueLabel, IssueLink
 from .issue_type import IssueType
 from .label import Label
@@ -42,6 +43,8 @@ __all__ = [
     "FileFolder",
     "FileVersion",
     "UploadSession",
+    "FileShareLink",
+    "FileShareAccess",
     "Notification",
     "PasswordResetToken",
     "WorkLog",

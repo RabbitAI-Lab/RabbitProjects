@@ -698,12 +698,30 @@ def _content_redirect(asset: FileAsset) -> str:
     })
 
 
-def preview_dispatch(*, asset: FileAsset) -> tuple[int, dict]:
+def _anon_deriv_url(asset: FileAsset, version: FileVersion, kind: str) -> str:
+    """匿名变体：衍生物直签 5 分钟预签名（FILE-004 §1.2 底线 3——每次签发、
+    不缓存长链接）；None 防御回退内部路径（ready 已判，理论不可达）。"""
+    return (
+        derivative_redirect_url(asset=asset, version=version, kind=kind)
+        or _deriv_path(asset, kind)
+    )
+
+
+def _anon_content_url(asset: FileAsset, version: FileVersion) -> str:
+    """匿名变体：当前版本正文直签 5 分钟预签名（inline；换发即续期同内部）。"""
+    return version_content_url(asset=asset, version=version)
+
+
+def preview_dispatch(*, asset: FileAsset, anonymous: bool = False) -> tuple[int, dict]:
     """预览调度（§4.2 #10）→ (http_status, data)；就绪 200 / 排队 202。
 
     决策链（§2.3）：image 缩略（未生成 202 排队）→ pdf 透传 → office 转码
     （产物就绪 200 / 排队 202 / 过大 unsupported）→ text ≤2MB / 超限引导下载 →
     video 流式 + 封面帧（非流式 400）→ archive/other 元数据卡。
+
+    ``anonymous=True``（FILE-004 §4.3.3）：URL 构造切换为匿名直签——内部路径
+    （reverse 的换发端点）对匿名访客不可达，改签 5 分钟预签名（决策链 / 排队
+    语义不变，§1.2 底线 3「每次换取 5 分钟预签名」）。
     """
     version = asset.current_version
     if version is None:  # 防御：无版本指针的 uploaded 行（回填遗漏）→ 引导下载
@@ -718,13 +736,16 @@ def preview_dispatch(*, asset: FileAsset) -> tuple[int, dict]:
     if kind == "image":
         state = ensure_derivative(version, "thumbnail")
         if state == "ready":
+            url = (_anon_deriv_url(asset, version, "thumbnail") if anonymous
+                   else _deriv_path(asset, "thumbnail"))
             return 200, {"kind": "image", "ready": True,
-                         "preview_url": _deriv_path(asset, "thumbnail"),
+                         "preview_url": url,
                          "fallback_download": True}
         return 202, _queued(kind="image", state="transcoding")
     if kind == "pdf":
+        url = _anon_content_url(asset, version) if anonymous else _content_redirect(asset)
         return 200, {"kind": "pdf", "ready": True,
-                     "preview_url": _content_redirect(asset),
+                     "preview_url": url,
                      "fallback_download": True}
     if kind == "office":
         if size > OFFICE_TRANSCODE_MAX:
@@ -732,16 +753,19 @@ def preview_dispatch(*, asset: FileAsset) -> tuple[int, dict]:
                          "fallback_download": True}
         state = ensure_derivative(version, "preview")
         if state == "ready":
+            url = (_anon_deriv_url(asset, version, "preview") if anonymous
+                   else _deriv_path(asset, "preview"))
             return 200, {"kind": "pdf", "ready": True,
-                         "preview_url": _deriv_path(asset, "preview"),
+                         "preview_url": url,
                          "fallback_download": True}
         return 202, _queued(kind="pdf", state="transcoding")
     if kind == "text":
         if size > TEXT_PREVIEW_MAX:  # BR-12/UT-14：>2MB 引导下载
             return 200, {"kind": "text", "ready": False, "state": "too_large",
                          "fallback_download": True}
+        url = _anon_content_url(asset, version) if anonymous else _content_redirect(asset)
         return 200, {"kind": "text", "ready": True,
-                     "preview_url": _content_redirect(asset),
+                     "preview_url": url,
                      "fallback_download": True}
     if kind == "video":
         if ext not in STREAMABLE_VIDEO_EXTS:  # §2.5：非流式视频仅下载
@@ -752,11 +776,13 @@ def preview_dispatch(*, asset: FileAsset) -> tuple[int, dict]:
                           "message": "仅支持 mp4/webm 流式播放"}],
             )
         data: dict = {"kind": "video", "ready": True,
-                      "preview_url": _content_redirect(asset),
+                      "preview_url": (_anon_content_url(asset, version) if anonymous
+                                      else _content_redirect(asset)),
                       "fallback_download": True}
         state = ensure_derivative(version, "poster")
         if state == "ready":
-            data["poster_url"] = _deriv_path(asset, "poster")
+            data["poster_url"] = (_anon_deriv_url(asset, version, "poster") if anonymous
+                                  else _deriv_path(asset, "poster"))
         else:
             data["poster_state"] = state  # 排队/失败不阻塞播放本体
         return 200, data

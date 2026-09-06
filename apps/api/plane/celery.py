@@ -30,12 +30,26 @@ app = Celery(
         "plane.bgtasks.issue_hierarchy",
         "plane.bgtasks.issue_link",
         "plane.bgtasks.notifications",
+        "plane.bgtasks.share_sweep",       # FILE-004：过期分享清扫（beat 每小时）
         "plane.bgtasks.worklog",
         "plane.bgtasks.workspace_invite",
     ],
 )
 app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()
+
+# ── FILE-004 §4.3.4：beat 调度注册（sweep_expired_shares 每小时整点）──
+# 仓库首个原生 beat_schedule（此前各任务的周期触发未在代码内登记——compose
+# beat 入口用 django_celery_beat DatabaseScheduler，而该库未装依赖，dev 环境以
+# `celery -A plane beat` 默认 PersistentScheduler 消费本表；偏差登记 ADR-0022）。
+from celery.schedules import crontab  # noqa: E402
+
+app.conf.beat_schedule = {
+    "sweep-expired-shares": {
+        "task": "plane.bgtasks.share_sweep.sweep_expired_shares",
+        "schedule": crontab(minute=0),
+    },
+}
 
 
 # ── TASK-010 §4.3.2：activity 队列 + DLX 死信路由（本迭代交付，非默认行为）──

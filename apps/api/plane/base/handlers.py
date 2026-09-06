@@ -130,6 +130,14 @@ def envelope_exception_handler(exc: Exception, context: dict[str, Any]) -> Respo
         wait = int(getattr(exc, "wait", 1) or 1)
         response = Response(status=status.HTTP_429_TOO_MANY_REQUESTS)
         response.headers["Retry-After"] = str(wait)
+        # FILE-004 BR-07：端点级 throttle 可在异常上附 rate_limit_info（真实配额），
+        # 据此补 §7.3 X-RateLimit 三件套（未附时保持 RateLimitHeaderMiddleware 占位）
+        info = getattr(exc, "rate_limit_info", None)
+        if isinstance(info, dict):
+            response.headers.setdefault("X-RateLimit-Limit", str(info.get("limit", -1)))
+            response.headers.setdefault(
+                "X-RateLimit-Remaining", str(info.get("remaining", -1)))
+            response.headers.setdefault("X-RateLimit-Reset", str(info.get("reset", -1)))
         response.data = _error_body(
             "RATE_LIMIT_EXCEEDED", request_id,
             message=f"请求过于频繁，请在 {wait} 秒后重试",

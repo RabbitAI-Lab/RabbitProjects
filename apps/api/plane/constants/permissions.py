@@ -55,6 +55,10 @@ PERMISSION_MATRIX: dict[str, dict[str, int]] = {
         "folder.manage": ProjectRole.CONTRIBUTOR,     # 目录新建/改名/移动/删除
         # ── FILE-003 §4.2.4（rbac §8.2 已登记条目：版本回溯）──
         "file.version.manage": ProjectRole.CONTRIBUTOR,  # 回滚（#8）
+        # ── FILE-004 §2.3 BR-01（rbac §8.2 已登记行：分享生成）──
+        # 默认 PROJ_ADMIN（rbac 表 CONTRIBUTOR 列为「⚠️ 可配置开关」——P3 起可
+        # 下放；P2 按默认列实现）。创建另叠加 can_view_file（不能分享自己看不见的文件）。
+        "file.share": ProjectRole.ADMIN,             # 创建/列表/延期/吊销
     },
 }
 
@@ -95,6 +99,7 @@ PERMISSION_LABELS: dict[str, str] = {
     "file.permission.manage": "管理文件可见性",
     "folder.manage": "管理文件目录",
     "file.version.manage": "管理文件版本",
+    "file.share": "分享文件",
 }
 
 

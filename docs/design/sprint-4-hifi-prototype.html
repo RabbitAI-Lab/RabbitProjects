@@ -27,6 +27,9 @@ RabbitProjects · Sprint 4 高保真可交互原型（单文件自包含，无�
     flex-shrink 等比压缩（每列 ~35.49px < 36px），而条定位按严格天数×列宽，每过
     一天累积 ~0.51px。修复：宽度按天数计数 + .g-col flex:0 0 auto 兜底；三粒度
     像素级复测 delta=0.00（周粒度参照点差一天为预期），全量自检 67 断言复跑通过。
+  · 冻结后勘误 2（2026-09-06，用户走查发现）：视图条右端「视图菜单 ⋯」tooltip 朝上
+    弹出被 .pmain{overflow:hidden} 裁切顶缘——挂 tip-up 类改朝下；顺带修正文件树
+    「目录操作 ⋯」的无效属性 data-tip-class="tip-up"（选择器认类不认属性）为真类。
   · 下游基准：本文件冻结后即为 Sprint-4 前端实现的视觉/交互验收基准；UI 表面
     清单随实现批次登记为 docs/sprint-0-poc/test-cases.md 附录 C.98+（ADR-0010 ①，
     每行标 GANTT-00X §3.x / FILE-00X §3.x 出处）。
@@ -652,7 +655,7 @@ function renderGantt(){
     <div class="seg" role="tablist" aria-label="布局"><button class="seg-btn" data-act="nav" data-h="#/p/rbt/issues">☰ 列表</button><button class="seg-btn" data-act="nav" data-h="#/p/rbt/board">▦ 看板</button><button class="seg-btn active">📅 甘特</button><button class="seg-btn" data-act="nav" data-h="#/p/rbt/table">▦ 表格</button></div>
     <span style="width:1px;height:20px;background:var(--line)"></span>
     <button class="layoutlink" data-act="noop">✨ 全部</button><button class="layoutlink" data-act="noop">🐛 缺陷</button><button class="layoutlink" data-act="noop">👤 我的待办</button>
-    <div class="right"><button class="icon-btn" data-tip="视图菜单" data-act="noop">⋯</button></div>
+    <div class="right"><button class="icon-btn tip-up" data-tip="视图菜单" data-act="noop">⋯</button></div>
   </div>
   <div class="gctl">
     <div class="seg" role="tablist" aria-label="粒度">
@@ -743,7 +746,7 @@ function renderFiles(){
    return `<div class="ftree-item${c.id===S.folder?" active":""}" data-act="fol" data-id="${c.id}" role="treeitem" aria-expanded="${!!(c.children&&c.children.length)}" style="padding-left:${8+depthT(c)*14}px">
      <span>📂</span><span class="nm" title="${esc(c.name)}">${esc(c.name)}</span>
      ${cnt?`<span class="cnt">${cnt}</span>`:""}
-     <button class="mi" data-act="fmenu" data-id="${c.id}" data-tip="目录操作" data-tip-class="tip-up">⋯</button>
+     <button class="mi tip-up" data-act="fmenu" data-id="${c.id}" data-tip="目录操作">⋯</button>
    </div>`+(c.children?treeHTML(c):"");
   }).join("");
   return kids;

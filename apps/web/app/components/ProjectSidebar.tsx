@@ -1,6 +1,11 @@
 import { NavLink, useParams } from "react-router";
 import { useStores } from "../stores";
 
+/** Sprint-3（BOARD-003 §3.2 布局段）：表格视图图标（list/kanban 同族 lucide 路径）。 */
+const tableIcon = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+);
+
 /** 项目侧栏 220px（高保真 PROJ-001 §3.3）：项目身份区 + 视图组 + 管理组 + 返回列表 */
 export function ProjectSidebar({ projectName, identifier }: { projectName: string; identifier: string }) {
   const { workspaceSlug, projectId } = useParams<{ workspaceSlug: string; projectId: string }>();
@@ -21,6 +26,10 @@ export function ProjectSidebar({ projectName, identifier }: { projectName: strin
       <NavLink to={`${base}/issues`} end className={({ isActive }) => item(isActive)}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
         任务列表
+      </NavLink>
+      <NavLink to={`${base}/table`} className={({ isActive }) => item(isActive)}>
+        {tableIcon}
+        表格
       </NavLink>
       <NavLink to={`${base}/board`} className={({ isActive }) => item(isActive)}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18M15 3v18"/></svg>

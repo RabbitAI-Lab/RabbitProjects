@@ -93,7 +93,7 @@ export const IssueAPI = {
     ordering?: string; group_by?: string; per_page?: number;
     /** TASK-004 §4.2.3：树形行级懒加载 */
     parent_id?: string;
-    /** TASK-003 白名单排序参数（issue_query.apply_order；树形下仅同层兄弟有序） */
+    /** TASK-003 白名单排序参数（issue_query.apply_order；树形下仅同层兄弟） */
     order_by?: string;
     /** TASK-005 §4.2.5：只看被未完成前置阻塞的任务 */
     blocked?: boolean;
@@ -101,6 +101,12 @@ export const IssueAPI = {
     archived?: boolean;
     /** TASK-003 白名单关键词搜索（关联/移动弹层目标搜索） */
     q?: string;
+    /** BOARD-003 §4.2-6 / TASK-011 §4.2.2：② 视图层（UUID）——与 URL 筛选恒 AND */
+    view_id?: string;
+    /** TASK-011 §4.2.2：③ 临时层（urlencode 后的 DSL JSON 串） */
+    filters?: string;
+    /** BOARD-003 §4.2-6：分组端点组内页大小（默认 25，上限 100） */
+    group_per_page?: number;
   } = {}) =>
     api.get(`workspaces/${slug}/projects/${projectId}/issues/`, { params }),
   create: (slug: string, projectId: string, payload: {
@@ -559,3 +565,48 @@ export const DeadLetterAPI = {
     api.post<{ replayed: number; skipped: number }>("activity-dead-letters/bulk/", { message_ids: messageIds }),
   discard: (messageId: string) => api.delete(`activity-dead-letters/${messageId}/`),
 };
+
+/* ═══════════════ Sprint-3 Phase 3-A（BOARD-003 §4.2 / TASK-011 §4.2）═══════════════ */
+
+/** BOARD-003 §4.2 views/ CRUD（TASK-011 消费同一端点族，不另建）。 */
+export const ViewAPI = {
+  /** 列表（内置 + 本人个人视图，按 sort_order；全量无分页）。 */
+  list: (slug: string, projectId: string) =>
+    api.get(`workspaces/${slug}/projects/${projectId}/views/`),
+  create: (slug: string, projectId: string, payload: {
+    name: string; layout?: "list" | "kanban" | "gantt" | "table";
+    filters?: unknown; display_props?: unknown; description?: string;
+  }) => api.post(`workspaces/${slug}/projects/${projectId}/views/`, payload),
+  patch: (slug: string, projectId: string, viewId: string, payload: {
+    name?: string; layout?: "list" | "kanban" | "gantt" | "table";
+    filters?: unknown; display_props?: unknown;
+  }) => api.patch(`workspaces/${slug}/projects/${projectId}/views/${viewId}/`, payload),
+  del: (slug: string, projectId: string, viewId: string) =>
+    api.delete(`workspaces/${slug}/projects/${projectId}/views/${viewId}/`),
+};
+
+/** BOARD-003 §4.2 注（BR-10）：「设为默认」零新端点——PATCH /users/me/settings/ 偏好键
+ *  board.default_view_id（值按项目记 {"<project_id>": "<view_uuid>"}；取消 = 传 null 删条目）。 */
+export const UserSettingsAPI = {
+  get: () => api.get<Record<string, unknown>>("users/me/settings/"),
+  patch: (payload: { "board.default_view_id"?: Record<string, string | null> | null }) =>
+    api.patch<Record<string, unknown>>("users/me/settings/", payload),
+};
+
+/** BOARD-003 §4.2.2 分组信封（BOARD-002 契约的维度泛化）。
+ *  data 键 = 裸列值键（State UUID / 枚举值 / UUID / 选项值 / __none__）；
+ *  响应不内嵌列元数据（BR-16）——列头名称/颜色由前端配置源渲染；
+ *  meta：grouped_by / applied / view_id / degraded / group_cursors。 */
+export interface GroupedEnvelope {
+  data: Record<string, { results: unknown[]; total_results: number; unfiltered_total_results: number }>;
+  meta: {
+    grouped_by: string;
+    sub_grouped_by: string | null;
+    total_count: number;
+    applied?: Record<string, unknown>;
+    view_id?: string;
+    degraded?: Record<string, string> | null;
+    group_cursors?: Record<string, { next_cursor: string | null }>;
+    warning?: string;
+  };
+}

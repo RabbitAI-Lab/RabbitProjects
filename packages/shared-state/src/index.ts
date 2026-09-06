@@ -77,14 +77,333 @@ export class BoardStore {
   }
 }
 
+/* ═══════════════ Sprint-3 Phase 3-A（BOARD-003 §4.4 / TASK-011 §4.4.1）═══════════════ */
+
+/** BOARD-003 §4.1.1 IssueView.Layout 白名单（BR-04）。 */
+export type ViewLayout = "list" | "kanban" | "gantt" | "table";
+
+/** display_props（§4.1.1 help_text 同构；columns 隐藏用「-」前缀——原型 O3 列配置）。 */
+export interface ViewDisplayProps {
+  icon?: string;
+  group_by?: string | null;
+  order_by?: string | null;
+  /** 列序数组（key/title/state/assignees/due/priority/labels）；「-key」= 隐藏 */
+  columns?: string[];
+  /** 卡片开关：固定 7 项 + cf_*（BR-09 键域） */
+  card_fields?: Record<string, boolean>;
+  show_empty_groups?: boolean;
+}
+
+/** 条件节点（TASK-011 §1.2 DSL；value 形态按操作符：多值=数组、标量=单值）。 */
+export interface FilterCondition {
+  field: string;
+  operator: string;
+  value: unknown[];
+}
+/** 逻辑节点（op ∈ AND/OR；conditions 混排条件与嵌套组；深度 ≤3、条件 ≤20）。 */
+export interface FilterLogicNode {
+  op: "AND" | "OR";
+  conditions: Array<FilterCondition | FilterLogicNode>;
+}
+
+/** BOARD-003 §4.2-1 GET …/views/ 行（IssueViewSerializer 同构）。 */
+export interface IssueViewData {
+  id: string;
+  project_id: string;
+  workspace_id: string;
+  name: string;
+  description?: string;
+  access: "personal" | "shared";
+  layout: ViewLayout;
+  owner_id: string;
+  is_system: boolean;
+  is_locked?: boolean;
+  filters: Partial<FilterLogicNode> | Record<string, never>;
+  display_props: ViewDisplayProps;
+  sort_order: number;
+}
+
+export const NONE_KEY = "__none__";
+/** BOARD-003 §3.4 八枚 emoji 预设（view_service.ICON_POOL 同源）。 */
+export const VIEW_ICON_POOL = ["✨", "📦", "🐛", "👤", "📅", "🧪", "🔥", "🚒"] as const;
+/** BOARD-003 §3.3 卡片开关固定 7 项（BR-09 同一集合）。 */
+export const CARD_FIELD_KEYS = [
+  "labels",
+  "sub_issues",
+  "attachments",
+  "estimate",
+  "priority",
+  "timer",
+  "target_date",
+] as const;
+/** 表格/列表列配置键域（原型 O3 / COL_NAMES）。 */
+export const TABLE_COLUMN_KEYS = ["key", "title", "state", "assignees", "due", "priority", "labels"] as const;
+
+export const DEFAULT_CARD_FIELDS: Record<string, boolean> = {
+  labels: true,
+  sub_issues: true,
+  attachments: true,
+  estimate: true,
+  priority: false,
+  timer: false,
+  target_date: true,
+};
+export const DEFAULT_DISPLAY_PROPS: ViewDisplayProps = {
+  group_by: "state_id",
+  order_by: "sort_order",
+  columns: [...TABLE_COLUMN_KEYS],
+  card_fields: { ...DEFAULT_CARD_FIELDS },
+  show_empty_groups: true,
+};
+
+/** —— DSL 树纯函数（TASK-011 §1.2 前后端同构）—— */
+export function isLogicNode(n: FilterCondition | FilterLogicNode): n is FilterLogicNode {
+  return "op" in n;
+}
+export function countConditions(tree: FilterLogicNode | null | undefined): number {
+  if (!tree) return 0;
+  return tree.conditions.reduce((s, c) => s + (isLogicNode(c) ? countConditions(c) : 1), 0);
+}
+export function treeDepth(tree: FilterLogicNode | null | undefined): number {
+  if (!tree) return 0;
+  return 1 + Math.max(0, ...tree.conditions.filter(isLogicNode).map((c) => treeDepth(c)));
+}
+export function cloneTree<T>(tree: T): T {
+  return JSON.parse(JSON.stringify(tree)) as T;
+}
+export function emptyTree(): FilterLogicNode {
+  return { op: "AND", conditions: [] };
+}
+/** 同层扁平化查找/删除（原型 findGroup/removeNode 同款，按引用操作）。 */
+export function findGroup(tree: FilterLogicNode, id: unknown): FilterLogicNode | null {
+  if (tree === id) return tree;
+  for (const c of tree.conditions) {
+    if (isLogicNode(c)) {
+      const hit = findGroup(c, id);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+export function removeNode(tree: FilterLogicNode, node: FilterCondition | FilterLogicNode): void {
+  tree.conditions = tree.conditions.filter((c) => c !== node);
+  for (const c of tree.conditions) if (isLogicNode(c)) removeNode(c, node);
+}
+/** 另存 = 合并树：视图 filters AND 临时树（TASK-011 §4.4.1 mergeTrees）。 */
+export function mergeTrees(view: Partial<FilterLogicNode> | null, temp: FilterLogicNode | null): FilterLogicNode {
+  const viewTree = view && (view as FilterLogicNode).conditions?.length ? (view as FilterLogicNode) : null;
+  if (!viewTree && !temp?.conditions.length) return emptyTree();
+  if (!temp?.conditions.length) return cloneTree(viewTree!);
+  if (!viewTree) return cloneTree(temp);
+  return { op: "AND", conditions: [cloneTree(viewTree), cloneTree(temp)] };
+}
+
+/**
+ * FilterTreeStore（TASK-011 §4.4.1）：③ 临时层（URL ?filters= 同源）。
+ * 本包不发起 HTTP（monorepo-structure.md §4）：命中数预估由 app 层注入
+ * preview 回调（500ms 防抖在其内实现），store 只持有结果。
+ */
+export class FilterTreeStore {
+  /** ③ 临时层编辑树（应用前草稿；applied 才入 URL） */
+  tree: FilterLogicNode = emptyTree();
+  /** 已应用的临时层（与 URL 同源；null = 无） */
+  applied: FilterLogicNode | null = null;
+  hitCount: number | null = null;
+  previewing = false;
+
+  constructor() {
+    makeObservable(this, {
+      tree: observable,
+      applied: observable,
+      hitCount: observable,
+      previewing: observable,
+      quota: computed,
+      setTree: action,
+      apply: action,
+      reset: action,
+      clear: action,
+      setHit: action,
+      hydrateApplied: action,
+    });
+  }
+
+  get quota(): { conditions: number; depth: number } {
+    return { conditions: countConditions(this.tree), depth: treeDepth(this.tree) };
+  }
+
+  setTree(t: FilterLogicNode): void {
+    this.tree = t;
+  }
+
+  /** 初始化：从 URL ?filters= 反序列化（app 层解析 JSON 后喂入；TASK-011 §4.4.2）。 */
+  hydrateApplied(tree: FilterLogicNode | null): void {
+    this.applied = tree ? cloneTree(tree) : null;
+    this.tree = tree ? cloneTree(tree) : emptyTree();
+  }
+
+  /** [应用]：树入 applied（URL 层）；空树 → 清空临时条件。 */
+  apply(): void {
+    this.applied = countConditions(this.tree) > 0 ? cloneTree(this.tree) : null;
+  }
+
+  /** 打开面板时以已应用树（或空树）为草稿。 */
+  reset(): void {
+    this.tree = this.applied ? cloneTree(this.applied) : emptyTree();
+    this.hitCount = null;
+  }
+
+  clear(): void {
+    this.tree = emptyTree();
+    this.applied = null;
+    this.hitCount = null;
+  }
+
+  setHit(n: number | null): void {
+    this.hitCount = n;
+  }
+}
+
+/** 临时层/视图层的本地未保存覆盖（黄条 dirty 依据，BOARD-003 §3.1）。 */
+export interface ViewOverrides {
+  displayProps?: Partial<ViewDisplayProps>;
+  layout?: ViewLayout | undefined;
+}
+
+/**
+ * ViewStore（BOARD-003 §4.4）：viewsByProject（SWR key project:{id}:views）、
+ * currentViewId（null = 「全部」前端固定入口）、dirty 派生（当前显示配置 vs
+ * 存档 diff）、默认视图偏好（board.default_view_id 镜像；读写由 app 层注入）。
+ * 本包不发起 HTTP：hydrate 由 app 层 services 调用后喂数。
+ */
+export class ViewStore {
+  /** project:{id}:views —— SWR 缓存键与 Map 键一致（§4.4）。 */
+  viewsByProject = new Map<string, IssueViewData[]>();
+  /** 当前选中视图（null = 「全部」固定首项，不入库）。 */
+  currentViewId: string | null = null;
+  /** board.default_view_id 偏好镜像（{project_id: view_id}）。 */
+  defaultViewByProject = new Map<string, string>();
+  /** 未保存覆盖：key = viewId ?? "__all__"（会话级；放弃=清空）。 */
+  overrides = new Map<string, ViewOverrides>();
+  loading = false;
+
+  constructor() {
+    makeObservable(this, {
+      viewsByProject: observable.shallow,
+      currentViewId: observable,
+      defaultViewByProject: observable.shallow,
+      overrides: observable.shallow,
+      loading: observable,
+      hydrate: action,
+      setLoading: action,
+      setCurrent: action,
+      upsert: action,
+      remove: action,
+      setDefault: action,
+      patchOverride: action,
+      discard: action,
+      markSaved: action,
+    });
+  }
+
+  views(projectId: string): IssueViewData[] {
+    return this.viewsByProject.get(projectId) ?? [];
+  }
+
+  currentView(projectId: string): IssueViewData | null {
+    if (!this.currentViewId) return null;
+    return this.views(projectId).find((v) => v.id === this.currentViewId) ?? null;
+  }
+
+  get overrideKey(): string {
+    return this.currentViewId ?? "__all__";
+  }
+
+  /** 黄条依据：存在任一未保存覆盖（display_props / layout）。 */
+  get dirty(): boolean {
+    const ov = this.overrides.get(this.overrideKey);
+    if (!ov) return false;
+    return Object.keys(ov.displayProps ?? {}).length > 0 || ov.layout !== undefined;
+  }
+
+  /** 生效显示配置 = 存档 display_props ⊕ 覆盖（「全部」= 默认值 ⊕ 覆盖）。 */
+  effectiveDisplayOf(projectId: string): ViewDisplayProps {
+    const base = this.currentView(projectId)?.display_props ?? DEFAULT_DISPLAY_PROPS;
+    const ov = this.overrides.get(this.overrideKey);
+    return { ...DEFAULT_DISPLAY_PROPS, ...base, ...(ov?.displayProps ?? {}) };
+  }
+
+  hydrate(projectId: string, views: IssueViewData[]): void {
+    this.viewsByProject.set(projectId, views);
+  }
+
+  setLoading(v: boolean): void {
+    this.loading = v;
+  }
+
+  setCurrent(viewId: string | null): void {
+    this.currentViewId = viewId;
+  }
+
+  upsert(view: IssueViewData): void {
+    const list = [...(this.viewsByProject.get(view.project_id) ?? [])];
+    const i = list.findIndex((v) => v.id === view.id);
+    if (i >= 0) list[i] = view;
+    else list.push(view);
+    list.sort((a, b) => a.sort_order - b.sort_order);
+    this.viewsByProject.set(view.project_id, list);
+  }
+
+  remove(projectId: string, viewId: string): void {
+    this.viewsByProject.set(
+      projectId,
+      (this.viewsByProject.get(projectId) ?? []).filter((v) => v.id !== viewId),
+    );
+    if (this.currentViewId === viewId) this.currentViewId = null;
+    this.overrides.delete(viewId);
+    if (this.defaultViewByProject.get(projectId) === viewId) this.defaultViewByProject.delete(projectId);
+  }
+
+  setDefault(projectId: string, viewId: string | null): void {
+    if (viewId) this.defaultViewByProject.set(projectId, viewId);
+    else this.defaultViewByProject.delete(projectId);
+  }
+
+  patchOverride(patch: Partial<ViewOverrides>): void {
+    const key = this.overrideKey;
+    const cur = this.overrides.get(key) ?? {};
+    this.overrides.set(key, {
+      displayProps: { ...(cur.displayProps ?? {}), ...(patch.displayProps ?? {}) },
+      layout: patch.layout ?? cur.layout,
+    });
+  }
+
+  discard(): void {
+    this.overrides.delete(this.overrideKey);
+  }
+
+  /** 保存成功：覆盖并入存档并清草稿。 */
+  markSaved(view: IssueViewData): void {
+    this.upsert(view);
+    this.overrides.delete(view.id);
+  }
+}
+
 export interface RootStore {
   session: SessionStore;
   workspace: WorkspaceStore;
   board: BoardStore;
+  views: ViewStore;
+  filterTree: FilterTreeStore;
 }
 
 export function createRootStore(): RootStore {
-  return { session: new SessionStore(), workspace: new WorkspaceStore(), board: new BoardStore() };
+  return {
+    session: new SessionStore(),
+    workspace: new WorkspaceStore(),
+    board: new BoardStore(),
+    views: new ViewStore(),
+    filterTree: new FilterTreeStore(),
+  };
 }
 
 export type { Issue, ProjectSummary, UUID };

@@ -21,6 +21,9 @@ import type { ApiError } from "../services/axios";
 import { useStores } from "../stores";
 import { toast } from "../components/Toast";
 import { LabelsAdminModal } from "./labels-admin";
+import { ViewSwitchBar } from "../components/views/ViewSwitchBar";
+import { FilterOpenButton, ViewChipsRow } from "../components/views/ViewFilterBar";
+import { useViewPage } from "../components/views/useViewPage";
 import type { Issue, SubtreeData } from "@rp/types";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -161,6 +164,9 @@ export default function IssuesList() {
   /** 响应式断点（§3.7：<768px 拖拽禁用，改行菜单） */
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
 
+  // ── Sprint-3 Phase 3-A：视图切换器工具条 + 筛选入口（BOARD-003 §3.1 / TASK-011 §3.2）──
+  const vp = useViewPage({ workspaceSlug, projectId, layout: "list" });
+
   // ── Sprint-2 列表新增（TASK-005/006/007/008/009 §3.3/§3.4/§3.5）──
   const stores = useStores();
   const myRole = stores.permission.effectiveProjectRole(projectId, workspaceSlug);
@@ -242,6 +248,9 @@ export default function IssuesList() {
           order_by: "sort_order",
           ...(blockedFilter ? { blocked: true } : {}),
           ...(archivedView ? { archived: true } : {}),
+          // ②③ 视图层 + 临时层（BOARD-003 §4.2-6 / TASK-011 BR-12：三源恒 AND）
+          ...(vp.viewIdParam ? { view_id: vp.viewIdParam } : {}),
+          ...(vp.filtersParam ? { filters: vp.filtersParam } : {}),
         }),
         ProjectAPI.detail(workspaceSlug!, projectId!),
       ]);
@@ -260,7 +269,7 @@ export default function IssuesList() {
     const handle = setTimeout(() => { void load(); }, 0);
     return () => clearTimeout(handle);
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceSlug, projectId, blockedFilter, archivedView]);
+  }, [workspaceSlug, projectId, blockedFilter, archivedView, vp.viewIdParam, vp.filtersParam]);
 
   // 成员表 + 字段 Schema（C.51 / C.56）：进入页面取一次
   useEffect(() => {
@@ -1099,6 +1108,8 @@ export default function IssuesList() {
             </div>
             <button onClick={() => setShowTaskModal(true)} className="inline-flex h-[34px] items-center gap-1.5 px-3.5 bg-brand-500 text-white rounded-md font-medium hover:bg-brand-600">+ 创建任务</button>
           </div>
+          {/* 视图切换器工具条（BOARD-003 §3.1 / TASK-011 §3.2；C.64/C.65/C.76） */}
+          <ViewSwitchBar vp={vp} />
           {/* 筛选工具条（C.28）：搜索框 + 标签管理 + Chips 行 */}
           <div className="border-b border-neutral-200 bg-white shrink-0">
             <div className="flex items-center gap-2 px-5 py-2.5">
@@ -1121,6 +1132,8 @@ export default function IssuesList() {
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.59 13.41 13.41 20.59a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><path d="M7 7h.01"/></svg>
                 管理标签
               </button>
+              {/* ⊞ 筛选入口（TASK-011 §3.1 + O2；C.74） */}
+              <FilterOpenButton vp={vp} />
               <span className="ml-auto text-[12px] text-neutral-500">命中 {filtered.length} / {total}</span>
             </div>
             {/* Chips 行（C.28 已选 Chips + 清空全部） */}
@@ -1139,6 +1152,8 @@ export default function IssuesList() {
                 <button onClick={() => setChips([])} className="text-[12px] text-neutral-500 hover:text-brand-600">清空全部</button>
               </div>
             )}
+            {/* 视图条件 chips 行（C.74：视图只读 chips + 叠加 chip + 清空） */}
+            <ViewChipsRow vp={vp} totalCount={(vp.viewIdParam || vp.filtersParam) ? total : null} />
             {/* C.45/C.59 筛选 Chip 行：被阻塞 = true / 已归档视图 + 命中计数 */}
             {(blockedFilter || archivedView) && (
               <div className="flex items-center flex-wrap gap-1.5 px-5 pb-2 text-[12px]" aria-label="已选筛选条件" data-sb-scope="list-chiprow">

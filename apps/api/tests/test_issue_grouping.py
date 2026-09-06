@@ -226,5 +226,7 @@ class TestGroupedEndpoint:
         )
         url = self._url(env, f"?group_by=state_id&view_id={other_view.id}")
         assert _Client(env["member"]).get(url).status_code == 200       # 本人
-        assert _Client(env["owner"]).get(url).status_code == 200        # WS 创建者隐式 ADMIN（board.manage）
-        assert _Client(env["viewer"]).get(url).status_code == 404       # VIEWER 存在性隐藏
+        # 应用面收严（ADR-0021）：board.manage 审计仅限 views/{id}/ CRUD 面，
+        # 列表/分组消费一律存在性隐藏——含 WS 隐式 ADMIN
+        assert _Client(env["owner"]).get(url).status_code == 404
+        assert _Client(env["viewer"]).get(url).status_code == 404

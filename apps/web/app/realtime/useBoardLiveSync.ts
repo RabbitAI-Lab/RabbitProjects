@@ -83,7 +83,13 @@ export function useBoardLiveSync<T extends LiveColMeta>(opts: UseBoardLiveSyncOp
     if (!version) return false;
     rebuildVersions();
     const local = versionsRef.current.get(issueId);
-    return local != null && version <= local;
+    if (local == null) return false;
+    // 数值化比较：事件侧 version 为 UTC ISO（+00:00），REST updated_at 为本地时区
+    // （+08:00）——字符串比较跨时区恒判 stale（Phase 5 验收发现的 P1 缺陷）
+    const tRemote = Date.parse(version);
+    const tLocal = Date.parse(local);
+    if (Number.isNaN(tRemote) || Number.isNaN(tLocal)) return version <= local; // 解析失败退字符串
+    return tRemote <= tLocal;
   }, [rebuildVersions]);
 
   const applyJob = useCallback(async (job: LiveJob) => {

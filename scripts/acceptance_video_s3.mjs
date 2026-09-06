@@ -872,13 +872,21 @@ await runScene(browser, "越权404", async (page) => {
   await page.getByRole("option", { name: /张三 的工作空间/ }).click();
   await page.waitForFunction(() => /\/workspace\/projects$/.test(location.pathname), null, { timeout: 15_000 });
   await sleep(500);
-  const gone = page.waitForResponse((r) => /\/issues\/\?.*view_id=/.test(r.url()) && r.request().method() === "GET", { timeout: 15_000 });
+  // 前端 ViewStore 判定不可见时短路（不发 issues?view_id 请求）→ API 侧存在性隐藏
+  // 以页面内直连取证（ADR-0021 修复后应为 404；修复前为 200——P2 缺陷实录）
+  const segs = victimUrl.pathname.split("/").filter(Boolean);
+  const pidSeg = segs[segs.indexOf("projects") + 1];
+  const wsSeg = segs[segs.indexOf("projects") - 1];
+  const vid = victimUrl.searchParams.get("view_id");
   await page.goto(`${victimUrl.pathname}${victimUrl.search}`);
-  const gres = await gone;
-  // 注：BOARD-003 §4.2-6 要求不可见视图 404（存在性隐藏）。实测「不存在 id」走 404，
-  // 而「存在但他人个人视图」列表端点返回 200（仅校验存在性、未校验归属——缺陷
-  // P2-002，见 README 缺陷清单）；前端侧 ViewStore 不可见 → 黄条回退「全部」正常。
-  console.log(`    [幕13] 李四访问他人视图 API：${gres.status()}（前端存在性隐藏按预期回退）`);
+  await sleep(800);
+  const apiStatus = await page.evaluate(
+    async ({ wsSeg, pidSeg, vid }) =>
+      (await fetch(`/api/v1/workspaces/${wsSeg}/projects/${pidSeg}/issues/?group_by=state_id&view_id=${vid}`, { credentials: "include" })).status,
+    { wsSeg, pidSeg, vid },
+  );
+  console.log(`    [幕13] 李四直连他人视图 API：${apiStatus}（ADR-0021 修复后应为 404）`);
+  if (apiStatus !== 404) throw new Error(`应用面存在性隐藏失效：HTTP ${apiStatus}`);
   await page.locator('[data-sb-scope="view-gone-bar"]').waitFor({ timeout: 15_000 });
   await expect(page.locator('[data-sb-scope="view-tab"][data-view-id="__all__"]')).toHaveAttribute("aria-selected", "true", { timeout: 8_000 });
   await sleep(1400);

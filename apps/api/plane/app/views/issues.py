@@ -183,9 +183,10 @@ class IssueListCreateView(ListCreateAPIView):
         degraded = None
         if raw_vid := request.query_params.get("view_id"):
             view = IssueView.objects.filter(id=raw_vid, project=project, deleted_at__isnull=True).first()
-            managed = project.current_user_role >= ProjectRole.CONTRIBUTOR  # board.manage（审计）
-            if view is None or not (view.is_system or view.owner_id == request.user.id or managed):
-                raise NotFound("RESOURCE_NOT_FOUND") from None  # 存在性隐藏（§6）
+            # 应用面（列表/分组消费）比详情审计面严格：仅内置或本人可用——board.manage
+            # 审计通道只在 views/{id}/ CRUD 面（ADR-0021；Phase 5 验收发现的 P2 缺陷修复）
+            if view is None or not (view.is_system or view.owner_id == request.user.id):
+                raise NotFound("RESOURCE_NOT_FOUND") from None  # 存在性隐藏（§6-9/BR-11）
             view_tree, degraded = resolve_view(view, project=project, user=request.user)
             view_q = compile_dsl(view_tree, ctx)
             view_applied = echo_conditions(view_tree)

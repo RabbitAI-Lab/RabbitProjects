@@ -5,7 +5,7 @@
 | 所属迭代 | Sprint 4 — 甘特图 + 文件管理（第 6 周） |
 | 优先级 | P2（标准版完整级） |
 | 覆盖模块 | M6-GANTT 甘特图进度｜M7-FILE 文件资源管理 |
-| 文档状态 | 待评审（Draft） |
+| 文档状态 | 已实现（Implemented，2026-09-07） |
 | 最后更新日期 | 2026-09-03 |
 | 上游依赖 | 迭代级硬阻塞：Sprint 2 全量（[`dependency-graph.md`](../architecture/dependency-graph.md) §2.1；Sprint 0/1 经 S0→S1→S2 传递依赖）；Sprint 3 为**文档级局部前置**（无迭代级阻塞边，明细见 §3）：`TASK-011`/`BOARD-003`（筛选 DSL 与 IssueView）、`COLLAB-003/004`（动态流与 WS 事件协议）；尤其 `TASK-005` relations 契约、`TASK-004` 子树、`TASK-006` 工时口径、`FILE-001` 预签名直传、`INFRA-002` MinIO/Celery/live 服务 |
 | 下游消费 | 有依赖边支持（依赖图 §4）：`GANTT-003`（P3 关键路径，← `GANTT-002`）、`RPT-004`（P3 负载报表，← `GANTT-002`）、`FILE-005`（P3 Wiki，← `FILE-004`）、`FILE-006`（P4 水印/合规，← `FILE-004`）；另 `RPT-002` / `INTG-001`（均 Sprint 5，README §4.7）在 `GANTT-001/002`、`FILE-002/003` 规格元信息中登记为口径对齐 / 附件挂接预留——依赖图 §4.11/§4.12 无对应依赖边，按「无依赖边的口径协同」解读，不计入下游依赖 |
@@ -193,3 +193,11 @@ flowchart TB
 - 前置迭代：[`docs/sprint-3-views-collab/sprint-overview.md`](../sprint-3-views-collab/sprint-overview.md)
 - 原始需求：[`docs/需求文档.md`](../需求文档.md) §3.6 / §3.7 / §8.2
 - 下一迭代：`docs/sprint-5-integration-standard/sprint-overview.md`（Sprint 5 — 集成 + 标准版收尾）
+
+## 12. 迭代退出核验（2026-09-07 收口）
+
+| 退出条件 | 核验结果 |
+| --- | --- |
+| 1. 功能验收（§6 六条） | ✓ 五规格七章结构与逐端点契约齐备；甘特 1 万任务首屏 P95 **99.5ms** < 1.5s、平移 56ms < 300ms、G3 索引命中（sprint-4-bench）；拖拽仅写 start/target 且钳制+冲突确认（e2e S4G-3/4/7）；连线与 TASK-005 契约一致（flow GANTT-001 段 29 断言）；PNG 导出含水印/范围提示（S4G-10）；100MB+ 分片续传断点重传（S4P-3：2.1GiB 级真 MinIO multipart 冒烟 + 断点片表核对）；五通道预览全通（office 本机无 soffice 走 202 排队/failed 兜底语义，compose 工具链分层已就位——ADR-0022 D-1）；版本回滚正确（flow F3 段 + S4P-2）；分享密码/有效期/权限全链路（flow F4 段 30 断言 + S4P-5/6/7）；三态权限 UI/API/预签名三层一致（flow 越权段 20 断言 + S4F-6/7 成对）；孤儿 30min 回收+活跃会话豁免+转码产物生命周期（IT-09 三段 + sweep 任务）；无障碍键盘导航（S4G-2 全套 + aria 断言） |
+| 2. 工程质量 | ✓ 无未修复 P0/P1；§9 七条风险应对的异常路径测试全过（视窗退化拦截/拖拽回滚与不自动顺延/断点重传/在途豁免三段断言/转码超时重试 202 排队/(IP,slug) 防爆破与源软删归档失效）；门禁全绿：flow 213 / bench 四门禁 / coverage 25 族 237 / pytest 500 / ruff+mypy / run-ci-checks 46 / e2e 148 过 2 失败均为 sprint-2 预存环境项（基线同挂） |
+| 3. 文档同步 | ✓ 五规格标「已实现（2026-09-07）」；偏差 57 条汇总 ADR-0022（A 实现偏差 45 + C 门禁 5 + D 工具链 4 + E 勘误 7，B 缺陷修复 9 条已闭环）；架构回改：dg §4.8/§4.9（dcf3450）、COLLAB-004 §1.3/§2.3 file 房间补登（a4d6dd1）、tech-stack html-to-image/react-virtual（263a7db）；清单 C.98~C.125 反向扫描 100%（7fe9349） |

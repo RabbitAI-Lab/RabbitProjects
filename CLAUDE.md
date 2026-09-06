@@ -38,6 +38,8 @@ python3 tests/jmeter/sprint-2-flow.py                          # sprint-2 七段
 python3 tests/jmeter/sprint-2-bench.py                         # 性能门禁（10 万数据集，五项 P95；跑完清数据）
 python3 tests/jmeter/sprint-3-flow.py                          # sprint-3 六段（视图/批量/评论/活动流/实时/筛选，214 断言）
 python3 tests/jmeter/sprint-3-bench.py                         # sprint-3 性能门禁四项（跑完清数据；重跑需等清理完成或手动 purge）
+python3 tests/jmeter/sprint-4-flow.py                          # sprint-4 七段（文件库/分片/分享/甘特×2/实时票据/越权，213 断言）
+python3 tests/jmeter/sprint-4-bench.py                         # sprint-4 性能门禁（甘特首屏/平移/索引 + 文件库万级×5；跑完清数据）
 # ⚠ sprint-2-flow 前置：常驻 worker（Activity 异步化后 T8-42 与时间线断言依赖消费；
 # 启动：cd apps/api && DATABASE_URL=… SECRET_KEY=dev CELERY_BROKER_URL=amqp://guest:guest@localhost:5672// \
 #   REDIS_URL=redis://localhost:6379/0 uv run celery -A plane worker -Q activity,celery --concurrency=2 &）
@@ -83,6 +85,9 @@ PG schema 准备（Django migrate 在 PG 上有已知问题，见下面"坑"）�
 18. **pytest 直连共享 dev PG**：断言禁止全表 `count()`（主栈 e2e/API 会直写库污染基数），一律 filter 到本测试作用域再计数（`test_comment_thread` 教训）。
 19. **vite dev 对 linked 包（`@rp/shared-state` 等）的 dist 有缓存**：包变更后需重启 dev server，否则 e2e 跑到旧代码。
 20. **celery 多代 worker 并存会静默分食投递**（现象：批量 Activity 约半数丢失）：跑 gate 前用 `celery -A plane inspect registered` 确认无旧进程（新代码应含 `event_publisher` / `record_activity_batch`），`ps aux | grep celery` 清残留集群。
+21. **软删残留对 ORM 默认管理器不可见**：e2e/脚本造数若走软删（deleted_at 置位），`Project.objects` 等默认管理器查不到但行仍在库——污染会撞裸查询（test_ut01 的 `FileFolder.objects.get(name=…)` 曾被 15 条同名软删行打爆）。清理残留一律用 `Model._base_manager.filter(...).delete()`（实例级 delete=物理 DELETE）；判定污染先 `docker exec rp-pg psql -t -c "SELECT count(*) FROM ..."` 对比 ORM 计数。
+22. **e2e 造数必须 afterAll 自动清理**：sprint-4 三份 spec（gantt/files/preview-share）已接 `tests/e2e/_cleanup_s4.py`（S4[FGP] 全域幂等硬删 + 演示工作区非演示账号治理）；新写 spec 造数请沿用同款收尾或并入该脚本，跑完以 psql 计数为零自证——T4-09/10 两批累计漏清 355 个项目曾被主线复验抓回。
+23. **突变自检后必查残留**：子代理用量上限中断会把 MUTATION 标记留在工作区（T4-11 的 `if (true) return; // MUTATION-1` 曾随半成品入库前被截获）。收编无报告的半成品前先 `grep -rn "MUTATION" apps/ tests/ packages/`，并把 typecheck/lint/e2e 全量跑绿再提交。
 
 ## 文档体系（改代码前先读对应文档）
 

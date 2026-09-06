@@ -183,14 +183,14 @@ test.describe("交互元素全覆盖", () => {
     await loginDemo(page);
     await createProject(page, uname("Modal Proj"), rid());
     await page.getByRole("button", { name: /\+ 创建任务/ }).click();
-    await page.locator("button").filter({ hasText: /待办/ }).nth(0).click();
+    await page.getByRole("dialog").locator("button").filter({ hasText: /待办/ }).first().click();
     for (const st of ["待办", "进行中", "已完成", "已取消"]) {
       await expect(page.getByRole("button", { name: new RegExp(`^${st}$`) }).first()).toBeVisible();
     }
-    await page.locator("button").filter({ hasText: /待办/ }).nth(0).click();
-    await page.locator("button").filter({ hasText: /未分配/ }).first().click();
+    await page.getByRole("dialog").locator("button").filter({ hasText: /待办/ }).first().click();
+    await page.getByRole("dialog").locator("button").filter({ hasText: /未分配/ }).first().click();
     await expect(page.getByText(/指派给我/)).toBeVisible();
-    await page.locator("button").filter({ hasText: /未分配/ }).first().click();
+    await page.getByRole("dialog").locator("button").filter({ hasText: /未分配/ }).first().click();
     await page.getByRole("button", { name: "今天", exact: true }).click();
     await page.getByPlaceholder("任务标题").fill("Modal Task");
     await page.keyboard.press("Meta+Enter");

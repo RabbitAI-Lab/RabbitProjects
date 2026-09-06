@@ -348,6 +348,11 @@ def complete_session(*, session: UploadSession, actor) -> FileAsset:
     session.asset.status = FileAsset.Status.UPLOADED
     session.asset.is_uploaded = True
     session.asset.save(update_fields=["status", "is_uploaded", "updated_at"])
+    # 回读刷新：_new_version 在另一实例上落 current_version（select_for_update 重取），
+    # 本实例不刷新则视图侧 asset.current_version 为 None → complete 响应内嵌
+    # version 退化为 {}（§2.1「201 文件元数据（含 version）」失守）——T4-12 flow
+    # 段实测发现，pytest 事务夹具掩盖了该路径（偏差登记 ADR-0022）。
+    session.asset.refresh_from_db()
     transaction.on_commit(lambda: _enqueue_derive(str(version.id)))
     return session.asset
 

@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """Sprint 0 全接口契约覆盖（api-full-coverage）——每个端点 × 每个方法 × 正/负例。
 用法：python3 tests/jmeter/api-full-coverage.py [http://localhost:8000]
-前置：API + 真实 PG。与 sprint-0-flow.py（10 步动线 CI gate）互补：
-  本脚本按端点矩阵逐个打满，任何一例失败 exit 1。
+前置：API + 真实 PG + MinIO（FILE-002 直传三步需真 PUT）。与 sprint-0-flow.py
+（10 步动线 CI gate）互补：本脚本按端点矩阵逐个打满，任何一例失败 exit 1。
 
 Sprint-2 阶段 0 起 HTTP/CODES/Client 一律 import `_contract`（CLAUDE.md 测试脚本规范 ①，
 ADR-0012 E4）：本脚本曾自带硬编码状态码/错误码表，是「唯一真相源」落地的最后一个双源残留，
 切换后 13 端点矩阵与新脚本共享同一份契约常量。
+
+Sprint-4（T4-12）扩族 +6：file_library 14 / file_versions 11 / file_shares 内部 4 /
+space 公开 3 / gantt 3 / overdue 1 —— 端点路径走 `_contract.ENDPOINTS` 模板。
 """
 import json
 import sys
 import time
+import urllib.request
 
-from _contract import CODES, HTTP, Client, detail_of
+from _contract import CODES, ENDPOINTS, HTTP, Client, detail_of
 
 BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000").rstrip("/")
 
@@ -401,7 +405,300 @@ case("RT-5", "错误码 == VALIDATION_INVALID_PARAM",
 expect("RT-6", "client_tab_id 缺失 → 400", "POST", rt, HTTP["BAD_REQUEST"],
        {"issue_rooms": []}, {"X-CSRFToken": csrf()})
 
-print(f"\n{'═' * 40}\n接口契约覆盖：{PASS} 通过 / {FAIL} 失败（19 端点族 × 方法 × 正/负例）")
+# ═══ Sprint-4 新端点族（FILE-002/003/004、GANTT-001/002；T4-12 扩族）═══
+# 端点路径一律取 _contract.ENDPOINTS（唯一真相源）；21~26 节按「正例 → 负例
+# （越权 403/404 / 参数 400 / 鉴权 401 / 方法 405）」的既有 19 族范式打满。
+
+print("═══ 21. file_library 14 端点（FILE-002 §4.2）═══")
+folders = ENDPOINTS["folders"].format(ws=ws, proj=proj)
+_, b = expect("FL-1", "新建目录 → 201", "POST", folders, HTTP["CREATED"],
+              {"name": "Full Cov 目录"}, {"X-CSRFToken": csrf()})
+folder_id = ((b or {}).get("data") or {}).get("id")
+case("FL-1b", "201 回显 visibility=all / allowed_members=[]",
+     ((b or {}).get("data") or {}).get("visibility") == "all"
+     and ((b or {}).get("data") or {}).get("allowed_members") == [])
+_, b = expect("FL-2", "目录树 → 200", "GET", folders, HTTP["OK"])
+case("FL-2b", "树行结构 {id, name, parent_id, visibility, file_count}",
+     isinstance((b or {}).get("data"), list) and bool((b or {}).get("data"))
+     and {"id", "name", "parent_id", "visibility", "file_count"} <= set((b or {}).get("data")[0]))
+_, b = expect("FL-3", "同层同名 → 409 + UNIQUE", "POST", folders, HTTP["CONFLICT"],
+              {"name": "Full Cov 目录"}, {"X-CSRFToken": csrf()})
+case("FL-3b", "错误码 RESOURCE_ALREADY_EXISTS + details (name, UNIQUE)",
+     ((b or {}).get("error") or {}).get("code") == CODES["alreadyExists"]
+     and err_field(b, "name", "UNIQUE") is not None)
+expect("FL-4", "PATCH 目录改名 → 200", "PATCH", f"{folders}{folder_id}/", HTTP["OK"],
+       {"name": "Full Cov 目录改"}, {"X-CSRFToken": csrf()})
+child = req("POST", folders, {"name": "子目录", "parent_id": folder_id},
+            {"X-CSRFToken": csrf()})[1]["data"]["id"]
+_, b = expect("FL-5", "PATCH 移动成环 → 409 + CYCLE", "PATCH", f"{folders}{folder_id}/",
+              HTTP["CONFLICT"], {"parent_id": child}, {"X-CSRFToken": csrf()})
+case("FL-5b", "错误码 RESOURCE_CIRCULAR_DEPENDENCY",
+     ((b or {}).get("error") or {}).get("code") == CODES["circular"])
+
+# 直传三步（真 MinIO PUT；失败则后续依赖用例显式失败——门禁环境 MinIO 恒在跑）
+presign = ENDPOINTS["folder_presign"].format(ws=ws, proj=proj, folder=folder_id)
+FL_BODY = b"full cov body"
+_, b = expect("FL-6", "presign → 201", "POST", presign, HTTP["CREATED"],
+              {"file_name": "full-cov.txt", "file_size": len(FL_BODY), "content_type": "text/plain"},
+              {"X-CSRFToken": csrf()})
+asset_id = ((b or {}).get("data") or {}).get("asset_id")
+put_url = ((b or {}).get("data") or {}).get("upload_url") or ""
+case("FL-6b", "upload_url 为 /uploads/ 同源前缀", put_url.startswith("/uploads/"))
+expect("FL-7", "presign 51MB → 400", "POST", presign, HTTP["BAD_REQUEST"],
+       {"file_name": "big.png", "file_size": 51 * 1024 * 1024, "content_type": "image/png"},
+       {"X-CSRFToken": csrf()})
+put_ok = False
+try:
+    _r = urllib.request.Request("http://localhost:9000" + put_url[len("/uploads"):],
+                                data=FL_BODY, method="PUT",
+                                headers={"Content-Type": "text/plain"})
+    with urllib.request.urlopen(_r, timeout=30) as resp:  # noqa: S310
+        put_ok = resp.status in (200, 201)
+except Exception:  # noqa: BLE001
+    put_ok = False
+case("FL-8", "MinIO 直传 PUT → 2xx", put_ok, "MinIO 不可达——后续依赖用例将失败")
+_, b = expect("FL-9", "complete → 200 status=uploaded", "POST",
+              ENDPOINTS["file_complete"].format(ws=ws, proj=proj, asset=asset_id),
+              HTTP["OK"], {}, {"X-CSRFToken": csrf()})
+case("FL-9b", "file_row {name, size_bytes, type_category, visibility}",
+     ((b or {}).get("data") or {}).get("status") == "uploaded"
+     and ((b or {}).get("data") or {}).get("type_category") == "document")
+
+files_list = ENDPOINTS["folder_files"].format(ws=ws, proj=proj, folder=folder_id)
+_, b = expect("FL-10", "目录文件列表 → 200", "GET", files_list, HTTP["OK"])
+case("FL-10b", "meta 九字段 + total_size_bytes",
+     "total_size_bytes" in ((b or {}).get("meta") or {})
+     and ((b or {}).get("meta") or {}).get("total_count") == 1)
+expect("FL-11", "损坏游标 → 400", "GET", files_list + "?cursor=@@@", HTTP["BAD_REQUEST"])
+expect("FL-12", "?type=document 筛选 → 200", "GET", files_list + "?type=document", HTTP["OK"])
+_, b = expect("FL-13", "download-url → 200", "GET",
+              ENDPOINTS["file_download"].format(ws=ws, proj=proj, asset=asset_id), HTTP["OK"])
+case("FL-13b", "{download_url(/uploads/), expires_in:300}",
+     (((b or {}).get("data") or {}).get("download_url") or "").startswith("/uploads/")
+     and ((b or {}).get("data") or {}).get("expires_in") == 300)
+_, b = expect("FL-14", "PATCH 文件重命名 → 200", "PATCH",
+              ENDPOINTS["file_detail"].format(ws=ws, proj=proj, asset=asset_id), HTTP["OK"],
+              {"name": "full-cov-v2.txt"}, {"X-CSRFToken": csrf()})
+case("FL-14b", "回显新名", ((b or {}).get("data") or {}).get("name") == "full-cov-v2.txt")
+expect("FL-15", "软删文件 → 204", "DELETE", ENDPOINTS["file_detail"].format(ws=ws, proj=proj, asset=asset_id),
+       HTTP["NO_CONTENT"], None, {"X-CSRFToken": csrf()})
+_, b = expect("FL-16", "回收站列表 → 200 含 deleted_at", "GET",
+              ENDPOINTS["trash"].format(ws=ws, proj=proj), HTTP["OK"])
+case("FL-16b", "回收站含刚删行",
+     any(r.get("id") == asset_id and r.get("deleted_at")
+         for r in (b or {}).get("data") or []))
+expect("FL-17", "restore → 200", "POST",
+       ENDPOINTS["file_restore"].format(ws=ws, proj=proj, asset=asset_id), HTTP["OK"],
+       {}, {"X-CSRFToken": csrf()})
+req("DELETE", ENDPOINTS["file_detail"].format(ws=ws, proj=proj, asset=asset_id),
+    None, {"X-CSRFToken": csrf()})
+_, b = expect("FL-18", "purge → 200 {purged:true}", "DELETE",
+              ENDPOINTS["file_purge"].format(ws=ws, proj=proj, asset=asset_id),
+              HTTP["OK"], None, {"X-CSRFToken": csrf()})
+case("FL-18b", "purged=true", ((b or {}).get("data") or {}).get("purged") is True)
+_, b = expect("FL-19", "storage 配额 → 200", "GET",
+              ENDPOINTS["storage"].format(ws=ws, proj=proj), HTTP["OK"])
+case("FL-19b", "四字段 {quota_bytes, used_bytes, pending_bytes, usage_ratio}",
+     set((b or {}).get("data") or {}) == {"quota_bytes", "used_bytes", "pending_bytes", "usage_ratio"})
+expect("FL-20", "PUT folders/ → 405 方法集", "PUT", folders, 405,
+       {"name": "x"}, {"X-CSRFToken": csrf()})
+c_anon = req("GET", folders, authed=False)
+case("FL-21", "未认证 GET folders → 401", c_anon[0] == HTTP["UNAUTHORIZED"], f"got {c_anon[0]}")
+expect("FL-22", "不存在项目 folders → 404", "GET",
+       ENDPOINTS["folders"].format(ws=ws, proj="00000000-0000-0000-0000-000000000000"),
+       HTTP["NOT_FOUND"])
+_, b = req("DELETE", f"{folders}{child}/", None, {"X-CSRFToken": csrf()})
+case("FL-23", "DELETE 目录整树软删 → 200 {folders_deleted, files_deleted}",
+     _ == HTTP["OK"] and {"folders_deleted", "files_deleted"} <= set((b or {}).get("data") or {}))
+
+print("═══ 22. file_versions 11 端点（FILE-003 §4.2）═══")
+sessions = ENDPOINTS["upload_sessions"].format(ws=ws, proj=proj)
+sess_detail = ENDPOINTS["upload_session_detail"].format(ws=ws, proj=proj, session="{}")
+sess_chunk = ENDPOINTS["upload_session_chunk"].format(ws=ws, proj=proj, session="{}", n="{}")
+sess_complete = ENDPOINTS["upload_session_complete"].format(ws=ws, proj=proj, session="{}")
+folder2 = req("POST", folders, {"name": "分片目录"}, {"X-CSRFToken": csrf()})[1]["data"]["id"]
+_, b = expect("FV-1", "init 会话 → 201", "POST", sessions, HTTP["CREATED"],
+              {"file_name": "full-cov.zip", "file_size": 9 * 1024 * 1024, "folder_id": folder2},
+              {"X-CSRFToken": csrf()})
+sid = ((b or {}).get("data") or {}).get("session_id")
+case("FV-1b", "session_row {total_chunks:2, chunk_size:8MB, uploaded_chunks:[]}",
+     ((b or {}).get("data") or {}).get("total_chunks") == 2
+     and ((b or {}).get("data") or {}).get("uploaded_chunks") == [])
+expect("FV-2", "init 白名单外 → 400", "POST", sessions, HTTP["BAD_REQUEST"],
+       {"file_name": "tool.exe", "file_size": 1024, "folder_id": folder2},
+       {"X-CSRFToken": csrf()})
+_, b = expect("FV-3", "GET 会话状态 → 200 uploading", "GET", sess_detail.format(sid), HTTP["OK"])
+case("FV-3b", "status=uploading + expires_at", ((b or {}).get("data") or {}).get("status") == "uploading"
+     and bool(((b or {}).get("data") or {}).get("expires_at")))
+_, b = expect("FV-4", "换发片预签名 → 200", "POST", sess_chunk.format(sid, 1), HTTP["OK"],
+              {}, {"X-CSRFToken": csrf()})
+case("FV-4b", "{part_number:1, expires_in:1800}",
+     ((b or {}).get("data") or {}).get("part_number") == 1
+     and ((b or {}).get("data") or {}).get("expires_in") == 1800)
+expect("FV-5", "登记片缺 etag → 400", "PATCH", sess_chunk.format(sid, 1), HTTP["BAD_REQUEST"],
+       {}, {"X-CSRFToken": csrf()})
+_, b = expect("FV-6", "缺片 complete → 400 MISMATCH", "POST", sess_complete.format(sid),
+              HTTP["BAD_REQUEST"], {}, {"X-CSRFToken": csrf()})
+case("FV-6b", "错误码 VALIDATION_FILE_UPLOAD_MISMATCH + details (chunks, MISSING)",
+     ((b or {}).get("error") or {}).get("code") == CODES["uploadMismatch"]
+     and err_field(b, "chunks", "MISSING") is not None)
+expect("FV-7", "abort 会话 → 204", "DELETE", sess_detail.format(sid), HTTP["NO_CONTENT"],
+       None, {"X-CSRFToken": csrf()})
+# 版本族：复用直传文件（complete 即 v1）
+v_asset, _v_row = None, {}
+if put_ok:
+    FV_BODY = b"ver body"
+    _pb = req("POST", ENDPOINTS["folder_presign"].format(ws=ws, proj=proj, folder=folder2),
+              {"file_name": "full-cov-ver.txt", "file_size": len(FV_BODY),
+               "content_type": "text/plain"},
+              {"X-CSRFToken": csrf()})
+    _a2 = _pb[1]["data"]["asset_id"]
+    with urllib.request.urlopen(urllib.request.Request(  # noqa: S310
+        "http://localhost:9000" + _pb[1]["data"]["upload_url"][len("/uploads"):],
+        data=FV_BODY, method="PUT", headers={"Content-Type": "text/plain"}), timeout=30):
+        pass
+    _c2 = req("POST", ENDPOINTS["file_complete"].format(ws=ws, proj=proj, asset=_a2),
+              {}, {"X-CSRFToken": csrf()})
+    v_asset = _c2[1]["data"]["id"]
+else:
+    v_asset = asset_id  # 已 purge——版本族用例将显式失败（门禁环境不应走到）
+versions = ENDPOINTS["file_versions"].format(ws=ws, proj=proj, asset=v_asset)
+_, b = expect("FV-8", "版本列表 → 200", "GET", versions, HTTP["OK"])
+case("FV-8b", "[v1(current)] + version_row 字段",
+     [v.get("version_number") for v in (b or {}).get("data") or []] == [1]
+     and (b or {}).get("data") and {"version_id", "version_number", "is_current",
+                                    "source_version_number"} <= set((b or {}).get("data")[0]))
+v1_id = ((b or {}).get("data") or [{}])[0].get("version_id")
+_, b = expect("FV-9", "回滚 → 201 新版本", "POST",
+              ENDPOINTS["file_version_rollback"].format(ws=ws, proj=proj, asset=v_asset, version=v1_id),
+              HTTP["CREATED"], {}, {"X-CSRFToken": csrf()})
+case("FV-9b", "{version_number:2, source_version_number:1}",
+     ((b or {}).get("data") or {}).get("version_number") == 2
+     and ((b or {}).get("data") or {}).get("source_version_number") == 1)
+st302, loc = C.get_no_redirect(
+    ENDPOINTS["file_version_content"].format(ws=ws, proj=proj, asset=v_asset, version=v1_id))
+case("FV-10", "版本内容 → 302 /uploads/", st302 == 302 and loc.startswith("/uploads/"),
+     f"got {st302} {loc[:60]}")
+_, b = expect("FV-11", "preview 调度 → 200（text ready）", "GET",
+              ENDPOINTS["file_preview"].format(ws=ws, proj=proj, asset=v_asset), HTTP["OK"])
+case("FV-11b", "{kind:text, ready:true, preview_url}", ((b or {}).get("data") or {}).get("kind") == "text"
+     and ((b or {}).get("data") or {}).get("ready") is True)
+expect("FV-12", "derivatives 未知 kind → 404", "GET",
+       ENDPOINTS["file_derivative"].format(ws=ws, proj=proj, asset=v_asset, kind="bogus"),
+       HTTP["NOT_FOUND"])
+expect("FV-13", "不存在资产版本列表 → 404", "GET",
+       ENDPOINTS["file_versions"].format(ws=ws, proj=proj, asset="00000000-0000-0000-0000-000000000000"),
+       HTTP["NOT_FOUND"])
+
+print("═══ 23. file_shares 内部 4 端点（FILE-004 §4.2）═══")
+shares = ENDPOINTS["share_links"].format(ws=ws, proj=proj, asset="{}")
+_, b = expect("FS-1", "创建分享 → 201", "POST", shares.format(v_asset), HTTP["CREATED"],
+              {"permission": "download", "expires_in_days": 1}, {"X-CSRFToken": csrf()})
+share_id = ((b or {}).get("data") or {}).get("id")
+share_slug = ((b or {}).get("data") or {}).get("slug")
+case("FS-1b", "share_row {slug(22), share_url(/s/), status:active}",
+     len(share_slug or "") == 22
+     and (((b or {}).get("data") or {}).get("share_url") or "").endswith(f"/s/{share_slug}")
+     and ((b or {}).get("data") or {}).get("status") == "active")
+_, b = expect("FS-2", "有效期 0 天 → 400 TOO_SMALL", "POST", shares.format(v_asset),
+              HTTP["BAD_REQUEST"], {"expires_in_days": 0}, {"X-CSRFToken": csrf()})
+case("FS-2b", "details (expires_in_days, TOO_SMALL)", err_field(b, "expires_in_days", "TOO_SMALL") is not None)
+_, b = expect("FS-3", "管理列表 → 200", "GET", shares.format(v_asset), HTTP["OK"])
+case("FS-3b", "行含 slug/status + meta 分页字段",
+     ((b or {}).get("meta") or {}).get("total_count", 0) >= 1
+     and {"next_cursor", "per_page"} <= set((b or {}).get("meta") or {}))
+_, b = expect("FS-4", "延期 7 天 → 200", "POST",
+              ENDPOINTS["share_link_extend"].format(ws=ws, proj=proj, link=share_id),
+              HTTP["OK"], {"extend_days": 7}, {"X-CSRFToken": csrf()})
+case("FS-4b", "{id, expires_at, status:active}",
+     ((b or {}).get("data") or {}).get("id") == share_id
+     and ((b or {}).get("data") or {}).get("status") == "active")
+perm_link = req("POST", shares.format(v_asset), {}, {"X-CSRFToken": csrf()})[1]["data"]["id"]
+expect("FS-5", "永久链接延期 → 400", "POST",
+       ENDPOINTS["share_link_extend"].format(ws=ws, proj=proj, link=perm_link),
+       HTTP["BAD_REQUEST"], {"extend_days": 7}, {"X-CSRFToken": csrf()})
+expect("FS-6", "吊销 → 204", "DELETE",
+       ENDPOINTS["share_link_detail"].format(ws=ws, proj=proj, link=share_id),
+       HTTP["NO_CONTENT"], None, {"X-CSRFToken": csrf()})
+expect("FS-7", "不存在资产建分享 → 404", "POST",
+       shares.format("00000000-0000-0000-0000-000000000000"), HTTP["NOT_FOUND"],
+       {}, {"X-CSRFToken": csrf()})
+
+print("═══ 24. space 公开 3 端点（FILE-004 §4.2 公开面，匿名）═══")
+# 公开段用独立有效链（FS-6 已吊销 share_slug——读时四查将 410，属负例语义）
+sp_slug = req("POST", shares.format(v_asset), {}, {"X-CSRFToken": csrf()})[1]["data"]["slug"]
+_, b = expect("SP-1", "匿名 meta → 200", "GET",
+              ENDPOINTS["public_share"].format(slug=sp_slug), HTTP["OK"], authed=False)
+case("SP-1b", "{requires_password:false, file.name, permission}",
+     ((b or {}).get("data") or {}).get("requires_password") is False
+     and bool((((b or {}).get("data") or {}).get("file") or {}).get("name")))
+_, b = expect("SP-2", "无密码链 unlock → 200 unlocked", "POST",
+              ENDPOINTS["public_unlock"].format(slug=sp_slug), HTTP["OK"],
+              {"password": ""}, authed=False)
+case("SP-2b", "{unlocked:true}", ((b or {}).get("data") or {}).get("unlocked") is True)
+_, b = expect("SP-3", "content 预览态 → 200", "GET",
+              ENDPOINTS["public_content"].format(slug=sp_slug), HTTP["OK"], authed=False)
+case("SP-3b", "kind=text ready（匿名直签变体）",
+     ((b or {}).get("data") or {}).get("kind") == "text")
+_dl_slug = req("POST", shares.format(v_asset), {"permission": "download"},
+               {"X-CSRFToken": csrf()})[1]["data"]["slug"]
+st_dl, loc_dl = C.get_no_redirect(ENDPOINTS["public_content"].format(slug=_dl_slug) + "?download=1")
+case("SP-4", "download=1 → 302 /uploads/", st_dl == 302 and loc_dl.startswith("/uploads/"),
+     f"got {st_dl}")
+_, b = expect("SP-5", "无效 slug meta → 410 RESOURCE_GONE", "GET",
+              ENDPOINTS["public_share"].format(slug="B" * 22), HTTP["GONE"], authed=False)
+case("SP-5b", "错误码 RESOURCE_GONE（同码同文案）",
+     ((b or {}).get("error") or {}).get("code") == CODES["gone"])
+expect("SP-6", "无效 slug content → 410", "GET",
+       ENDPOINTS["public_content"].format(slug="B" * 22), HTTP["GONE"], authed=False)
+expect("SP-7", "无效 slug unlock → 410", "POST",
+       ENDPOINTS["public_unlock"].format(slug="B" * 22), HTTP["GONE"],
+       {"password": "x"}, authed=False)
+_, b = expect("SP-8", "已吊销链 meta → 410（FS-6 的 share_slug 复用为负例）", "GET",
+              ENDPOINTS["public_share"].format(slug=share_slug), HTTP["GONE"], authed=False)
+case("SP-8b", "RESOURCE_GONE", ((b or {}).get("error") or {}).get("code") == CODES["gone"])
+
+print("═══ 25. gantt 3 端点（GANTT-001 §4.2）═══")
+vp = f"viewport_start=2026-01-01&viewport_end=2026-12-31"
+_, b = expect("GT-1", "视窗行取数 → 200", "GET",
+              ENDPOINTS["gantt_rows"].format(ws=ws, proj=proj) + f"?{vp}", HTTP["OK"])
+case("GT-1b", "{rows, unscheduled_count} + meta.viewport 回显",
+     {"rows", "unscheduled_count"} <= set((b or {}).get("data") or {})
+     and (((b or {}).get("meta") or {}).get("viewport") or {}).get("start") == "2026-01-01")
+expect("GT-2", "缺 viewport_start → 400", "GET",
+       ENDPOINTS["gantt_rows"].format(ws=ws, proj=proj) + "?viewport_end=2026-12-31",
+       HTTP["BAD_REQUEST"])
+expect("GT-3", "非法 tz → 400", "GET",
+       ENDPOINTS["gantt_rows"].format(ws=ws, proj=proj) + f"?{vp}&tz=Bad/Zone",
+       HTTP["BAD_REQUEST"])
+_, b = expect("GT-4", "relations bulk → 200", "POST",
+              ENDPOINTS["gantt_relations"].format(ws=ws, proj=proj), HTTP["OK"],
+              {"issue_ids": [i1]}, {"X-CSRFToken": csrf()})
+case("GT-4b", "{edges:[]} + meta.requested=1（无边任务）",
+     ((b or {}).get("data") or {}).get("edges") == []
+     and ((b or {}).get("meta") or {}).get("requested") == 1)
+expect("GT-5", "issue_ids 非数组 → 400", "POST",
+       ENDPOINTS["gantt_relations"].format(ws=ws, proj=proj), HTTP["BAD_REQUEST"],
+       {"issue_ids": "x"}, {"X-CSRFToken": csrf()})
+_, b = expect("GT-6", "unscheduled → 200", "GET",
+              ENDPOINTS["gantt_unscheduled"].format(ws=ws, proj=proj), HTTP["OK"])
+case("GT-6b", "行 fields 裁剪 {id, issue_key, name, state_group, assignee_ids}",
+     ((b or {}).get("data") == []) or
+     set((b or {}).get("data")[0]) == {"id", "issue_key", "name", "state_group",
+                                       "state_color", "assignee_ids"})
+
+print("═══ 26. overdue-summary 1 端点（GANTT-002 §4.2.1）═══")
+_, b = expect("OD-1", "延期概览 → 200", "GET",
+              ENDPOINTS["gantt_overdue"].format(ws=ws, proj=proj), HTTP["OK"])
+case("OD-1b", "{overdue_count, max_overdue_days, by_assignee, items, items_truncated} + meta.today",
+     {"overdue_count", "max_overdue_days", "by_assignee", "items", "items_truncated"}
+     <= set((b or {}).get("data") or {})
+     and bool(((b or {}).get("meta") or {}).get("today")))
+expect("OD-2", "不存在项目 → 404", "GET",
+       ENDPOINTS["gantt_overdue"].format(ws=ws, proj="00000000-0000-0000-0000-000000000000"),
+       HTTP["NOT_FOUND"])
+
+print(f"\n{'═' * 40}\n接口契约覆盖：{PASS} 通过 / {FAIL} 失败（19+6=25 端点族 × 方法 × 正/负例）")
 if FAILURES:
     print("\n".join("  ✗ " + f for f in FAILURES))
     sys.exit(1)

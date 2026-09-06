@@ -193,11 +193,14 @@ def folder_tree(*, project, user) -> list[dict]:
         f.folder_id for f in files if f.folder_id in kept_ids and can_view_file(user, f, role=role)
     )
 
-    # 子树聚合：kept 内父→子传播（父计数 ⊇ 可见子孙计数，不含被剪支）
+    # 子树聚合：kept 内父→子传播（父计数 ⊇ 可见子孙计数，不含被剪支）。
+    # .get 兜底：父有文件而子无文件时子不在 totals 键集——T4-12 flow 段实测
+    # 此结构（root 带文件 + 空子目录）触发 KeyError → GET …/folders/ 500，
+    # pytest 树用例的数据面未覆盖该形态（偏差登记 ADR-0022）。
     totals: dict = dict(own_counts)
     for folder in sorted(kept, key=lambda f: -_tree_depth(f, by_id)):
         if folder.parent_id in totals:
-            totals[folder.parent_id] += totals[folder.id]
+            totals[folder.parent_id] += totals.get(folder.id, 0)
 
     children_map: Counter = Counter(f.parent_id for f in kept)
     return [
@@ -432,7 +435,14 @@ def _category_filter(category: str) -> Q:
 
 
 def list_files(*, folder, user, params: dict) -> tuple[list[dict], dict]:
-    """目录文件列表（游标 + 筛选 + 逐文件可见性过滤）→ (rows, meta 九字段 + total_size_bytes)。"""
+    """目录文件列表（游标 + 筛选 + 逐文件可见性过滤）→ (rows, meta 九字段 + total_size_bytes)。
+
+    可见性过滤下推 SQL（IT-07 万级单目录 P95<300ms 门禁——T4-13 bench 实测全量
+    水合 10k 行 313ms 失守）：``can_view_file`` 三态判定与 SQL 谓词同源——
+    ADMIN+ 全量；否则 ``visibility='all' ∨ (members ∧ allowed_members∋本人)``。
+    行为与逐行 Python 过滤等价（角色先行求值，判定逻辑仍只在 can_view_file 一处
+    定义，此处是它的集合投影）；分页/计数/容量汇总均由 SQL 完成。
+    """
     qs = FileAsset.objects.filter(
         project_id=folder.project_id,
         entity_type=FileAsset.EntityType.PROJECT_FILE,
@@ -460,15 +470,21 @@ def list_files(*, folder, user, params: dict) -> tuple[list[dict], dict]:
     direction = "" if ordering.startswith("-") else "-"
     qs = qs.order_by(f"{direction}{order_map[key]}", "-id")
 
-    rows_all = list(qs.select_related("uploaded_by"))
     role = effective_project_role(user, folder.project_id)
-    visible_rows = [a for a in rows_all if can_view_file(user, a, role=role)]
+    if role is None:
+        qs = qs.none()  # 非成员在 can_view_file 口径下不可见任何文件（防御分支）
+    elif role < ProjectRole.ADMIN:
+        qs = qs.filter(
+            Q(visibility=FileFolder.Visibility.ALL)
+            | Q(visibility=FileFolder.Visibility.MEMBERS,
+               allowed_members__contains=[str(user.id)])
+        )
 
     per_page = params.get("per_page") or 50
     offset = params.get("offset") or 0
-    page_rows = visible_rows[offset:offset + per_page]
-    total_count = len(visible_rows)
-    total_size = sum(a.size for a in visible_rows)
+    total_count = qs.count()
+    total_size = qs.aggregate(s=Sum("size"))["s"] or 0
+    page_rows = list(qs.select_related("uploaded_by")[offset:offset + per_page])
 
     def _enc(off: int) -> str | None:
         return base64.b64encode(f"c:{off}:0".encode()).decode() if 0 <= off < total_count else None

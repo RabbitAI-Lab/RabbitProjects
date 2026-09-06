@@ -20,6 +20,7 @@ export const HTTP = {
   FORBIDDEN:     403,  // 越权 / 角色不足
   NOT_FOUND:     404,  // 资源不存在 / 越权 404（防 ID 枚举）
   CONFLICT:      409,  // identifier 重复
+  GONE:          410,  // 公开分享读时四查统一失效（Sprint-4 FILE-004，与 _contract.py 同步）
   TOO_MANY:      429,  // 限流
   SRV_ERR:       500,
   SRV_UNAVAILABLE: 503, // 依赖服务不可用（COLLAB-004 live 降级，与 _contract.py 同步）

@@ -30,6 +30,7 @@ HTTP = {
     "FORBIDDEN": 403,     # 越权（角色不足）
     "NOT_FOUND": 404,     # 越权 404（AUTH-003 防 ID 枚举）
     "CONFLICT": 409,      # 唯一性冲突 / 上限
+    "GONE": 410,          # 公开分享读时四查统一失效（FILE-004 §4.3.1 防枚举区分）
     "TOO_MANY": 429,      # 限流
     "SRV_ERR": 500,       # 期望失败用
     "SRV_UNAVAILABLE": 503,  # 依赖服务不可用（COLLAB-004 live 探测降级 SERVER_LIVE_SERVICE_UNAVAILABLE）
@@ -72,6 +73,52 @@ CODES = {
     # ── Sprint-4（FILE-002 项目文件库，均为既有注册码） ──
     "quotaStorage": "QUOTA_STORAGE_EXCEEDED",            # 工作空间配额耗尽（F002 §2.5，409；details 子码 QUOTA）
     "uploadMismatch": "VALIDATION_FILE_UPLOAD_MISMATCH",  # complete HEAD 大小不匹配（F002 IT-02）
+    # ── Sprint-4（FILE-003/004、GANTT，均为既有注册码） ──
+    "authRequired": "AUTH_REQUIRED",                     # 公开分享未解锁读 content（F004 §4.3.3，401）
+    "gone": "RESOURCE_GONE",                             # 读时四查统一失效（F004 §4.3.1，410 同码同文案）
+    "storageError": "SERVER_STORAGE_ERROR",              # MinIO 不可用降级（F002/F003/F004，500）
+}
+
+#: Sprint-4 起端点路径模板（FILE-002/003/004 + GANTT-001/002 + 实时第四类房间）。
+#: flow / coverage / bench 共用，防端点路径各自硬编码漂移；全部强制尾斜杠。
+_S4_BASE = "/api/v1/workspaces/{ws}/projects/{proj}"
+ENDPOINTS = {
+    # FILE-002 §4.2 #1~#14
+    "folders": _S4_BASE + "/folders/",
+    "folder_detail": _S4_BASE + "/folders/{folder}/",
+    "folder_files": _S4_BASE + "/folders/{folder}/files/",
+    "folder_presign": _S4_BASE + "/folders/{folder}/files/presign/",
+    "file_detail": _S4_BASE + "/files/{asset}/",
+    "file_complete": _S4_BASE + "/files/{asset}/complete/",
+    "file_download": _S4_BASE + "/files/{asset}/download-url/",
+    "file_restore": _S4_BASE + "/files/{asset}/restore/",
+    "file_purge": _S4_BASE + "/files/{asset}/purge/",
+    "trash": _S4_BASE + "/files/trash/",
+    "storage": _S4_BASE + "/files/storage/",
+    # FILE-003 §4.2 #1~#11
+    "upload_sessions": _S4_BASE + "/upload-sessions/",
+    "upload_session_detail": _S4_BASE + "/upload-sessions/{session}/",
+    "upload_session_chunk": _S4_BASE + "/upload-sessions/{session}/chunks/{n}/",
+    "upload_session_complete": _S4_BASE + "/upload-sessions/{session}/complete/",
+    "file_versions": _S4_BASE + "/files/{asset}/versions/",
+    "file_version_rollback": _S4_BASE + "/files/{asset}/versions/{version}/rollback/",
+    "file_version_content": _S4_BASE + "/files/{asset}/versions/{version}/content/",
+    "file_preview": _S4_BASE + "/files/{asset}/preview/",
+    "file_derivative": _S4_BASE + "/files/{asset}/derivatives/{kind}/",
+    # FILE-004 §4.2 内部 #1~#4 + 公开 #5~#7
+    "share_links": _S4_BASE + "/files/{asset}/share-links/",
+    "share_link_detail": _S4_BASE + "/share-links/{link}/",
+    "share_link_extend": _S4_BASE + "/share-links/{link}/extend/",
+    "public_share": "/api/v1/public/shares/{slug}/",
+    "public_unlock": "/api/v1/public/shares/{slug}/unlock/",
+    "public_content": "/api/v1/public/shares/{slug}/content/",
+    # GANTT-001 §4.2 + GANTT-002 §4.2.1
+    "gantt_rows": _S4_BASE + "/gantt/",
+    "gantt_relations": _S4_BASE + "/gantt/relations/bulk/",
+    "gantt_unscheduled": _S4_BASE + "/gantt/unscheduled/",
+    "gantt_overdue": _S4_BASE + "/gantt/overdue-summary/",
+    # COLLAB-004（file_rooms 走同端点载荷扩展）
+    "realtime_token": _S4_BASE + "/realtime-token/",
 }
 
 #: 统一信封字段路径（INFRA-004 C1）

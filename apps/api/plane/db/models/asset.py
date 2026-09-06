@@ -116,24 +116,21 @@ class FileAsset(BaseModel):
     )
     download_count = models.PositiveIntegerField(default=0, verbose_name="下载次数")
 
-    # ── FILE-003 预留列（本次迁移一并建列，后续零列级 DDL；逻辑不实现）────
-    # 目标形态是 FK("db.FileVersion") / OneToOneField("db.UploadSession")，但两个
-    # 模型属 FILE-003 交付物、当前不存在——Django 无法解析未定义目标。故先以
-    # UUID 列落库（列名与目标 FK 列名一致：current_version_id / upload_session_id，
-    # upload_session 侧唯一约束一并预建），FILE-003 到场时 AlterField 为 FK/OneToOne
-    # 仅追加引用约束，不再动列（偏差登记见任务报告 / ADR-0022）。
-    current_version = models.UUIDField(
+    # ── FILE-003 §4.1.1/§4.1.2：当前版本指针（真 FK，迁移 0010 AlterField 升级）──
+    # T4-03 曾以 UUID 预留列落库（current_version），FILE-003 建 FileVersion 表后
+    # AlterField 为 FK 仅改列名 + 追加引用约束。原 ``upload_session`` OneToOne 预留
+    # 列撤销不建（§4.1.2 注 2）：会话↔文件关系由 UploadSession.asset FK 承载，
+    # OneToOne 不释放会撞同名二次上传（BR-15）。
+    # 行级镜像不变量（§4.3.2 注）：storage_path/size/attributes 恒等于
+    # current_version.object_key/attributes["size"]/attributes —— _new_version 单点维护。
+    current_version = models.ForeignKey(
+        "db.FileVersion",
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
         editable=False,
-        verbose_name="当前版本（FILE-003 预留）",
-    )
-    upload_session = models.UUIDField(
-        null=True,
-        blank=True,
-        editable=False,
-        unique=True,
-        verbose_name="分片上传会话（FILE-003 预留）",
+        related_name="asset_current",
+        verbose_name="当前版本指针（FILE-003）",
     )
 
     class Meta(BaseModel.Meta):

@@ -173,3 +173,101 @@ def presigned_get_url(
             "storage_presign_get_failed bucket=%s key=%s err=%s", bucket, key, exc,
         )
         raise StorageUnavailable(str(exc)) from exc
+
+
+# ── S3 Multipart（FILE-003 §4.3 分片会话；真相在 S3，表只记索引）────────
+
+
+def create_multipart_upload(*, bucket: str, key: str, content_type: str) -> str:
+    """发起 multipart 上传 → 返回 upload_id（init 端点，§4.2 #1）。"""
+    client = _client()
+    try:
+        resp = client.create_multipart_upload(
+            Bucket=bucket, Key=key,
+            ContentType=content_type or "application/octet-stream",
+        )
+    except (BotoCoreError, ClientError, EndpointConnectionError) as exc:
+        logger.warning("storage_create_mpu_failed bucket=%s key=%s err=%s", bucket, key, exc)
+        raise StorageUnavailable(str(exc)) from exc
+    return str(resp["UploadId"])
+
+
+def presigned_upload_part_url(
+    *, bucket: str, key: str, upload_id: str, part_number: int, expires: int = 1800,
+) -> str:
+    """签发 UploadPart 预签名 URL（§4.2 #3——浏览器直传单片，含 Content-MD5 头由前端加）。"""
+    client = _client()
+    try:
+        return client.generate_presigned_url(
+            "upload_part",
+            Params={"Bucket": bucket, "Key": key,
+                    "UploadId": upload_id, "PartNumber": part_number},
+            ExpiresIn=expires,
+            HttpMethod="PUT",
+        )
+    except (BotoCoreError, ClientError, EndpointConnectionError) as exc:
+        logger.warning(
+            "storage_presign_part_failed bucket=%s key=%s part=%s err=%s",
+            bucket, key, part_number, exc,
+        )
+        raise StorageUnavailable(str(exc)) from exc
+
+
+def list_parts(*, bucket: str, key: str, upload_id: str) -> list[dict[str, Any]]:
+    """列已传片（BR-04 complete 核对源）→ ``[{PartNumber, ETag, Size}]``（ETag 去引号）。"""
+    client = _client()
+    parts: list[dict[str, Any]] = []
+    try:
+        paginator = client.get_paginator("list_parts")
+        for page in paginator.paginate(Bucket=bucket, Key=key, UploadId=upload_id):
+            for p in page.get("Parts", []):
+                parts.append({
+                    "PartNumber": int(p["PartNumber"]),
+                    "ETag": str(p["ETag"]).strip('"'),
+                    "Size": int(p.get("Size", 0)),
+                })
+        return parts
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("NoSuchUpload",):
+            raise StorageObjectNotFound(f"{key}?uploadId={upload_id}") from exc
+        logger.warning("storage_list_parts_failed bucket=%s key=%s err=%s", bucket, key, exc)
+        raise StorageUnavailable(str(exc)) from exc
+    except (BotoCoreError, EndpointConnectionError) as exc:
+        raise StorageUnavailable(str(exc)) from exc
+
+
+def complete_multipart_upload(
+    *, bucket: str, key: str, upload_id: str, parts: list[dict[str, Any]],
+) -> None:
+    """合并片（parts 按片号升序：``[{PartNumber, ETag}]``，ETag 带不带引号均可）。"""
+    client = _client()
+    payload = [{"PartNumber": int(p["PartNumber"]), "ETag": p["ETag"]} for p in parts]
+    try:
+        client.complete_multipart_upload(
+            Bucket=bucket, Key=key, UploadId=upload_id,
+            MultipartUpload={"Parts": payload},
+        )
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("NoSuchUpload", "InvalidPart", "InvalidPartOrder"):
+            raise StorageObjectNotFound(f"{key}?uploadId={upload_id}") from exc
+        logger.warning("storage_complete_mpu_failed bucket=%s key=%s err=%s", bucket, key, exc)
+        raise StorageUnavailable(str(exc)) from exc
+    except (BotoCoreError, EndpointConnectionError) as exc:
+        raise StorageUnavailable(str(exc)) from exc
+
+
+def abort_multipart_upload(*, bucket: str, key: str, upload_id: str) -> None:
+    """取消 multipart（BR-05 24h TTL / 用户 abort）——NoSuchUpload 幂等成功。"""
+    client = _client()
+    try:
+        client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("NoSuchUpload", "404", "NotFound"):
+            return
+        logger.warning("storage_abort_mpu_failed bucket=%s key=%s err=%s", bucket, key, exc)
+        raise StorageUnavailable(str(exc)) from exc
+    except (BotoCoreError, EndpointConnectionError) as exc:
+        raise StorageUnavailable(str(exc)) from exc

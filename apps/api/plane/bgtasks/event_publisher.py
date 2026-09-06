@@ -46,6 +46,10 @@ EVENT_MAP: dict[str, Callable[[dict[str, Any]], list[str]]] = {
     "activity.created": lambda p: [f"project:{p['project_id']}"],
     # user 个人房间（铃铛秒达，COLLAB-001 轮询通道的加速器）
     "notification.created": lambda p: [f"user:{p['receiver_id']}"],
+    # ── FILE-003 §4.4：file 域两事件（rooms = project + file:{asset_id} 第四类
+    #    房间——live 侧消费由 T4-08 接线；api 侧 on_commit 投递本任务交付）──
+    "file.version.created": lambda p: [f"project:{p['project_id']}", f"file:{p['asset_id']}"],
+    "file.transcode.completed": lambda p: [f"project:{p['project_id']}", f"file:{p['asset_id']}"],
 }
 
 
@@ -198,6 +202,43 @@ def publish_notifications_created(rows) -> None:
                            [f"user:{rid}"])
     except Exception as exc:  # noqa: BLE001 —— 推送尽力而为，不阻断通知主流程
         logger.warning("event_publisher.notifications_created_failed exc=%s", exc)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# file 域挂点 helper（FILE-003 §4.4 事件登记表；on_commit 调用收口）
+# ─────────────────────────────────────────────────────────────────────
+def publish_file_version_created(*, project_id: str, asset_id: str,
+                                 version_number: int, actor_id: str | None,
+                                 source_version_number: int | None = None) -> None:
+    """新版本落库 / 回滚（services.upload_session._new_version 的 on_commit）。
+
+    payload 要点（§4.4）：asset_id / version_number / actor_id /
+    source_version_number（回滚时携带）——VersionPanel mutate 与动态流水位增量。
+    """
+    payload: dict[str, Any] = {
+        "asset_id": asset_id,
+        "version_number": version_number,
+        "actor_id": actor_id,
+    }
+    if source_version_number is not None:
+        payload["source_version_number"] = source_version_number
+    dispatch_event(
+        "file.version.created", payload,
+        EVENT_MAP["file.version.created"]({
+            "project_id": str(project_id), "asset_id": str(asset_id)}),
+    )
+
+
+def publish_file_transcode_completed(*, project_id: str, asset_id: str,
+                                     derivative_kind: str) -> None:
+    """转码 / 缩略 / 封面帧任务成功（含冷清理后重生成，BR-11）——Worker 尾部
+    直接调用（无事务上下文，不走 on_commit）；排队态预览自动刷新（202 → 就绪）。"""
+    dispatch_event(
+        "file.transcode.completed",
+        {"asset_id": str(asset_id), "derivative_kind": derivative_kind},
+        EVENT_MAP["file.transcode.completed"]({
+            "project_id": str(project_id), "asset_id": str(asset_id)}),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────

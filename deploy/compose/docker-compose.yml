@@ -164,6 +164,10 @@ services:
     build:
       context: ../..
       dockerfile: apps/api/Dockerfile
+      # FILE-003 §1.6：LibreOffice + ffmpeg apt 层（预览派生工具链）——仅 worker
+      # 镜像安装；api/beat 复用 base 层缓存，不受体积增量影响。
+      args:
+        INSTALL_TRANSCODE_TOOLS: "1"
     env_file:
       - ../../.env
     environment:

@@ -563,8 +563,10 @@ def presign_file(*, folder: FileFolder, payload: dict, actor) -> dict:
     }
 
 
-def complete_file(*, asset: FileAsset) -> dict:
-    """完成确认（FILE-001 §4.3.2 协议复用）：HEAD 校验 → 条件 UPDATE 翻转；幂等。"""
+def complete_file(*, asset: FileAsset, actor=None) -> dict:
+    """完成确认（FILE-001 §4.3.2 协议复用 + FILE-003 §4.3.4 版本接线）：HEAD 校验 →
+    ``_wire_direct_version``（新名翻转五态 / 同名并入版本链 + 暂存行硬删）→
+    ``_new_version``（BR-08/BR-13/derive_preview 钩子同挂）；幂等。"""
     if asset.status == FileAsset.Status.UPLOADED:
         return file_row(asset)  # 幂等快路径：重放同构
     try:
@@ -586,12 +588,11 @@ def complete_file(*, asset: FileAsset) -> dict:
             details=[{"field": "file_size", "code": "INVALID",
                       "message": "对象大小与声明不一致，请重新上传"}],
         )
-    with transaction.atomic():
-        FileAsset.objects.filter(
-            pk=asset.pk, status=FileAsset.Status.UPLOADING
-        ).update(status=FileAsset.Status.UPLOADED, is_uploaded=True)
-    asset.refresh_from_db()
-    return file_row(asset)
+    from plane.db.services.upload_session import wire_direct_version
+
+    target = wire_direct_version(staging=asset, stat_size=stat, actor=actor)
+    target.refresh_from_db()
+    return file_row(target)
 
 
 # ── 下载预签名（§4.2 #7；BR-09 签发时实时校验 + BR-10 计数）──────────
@@ -698,25 +699,75 @@ def restore_file(*, asset: FileAsset, actor) -> FileAsset:
 
 
 def has_live_references(storage_path: str, *, exclude_pk=None) -> bool:
-    """BR-06 键级引用计数：同 ``storage_path`` 是否还有其他存活 file_assets 行。
+    """BR-06 键级引用计数：同 ``storage_path`` 是否还有其他存活 file_assets 行，
+    或 FILE-003 起的存活版本行引用（``FileVersion.object_key``——多版本/回滚链）。
 
-    （FILE-003 版本行 file_versions 落地后在此追加第二段判定——当前无该表。）
+    本函数语义为「除本行外是否还有引用」；调用方清理整资产（行与其版本行同批
+    消失）时请用 ``collect_purge_keys``（IT-07：4 版文件期满清理，无存活版本
+    引用才删对象）。
     """
+    from plane.db.models import FileVersion
+
     qs = FileAsset.objects.filter(storage_path=storage_path)  # 默认管理器 = 存活行
     if exclude_pk is not None:
         qs = qs.exclude(pk=exclude_pk)
-    return qs.exists()
+    if qs.exists():
+        return True
+    return FileVersion.objects.filter(
+        object_key=storage_path, deleted_at__isnull=True
+    ).exists()
+
+
+def collect_purge_keys(asset: FileAsset) -> set[str]:
+    """整资产清理键集：行级 storage_path ∪ 名下全部版本对象键（含已淘汰软删行——
+    回滚零拷贝复用下旧键可能仍是当前内容）。"""
+    from plane.db.models import FileVersion
+
+    keys = {asset.storage_path}
+    keys.update(
+        FileVersion.all_objects.filter(asset_id=asset.pk)
+        .values_list("object_key", flat=True)
+    )
+    keys.discard("")
+    return keys
+
+
+def _key_referenced_outside(key: str, *, going_asset_pk, going_version_ids: set) -> bool:
+    """键是否被「不随本次清理消失」的行引用：其他存活资产行 / 其他存活版本行。"""
+    from plane.db.models import FileVersion
+
+    if (FileAsset.objects.filter(storage_path=key, deleted_at__isnull=True)
+            .exclude(pk=going_asset_pk).exists()):
+        return True
+    return (FileVersion.objects
+            .filter(object_key=key, deleted_at__isnull=True)
+            .exclude(id__in=going_version_ids)
+            .exists())
 
 
 def purge_asset(*, asset: FileAsset) -> None:
-    """彻底删除：硬删元数据行（purged 终态）+ 无存活引用才删对象（BR-06）。"""
-    if not has_live_references(asset.storage_path, exclude_pk=asset.pk):
+    """彻底删除：硬删元数据行（purged 终态，级联版本行）+ 逐键引用计数后删对象
+    （BR-06；FILE-003 起 IT-07 扩展——4 版文件的 4 个对象均按引用判定清理）。
+
+    顺序沿用 FILE-001 资产清理纪律：先删对象（404 幂等）→ 后硬删行——对象
+    删除失败时行保留，下轮 purge 重试（引用判定已排除本行与本资产版本行）。
+    """
+    from plane.db.models import FileVersion
+
+    going_version_ids = set(
+        FileVersion.all_objects.filter(asset_id=asset.pk).values_list("id", flat=True)
+    )
+    for key in collect_purge_keys(asset):
+        if _key_referenced_outside(
+            key, going_asset_pk=asset.pk, going_version_ids=going_version_ids
+        ):
+            continue
         try:
-            storage.remove_object(bucket=BUCKET, key=asset.storage_path)
+            storage.remove_object(bucket=BUCKET, key=key)
         except storage.StorageUnavailable as exc:
-            logger.warning("file_library.purge_remove_failed asset=%s err=%s", asset.id, exc)
+            logger.warning("file_library.purge_remove_failed key=%s err=%s", key, exc)
             raise AppException("SERVER_STORAGE_ERROR", message="对象存储暂时不可用，请稍后重试") from exc
-    asset.delete()  # 实例删除 = 硬删
+    asset.delete()  # 实例删除 = 硬删（级联 file_versions 行）
 
 
 # ── 回收站列表（§4.2 #11：R1 同键口径过滤）──────────────────────────
@@ -777,20 +828,65 @@ def _distinct_key_sum(qs) -> int:
     return FileAsset.objects.filter(id__in=ids).aggregate(s=Sum("size"))["s"] or 0
 
 
+def _distinct_object_usage(workspace_id) -> int:
+    """BR-14 去重核算：used 按**对象键**跨表 DISTINCT——``FileAsset.storage_path``
+    ∪ ``FileVersion.object_key``（存活资产名下），同键（版本/回滚零拷贝复用、双挂）
+    恒只计一次；版本行取 attributes.size（镜像不变量下行键与当前版本键同值）。"""
+    sizes: dict[str, int] = {}
+    for path, size in (
+        FileAsset.objects
+        .filter(workspace_id=workspace_id, status=FileAsset.Status.UPLOADED,
+                deleted_at__isnull=True)
+        .values_list("storage_path", "size")
+    ):
+        sizes.setdefault(path, size)
+    from plane.db.models import FileVersion
+
+    for key, attrs in (
+        FileVersion.objects
+        .filter(asset__workspace_id=workspace_id, deleted_at__isnull=True,
+                asset__deleted_at__isnull=True)
+        .values_list("object_key", "attributes")
+    ):
+        sizes.setdefault(key, int((attrs or {}).get("size") or 0))
+    return sum(sizes.values())
+
+
+def _inflight_pending(workspace_id) -> int:
+    """在途预留扩展口径（FILE-003 §1.6 第 2 条）：Σ 无活跃会话的 uploading 资产行
+    （直传在途）∪ Σ 活跃 UploadSession.file_size（分片在途）——新名分片行虽建行即
+    uploading，预留以会话行为准、资产行侧排除防同笔双计。"""
+    from plane.db.models import UploadSession
+
+    direct = _distinct_key_sum(
+        FileAsset.objects
+        .filter(workspace_id=workspace_id, status=FileAsset.Status.UPLOADING)
+        .exclude(upload_sessions__status=UploadSession.Status.UPLOADING)
+    )
+    session_ids = list(
+        UploadSession.objects
+        .filter(project__workspace_id=workspace_id,
+                status=UploadSession.Status.UPLOADING, deleted_at__isnull=True)
+        .order_by("object_key")
+        .distinct("object_key")
+        .values_list("id", flat=True)
+    )
+    session_side = (
+        UploadSession.objects.filter(id__in=session_ids)
+        .aggregate(s=Sum("file_size"))["s"] or 0
+    )
+    return direct + session_side
+
+
 def workspace_storage_usage(workspace_id) -> dict:
-    """§4.2.3 配额用量：{quota_bytes, used_bytes, pending_bytes, usage_ratio}。"""
+    """§4.2.3 配额用量：{quota_bytes, used_bytes, pending_bytes, usage_ratio}。
+
+    FILE-003 起口径扩展：used 按对象键跨表 DISTINCT（BR-14，版本去重）；
+    pending 含分片在途会话（§1.6 第 2 条扩展口径）。
+    """
     quota = get_workspace_quota(workspace_id)
-    used = _distinct_key_sum(
-        FileAsset.objects.filter(
-            workspace_id=workspace_id, status=FileAsset.Status.UPLOADED,
-            deleted_at__isnull=True,
-        )
-    )
-    pending = _distinct_key_sum(
-        FileAsset.objects.filter(
-            workspace_id=workspace_id, status=FileAsset.Status.UPLOADING,
-        )
-    )
+    used = _distinct_object_usage(workspace_id)
+    pending = _inflight_pending(workspace_id)
     ratio = round(used / quota, 2) if quota > 0 else 1.0
     return {"quota_bytes": quota, "used_bytes": used, "pending_bytes": pending,
             "usage_ratio": ratio}
@@ -802,6 +898,9 @@ def assert_quota(*, workspace_id, incoming: int) -> None:
     行锁必须求值（赋给 ``_``），否则 Django 丢弃仅 SELECT 的裸锁、失去串行化
     语义（FILE-001 ``_check_task_limit`` 同一先例）。两笔临界并发 presign 一先
     一后进入判定，后到者 Sum 即读到先行者落库的 uploading 行 → 恰一笔 409。
+
+    FILE-003 扩展：used/pending 均按对象键 DISTINCT（BR-14）+ 分片在途以会话
+    行计（§1.6 第 2 条——同名换版的新尺寸仅记在会话行，资产行侧排除防双计）。
     """
     with transaction.atomic():
         locked = (
@@ -812,18 +911,8 @@ def assert_quota(*, workspace_id, incoming: int) -> None:
         )
         _ = locked  # 求值即获取行锁
         quota = get_workspace_quota(workspace_id)
-        # 按 workspace 直查（非 project__workspace），杜绝按项目聚合漏掉的无项目行
-        used = _distinct_key_sum(
-            FileAsset.objects.filter(
-                workspace_id=workspace_id, status=FileAsset.Status.UPLOADED,
-                deleted_at__isnull=True,
-            )
-        )
-        pending = _distinct_key_sum(
-            FileAsset.objects.filter(
-                workspace_id=workspace_id, status=FileAsset.Status.UPLOADING,
-            )
-        )
+        used = _distinct_object_usage(workspace_id)
+        pending = _inflight_pending(workspace_id)
         if used + pending + incoming > quota:  # 在途计入（BR-03）
             raise QuotaExceededError(used=used, pending=pending, quota=quota, incoming=incoming)
 

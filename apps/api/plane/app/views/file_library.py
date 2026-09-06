@@ -459,7 +459,8 @@ class FilePurgeView(APIView):
 
 
 class FileCompleteView(APIView):
-    """POST …/files/{asset_id}/complete/ —— 完成确认（FILE-001 §4.3.2 协议复用，幂等）。"""
+    """POST …/files/{asset_id}/complete/ —— 完成确认（FILE-001 §4.3.2 协议复用，
+    幂等；FILE-003 §4.3.4 起成功回调挂版本接线：新名翻转五态 / 同名并入版本链）。"""
 
     def post(self, request, *args, **kwargs):
         project, _, _ = get_project_or_404(
@@ -471,7 +472,7 @@ class FileCompleteView(APIView):
         if asset.uploaded_by_id != request.user.id:
             raise NotFound("RESOURCE_NOT_FOUND")
         _require_not_archived(project)
-        data = svc.complete_file(asset=asset)
+        data = svc.complete_file(asset=asset, actor=request.user)
         return success_response(data)
 
 

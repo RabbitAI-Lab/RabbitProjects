@@ -100,6 +100,7 @@ FEATURE_MODULES = (
     "labels",           # TASK-002 项目标签
     "attachments",      # FILE-001 任务附件
     "file_library",     # FILE-002 项目文件库与多层级目录
+    "file_versions",    # FILE-003 分片会话 / 版本 / 预览调度
     "comments",         # COLLAB-001 评论
     "notifications",    # COLLAB-001 通知中心
     "stats",            # RPT-001 个人统计

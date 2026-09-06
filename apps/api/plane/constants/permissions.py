@@ -53,6 +53,8 @@ PERMISSION_MATRIX: dict[str, dict[str, int]] = {
         "file.delete": ProjectRole.CONTRIBUTOR,       # + R1：CONTRIBUTOR 仅本人上传（回收站同键过滤）
         "file.permission.manage": ProjectRole.ADMIN,  # 可见性配置（目录与文件同码）
         "folder.manage": ProjectRole.CONTRIBUTOR,     # 目录新建/改名/移动/删除
+        # ── FILE-003 §4.2.4（rbac §8.2 已登记条目：版本回溯）──
+        "file.version.manage": ProjectRole.CONTRIBUTOR,  # 回滚（#8）
     },
 }
 
@@ -92,6 +94,7 @@ PERMISSION_LABELS: dict[str, str] = {
     "file.delete": "删除文件",
     "file.permission.manage": "管理文件可见性",
     "folder.manage": "管理文件目录",
+    "file.version.manage": "管理文件版本",
 }
 
 

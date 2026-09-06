@@ -630,7 +630,9 @@ class TestNotificationMutex:
         events = list(Notification.objects.filter(receiver=env["member"])
                       .values_list("event", flat=True))
         assert events == ["issue.mentioned"]
-        assert not Notification.objects.filter(event="comment.replied").exists()
+        # 作用域化：共享 dev PG 会被真栈 e2e/录屏的 comment.replied 残留污染（CLAUDE.md 坑 #18）
+        env_uids = [u.id for u in (env["owner"], env["member"], env["third"], env["viewer"])]
+        assert not Notification.objects.filter(receiver_id__in=env_uids, event="comment.replied").exists()
 
     def test_operator_and_outside_domain_excluded(self, env):
         """BR-12：操作者本人 / 域外成员剔除；重复投递零重复（dedup_key）。

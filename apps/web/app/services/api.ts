@@ -445,6 +445,89 @@ export const RelationAPI = {
     api.delete(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/relations/${linkId}/`),
 };
 
+/** GANTT-001 §4.2 / GANTT-002 §4.2.1：甘特域端点（视窗行取数 / 连线批量 / 未排期 /
+ *  延期概览）。拖拽写通道零新端点（Issue PATCH 既有，GANTT-002 BR-01）。 */
+export type GanttGranularity = "day" | "week" | "month";
+
+/** §4.2.1 行契约 18 字段（progress/progress_source 服务端单源，BR-04 前端禁自算）。 */
+export interface GanttRow {
+  id: string;
+  issue_key: string;
+  name: string;
+  depth: number;
+  has_children: boolean;
+  collapsed: boolean;
+  start_date: string | null;
+  target_date: string | null;
+  progress: number;
+  progress_source: "subtasks" | "state";
+  state_group: string;
+  state_color: string | null;
+  is_overdue: boolean;
+  assignee_ids: string[];
+  is_aggregated: boolean;
+  relation_count: number;
+  estimate_minutes: number | null;
+  spent_minutes: number;
+}
+
+/** §4.2.2 连线边（violation 仅 blocks 边派生，§3.3 红点提示）。 */
+export interface GanttEdge {
+  from_issue_id: string;
+  to_issue_id: string;
+  relation_type: "blocks" | "relates_to" | "duplicates";
+  from: { issue_key: string; target_date: string | null };
+  to: { issue_key: string; start_date: string | null; violation: boolean };
+}
+
+/** §4.2.3 未排期行（fields 裁剪：编号/标题/状态/执行人）。 */
+export interface GanttUnscheduledRow {
+  id: string;
+  issue_key: string;
+  name: string;
+  state_group: string;
+  state_color: string | null;
+  assignee_ids: string[];
+}
+
+/** GANTT-002 §4.2.1 延期概览（统计三数字 = 完整逾期集；items 前 20 截断）。 */
+export interface GanttOverdueSummary {
+  overdue_count: number;
+  max_overdue_days: number;
+  by_assignee: Array<{ assignee_id: string; display_name: string; count: number }>;
+  items: Array<{ id: string; issue_key: string; name: string; target_date: string; overdue_days: number; assignee_ids: string[] }>;
+  items_truncated: boolean;
+}
+
+export interface GanttListParams {
+  view_id?: string;
+  filters?: string;
+}
+
+export const GanttAPI = {
+  /** 视窗行取数（BR-02 相交判定 + 游标行窗口；per_page 默认 60 上限 100）。 */
+  rows: (slug: string, projectId: string, params: GanttListParams & {
+    granularity: GanttGranularity;
+    viewport_start: string;
+    viewport_end: string;
+    per_page?: number;
+    cursor?: string;
+    tz?: string;
+  }) =>
+    api.get<{ rows: GanttRow[]; unscheduled_count: number }>(
+      `workspaces/${slug}/projects/${projectId}/gantt/`, { params }),
+  /** 连线批量（一次 ≤ 60 issue，超限由前端分批，§2.5）。 */
+  relationsBulk: (slug: string, projectId: string, issueIds: string[]) =>
+    api.post<{ edges: GanttEdge[] }>(
+      `workspaces/${slug}/projects/${projectId}/gantt/relations/bulk/`, { issue_ids: issueIds }),
+  /** 未排期任务列表（meta.total_count 供折叠区徽标）。 */
+  unscheduled: (slug: string, projectId: string, params: GanttListParams & { per_page?: number; cursor?: string } = {}) =>
+    api.get<GanttUnscheduledRow[]>(`workspaces/${slug}/projects/${projectId}/gantt/unscheduled/`, { params }),
+  /** 延期概览聚合（端点级限流 10/min·user，超限 429 RATE_LIMIT_EXCEEDED）。 */
+  overdueSummary: (slug: string, projectId: string, params: GanttListParams = {}) =>
+    api.get<GanttOverdueSummary>(`workspaces/${slug}/projects/${projectId}/gantt/overdue-summary/`, { params }),
+};
+
 /** TASK-006 §4.2.1 工时记录行（POST 201 响应另含 issue_spent_minutes 实时聚合回传）。 */
 export interface WorkLogRow {
   id: string;

@@ -144,21 +144,15 @@ export function ViewSwitchBar({ vp }: { vp: ViewPage }) {
 
   return (
     <div className="flex items-center gap-2.5 px-5 py-2.5 border-b border-neutral-200 bg-white flex-wrap shrink-0" data-sb-scope="viewswitch" role="tablist" aria-label="视图">
-      {/* 布局四段器（R1：最左；gantt 禁用+tooltip） */}
+      {/* 布局四段器（R1：最左；gantt 自 Sprint-4 起启用——GANTT-001 §3.1 视图切换条） */}
       <div className="inline-flex bg-neutral-100 rounded-lg p-0.5 gap-0.5" role="group" aria-label="布局" data-sb-scope="layout-seg">
         {LAYOUT_SEGS.map((s) => {
           const active = vp.layout === s.key;
-          const disabled = s.key === "gantt";
-          return disabled ? (
-            <button key={s.key} type="button" disabled title="甘特视图即将上线（GANTT-001）" aria-pressed={active}
-              className="h-7 px-2.5 rounded-md text-[12.5px] text-neutral-300 cursor-not-allowed inline-flex items-center gap-1.5" data-sb-scope="layout-seg-gantt">
-              ⏱ {s.label}
-            </button>
-          ) : (
+          return (
             <button key={s.key} type="button" aria-pressed={active} data-sb-scope={`layout-seg-${s.key}`}
               onClick={() => { if (active) return; guardLeave(() => void vp.switchLayout(s.key, navigate)); }}
               className={`h-7 px-2.5 rounded-md text-[12.5px] inline-flex items-center gap-1.5 ${active ? "bg-white text-neutral-900 font-medium shadow-sm" : "text-neutral-400 hover:text-neutral-600"}`}>
-              {s.key === "list" ? "☰" : s.key === "kanban" ? "▦" : "▤"} {s.label}
+              {s.key === "list" ? "☰" : s.key === "kanban" ? "▦" : s.key === "gantt" ? "📅" : "▤"} {s.label}
             </button>
           );
         })}

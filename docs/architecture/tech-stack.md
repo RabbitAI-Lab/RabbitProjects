@@ -74,6 +74,7 @@
 | react-i18next | `15.x` | i18next 的 React 绑定 | `useTranslation` / `Trans` 组件，支持组件内插值 |
 | swr + mobx 协同层 | 自研（`packages/shared-state`） | 数据流编排 | 见 §2.1 |
 | date-fns | `4.1.x` | 日期计算与格式化 | 甘特图/迭代/工时大量日期运算；Tree-shakable，不可变 API，体积远小于 moment |
+| html-to-image | `1.11.x` | 甘特视窗 PNG 导出（DOM/SVG 混合渲染截图） | DOM 截图而非 canvas 重绘——甘特为 DOM/SVG 混合渲染，重绘成本远高于截图；2x `pixelRatio` 保证打印可读；MIT + 自带 TS 类型，gzip ≈ 10KB；自研替代需手写 SVG 序列化 + 字体/图片内联，超出 §9.1 第 1 条「少量自研（<100 行）可替代」豁免线（GANTT-002 §4.3.3 登记声明） |
 | clsx + tailwind-merge | `2.1.x` / `3.x` | className 合并 | 组件库变体样式合并的事实标准（`cn()` 工具函数） |
 | Storybook | `8.x` | `@rp/ui` 组件文档与视觉回归 | 组件库独立开发与评审载体，Vite builder 与主应用共享构建配置 |
 | htmldiff-js | P4 引入，版本随立项定稿 | Wiki 页面版本对比 diff 渲染（新增绿底 / 删除红划线） | 双版本 HTML 拉取后纯前端渲染；FILE-005（s9，2026-09-06 回改登记） |

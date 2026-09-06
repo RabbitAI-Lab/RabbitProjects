@@ -1,3 +1,82 @@
 @import "tailwindcss";
 @import "@rp/tailwind-config/theme.css";
 @import "@rp/tailwind-config/preset.css";
+
+/* ═══════════ 甘特视图（GANTT-001 §3.1~§3.3 / GANTT-002 §3.1~§3.2；类名与
+   docs/design/sprint-4-hifi-prototype.html 冻结稿逐一对应——视觉基准唯一） ═══════════ */
+.rp-g-left-head{height:40px;border-bottom:1px solid #e5e5e5;display:flex;align-items:center;padding:0 12px;font-size:13px;font-weight:500;color:#525252;flex-shrink:0}
+.rp-grow{height:36px;display:flex;align-items:center;gap:6px;padding-right:8px;font-size:13px;cursor:default;position:absolute;left:0;right:0}
+.rp-grow:hover{background:#f5f5f5}
+.rp-grow.selected{background:var(--color-brand-50)}
+.rp-grow .caret{width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;color:#a3a3a3;flex-shrink:0;border-radius:4px}
+.rp-grow .caret:hover{background:#e5e5e5}
+.rp-grow .ttl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#525252}
+.rp-g-resizer{width:5px;cursor:col-resize;background:transparent;position:absolute;top:0;right:-3px;height:100%;z-index:5}
+.rp-g-resizer:hover,.rp-g-resizer.on{background:var(--color-brand-100)}
+.rp-g-col{height:100%;display:flex;align-items:center;justify-content:center;font-size:12px;color:#a3a3a3;border-right:1px solid #e5e5e5;white-space:nowrap;overflow:hidden;flex:0 0 auto;position:absolute;top:0}
+.rp-g-col.wknd{background:rgba(0,0,0,.06)}
+.rp-g-col.hol{background:rgba(0,0,0,.1)}
+.rp-g-col .sub{font-size:10px;color:#d4d4d8;margin-left:4px}
+.rp-g-cell-wknd{position:absolute;top:0;height:100%;background:rgba(0,0,0,.06)}
+.rp-g-cell-hol{position:absolute;top:0;height:100%;background:rgba(0,0,0,.1)}
+.rp-gbar{position:absolute;height:20px;top:8px;border-radius:4px;z-index:10;display:flex;align-items:center;padding:0 6px;font-size:11px;color:#525252;overflow:hidden;white-space:nowrap;cursor:grab;user-select:none}
+.rp-gbar .txt{overflow:hidden;text-overflow:ellipsis;pointer-events:none;position:relative;z-index:2}
+.rp-gbar.st-unstarted{background:rgba(107,114,128,.1);border:1px solid #d4d4d8}
+.rp-gbar.st-started{background:rgba(59,130,246,.15);border:1px solid #3b82f6}
+.rp-gbar.st-completed{background:rgba(16,185,129,.15);border:1px solid transparent}
+.rp-gbar.st-cancelled{background:rgba(107,114,128,.08);border:1px dashed #6b7280}
+.rp-gbar.st-completed .txt{text-decoration:line-through;color:#a3a3a3}
+.rp-gbar .fill{position:absolute;left:0;top:0;bottom:0;border-radius:4px 0 0 4px;pointer-events:none}
+.rp-gbar.st-started .fill{background:#3b82f6;opacity:.85}
+.rp-gbar.st-completed .fill{background:#10b981;width:100%!important}
+.rp-gbar.st-cancelled .fill{display:none}
+.rp-gbar.overdue{background:rgba(239,68,68,.15);border:1.5px solid #ef4444}
+.rp-gbar.overdue .fill{background:#3b82f6}
+.rp-gbar .warn-ico{position:absolute;right:2px;top:50%;transform:translateY(-50%);color:#ef4444;font-size:11px;pointer-events:none;z-index:2}
+.rp-gbar.agg{background:linear-gradient(90deg,rgba(63,118,255,.12),rgba(63,118,255,.22));border:1px dashed var(--color-brand-500)}
+.rp-gbar.agg .fill{background:repeating-linear-gradient(45deg,rgba(63,118,255,.35) 0 4px,rgba(63,118,255,.18) 4px 8px)}
+.rp-gbar.open-start{border-top-left-radius:0;border-bottom-left-radius:0;mask-image:linear-gradient(90deg,transparent,#000 14px);-webkit-mask-image:linear-gradient(90deg,transparent,#000 14px)}
+.rp-gbar.open-end{border-top-right-radius:0;border-bottom-right-radius:0;mask-image:linear-gradient(270deg,transparent,#000 14px);-webkit-mask-image:linear-gradient(270deg,transparent,#000 14px)}
+.rp-gbar.cross-today{box-shadow:-2px 0 0 0 #f59e0b}
+.rp-gbar.dragging{opacity:.6;z-index:30}
+.rp-gbar.ghosted{opacity:.35;border:1px dashed #a3a3a3;background:transparent!important}
+.rp-gbar.clamped{animation:rp-g-jitter .1s 1}
+.rp-gbar.easeback{transition:left .3s cubic-bezier(.2,.8,.3,1),width .3s cubic-bezier(.2,.8,.3,1)}
+.rp-gbar .rz{position:absolute;top:0;bottom:0;width:5px;cursor:ew-resize;opacity:0;z-index:3}
+.rp-gbar .rz.l{left:0}.rp-gbar .rz.r{right:0}
+.rp-gbar:hover .rz{opacity:1;background:rgba(63,118,255,.5);border-radius:4px 0 0 4px}
+.rp-gbar .rz.r:hover{border-radius:0 4px 4px 0}
+.rp-gbar.nodrag{cursor:default}
+.rp-glines{position:absolute;top:0;left:0;z-index:5;pointer-events:none}
+.rp-glines path{pointer-events:stroke;fill:none}
+.rp-glines .rel-blocks{stroke:var(--color-brand-500);stroke-width:1.5}
+.rp-glines .rel-relates_to{stroke:#9ca3af;stroke-width:1.2;stroke-dasharray:5 4}
+.rp-glines .rel-duplicates{stroke:#9ca3af;stroke-width:1.2;stroke-dasharray:2 3 6 3}
+.rp-glines .hl{stroke-width:2.5;filter:drop-shadow(0 0 2px rgba(63,118,255,.6))}
+.rp-glines .conflict-dot{fill:#ef4444}
+.rp-glines .conflict-dot.pulse{animation:rp-g-pulse 1s infinite}
+.rp-gtip{position:fixed;z-index:80;background:#262626;color:#fff;font-size:12px;border-radius:8px;padding:10px 12px;width:260px;box-shadow:0 8px 24px rgba(0,0,0,.18);pointer-events:none;line-height:1.7}
+.rp-gtip .k{color:#a3a3a3}
+.rp-drag-badge{position:fixed;z-index:200;background:#262626;color:#fff;font-size:12px;padding:3px 10px;border-radius:99px;pointer-events:none;box-shadow:0 4px 12px rgba(0,0,0,.15);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.rp-drag-badge.bad{background:#ef4444}
+.rp-g-unsched{border-top:1px solid #e5e5e5;background:#fafafa;flex-shrink:0}
+.rp-g-unsched-head{height:36px;display:flex;align-items:center;gap:8px;padding:0 12px;font-size:13px;color:#525252;cursor:pointer;width:100%}
+.rp-g-unsched-head:hover{background:#f0f0f0}
+.rp-g-unsched-list{max-height:144px;overflow:auto;padding:0 12px 8px}
+.rp-g-unsched-row{height:32px;display:flex;align-items:center;gap:6px;font-size:12.5px;color:#525252;cursor:grab;border-radius:6px;padding:0 6px}
+.rp-g-unsched-row:hover{background:#f0f0f0}
+.rp-today-line{position:absolute;top:0;bottom:0;width:2px;background:#ef4444;z-index:8}
+.rp-today-tag{position:absolute;top:2px;left:-14px;background:#ef4444;color:#fff;font-size:10px;padding:0 5px;border-radius:3px;z-index:9;white-space:nowrap}
+.rp-g-body{position:relative;overflow-y:auto;overflow-x:hidden;flex:1;min-height:0;cursor:grab}
+.rp-g-body.panning{cursor:grabbing}
+.rp-g-content{position:relative;will-change:transform}
+.rp-g-anim{transition:transform .15s ease}
+.rp-g-drop-hint{position:absolute;top:0;bottom:0;z-index:7;border-left:2px solid var(--color-brand-500);background:rgba(63,118,255,.08);pointer-events:none}
+@keyframes rp-g-jitter{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+@keyframes rp-g-pulse{0%,100%{r:4;opacity:1}50%{r:6;opacity:.5}}
+@keyframes rp-g-flash{0%{background:rgba(63,118,255,.25)}100%{background:transparent}}
+.rp-gbar.rp-remote-in{animation:rp-g-flash .6s ease-out}
+
+/* 甘特域通用小件（原型 133/390 行同源；sidebar 的 badge-id 此前无定义——顺手补齐） */
+.badge-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;padding:1px 6px;background:#f5f5f5;border-radius:4px;color:#525252;white-space:nowrap}
+.kbd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;border:1px solid #d4d4d8;border-bottom-width:2px;border-radius:4px;padding:0 5px;background:#f5f5f5;color:#525252}

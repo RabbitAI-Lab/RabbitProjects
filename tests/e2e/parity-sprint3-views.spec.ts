@@ -99,17 +99,21 @@ test.describe("Sprint-3 Phase 3-A 视图与筛选（BOARD-003 / TASK-011 · C.64
 
   /* ═══════════ C.64 视图切换器工具条 parity ═══════════ */
 
-  test("S3V-1 C.64 工具条：四段器（gantt 禁用）+ 全部/五内置 Tab（🔒）+ ⚙显示 + 分组切换器", async ({ page }) => {
+  test("S3V-1 C.64 工具条：四段器（gantt 自 Sprint-4 启用）+ 全部/五内置 Tab（🔒）+ ⚙显示 + 分组切换器", async ({ page }) => {
     test.setTimeout(90_000);
     await loginDemo(page);
     await createProject(page);
     await waitTabs(page);
-    // C.64 布局四段器：list/kanban/table/gantt，gantt 禁用 + tooltip（BOARD-003 §3.1）
+    // C.64 布局四段器：list/kanban/table/gantt——gantt 占位禁用态已被 Sprint-4 甘特页
+    // 替换（GANTT-001 §3.1 / C.98 侧栏「甘特」入口），此处改为断言可点击且落甘特路由
     await expect(page.locator('[data-sb-scope="layout-seg-list"]')).toBeVisible();
     await expect(page.locator('[data-sb-scope="layout-seg-kanban"]')).toBeVisible();
     await expect(page.locator('[data-sb-scope="layout-seg-table"]')).toBeVisible();
-    await expect(page.locator('[data-sb-scope="layout-seg-gantt"]')).toBeDisabled();
-    await expect(page.locator('[data-sb-scope="layout-seg-gantt"]')).toHaveAttribute("title", /甘特视图即将上线/);
+    await expect(page.locator('[data-sb-scope="layout-seg-gantt"]')).toBeEnabled();
+    await page.locator('[data-sb-scope="layout-seg-gantt"]').click();
+    await page.waitForURL(/\/gantt/, { timeout: 10_000 });
+    await expect(page.locator('[data-sb-scope="layout-seg-gantt"]')).toHaveAttribute("aria-pressed", "true");
+    await page.goBack();
     // C.64 「全部」固定首项（前端入口不入库）+ 内置五视图 🔒（§3.1/§3.6 / R4）
     await expect(page.locator('[data-sb-scope="view-tab"][data-view-id="__all__"]')).toContainText("全部");
     for (const name of ["需求池", "缺陷列表", "我的待办", "本周到期", "测试执行"]) {

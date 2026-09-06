@@ -36,6 +36,9 @@ export const CODES = {
   csrf:          "AUTH_CSRF_FAILED",
   projectExists: "RESOURCE_ALREADY_EXISTS",
   limitExceeded: "RESOURCE_LIMIT_EXCEEDED", // TASK-004 深度越限（details[].code=DEPTH）
+  // Sprint-4（GANTT-002 §2.5）：VIEWER 直连改期 PATCH 403——与 _contract.py
+  // CODES.roleInsufficient 对齐（此前 TS 镜像漏登，本次同步补齐）
+  roleInsufficient: "PERM_ROLE_INSUFFICIENT",
   // Sprint-2（TASK-004~010；均为既有注册码，顶层码零新增）
   stateInvalid:      "RESOURCE_STATE_INVALID",
   circular:          "RESOURCE_CIRCULAR_DEPENDENCY",

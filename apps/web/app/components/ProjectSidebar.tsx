@@ -35,6 +35,11 @@ export function ProjectSidebar({ projectName, identifier }: { projectName: strin
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18M15 3v18"/></svg>
         看板
       </NavLink>
+      {/* Sprint-4（GANTT-001 §3.1 / C.98）：甘特视图入口 */}
+      <NavLink to={`${base}/gantt`} className={({ isActive }) => item(isActive)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h9M4 12h13M4 18h7"/><circle cx="18" cy="6" r="1.6" fill="currentColor" stroke="none"/><circle cx="11" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="16" cy="18" r="1.6" fill="currentColor" stroke="none"/></svg>
+        甘特
+      </NavLink>
       {/* Sprint-3 Phase 3-C（COLLAB-003 §3.1 / 原型 O5）：动态流页入口（pulse 图标） */}
       <NavLink to={`${base}/activity`} className={({ isActive }) => item(isActive)}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>

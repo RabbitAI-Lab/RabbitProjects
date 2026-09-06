@@ -289,9 +289,15 @@ importers:
       '@rp/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@tanstack/react-virtual':
+        specifier: 3.13.26
+        version: 3.13.26(react-dom@19.1.9(react@19.1.9))(react@19.1.9)
       axios:
         specifier: 1.8.x
         version: 1.8.4
+      html-to-image:
+        specifier: 1.11.13
+        version: 1.11.13
       isbot:
         specifier: ^5
         version: 5.2.2
@@ -1773,11 +1779,20 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7
 
+  '@tanstack/react-virtual@3.13.26':
+    resolution: {integrity: sha512-DosdgjOxCLahkn0o+ilmZYwEjo1glfMGuRT/j3PQ18yr5XqA8N/BCaL9IJ3B5TRl+nnzyK2IOFgAILwzN3a9xQ==}
+    peerDependencies:
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+      react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
   '@tanstack/react-virtual@3.14.10':
     resolution: {integrity: sha512-SRyoUbdFMRHuYXMijV5H4ZarQWpXkj3iANq8OFre+pybeVap8ZJjZ3Nz9bVjx4d8PfobVUQUdKyyyHYk3E+djw==}
     peerDependencies:
       react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
       react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
+  '@tanstack/virtual-core@3.16.0':
+    resolution: {integrity: sha512-Er2N7q3WOiH6y2JLxsxNX+u2/sLqSsL0bxFgDjuiPiA7vKhZRm+IzcS17vRee3GNXr64UsesA5CAp9yTiIYw9A==}
 
   '@tanstack/virtual-core@3.17.8':
     resolution: {integrity: sha512-BfEvehNpOT75r5Ksc5xW6NZuXujTfb7nlSEyVu4XHG3gdxNg1KqXruWbDewXOUaUYIo4oRbSfkjIajz4MAT8tA==}
@@ -2599,6 +2614,9 @@ packages:
   hasown@2.0.4:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
+
+  html-to-image@1.11.13:
+    resolution: {integrity: sha512-cuOPoI7WApyhBElTTb9oqsawRvZ0rHhaHwghRLlTuffoD1B2aDemlCruLeZrUIIdvG7gs9xeELEPm6PhuASqrg==}
 
   http-errors@2.0.0:
     resolution: {integrity: sha512-FtwrG/euBzaEjYeRqOgly7G0qviiXoJWnvEH2Z1plBdXgbyjv34pHTSb9zoeHMyDy33+DWy5Wt9Wo+TURtOYSQ==}
@@ -4840,11 +4858,19 @@ snapshots:
       tailwindcss: 4.1.18
       vite: 6.3.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(yaml@2.9.0)
 
+  '@tanstack/react-virtual@3.13.26(react-dom@19.1.9(react@19.1.9))(react@19.1.9)':
+    dependencies:
+      '@tanstack/virtual-core': 3.16.0
+      react: 19.1.9
+      react-dom: 19.1.9(react@19.1.9)
+
   '@tanstack/react-virtual@3.14.10(react-dom@19.1.9(react@19.1.9))(react@19.1.9)':
     dependencies:
       '@tanstack/virtual-core': 3.17.8
       react: 19.1.9
       react-dom: 19.1.9(react@19.1.9)
+
+  '@tanstack/virtual-core@3.16.0': {}
 
   '@tanstack/virtual-core@3.17.8': {}
 
@@ -5734,6 +5760,8 @@ snapshots:
   hasown@2.0.4:
     dependencies:
       function-bind: 1.1.2
+
+  html-to-image@1.11.13: {}
 
   http-errors@2.0.0:
     dependencies:

@@ -48,7 +48,7 @@ export interface LabelRow {
 /** useViewPage：BOARD-003 §4.4 ViewStore + TASK-011 §4.4.1 FilterTreeStore 的 web 编排层。
  *  职责：视图列表/偏好/Schema 拉取与喂 store；?view_id 与 ?filters= URL 双向绑定
  *  （R2 裁决）；dirty 黄条判定；保存/另存/设默认/删除动作。 */
-export function useViewPage(opts: { workspaceSlug?: string | undefined; projectId?: string | undefined; layout: "list" | "kanban" | "table" }) {
+export function useViewPage(opts: { workspaceSlug?: string | undefined; projectId?: string | undefined; layout: "list" | "kanban" | "table" | "gantt" }) {
   const { workspaceSlug, projectId, layout } = opts;
   const stores = useStores();
   const viewStore = stores.views;
@@ -366,7 +366,7 @@ export function useViewPage(opts: { workspaceSlug?: string | undefined; projectI
 
   /** 切布局：路由段变化 + PATCH 视图 layout 单字段（BR-04/BR-13；「全部」裸态仅本地态）。 */
   async function switchLayout(next: ViewLayout, navigate: (path: string) => void) {
-    const seg = next === "kanban" ? "board" : next === "table" ? "table" : "issues";
+    const seg = next === "kanban" ? "board" : next === "table" ? "table" : next === "gantt" ? "gantt" : "issues";
     const path = `/${workspaceSlug}/projects/${projectId}/${seg}${window.location.search}`;
     if (currentView) {
       try {

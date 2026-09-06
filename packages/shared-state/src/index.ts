@@ -524,3 +524,7 @@ export function createRootStore(): RootStore {
 }
 
 export type { Issue, ProjectSummary, UUID };
+
+/* ═══════════════ Sprint-3 Phase 3-C（COLLAB-004 §4.4 实时层）═══════════════ */
+
+export * from "./realtime";

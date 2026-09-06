@@ -6,6 +6,7 @@ import type { ApiError } from "../../services/axios";
 import { toast } from "../Toast";
 import { AvatarStack, BlockedCompleteDialog, blockersFromError, type BlockerItem } from "../issue-dialogs";
 import { usePeekHover, type PeekIssue } from "../PeekPopover";
+import { useBoardLiveSync } from "../../realtime/useBoardLiveSync";
 import type { ViewPage } from "./useViewPage";
 import { PRIORITY_COLUMNS } from "./view-dsl";
 
@@ -20,6 +21,11 @@ const BOARD_CSS = `
 article.bcard.bounce-back{animation:boardbounce .3s cubic-bezier(.2,.9,.3,1.1)}
 @keyframes boardshake{0%,100%{transform:translateX(0)}20%{transform:translateX(-4px)}40%{transform:translateX(4px)}60%{transform:translateX(-3px)}80%{transform:translateX(3px)}}
 section.bcol.shaking{animation:boardshake .4s ease}
+/* COLLAB-004 §3.2：远端卡片 300ms 淡入 + 列计数 bump */
+@keyframes rpremotein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+article.bcard.rp-remote-in{animation:rpremotein .3s ease}
+@keyframes rpcountbump{0%{transform:scale(1)}40%{transform:scale(1.25)}100%{transform:scale(1)}}
+.rp-count-bump{animation:rpcountbump .6s ease}
 `;
 
 const DIM_NAMES: Record<string, string> = {
@@ -92,6 +98,17 @@ export function GroupedBoard({ vp, workspaceSlug, projectId, canEdit, blockedIds
   const [blockedDlg, setBlockedDlg] = useState<{ issueName: string; blockers: BlockerItem[]; stateId: string; issueId: string } | null>(null);
   const loadTick = useRef(0);
   const { bind } = usePeekHover();
+
+  // ── Sprint-3 Phase 3-C（COLLAB-004 §3.2/§4.4.2）：远端事件定向更新 + 拖拽保护（最小触点）──
+  const { flush: flushLiveQueue } = useBoardLiveSync({
+    groupBy,
+    cols,
+    colGroupOf: (key) => vp.states.find((s) => s.id === key)?.group,
+    fetchGrouped: () => vp.fetchGrouped(groupBy),
+    setCols: setCols,
+    dragging: dragId != null,
+    memberName: (uid) => (uid ? vp.members.find((m) => m.id === uid)?.name ?? "成员" : "成员"),
+  });
 
   const showEmpty = effDisplay.show_empty_groups !== false;
   const cardFields = { labels: true, sub_issues: true, attachments: true, estimate: true, priority: false, timer: false, target_date: true, ...(effDisplay.card_fields ?? {}) };
@@ -395,7 +412,7 @@ export function GroupedBoard({ vp, workspaceSlug, projectId, canEdit, blockedIds
                       {...bind(it as unknown as PeekIssue)}
                       onMouseEnter={(e) => { if (blocked) onLoadBlockedTip(it.id); bind(it as unknown as PeekIssue).onMouseEnter?.(e); }}
                       onDragStart={(e) => { setDragId(it.id); e.dataTransfer.setData("text/plain", it.id); e.dataTransfer.effectAllowed = "move"; }}
-                      onDragEnd={() => setDragId(null)}>
+                      onDragEnd={() => { setDragId(null); flushLiveQueue(); }}>
                       <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded" style={{ background: state?.color ?? "#9ca3af" }} aria-hidden="true" />
                       {bulk && (
                         <input type="checkbox" data-sb-scope="board-card-cb" aria-label={`选择 ${it.name}`} checked={selected}

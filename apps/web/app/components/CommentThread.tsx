@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { liveEventBus } from "@rp/shared-state";
+import type { CommentCreatedPayload, LiveEnvelope } from "@rp/types";
 import {
   AttachmentAPI,
   CommentAPI,
@@ -110,6 +112,31 @@ export function CommentThreadTab({ slug, projectId, issueId, canComment, members
       .then((r) => { setComments(unwrap<CommentRow[]>(r) ?? []); setLoaded(true); })
       .catch(() => { /* 鉴权跳转由拦截器负责 */ });
   }, [slug, projectId, issueId]);
+
+  // ── Sprint-3 Phase 3-C（COLLAB-004 §3.3）：comment.created 实时化 ──
+  // 非本人评论 → 静默拉取补齐正文（「推送负责知道、拉取负责最终一致」）+ 底部
+  // 「N 条新回复 ↓」浮条（aria-live=polite，不抢滚动位置——点击才滚到线程底部）。
+  const [pendingReplies, setPendingReplies] = useState(0);
+  const threadBottomRef = useRef<HTMLDivElement | null>(null);
+  /** 事件去重表（comment_id）：多房间订阅（issue+project）会收到逐房间帧（live §4.3.1
+   *  单房间单播），同一条评论可能到达两次——按载荷实体 ID 幂等。 */
+  const seenLiveCommentIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const off = liveEventBus.on("comment.created", (env: LiveEnvelope) => {
+      const p = env.payload as unknown as CommentCreatedPayload;
+      if (p?.issue_id !== issueId) return;
+      if (p.actor_id === myUserId) return; // 自己的乐观更新已就位（BR-08 语义）
+      if (p.comment_id) {
+        if (seenLiveCommentIds.current.has(p.comment_id)) return;
+        seenLiveCommentIds.current.add(p.comment_id);
+        if (seenLiveCommentIds.current.size > 500) seenLiveCommentIds.current = new Set();
+      }
+      setPendingReplies((n) => n + 1);
+      void refresh();
+    });
+    return off;
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [issueId, myUserId, refresh]);
 
   useEffect(() => {
     // 换 issue 时复位本地态（setTimeout(0) 避开 set-state-in-effect 级联渲染——仓库既有范式）
@@ -371,6 +398,16 @@ export function CommentThreadTab({ slug, projectId, issueId, canComment, members
       {/* C.84 评论计数头：💬 评论 N · 回复 M */}
       <div className="flex items-center gap-2 text-[13px] font-semibold text-neutral-600 py-3" data-sb-scope="cmt-head">
         💬 评论 {topN} <span className="text-[12px] font-normal text-neutral-400">· 回复 {repN}</span>
+        {pendingReplies > 0 && (
+          <button type="button" aria-live="polite" data-sb-scope="cmt-new-replies"
+            onClick={() => {
+              setPendingReplies(0);
+              threadBottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+            }}
+            className="ml-auto h-6 px-2.5 rounded-full bg-brand-500 text-white text-[11.5px] font-normal inline-flex items-center gap-1">
+            {pendingReplies} 条新回复 ↓
+          </button>
+        )}
       </div>
 
       {/* 线程列表（C.84） */}
@@ -510,6 +547,8 @@ export function CommentThreadTab({ slug, projectId, issueId, canComment, members
           ))}
         </ul>
       )}
+      {/* COLLAB-004 §3.3：「N 条新回复 ↓」浮条滚动锚点（线程底部哨兵） */}
+      <div ref={threadBottomRef} aria-hidden="true" />
 
       {/* ── Composer（C.88：回复态顶部条 + 工具条 + ⌘Enter + 计数）── */}
       <div className="mt-3 border-t border-neutral-200 pt-3 relative" data-sb-scope="cmt-composer-wrap">

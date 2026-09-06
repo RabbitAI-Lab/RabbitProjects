@@ -2,7 +2,8 @@ import { makeAutoObservable } from "mobx";
 // Sprint-3 Phase 3-A（BOARD-003 §4.4 / TASK-011 §4.4.1）：视图与筛选树状态来自
 // @rp/shared-state（本包不发起 HTTP，数据由本层 services 注入——见 useViewPage）。
 // Sprint-3 Phase 3-B（BOARD-004 §4.4）：批量选中池 SelectionStore 同源。
-import { FilterTreeStore, SelectionStore, ViewStore } from "@rp/shared-state";
+// Sprint-3 Phase 3-C（COLLAB-004 §4.4）：实时连接状态机 + presence 表同源。
+import { FilterTreeStore, PresenceStore, RealtimeStore, SelectionStore, ViewStore } from "@rp/shared-state";
 import type { Issue, WorkspaceSummary } from "@rp/types";
 import { AuthAPI, type MeEnvelope } from "../services/api";
 import { clearSessionProbe, markSessionProbe } from "../services/session-probe";
@@ -122,6 +123,9 @@ export class RootStore {
   filterTree = new FilterTreeStore();
   selection = new SelectionStore();
   permission = new PermissionStore(this);
+  /** COLLAB-004 §4.4：连接状态机（指示三态/降级横幅）+ presence 表（头像列）。 */
+  realtime = new RealtimeStore();
+  presence = new PresenceStore();
 
   constructor() {
     // AUTH-005 §2.6：登录 → hydrate；登出 → reset（避免 PermissionStore 反向 import SessionStore 造成循环）

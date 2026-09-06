@@ -710,3 +710,136 @@ export const BulkAPI = {
   preview: (slug: string, projectId: string, payload: { issue_ids: string[]; action: "delete" | "archive" }) =>
     api.post<BulkPreviewResult>(`workspaces/${slug}/projects/${projectId}/issues/bulk/preview/`, payload),
 };
+
+/* ═══════════════ Sprint-3 Phase 3-C（COLLAB-003 §4.2 / COLLAB-004 §4.2）═══════════════ */
+
+/** COLLAB-003 §4.2.1 动态流行结构：kind 三态（activity / comment / batch）。 */
+export interface StreamActorRef {
+  id: string | null;
+  display_name: string;
+  avatar_url?: string | null;
+}
+export interface StreamIssueRef {
+  id: string;
+  issue_key: string;
+  name: string;
+  is_deleted: boolean;
+  is_archived: boolean;
+}
+export interface ActivityStreamRow {
+  kind: "activity";
+  id: string;
+  epoch?: number | null;
+  actor: StreamActorRef | null;
+  verb: string;
+  field: string | null;
+  /** activity_builder 写入的可读摘要（无则前端按 verb/field 兜底组句）。 */
+  text: string | null;
+  is_system?: boolean;
+  issue: StreamIssueRef | null;
+  created_at: string;
+}
+export interface CommentStreamRow {
+  kind: "comment";
+  id: string;
+  actor: StreamActorRef | null;
+  text: string | null;
+  root_id: string | null;
+  reply_to_actor: { id: string | null; display_name: string } | null;
+  issue: StreamIssueRef | null;
+  created_at: string;
+}
+export interface BatchStreamRow {
+  kind: "batch";
+  epoch: number;
+  actor: StreamActorRef | null;
+  summary: string;
+  /** 全部相同直出；不同 =「多种变更」（§3.2 变更摘要）。 */
+  change_brief: string | null;
+  batch_count: number;
+  created_at: string;
+}
+export type StreamRow = ActivityStreamRow | CommentStreamRow | BatchStreamRow;
+
+/** §4.2.1 meta（组感知分页 + BR-12 stream_cursor 仅首页携带）。 */
+export interface StreamMeta {
+  next_cursor: string | null;
+  next_page_results: boolean;
+  count: number;
+  total_count: number;
+  total_pages: number;
+  page: number;
+  per_page: number;
+  stream_cursor?: string;
+  total_count_estimated?: boolean;
+}
+
+/** §2.3 event 语义组（与后端 EVENT_CHOICES 白名单同源；未知值 400 BR-08）。 */
+export const STREAM_EVENT_GROUPS: Array<{ key: string; label: string }> = [
+  { key: "created", label: "创建" },
+  { key: "state", label: "状态" },
+  { key: "assignees", label: "指派" },
+  { key: "priority", label: "优先级" },
+  { key: "dates", label: "日期" },
+  { key: "estimate", label: "工时" },
+  { key: "custom_fields", label: "字段" },
+  { key: "relations", label: "关联" },
+  { key: "parent", label: "父子" },
+  { key: "worklog", label: "工时" },
+  { key: "archived", label: "归档" },
+  { key: "deleted", label: "删除" },
+  { key: "comment", label: "评论" },
+];
+
+/** stream_cursor 解析（§4.2.1 要点 2）：自右向左取最后一段为 UUID、其余整体为时间戳。 */
+export function parseStreamCursor(cursor: string): { createdAt: string; id: string } | null {
+  const idx = cursor.lastIndexOf(":");
+  if (idx <= 0) return null;
+  return { createdAt: cursor.slice(0, idx), id: cursor.slice(idx + 1) };
+}
+
+export const ActivityStreamAPI = {
+  /** #1 GET …/projects/{pid}/activities/ —— 动态流（合流 + 折叠 + 组感知游标）。 */
+  stream: (slug: string, projectId: string, params: {
+    actor_id?: string; event?: string; cursor?: string; per_page?: number;
+  } = {}) =>
+    api.get<StreamRow[]>(`workspaces/${slug}/projects/${projectId}/activities/`, { params }),
+  /** #2 GET …/activities/?epoch=<f> —— 批量明细（轻量行；meta 翻页豁免四字段）。 */
+  batchDetail: (slug: string, projectId: string, epoch: number, params: { per_page?: number } = {}) =>
+    api.get<BatchDetailRow[]>(`workspaces/${slug}/projects/${projectId}/activities/`, {
+      params: { epoch: String(epoch), ...params },
+    }),
+};
+
+/** §4.2.2 批量明细轻量行。 */
+export interface BatchDetailRow {
+  issue_id: string;
+  issue_key: string;
+  name: string;
+  field: string | null;
+  old_value: string | null;
+  new_value: string | null;
+}
+export interface BatchDetailMeta {
+  count: number;
+  total_count: number;
+  truncated: boolean;
+  limit: number;
+}
+
+/** COLLAB-004 §4.2 换票 / 续签（§4.2.1 信封 data：token/rooms/expires_at/renew_after）。 */
+export interface RealtimeTokenResult {
+  token: string;
+  rooms: string[];
+  expires_at: string;
+  renew_after: number;
+}
+
+export const RealtimeAPI = {
+  /** #1 POST …/projects/{pid}/realtime-token/（project.read；issue 不可见 403 拒整票）。 */
+  token: (slug: string, projectId: string, payload: { client_tab_id: string; issue_rooms: string[] }) =>
+    api.post<RealtimeTokenResult>(`workspaces/${slug}/projects/${projectId}/realtime-token/`, payload),
+  /** #2 POST /users/me/realtime-token/renew/（旧 jti 轮换；issue_rooms 缺省沿用旧票房间集）。 */
+  renew: (payload: { token: string; client_tab_id: string; issue_rooms?: string[] }) =>
+    api.post<RealtimeTokenResult>("users/me/realtime-token/renew/", payload),
+};

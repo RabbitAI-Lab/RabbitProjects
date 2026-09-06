@@ -110,7 +110,10 @@ api.interceptors.response.use(
     } else if (status === 429) {
       toast("请求过于频繁，请稍后重试", "error");
     } else if (status !== undefined && status >= 500) {
-      toast("服务器开小差了，请稍后重试", "error");
+      // COLLAB-004 BR-10：realtime-token 500（SERVER_LIVE_SERVICE_UNAVAILABLE）=
+      // 已文档化的降级路径（横幅 + 轮询兜底）——静默，不弹全局错误 toast。
+      const silentRealtime = typeof err.config?.url === "string" && err.config.url.includes("realtime-token");
+      if (!silentRealtime) toast("服务器开小差了，请稍后重试", "error");
     }
     return Promise.reject(friendly);
   },

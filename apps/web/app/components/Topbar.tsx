@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
+import { liveEventBus } from "@rp/shared-state";
+import type { LiveEnvelope, NotificationCreatedPayload } from "@rp/types";
 import { useStores } from "../stores";
-import { WorkspaceAPI } from "../services/api";
+import { WorkspaceAPI, NotificationAPI, unwrap } from "../services/api";
 import { toast } from "./Toast";
 import { NotificationBell, NotificationDrawer } from "./NotificationDrawer";
 
@@ -18,7 +20,35 @@ export function Topbar() {
   // C.34 通知抽屉（COLLAB-001）：铃铛常驻顶栏，未读数经 NotificationDrawer 回写
   const [notifOpen, setNotifOpen] = useState(false);
   const [unread, setUnread] = useState(0);
+  /** COLLAB-004 §3.3：notification.created 徽标 +1（弹跳一次，user 房间秒达）。 */
+  const [bounce, setBounce] = useState(false);
+  /** 按 notification_id 去重（§4.4.2；多房间/重放幂等）。 */
+  const seenNotifIds = useRef<Set<string>>(new Set());
   const cur = session.workspaces.find((x) => x.slug === session.currentWsSlug);
+
+  useEffect(() => {
+    const off = liveEventBus.on("notification.created", (env: LiveEnvelope) => {
+      const p = env.payload as unknown as NotificationCreatedPayload;
+      if (!p?.notification_id) return;
+      if (seenNotifIds.current.has(p.notification_id)) return; // 去重
+      seenNotifIds.current.add(p.notification_id);
+      if (seenNotifIds.current.size > 500) seenNotifIds.current = new Set();
+      setUnread((u) => u + Math.max(1, p.unread_delta ?? 1));
+      setBounce(true);
+      setTimeout(() => setBounce(false), 600);
+    });
+    /** 断线重连补偿：未读数全量收敛（「推送负责知道、拉取负责最终一致」）。 */
+    const onReconnected = () => {
+      NotificationAPI.unreadCount()
+        .then((r) => setUnread(unwrap<{ count: number }>(r)?.count ?? 0))
+        .catch(() => {});
+    };
+    window.addEventListener("rp:live-reconnected", onReconnected);
+    return () => {
+      off();
+      window.removeEventListener("rp:live-reconnected", onReconnected);
+    };
+  }, []);
 
   // 点击外部 / Esc 关闭下拉：mousedown 阶段判 target.closest，含下拉容器/触发按钮时保留
   useEffect(() => {
@@ -80,8 +110,8 @@ export function Topbar() {
         <span className="h-7 px-2 border border-neutral-200 rounded-md text-xs text-neutral-400 bg-white flex items-center gap-1" title="全局搜索 · Sprint 1+ 交付">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>⌘K
         </span>
-        {/* C.34 铃铛（ADR-0011 #16：工作台与项目内顶栏一致常驻） */}
-        <NotificationBell unread={unread} onOpen={() => setNotifOpen(true)} />
+        {/* C.34 铃铛（ADR-0011 #16：工作台与项目内顶栏一致常驻）· COLLAB-004 徽标弹跳 */}
+        <NotificationBell unread={unread} bounce={bounce} onOpen={() => setNotifOpen(true)} />
         <div className="relative">
           <button data-sb-scope="topbar-menu" onClick={(e) => { e.stopPropagation(); setMenu(menu === "avatar" ? null : "avatar"); }}
             aria-haspopup="menu" aria-expanded={menu === "avatar"} aria-label="账号菜单"

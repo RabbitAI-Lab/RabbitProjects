@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { ViewLayout } from "@rp/shared-state";
 import { toast } from "../Toast";
+import { DegradedBanner, PresenceBar } from "../../realtime/PresenceBar";
 import type { ViewPage } from "./useViewPage";
 import { DisplayDrawer } from "./DisplayDrawer";
 import { SaveViewModal } from "./SaveViewModal";
@@ -218,9 +219,9 @@ export function ViewSwitchBar({ vp }: { vp: ViewPage }) {
         </span>
       </div>
 
-      {/* 右侧：presence 空容器（COLLAB-004 C 批）+ 分组切换器（kanban）+ ⚙ 显示 */}
+      {/* 右侧：presence 头像列 + 连接指示（COLLAB-004 §3.1 · O1 消费位点亮）+ 分组切换器（kanban）+ ⚙ 显示 */}
       <div className="ml-auto flex items-center gap-2">
-        <span data-sb-scope="view-presence-slot" aria-hidden="true" />
+        <PresenceBar projectId={projectId} members={vp.members} />
         {vp.layout === "kanban" && (
           <span className="relative" data-sb-scope="view-group-dd">
             <button type="button" aria-haspopup="menu" aria-expanded={groupOpen} aria-label="分组维度" data-sb-scope="view-group-btn"
@@ -248,6 +249,8 @@ export function ViewSwitchBar({ vp }: { vp: ViewPage }) {
           className="h-8 px-2.5 inline-flex items-center gap-1.5 border border-neutral-300 rounded-md text-[13px] text-neutral-700 hover:bg-neutral-50">⚙ 显示 ▾</button>
       </div>
 
+      {/* 实时降级横幅（COLLAB-004 §3.1 / BR-10：live 不可达 → 轮询模式黄条，恢复自动撤除） */}
+      <DegradedBanner />
       {/* 停用字段降级黄条（§3.6 / meta.degraded.group_by） */}
       {vp.degraded && (
         <div role="status" data-sb-scope="view-degraded-bar"

@@ -7,7 +7,12 @@
     "VITE_API_BASE_URL",
     "VITE_LIVE_BASE_URL",
     "LIVE_PORT",
-    "API_INTERNAL_URL"
+    "API_INTERNAL_URL",
+    "VITE_LIVE_HEALTH_URL",
+    "REDIS_URL",
+    "LIVE_JWT_PUBLIC_KEY",
+    "LIVE_HEARTBEAT",
+    "INTERNAL_KEY"
   ],
   "tasks": {
     "build": {

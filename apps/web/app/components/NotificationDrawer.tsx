@@ -332,8 +332,9 @@ export function NotificationDrawer({ open, onClose, workspaceSlug, onUnreadChang
 }
 
 /** 顶栏铃铛（未读徽标 + 点击打开抽屉；C.34 头部铃铛 + ADR-0011 #16 全局顶栏常驻）。
- *  仅展示，外层 open 状态由父组件管理；本组件只触发 onOpen。 */
-export function NotificationBell({ unread, onOpen }: { unread: number; onOpen: () => void }) {
+ *  仅展示，外层 open 状态由父组件管理；本组件只触发 onOpen。
+ *  COLLAB-004 §3.3：notification.created 到达时 bounce=true 播一次弹跳（0.5s）。 */
+export function NotificationBell({ unread, bounce, onOpen }: { unread: number; bounce?: boolean; onOpen: () => void }) {
   const showBadge = unread > 0;
   const label = showBadge ? `通知，${unread} 条未读` : "通知";
   return (
@@ -350,10 +351,11 @@ export function NotificationBell({ unread, onOpen }: { unread: number; onOpen: (
         <path d="M13.73 21a2 2 0 0 1-3.46 0" />
       </svg>
       {showBadge && (
-        <span data-sb-scope="topbar-bell-badge" className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold inline-flex items-center justify-center tabular-nums" aria-hidden="true">
+        <span data-sb-scope="topbar-bell-badge" className={`absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold inline-flex items-center justify-center tabular-nums ${bounce ? "animate-[notifbounce .5s]" : ""}`} aria-hidden="true">
           {unread > 99 ? "99+" : unread}
         </span>
       )}
+      <style>{`@keyframes notifbounce{0%{transform:scale(1)}35%{transform:scale(1.45)}100%{transform:scale(1)}}`}</style>
     </button>
   );
 }

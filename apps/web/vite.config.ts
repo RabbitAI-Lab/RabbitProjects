@@ -2,6 +2,11 @@ import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 
+// 代理目标可由环境变量覆盖（默认不变）——COLLAB-004 e2e 用独立副栈
+// （api:8001 + live:3000 + web:3002）时注入 API_PROXY_TARGET；用户 dev 零影响。
+const API_PROXY_TARGET = process.env.API_PROXY_TARGET ?? "http://localhost:8000";
+const LIVE_PROXY_TARGET = process.env.LIVE_PROXY_TARGET ?? "http://localhost:3000";
+
 export default defineConfig({
   plugins: [tailwindcss(), reactRouter()],
   // envDir 指向仓库根：三个 app 统一从仓库根加载 .env*（INFRA-001 §4.10）
@@ -16,12 +21,20 @@ export default defineConfig({
     // （实测 too many clients → 全线 500）。默认 keep-alive 复用少数连接反而安全。
     proxy: {
       "/api": {
-        target: "http://localhost:8000",
+        target: API_PROXY_TARGET,
         changeOrigin: false,
         secure: false,
       },
+      // COLLAB-004 BR-10 健康探测：express 的 /health 挂在根路径，/live 前缀不改写
+      // 会 404——dev 代理补一条改写（生产网关同理需在 nginx 侧改写或设 VITE_LIVE_HEALTH_URL）。
+      "/live/health": {
+        target: LIVE_PROXY_TARGET,
+        changeOrigin: false,
+        secure: false,
+        rewrite: (p) => p.replace(/^\/live/, ""),
+      },
       "/live": {
-        target: "http://localhost:3000",
+        target: LIVE_PROXY_TARGET,
         ws: true,
         changeOrigin: false,
         secure: false,

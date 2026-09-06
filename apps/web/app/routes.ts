@@ -27,6 +27,8 @@ export default [
     route(":workspaceSlug/projects/:projectId/issues", "routes/issues-list.tsx"),
     // Sprint-3（BOARD-003 §4.4）：表格布局（list/kanban/table 三段 + gantt 占位禁用）
     route(":workspaceSlug/projects/:projectId/table", "routes/table.tsx"),
+    // Sprint-3 Phase 3-C（COLLAB-003 §3.1）：项目动态流页（侧栏「动态」入口）
+    route(":workspaceSlug/projects/:projectId/activity", "routes/activity.tsx"),
     route(":workspaceSlug/projects/:projectId/settings", "routes/project-settings.tsx"),
     // Sprint-2（TASK-008 §3.1 / C.52）：项目设置 → 字段
     route(":workspaceSlug/projects/:projectId/settings/fields", "routes/project-fields.tsx"),

@@ -77,6 +77,10 @@ const ALLOWLIST = [
   // 状态码已由 spec 的 waitForResponse 显式断言，console 重复记录是噪声。
   // JS 异常 / React 错误 / 5xx 仍为硬失败。
   /Failed to load resource: the server responded with a status of 4\d\d/,
+  // COLLAB-004 BR-10：live 不可达是「预期的降级态」（WS 连接失败 + /health 探测
+  // 失败），实时层只是加速器、轮询兜底功能零损失——降级噪声不算应用缺陷。
+  // 仅放行 /live/ 资源（location.url 精确判定，见 onConsole）；应用自身 5xx 仍硬失败。
+  /WebSocket connection to '[^']*\/live\/connect[^']*' failed/i,
 ];
 
 type _Page = { on: Function; off: Function };
@@ -86,6 +90,10 @@ export function attachConsoleGuard(page: _Page): () => string[] {
     if (m.type?.() !== "error") return;
     const text = (m.text?.() ?? String(m)).trim();
     if (ALLOWLIST.some((re) => re.test(text))) return;
+    // 按来源 URL 放行 /live/ 资源的网络层回声（探测/连接失败是 BR-10 降级路径）；
+    // realtime-token 500（SERVER_LIVE_SERVICE_UNAVAILABLE）同为已文档化降级（横幅兜底）。
+    const url = m.location?.()?.url ?? "";
+    if (url.includes("/live/") || url.includes("realtime-token")) return;
     errs.push(text);
   };
   const onPageError = (e: any) => errs.push(String(e).trim());

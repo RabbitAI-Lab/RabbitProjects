@@ -21,6 +21,7 @@ import {
 } from "../services/api";
 import type { ApiError } from "../services/axios";
 import { useStores } from "../stores";
+import { useIssueRemoteFlash } from "../realtime/useIssueRemoteFlash";
 import { StateBadge } from "./StateBadge";
 import { toast } from "./Toast";
 import { CommentThreadTab } from "./CommentThread";
@@ -345,6 +346,8 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
       setIssue(unwrap<Issue>(r));
     });
   }
+  // ── Sprint-3 Phase 3-C（COLLAB-004 §3.3）：issue.updated → 匹配区 150ms 轻闪 +「已更新」角标 ──
+  const { remoteBrief } = useIssueRemoteFlash(issueId, issue?.updated_at ?? null, myUserId);
   /** Sprint-2 分区数据（关联 + 工时记录；spent/estimate 随 issue detail 走）。 */
   function refreshRelations() {
     RelationAPI.list(slug, projectId, issueId)
@@ -857,6 +860,12 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
           {issue.archived_at && (
             <span className="inline-flex items-center gap-1 text-[12px] text-neutral-400 bg-neutral-100 rounded px-1.5 py-0.5" data-sb-scope="drawer-arch-badge">🗄 已归档</span>
           )}
+          {/* COLLAB-004 §3.3：远端 issue.updated 提示角标（4s 消隐） */}
+          {remoteBrief && (
+            <span className="inline-flex items-center gap-1 text-[12px] text-brand-700 bg-brand-50 border border-brand-200 rounded px-1.5 py-0.5" role="status" data-sb-scope="drawer-live-badge">
+              ✦ 已更新{remoteBrief && remoteBrief !== "updated" ? `（${remoteBrief}）` : ""}
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-1">
             <div className="relative" ref={menuRef} data-sb-scope="drawer-more-menu">
               <button aria-label="更多操作" onClick={() => setMenuOpen(!menuOpen)}
@@ -974,8 +983,11 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
                 />
               </div>
 
-              {/* 属性区七行（C.23）—— label 80px + 控件 行式布局 */}
-              <div className="mt-4 border-t border-neutral-200 pt-4 grid grid-cols-[80px_1fr] gap-x-3 gap-y-3 items-center">
+              {/* 属性区七行（C.23）—— label 80px + 控件 行式布局。
+                  COLLAB-004 §3.3：远端 brief 命中字段区 → 150ms 背景轻闪（rp-live-flash）。 */}
+              <div className={`mt-4 border-t border-neutral-200 pt-4 grid grid-cols-[80px_1fr] gap-x-3 gap-y-3 items-center ${remoteBrief ? "rp-live-flash" : ""}`}
+                data-sb-scope="drawer-props">
+                <style>{`@keyframes rpliveflash{0%{background:rgba(63,118,255,0)}30%{background:rgba(63,118,255,.12)}100%{background:rgba(63,118,255,0)}}.rp-live-flash{animation:rpliveflash .15s ease}`}</style>
                 {/* 以下六行均为「行内编辑 · 选中即提交」（C.23 / TASK-002 §3.2）。
                     此前全部渲染成纯文本，导致优先级 / 负责人 / 开始 / 截止（以及状态 / 类型）
                     在抽屉里根本改不了 —— 只有标签那一行是可用的。 */}

@@ -5,13 +5,14 @@
 | 文档编号 | AI-001 |
 | 所属迭代 | P4：远期增强（第 13 周起，签约驱动排期） |
 | 优先级 | P4（企业版增强 / 智能价值线） |
-| 所属模块 | M11-AI 智能辅助 |
-| 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
-| 上游依据 | `docs/需求文档.md` §3.8 AI 能力节、§8.2 P4 列（AI 行）、§9.2 AI 数据出域约束 |
-| 前置依赖 | 全量数据面（Sprint 1-9 全模块）、`RPT-003/004`（聚合框架，风险预警特征源）、`AUTH-012`（租户级 AI 开关与配额治理）、`FILE-006`（脱敏基础设施复用） |
+| 所属模块 | M12-AI AI 辅助能力（据 `dependency-graph.md` §1.3 与 `docs/README.md` §4 索引） |
+| 文档状态 | 待评审（R1 修复稿） |
+| 最后更新日期 | 2026-09-05 |
+| 修复摘要 | 2026-09-05 落实 R1 评审 10 项：模块码更正 M12-AI；上游依据更正 §3.9/§8.2；AI 调用配额划归本文自建（`AiQuotaCounter`，与 `AUTH-012` 分域）；架构基线更正 tech-stack §3/§6.2；响应信封 `request_id` 归位 error 对象；能力端点补齐 workspaces 层级并逐端点声明权限 Key（`ai.invoke`/`ai.manage`，按 rbac 附录 B 登记）；后端落位 `apps/api/plane/ai/`；新增 `AiQuotaCounter`/`IssueRiskScore`/`AiFeedback` 模型与 UT-13~16；`QUOTA_AI_EXCEEDED` 改引 api-conventions §8.7 已注册码；searchSimilar 补 description 参数 |
+| 上游依据 | `docs/需求文档.md` §3.9 企业版专属-AI 辅助能力行、§8.2 分模块优先级全景表 P4 列「AI 能力」行（与 `docs/README.md` §4 索引一致） |
+| 前置依赖 | 全量数据面（Sprint 1-9 全模块）、`RPT-003/004`（聚合框架，风险预警特征源）、`AUTH-012`（多租户隔离与租户级存储配额——治理域，不承载 AI 调用配额，分域见 BR-05）、`FILE-006`（脱敏基础设施复用） |
 | 下游依赖 | P4+ AI 深化（智能排期、自动分类）；`FILE-006` DLP 内容识别升级 |
-| 架构基线 | [`api-conventions.md`](../architecture/api-conventions.md) §8、[`tech-stack.md`](../architecture/tech-stack.md) §5（异步任务范式） |
+| 架构基线 | [`api-conventions.md`](../architecture/api-conventions.md) §8（错误码体系，含 §8.7 `QUOTA_AI_EXCEEDED`）、[`tech-stack.md`](../architecture/tech-stack.md) §3/§6.2（异步任务范式：Celery/beat 与队列纪律）；新增 AI 依赖（LLM SDK、pgvector、bge embedding、LightGBM）与 `ai_embed` 队列（§6.2 队列拆分清单）（tech-stack 待回改登记）；新增独立应用 `plane/ai/`（基线树 + INSTALLED_APPS）（monorepo-structure 待回改登记） |
 | 竞品参考 | Linear（AI 摘要与相似任务）、Notion AI、Jira Intelligence（Atlassian Intelligence）、飞书智能伙伴 |
 
 > **范围声明**：本文档交付四项 AI 能力——**任务摘要**（长讨论一键归纳）、**重复识别**（建任务时相似推荐）、**风险预警**（基于进度信号的任务延期预测）、**内容生成**（任务描述/子任务拆解草稿）。全部能力共享同一**模型服务抽象层**（§4.1，多提供方可插拔）与**数据出域授权体系**（§2.4，显式授权 + 脱敏策略）。不做：自主操作（AI 直接改任务状态）、对话式 Agent、客户数据训练。
@@ -36,7 +37,7 @@ AI 在项目管理里的真实价值不是「聊天框」，而是**把分散信
 | 条件 | 判定 |
 | --- | --- |
 | 商业条件 | 企业版客户签约 AI 增值包（独立 SKU）；**数据出域授权书**签署（§2.4）是启用前置 |
-| 技术前置 | 全量数据面稳定（风险预警特征依赖 `TASK-006/010`、`RPT-003` 快照）；`AUTH-012` 可承载 AI 调用配额 |
+| 技术前置 | 全量数据面稳定（风险预警特征依赖 `TASK-006/010`、`RPT-003` 快照）；AI 调用配额由本文自建承载（`AiCallLedger` 逐次记账 + `AiQuotaCounter` 日计数，§4.3）——`AUTH-012` 的 `TenantQuota` 仅覆盖存储/成员/API 速率/导出行数（多租户治理域），不承载 AI 调用配额 |
 | 选型前置 | **模型服务选型评审完成**：首选自部署开源模型（Qwen/Llama 系，私有化客户）+ 商用 API（SaaS 客户，Anthropic/OpenAI/通义），抽象层验证两家以上提供方接入 |
 
 ### 1.3 独立交付判定
@@ -94,7 +95,7 @@ flowchart LR
 | BR-02 | 显式授权 | 工作空间 AI 总开关默认**关**；开启时弹授权书（出域字段清单 + 提供方 + zero-retention 条款），WS_ADMIN 签署留痕 |
 | BR-03 | 脱敏前置 | 出域 payload 经脱敏管道（§2.4）：人名→`[成员A]`、邮箱/电话/身份证正则屏蔽、自定义敏感词表；摘要等人名敏感场景在**返回后**本地回填（`[成员A]`→真名映射只存在服务端内存） |
 | BR-04 | 台账可查 | 每次调用落 `AiCallLedger`（触发人/能力/出域字段类型/模型/token/耗时/状态）；WS_ADMIN 可导出 |
-| BR-05 | 配额治理 | 租户级日配额（按 SKU：摘要 500 次/日、生成 300 次/日、预警与识别不限量——后两者非 LLM 或低成本）；超限 `QUOTA_AI_EXCEEDED`（§4.5 注册新码于 api-conventions 增补） |
+| BR-05 | 配额治理 | 租户级日配额（按 SKU：摘要 500 次/日、生成 300 次/日、预警与识别不限量——后两者非 LLM 或低成本）由本文自建配额模型承载（`AiQuotaCounter` 按 workspace+能力+日计数，§4.3）；超限 `409 QUOTA_AI_EXCEEDED`（api-conventions §8.7 已注册码，响应示例见 §4.4）。分域边界：`AUTH-012` 管租户级存储配额（5 GB 起，多租户治理域），AI 调用配额与 LLM 供应商限额归本文 |
 | BR-06 | 失败降级 | 模型超时/故障：摘要与生成显示「暂时不可用」重试按钮；重复识别静默隐藏面板；风险预警用前一日分数；**业务写路径永不阻塞** |
 | BR-07 | 反馈回路 | 摘要与生成结果旁「有用/无用」轻反馈；反馈落库供 prompt 迭代，不含内容本身 |
 | BR-08 | 风险分可解释 | 预警必须给出 ≤ 3 条主因（来自特征贡献度，如「近 7 天无活动」「剩余 3 天完成度 20%」），不允许裸分数 |
@@ -219,7 +220,7 @@ flowchart LR
 ### 4.1 模型服务抽象层（AiGateway）
 
 ```python
-# apps/api/rp_ai/gateway.py
+# apps/api/plane/ai/gateway.py
 from typing import Protocol
 
 
@@ -260,30 +261,30 @@ class AiGateway:
 | 要点 | 说明 |
 | --- | --- |
 | 提供方注册表 | `ProviderRegistry` 按工作空间配置路由：私有化 → vLLM 集群端点；SaaS → 商用 API（密钥密保库，zero-retention 参数） |
-| 配额前置 | `assert_enabled` 内做 Redis 日计数预检（BR-05），计数在台账落笔时 +1 |
+| 配额前置 | `assert_enabled` 内做 Redis 日计数原子预检（BR-05，`INCR aiq:{workspace}:{capability}:{date}`，首键设过期至当日 0 点），超限抛 `QUOTA_AI_EXCEEDED`；`AiCallLedger` 落笔时同步 `AiQuotaCounter` 落库对账（§4.3） |
 | 超时纪律 | LLM 调用硬超时 20s（摘要/生成）、5s（embedding 批量）；Celery 任务重试上限 2 次 |
 
 ### 4.2 重复识别（pgvector）
 
 ```sql
--- 迁移：启用扩展 + 向量列（独立表，不动 Issue 主表）
+-- 迁移：启用扩展 + 向量列（独立表，不动 Issue 主表；随 plane/ai 应用迁移登记）
 CREATE EXTENSION IF NOT EXISTS vector;
 
-CREATE TABLE issue_embedding (
-    issue_id    UUID PRIMARY KEY REFERENCES issue(id),
+CREATE TABLE issue_embeddings (
+    issue_id    UUID PRIMARY KEY REFERENCES issues(id),
     workspace_id UUID NOT NULL,
     project_id  UUID NOT NULL,
     embedding   vector(1024) NOT NULL,
     state_group VARCHAR(16) NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_issue_emb_hnsw ON issue_embedding
+CREATE INDEX idx_issue_emb_hnsw ON issue_embeddings
     USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
-CREATE INDEX idx_issue_emb_ws ON issue_embedding (workspace_id, project_id);
+CREATE INDEX idx_issue_emb_ws ON issue_embeddings (workspace_id, project_id);
 
 -- 相似查询（BR-09：行级过滤先行）
 SELECT ie.issue_id, 1 - (ie.embedding <=> %(qvec)::vector) AS score
-FROM issue_embedding ie
+FROM issue_embeddings ie
 WHERE ie.workspace_id = %(ws)s
   AND ie.project_id = ANY(%(visible_projects)s)   -- 权限预过滤
   AND ie.issue_id <> %(self)s
@@ -297,31 +298,31 @@ LIMIT 5;
 | 阈值 | 余弦相似 ≥ 0.82 才展示；embedding 模型自部署 bge-large（私有化和 SaaS 同模，避免双模型漂移） |
 | 分区 | `workspace_id` 等值过滤 + `project_id ANY` 权限剪枝，HNSW 内建不跨空间（BR-09） |
 
-### 4.3 台账与策略模型
+### 4.3 台账、配额与支撑模型
 
 ```python
-# apps/api/rp_ai/models.py
+# apps/api/plane/ai/models.py
 class AiConsent(BaseModel):
     """AI 授权书签署记录；版本化（条款变更需重签，BR-02）。"""
-    workspace = models.ForeignKey("rp_workspaces.Workspace",
+    workspace = models.ForeignKey("db.Workspace",
                                   on_delete=models.CASCADE)
     consent_version = models.CharField(max_length=8)           # v3
     capabilities = models.JSONField(default=list)              # 四能力子集
     provider_policy = models.CharField(max_length=16)          # commercial/selfhosted
-    signed_by = models.ForeignKey("rp_users.User",
+    signed_by = models.ForeignKey("db.User",
                                   on_delete=models.PROTECT)
     revoked_at = models.DateTimeField(null=True)
 
     class Meta:
-        db_table = "ai_consent"
+        db_table = "ai_consents"
         indexes = [models.Index(fields=["workspace", "-created_at"],
                                 name="idx_ai_consent_ws")]
 
 
 class AiCallLedger(BaseModel):
-    workspace = models.ForeignKey("rp_workspaces.Workspace",
+    workspace = models.ForeignKey("db.Workspace",
                                   on_delete=models.CASCADE)
-    actor = models.ForeignKey("rp_users.User", null=True,
+    actor = models.ForeignKey("db.User", null=True,
                               on_delete=models.SET_NULL)
     capability = models.CharField(max_length=16)               # summary/dup/risk/gen
     provider = models.CharField(max_length=24)                 # anthropic/vllm/…
@@ -334,25 +335,86 @@ class AiCallLedger(BaseModel):
     error = models.CharField(max_length=255, blank=True)
 
     class Meta:
-        db_table = "ai_call_ledger"
+        db_table = "ai_call_ledgers"
         indexes = [
             models.Index(fields=["workspace", "-created_at"],
                          name="idx_ai_ledger_ws"),
         ]
+
+
+class AiQuotaCounter(BaseModel):
+    """BR-05 配额承载：按 workspace + 能力 + 日 计数。运行时 Redis 原子预检
+    （§4.1 配额前置），本表落库用于日终对账与水位查询（§4.4 quota 端点）；
+    上限值由套餐 SKU 配额表定义（BR-05）。与 `AUTH-012` 的 TenantQuota
+    （租户存储/成员/API 速率，治理域）分域，互不承载。"""
+    workspace = models.ForeignKey("db.Workspace", on_delete=models.CASCADE)
+    capability = models.CharField(max_length=16)               # summary/dup/risk/gen
+    quota_date = models.DateField()                            # 计数归属日（UTC）
+    used = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "ai_quota_counters"
+        constraints = [models.UniqueConstraint(
+            fields=["workspace", "capability", "quota_date"],
+            name="uq_ai_quota_ws_cap_date")]
+
+
+class IssueRiskScore(BaseModel):
+    """风险预警分数存储（§2.3）：任务页读最新一条；实时重算插新行不覆盖
+    （保留规则版/模型版双跑校准窗口），主因 ≤3 条落 JSON（BR-08）。"""
+    workspace = models.ForeignKey("db.Workspace",
+                                  on_delete=models.CASCADE)    # 冗余，行级过滤
+    issue = models.ForeignKey("db.Issue", on_delete=models.CASCADE)
+    score = models.PositiveSmallIntegerField()                 # 0-100
+    top_reasons = models.JSONField(default=list)               # ≤3 条主因
+    confidence = models.FloatField(default=0.0)
+    model_version = models.CharField(max_length=16)            # rule_v0 / lgbm_v1
+    source = models.CharField(max_length=8)                    # daily / realtime
+    computed_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "issue_risk_scores"
+        indexes = [models.Index(fields=["issue", "-computed_at"],
+                                name="idx_risk_score_issue")]
+
+
+class AiFeedback(BaseModel):
+    """BR-07 轻反馈落库；主键即 §4.4 响应中的 feedback_id（UUID v4）。
+    仅记 verdict 与用户自填原因，不落 AI 产出内容本身。"""
+    workspace = models.ForeignKey("db.Workspace", on_delete=models.CASCADE)
+    actor = models.ForeignKey("db.User", null=True,
+                              on_delete=models.SET_NULL)
+    capability = models.CharField(max_length=16)               # summary/dup/risk/gen
+    issue = models.ForeignKey("db.Issue", null=True,
+                              on_delete=models.SET_NULL)
+    verdict = models.CharField(max_length=8)                   # useful / useless
+    reason = models.CharField(max_length=200, blank=True)      # 👎 可选一句原因（用户输入）
+
+    class Meta:
+        db_table = "ai_feedbacks"
+        indexes = [models.Index(fields=["workspace", "-created_at"],
+                                name="idx_ai_feedback_ws")]
 ```
+
+> 迁移登记：上述模型随 `plane/ai` 应用迁移落库（`0001_initial`，含 §4.2 向量表与扩展启用）；模型基类与 FK 字符串引用 `db` app（`db.Workspace` / `db.User` / `db.Issue`），与 rbac-permission-model.md §3、unified-issue-model.md 的模型约定一致。
 
 ### 4.4 API 端点
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| POST | `/api/v1/projects/{pid}/issues/{id}/ai-summary/` | 生成摘要（同步 ≤ 20s，超出转异步 + 轮询） |
-| GET | `/api/v1/projects/{pid}/issues/similar/?title=&description=` | 重复识别（去抖后端调用） |
-| GET | `/api/v1/projects/{pid}/issues/{id}/risk-score/` | 单行风险分（含主因与置信度） |
-| POST | `/api/v1/projects/{pid}/ai-draft/` | 描述/子任务拆解草稿 |
-| POST | `/api/v1/ai/feedback/` | 有用/无用反馈（BR-07） |
-| GET/POST/DELETE | `/api/v1/workspaces/{slug}/ai/consent/` | 授权查看/签署/撤销 |
-| GET | `/api/v1/workspaces/{slug}/ai/ledger/` | 台账（cursor 分页 + CSV 导出） |
-| GET | `/api/v1/workspaces/{slug}/ai/quota/` | 配额水位 |
+| 方法 | 路径 | 说明 | 权限 Key |
+| --- | --- | --- | --- |
+| POST | `/api/v1/workspaces/{slug}/projects/{pid}/issues/{id}/ai-summary/` | 生成摘要（同步 ≤ 20s，超出转异步 + 轮询） | `ai.invoke` |
+| GET | `/api/v1/workspaces/{slug}/projects/{pid}/issues/similar/?title=&description=` | 重复识别（前端去抖 800ms 后调用；`title` 必填 ≥ 4 字符，`description` 可选纯文本） | `ai.invoke` |
+| GET | `/api/v1/workspaces/{slug}/projects/{pid}/issues/{id}/risk-score/` | 单行风险分（含主因与置信度） | `ai.invoke` |
+| POST | `/api/v1/workspaces/{slug}/projects/{pid}/ai-draft/` | 描述/子任务拆解草稿 | `ai.invoke` |
+| POST | `/api/v1/workspaces/{slug}/ai/feedback/` | 有用/无用反馈（BR-07，落 `AiFeedback`） | `ai.invoke` |
+| GET/POST/DELETE | `/api/v1/workspaces/{slug}/ai/consent/` | 授权查看/签署/撤销（BR-02/BR-12） | `ai.manage` |
+| GET | `/api/v1/workspaces/{slug}/ai/ledger/?cursor=&per_page=100&ordering=-created_at` | 台账（cursor 分页 + `?format=csv` 导出） | `ai.manage` |
+| GET | `/api/v1/workspaces/{slug}/ai/quota/` | 配额水位（读 `AiQuotaCounter`，入口置灰依赖此端点） | `ai.invoke` |
+
+> **权限 Key 说明**：rbac §8 现无 `ai.*` 既有码，本文新增两码并**按 rbac 附录 B 登记**（登记后需在 rbac §8.1 权限矩阵与 `packages/constants/src/permission.ts` 同步落表——rbac 文档待回改）：
+> - `ai.invoke`（新增码，按 rbac 附录 B 登记）——AI 能力调用与反馈（工作空间级资源；角色矩阵：WS_OWNER / WS_ADMIN / WS_MEMBER ✅，WS_GUEST ❌——Guest 不触发数据出域与配额消耗；项目内结果按 `issue.read` 可见性过滤，与 BR-09 一致）。
+> - `ai.manage`（新增码，按 rbac 附录 B 登记）——AI 治理动作（授权签署/撤销、台账读取与导出、能力开关；角色矩阵：WS_OWNER / WS_ADMIN ✅，WS_MEMBER / WS_GUEST ❌，与 BR-04「WS_ADMIN 可导出」一致）。
+> 越权行为：无 `ai.invoke` 调能力端点、无 `ai.manage` 访问治理端点 → `403 PERM_DENIED`（api-conventions §8.3 兜底码）；工作空间未签授权 → `403 PERM_LICENSE_REQUIRED`（§8.3 已注册）。
 
 **成功示例** — `POST …/ai-summary/`：
 
@@ -369,11 +431,12 @@ class AiCallLedger(BaseModel):
       "disputes": ["渠道 A 备用方案是否保留（未决）"],
       "key_people": ["张三点", "李四维"]
     },
-    "feedback_id": "01J70DK2M8NQ4PXRBTVH5WD3EA"
-  },
-  "meta": {"request_id": "01J70DL3N9OR5QYSCUW6XE4FB"}
+    "feedback_id": "7c2e5a1f-8b3d-4e6a-9c01-5d4e6f7a8b9c"
+  }
 }
 ```
+
+> 成功信封不含 `meta.request_id`：动作端点 `meta` 可省略（api-conventions §4.1），请求追踪 ID 经 `X-Request-Id` 响应头返回（§4.4）；`feedback_id` 为 `AiFeedback` 主键（UUID v4，api-conventions §4.5）。
 
 **错误示例** — 未授权（BR-02）：
 
@@ -384,9 +447,9 @@ class AiCallLedger(BaseModel):
     "code": "PERM_LICENSE_REQUIRED",
     "message": "该工作空间未启用 AI 能力，需管理员签署数据出域授权书",
     "details": [{"field": "ai_consent", "code": "REQUIRED",
-                 "message": "设置 → AI 能力 → 开启向导"}]
-  },
-  "meta": {"request_id": "01J70DM4O0PS6RZTDVX7YF5GC"}
+                 "message": "设置 → AI 能力 → 开启向导"}],
+    "request_id": "01J70DM4O0PS6RZTDVX7YF5GC"
+  }
 }
 ```
 
@@ -399,13 +462,13 @@ class AiCallLedger(BaseModel):
     "code": "QUOTA_AI_EXCEEDED",
     "message": "今日 AI 摘要配额已用完（500/500），明日 0 点重置",
     "details": [{"field": "capability", "code": "TOO_LARGE",
-                 "message": "可在设置 → AI 能力 查看用量或升级套餐"}]
-  },
-  "meta": {"request_id": "01J70DN5P1QT7S1UEWY8ZG6HD"}
+                 "message": "可在设置 → AI 能力 查看用量或升级套餐"}],
+    "request_id": "01J70DN5P1QT7S1UEWY8ZG6HD"
+  }
 }
 ```
 
-> 注：`QUOTA_AI_EXCEEDED` 为本文档向 `api-conventions.md` §8.7 申请的**增补码**（409），随本能力发布同步更新注册表。
+> 注：`QUOTA_AI_EXCEEDED`（409）**已注册**于 `api-conventions.md` §8.7（「AI 能力租户日配额耗尽（按 SKU 分项配额）」），本文直接引用，无需增补申请；计数模型见 §4.3 `AiQuotaCounter`。
 
 ### 4.5 前端 Store
 
@@ -428,7 +491,7 @@ export class AiStore {
   async summarize(projectId: string, issueId: string) {
     this.isSummarizing = true;
     try {
-      const res = await aiService.summarize(projectId, issueId);
+      const res = await aiService.summarize(this.workspaceSlug, projectId, issueId);
       runInAction(() => { this.summary = res.data; });
     } catch (e) {
       if (errorCode(e) === "QUOTA_AI_EXCEEDED") toast.warn(e.message);
@@ -440,9 +503,12 @@ export class AiStore {
     }
   }
 
-  searchSimilar = debounce(async (projectId: string, title: string) => {
+  // description 与 §4.4 similar 端点查询参数对齐（OpenAPI 生成时补 description 字段说明）
+  searchSimilar = debounce(async (projectId: string, title: string,
+                                  description = "") => {
     if (title.trim().length < 4) return;
-    const res = await aiService.similar(projectId, title);
+    const res = await aiService.similar(this.workspaceSlug, projectId,
+                                        title, description);
     runInAction(() => { this.similarIssues = res.data.results; });
   }, 800);
 }
@@ -462,7 +528,7 @@ export class AiStore {
 | 重复识别 | P95 < 300ms | HNSW + 权限预过滤；embedding 异步预计算 |
 | 风险全量 | 10 万任务 < 15min/日 | LightGBM 批量推理（单机 CPU 万行/秒级） |
 | 成本封顶 | 租户月成本 ≤ 套餐毛利红线 | 日配额（BR-05）+ prompt 长度上限 + 模型路由（草稿类可走小模型档） |
-| 降级矩阵 | §BR-06 四能力各异 | 全部降级不阻塞业务写路径（IT-04 验证） |
+| 降级矩阵 | BR-06 四能力各异 | 全部降级不阻塞业务写路径（IT-04 验证） |
 
 ---
 
@@ -472,7 +538,7 @@ export class AiStore {
 
 | 编号 | 用例 | 断言 |
 | --- | --- | --- |
-| UT-01 | 未授权拒绝 | 无 consent 调摘要返回 `PERM_LICENSE_REQUIRED`；四端点同 |
+| UT-01 | 未授权拒绝 | 无 consent 调摘要返回 `PERM_LICENSE_REQUIRED`；六个 `ai.invoke` 端点同（summary/similar/risk-score/draft/feedback/quota） |
 | UT-02 | 撤销即失效 | `revoked_at` 非空后所有能力 403 |
 | UT-03 | 字段白名单 | 摘要 payload 不含自定义字段/附件/邮箱（schema 断言） |
 | UT-04 | 人名脱敏回填 | 出域串含 `[成员A]` 不含真名；响应回填后真名正确 |
@@ -483,7 +549,11 @@ export class AiStore {
 | UT-09 | 相似权限 | 不可见项目任务不出现在相似结果（BR-09） |
 | UT-10 | 风险主因 | 分数响应含 ≤3 条主因且与特征贡献度一致（BR-08） |
 | UT-11 | 规则版预警 | 冷启动规则打分与阈值表一致 |
-| UT-12 | 反馈落库 | 👍/👎 落反馈表且不含内容 |
+| UT-12 | 反馈落库 | 👍/👎 落 `AiFeedback` 且不落 AI 产出内容（verdict 与 reason 分离，UT-16 断言） |
+| UT-13 | 权限 Key 越权 | WS_MEMBER 访问 consent/ledger 返回 `403 PERM_DENIED`；WS_GUEST 调 `ai.invoke` 端点 403（按 rbac 附录 B 第 7 步：非成员 / 低权限 / 跨工作空间三身份断言） |
+| UT-14 | 配额模型一致性 | 并发调用下 `AiQuotaCounter.used` 与 `AiCallLedger` 成功条数相等；Redis 预检与落库计数无漂移 |
+| UT-15 | 风险分存储 | `IssueRiskScore` 落库含 model_version/source/computed_at；实时重算插新行不覆盖日批行（双跑窗口可回放） |
+| UT-16 | 反馈模型校验 | `verdict` 仅接受 useful/useless，非法值 `400 VALIDATION_INVALID_PARAM`；reason ≤ 200 字符 |
 
 ### 5.2 集成测试（IT）
 
@@ -527,11 +597,11 @@ export class AiStore {
 
 | 交付面 | 内容 | 估算 |
 | --- | --- | --- |
-| 抽象层 | AiGateway + 双提供方适配 + 脱敏管道 + 台账 | 4 d |
-| 四能力 | 摘要/生成（prompt + schema）、embedding 索引、风险特征与模型 | 6 d |
+| 抽象层 | AiGateway + 双提供方适配 + 脱敏管道 + 台账与配额模型（`AiCallLedger`/`AiQuotaCounter`） | 4 d |
+| 四能力 | 摘要/生成（prompt + schema）、embedding 索引、风险特征与模型、风险分与反馈存储（`IssueRiskScore`/`AiFeedback`） | 6 d |
 | 前端 | 五入口组件 + AI 管理页 + 授权向导 | 4 d |
 | 质量评测 | 评测集构建与评审流程（E2E-04） | 2 d |
-| 测试 | UT-01~12、IT-01~06、E2E-01~04 | 3 d |
+| 测试 | UT-01~16、IT-01~06、E2E-01~04 | 3 d |
 | **合计** | | **19 d（3 人并行约 2 周）** |
 
 ### 7.2 可操作演示的验收标准

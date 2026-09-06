@@ -7,11 +7,12 @@
 | 优先级 | P4（企业版增强 / 生态与开放价值线） |
 | 所属模块 | M9-INTG 集成开放 |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-01 |
-| 上游依据 | `docs/需求文档.md` §3.5 集成节、§8.2 P4 列（集成行） |
+| 最后更新日期 | 2026-09-05 |
+| 修复摘要 | 2026-09-05 R1 评审 10 项修复：①鉴权对齐基线 `X-API-Key` 头 + `rp_<env>_` 前缀密钥体系（api-conventions §9.3，弃 `Bearer rp_sk_`）；②开放面路径对齐 `/api/v1/external/`（§2.1）、排序参数改 `ordering`（§5.4）；③OAuth 端点/方法/期限对齐 §9.4（authorize=GET / token=POST / revoke=POST，增 introspect/userinfo，access 1h + refresh 30d），`client_credentials` 作为基线扩展显式定义（api-conventions 待回改登记）；④scope 全量改复数（`issues:read` 等，§9.3 示例体系）；⑤scope×权限码映射全部改用 rbac §8 已注册码（`approval.read` 按 rbac 附录 B 登记）；⑥上游依据更正 §3.9/§8.2；⑦`request_id` 移入 error 对象；⑧密钥管理复用既有 `/api-tokens/` 体系（扩展 scope/IP 白名单/尾缀字段），不新设 `/developers/keys/` 端点；⑨24 个 scope 全枚举（补 `approvals:read`/`issues:relation`/`comments:delete`/`activities:read`/`workspaces:read` 等，IT-04 可构建）；⑩后端落位 `apps/api/plane/`（db/api 包）、前端 store 落位 `packages/shared-state` |
+| 上游依据 | `docs/需求文档.md` §3.9 第三方工具集成节、§8.2 P4 列（第三方集成行：完整 OpenAPI、第三方应用接入市场） |
 | 前置依赖 | 全部业务 Sprint（API v1 面完整稳定是开放的前提）、`INTG-002`（Webhook 出站，应用的事件通道）、`AUTH-012`（租户级 API 配额治理） |
 | 下游依赖 | 应用接入市场（P4+，本文档交付其凭证与清单底座） |
-| 架构基线 | [`api-conventions.md`](../architecture/api-conventions.md) 全文（Open API = 该规范的对外承诺）、§7.2 限流分组、§9 认证 |
+| 架构基线 | [`api-conventions.md`](../architecture/api-conventions.md) 全文（Open API = 该规范的对外承诺）、§2.1 三套 API 分组（`/api/v1/external/`）、§7.2 限流分组、§9.3 Token 认证（API Key）、§9.4 OAuth 2.0；[`monorepo-structure.md`](../architecture/monorepo-structure.md) §2（`plane/api/` 落位） |
 | 竞品参考 | GitHub REST API（文档与 SDK 标杆）、Linear（GraphQL + OAuth 应用）、Jira（Connect 应用框架） |
 
 > **范围声明**：本文档把「内部 API」升级为「可签约的公共产品」——**API Key 与 OAuth 2.0 应用**两种凭证、**scope 细粒度授权**、**开发者门户**（文档/密钥管理/调用日志）、**稳定性承诺**（版本策略与弃用日历）。Open API 覆盖的端点面 = 既有 API v1 的精选子集（§2.2 白名单），不新增业务能力。
@@ -26,8 +27,8 @@
 
 | 交付项 | 说明 |
 | --- | --- |
-| 个人 API Key | 用户级凭证（`rp_sk_` 前缀），scope 勾选，代表本人权限子集 |
-| OAuth 2.0 应用 | 第三方应用授权码流程 + Client Credentials（服务间），应用级 scope 与安装审计 |
+| 个人 API Key | 用户级凭证（`rp_<env>_` 前缀，如 `rp_live_…`，经 `X-API-Key` 头传递——api-conventions §9.3），scope 勾选，代表本人权限子集 |
+| OAuth 2.0 应用 | 第三方应用授权码 + PKCE 流程 + Client Credentials（服务间，基线扩展授权类型，见 §2.5），应用级 scope 与安装审计 |
 | scope 体系 | 24 个 scope（§2.3），`resource:action` 二维，与 RBAC 权限码同源映射 |
 | 开发者门户 | `/developers`：文档（OpenAPI 3.1 生成）、密钥管理、调用日志、速率余量 |
 | 稳定性承诺 | v1 契约冻结策略、弃用日历（`Sunset` 头）、变更日志 |
@@ -71,10 +72,10 @@
 ```mermaid
 flowchart LR
     subgraph CRED["凭证层"]
-        PAK["个人 API Key<br/>rp_sk_…<br/>=用户本人权限 ∩ scope"]
+        PAK["个人 API Key<br/>X-API-Key: rp_live_…<br/>=用户本人权限 ∩ scope"]
         APP["OAuth 应用<br/>授权码: 代用户操作<br/>CC: 应用自身(服务账号)"]
     end
-    PAK --> GATE["OpenApiGateway 认证类"]
+    PAK --> GATE["OpenApiAuthentication<br/>（plane/api/）"]
     APP --> GATE
     GATE --> SCOPE["scope 校验<br/>（RBAC 同源映射）"]
     SCOPE --> RATE["配额:<br/>租户桶(AUTH-012) + 凭证桶"]
@@ -86,50 +87,62 @@ flowchart LR
 | 代表 | 用户本人 | 用户（应用代办） | 应用服务账号 |
 | 上限 | 权限 ∩ scope | 授权用户权限 ∩ scope | 应用绑定服务账号权限 ∩ scope |
 | 典型场景 | 个人脚本/BI 抽数 | 第三方 Web 应用 | CI/机器人 |
-| 有效期 | 可设 30/90/365 天或永久 | access 2h + refresh 90d | access 2h（refresh 不可用） |
+| 有效期 | 可设 30/90/365 天或永久 | access 1h + refresh 30d（api-conventions §9.1） | access 1h（refresh 不适用） |
 | 吊销 | 用户自助 + 管理员强制 | 用户「已授权应用」页撤销 | 管理员停用应用 |
 
 ### 2.2 开放端点白名单
 
 | 资源组 | 开放端点 | 备注 |
 | --- | --- | --- |
-| issues | CRUD / 列表 / 搜索 / 评论 / 链接 / 子任务 | 含 `order_by` 与 cursor，不含批量写（v1.1 开放） |
+| issues | CRUD / 列表 / 搜索 / 评论 / 链接 / 子任务 / 动态只读 | 含 `ordering` 排序与游标分页（§5.4/§6），不含批量写（v1.1 开放） |
 | projects | 详情 / 列表 / 成员 | 项目设置写不开放 |
+| workspaces | 详情 / 成员 只读 | 集成方定位租户上下文（`workspaces:read`；成员列表需 `users:read`） |
 | cycles / views | 只读 | 写操作 v1.1 评估 |
 | worklogs | CRUD | 含工时审批状态只读 |
 | files | 上传（预签名三段式）/ 下载 / 元数据 | 分享链接管理不开放 |
 | webhooks | 订阅 CRUD（复用 `INTG-002`） | 应用事件通道 |
-| 不开放 | 认证/SSO/权限/审计/工作流管理/系统管理 | 安全面永不开放（BR-06） |
+| 不开放 | 认证/SSO/权限/审计/工作流管理/系统管理 | 安全面永不开放（BR-06）；任务动态（`activities:read`）属产品动态时间线而非审计日志（`AuditLog`），不在此列 |
+| notifications | 本人通知只读（notification.read） | `notifications:read` |
+| approvals | 审批记录只读（BR-06；approval.read 按 rbac 附录 B 登记） | `approvals:read` |
+| labels / states | 元数据只读（并入 issue/project 组语义，单列便于 scope 映射） | `labels:read` / `states:read` |
 
-### 2.3 scope 体系（24 个）
+### 2.3 scope 体系（24 个，全枚举）
 
-| scope | 覆盖 | 映射 RBAC |
+命名沿用 api-conventions §9.3 的复数 `<resource>:<action>` 体系（如 `issues:read`、`webhooks:manage`）。映射列全部取自 `rbac-permission-model.md` §8 已注册权限码；BR-01 交集在此之上收缩。
+
+| scope（逐行可数：3+1+3+2+1+2+2+1+4+2+1+1+1 = 24） | 覆盖 | 映射 RBAC 权限码（rbac §8） |
 | --- | --- | --- |
-| `issue:read` / `issue:write` / `issue:delete` | 任务读/写/删 | `issue.view`/`issue.create+update`/`issue.delete` |
-| `comment:read` / `comment:write` | 评论 | `comment.*` |
-| `project:read` / `project:write` | 项目与成员 | `project.view`/`project.manage` |
-| `worklog:read` / `worklog:write` | 工时 | `worklog.*` |
-| `file:read` / `file:write` | 文件 | `file.view`/`file.upload` |
-| `webhook:manage` | 订阅管理 | `webhook.manage` |
-| `cycle:read` / `view:read` / `label:read` / `state:read` | 只读元数据 | 对应 `.view` |
-| `user:read` / `team:read` | 成员目录只读 | 成员可见性 |
-| （其余 6 个为上述的只读变体与 `notification:read`） | | |
+| `issues:read` / `issues:write` / `issues:delete` | 任务读/写/删 | `issue.read` ／ `issue.create`+`issue.update` ／ `issue.delete` |
+| `issues:relation` | 任务链接 / 依赖 / 子任务挂载 | `issue.relation.manage` |
+| `comments:read` / `comments:write` / `comments:delete` | 评论读 / 发表与改本人 / 删 | `comment.read` ／ `comment.create`+`comment.update.own` ／ `comment.delete` |
+| `projects:read` / `projects:write` | 项目与成员读 / 项目基础信息写（设置写不开放） | `project.read`+`project.member.read` ／ `project.update` |
+| `workspaces:read` | 工作空间基础信息只读 | `workspace.read` |
+| `worklogs:read` / `worklogs:write` | 工时读 / 报 | `worklog.read` ／ `worklog.create` |
+| `files:read` / `files:write` | 文件读（下载/元数据）/ 传（预签名三段式） | `file.read` ／ `file.upload` |
+| `webhooks:manage` | 订阅管理（复用 `INTG-002` 端点） | `integration.config` |
+| `cycles:read` / `views:read` / `labels:read` / `states:read` | 只读元数据（迭代/视图/标签/状态集） | 随 `project.read` 授权（rbac §8.2 无独立 read 码，元数据读取挂项目读取鉴权） |
+| `users:read` / `teams:read` | 成员目录只读（团队目录即工作空间成员域） | `workspace.member.read`+`project.member.read` |
+| `notifications:read` | 本人通知只读 | `notification.read` |
+| `activities:read` | 任务动态时间线只读 | `activity.read` |
+| `approvals:read` | 审批记录只读（BR-06） | `approval.read`（rbac §8.2 仅有 `approval.act`/`approval.withdraw`，只读码为新增，**按 rbac 附录 B 登记**） |
+
+> 权限码对照说明：上表除 `approval.read`（新码，按 rbac 附录 B 登记）外，全部为 rbac §8 注册表既有码；rbac 无 `issue.view`/`project.view`/`file.view`/`webhook.manage` 等码，读语义一律对应 `.read` 族注册码。
 
 ### 2.4 业务规则（BR）
 
 | 编号 | 规则 | 说明 |
 | --- | --- | --- |
 | BR-01 | 权限交集 | 凭证有效权限 = 主体 RBAC 权限 ∩ scope 声明；scope 只是收缩，永不放大 |
-| BR-02 | Key 哈希落库 | `rp_sk_` 明文仅创建时展示一次；DB 存 SHA-256 + 前后各 4 位展示段 |
+| BR-02 | Key 哈希落库 | `rp_<env>_` 明文仅创建时展示一次（AUTH-001 同规则）；DB 存 SHA-256 + 前 8 位前缀与尾 4 位展示段 |
 | BR-03 | 越权报错精确 | scope 不足返回 `PERM_TOKEN_SCOPE_INSUFFICIENT`，`details` 列出所需 scope（不泄露端点是否存在于白名单外——白名单外统一 404） |
 | BR-04 | 速率双层 | 凭证桶（默认 60 req/min）+ 租户桶（`AUTH-012`）；响应头 `X-RateLimit-*` 全套 + `Retry-After` |
 | BR-05 | 调用留痕 | 每次调用记 `ApiCallLog`（凭证 ID/端点/状态码/耗时/IP），保留 30 天；密钥使用本身入 `AuditLog`（创建/吊销/权限变更） |
-| BR-06 | 安全面封闭 | 认证、SSO、权限、审计、工作流管理、系统管理端点**永不进入**白名单；审批记录只读开放（`approval:read`） |
-| BR-07 | OAuth 授权明示 | 授权页逐 scope 列中文说明 + 风险分级色标；`user:read` 等基础 scope 默认勾选可取消 |
+| BR-06 | 安全面封闭 | 认证、SSO、权限、审计、工作流管理、系统管理端点**永不进入**白名单；审批记录只读开放（`approvals:read`） |
+| BR-07 | OAuth 授权明示 | 授权页逐 scope 列中文说明 + 风险分级色标；`users:read` 等基础 scope 默认勾选可取消 |
 | BR-08 | 弃用日历 | 破坏性变更：公告 ≥ 180 天 + `Sunset`/`Deprecation` 响应头 + 文档标记；v1 内只允许 additive 变更 |
 | BR-09 | 应用审核 | OAuth 应用上线（可被其他工作空间安装）需我方审核；自用应用（仅本空间）免审 |
 | BR-10 | 服务账号 | Client Credentials 应用在每个安装空间生成影子服务账号（`is_bot=True`，昵称=应用名），权限由安装者授予，离职免疫 |
-| BR-11 | IP 白名单 | Key 可绑定 CIDR 白名单（可选）；不匹配返回 `PERM_IP_NOT_ALLOWED` |
+| BR-11 | IP 白名单 | Key 可绑定 CIDR 白名单（可选）；不匹配返回 `PERM_IP_NOT_ALLOWED` （api-conventions 待回改登记：§8.3 该码触发场景扩宽为实例级/凭证级 IP 白名单） |
 | BR-12 | 文档即契约 | OpenAPI 3.1 spec 由代码注解生成（drf-spectacular），CI 强制 spec diff 审查；文档站每日构建发布 |
 
 ### 2.5 OAuth 2.0 授权码流程
@@ -140,13 +153,13 @@ sequenceDiagram
     participant T as 第三方应用
     participant RP as 系统（授权服务）
     U->>T: 点击「连接 RabbitProjects」
-    T->>RP: GET /oauth/authorize?client_id&redirect_uri&scope&state&code_challenge(PKCE)
+    T->>RP: GET /api/v1/oauth/authorize/?client_id&redirect_uri&scope&state&code_challenge(PKCE)
     RP->>U: 授权页（应用信息 + scope 明示 BR-07）
     U->>RP: 同意授权
     RP-->>T: 302 redirect?code=…&state=…
-    T->>RP: POST /oauth/token {code, code_verifier, client_secret}
-    RP-->>T: {access_token(2h), refresh_token(90d), scope}
-    T->>RP: GET /api/v1/issues/ (Bearer access_token)
+    T->>RP: POST /api/v1/oauth/token/ {code, code_verifier, client_secret}
+    RP-->>T: {access_token(1h), refresh_token(30d), scope}
+    T->>RP: GET /api/v1/external/workspaces/{slug}/projects/{pid}/issues/?ordering=-created_at (Bearer access_token)
     RP-->>T: 200（权限 = 用户 ∩ scope，BR-01）
 ```
 
@@ -154,8 +167,9 @@ sequenceDiagram
 | --- | --- |
 | PKCE 强制 | 所有客户端类型强制 `code_challenge`（S256），公共客户端无 secret 也可安全 |
 | state 校验 | 授权回调 state 不匹配即拒绝并告警（CSRF 防护） |
-| 撤销 | 用户「设置 → 已授权应用」一键撤销：refresh 立即失效，access 加黑名单至自然过期（≤2h） |
-| Client Credentials | `POST /oauth/token {grant_type=client_credentials}` → 服务账号 token（BR-10） |
+| 撤销 | 用户「设置 → 已授权应用」一键撤销：refresh 立即失效，access 加黑名单至自然过期（≤1h） |
+| refresh 轮换 | 每次刷新签发新 refresh_token 并作废旧值，检测到旧值复用即吊销整个授权链（api-conventions §9.4 refresh token rotation） |
+| Client Credentials | `POST /api/v1/oauth/token/` 携 `{grant_type=client_credentials}` → 服务账号 token（BR-10）。**基线扩展**：api-conventions §9.4 授权类型仅列「授权码 + PKCE（唯一推荐）与 refresh_token」，`client_credentials` 为本模式新增的服务间授权类型（api-conventions 待回改登记：§9.4 增补 `client_credentials` 授权类型；implicit / password grant 仍不支持） |
 
 ### 2.6 开发者门户
 
@@ -178,7 +192,7 @@ sequenceDiagram
 | 开发者门户首页 | `/developers` | 文档导航 + 快速开始（3 步出第一个请求） |
 | API 密钥 | `/developers/keys` | Key 全生命周期 |
 | OAuth 应用 | `/developers/apps` | 应用注册与管理 |
-| 授权同意页 | `/oauth/authorize` | scope 明示与授权决策 |
+| 授权同意页 | `/oauth/authorize` | scope 明示与授权决策（前端渲染页，承载协议端点 `GET /api/v1/oauth/authorize/`） |
 | 已授权应用 | `/{ws}/settings/authorized-apps` | 用户撤销入口 |
 | 调用日志 | `/developers/logs` | 调用检索与导出 |
 
@@ -191,14 +205,14 @@ sequenceDiagram
 │ ┌──────────────────┬──────────────┬───────────┬───────┬───────┐  │
 │ │ 名称             │ Key          │ scope     │ 到期  │ 状态  │  │
 │ ├──────────────────┼──────────────┼───────────┼───────┼───────┤  │
-│ │ BI 抽数          │ rp_sk_Ab3x…  │ issue:read│ 90d   │ ●活跃 │  │
-│ │                  │ …9fQ2        │ worklog:r │ 剩61d │ 用 1h前│  │
-│ │ CI 机器人        │ rp_sk_Zy7w…  │ issue:rw  │ 永久  │ ●活跃 │  │
-│ │                  │ …1kLm        │ webhook:m │       │ 用 3m前│  │
+│ │ BI 抽数          │ rp_live_Ab3x…│ issues:read│ 90d   │ ●活跃 │  │
+│ │                  │ …8oP1        │ worklogs:r│ 剩61d │ 用 1h前│  │
+│ │ CI 机器人        │ rp_live_Zy7w…│ issues:rw │ 永久  │ ●活跃 │  │
+│ │                  │ …1kLm        │ webhooks:m│       │ 用 3m前│  │
 │ └──────────────────┴──────────────┴───────────┴───────┴───────┘  │
 │ ── 创建密钥 ─────────────────────────────────────────────────     │
 │ 名称 [__________]  有效期 [90 天 ▾]  IP 白名单 [可选 CIDR,]       │
-│ scope: ☑issue:read ☑issue:write ☐issue:delete ☑project:read …     │
+│ scope: ☑issues:read ☑issues:write ☐issues:delete ☑projects:read …  │
 │ ⚠ 密钥仅创建时完整显示一次，请立即保存。                           │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -211,10 +225,10 @@ sequenceDiagram
 │      由 Acme Inc 提供 · 已审核 ✓                        │
 ├────────────────────────────────────────────────────────┤
 │ 该应用将获得以下权限：                                  │
-│  ☑ 🟢 读取任务与评论        (issue:read comment:read)   │
-│  ☑ 🟢 读取项目与成员目录    (project:read team:read)    │
-│  ☑ 🟡 代你创建和修改任务    (issue:write)               │
-│  ☐ 🔴 代你删除任务          (issue:delete)              │
+│  ☑ 🟢 读取任务与评论        (issues:read comments:read) │
+│  ☑ 🟢 读取项目与成员目录    (projects:read teams:read)  │
+│  ☑ 🟡 代你创建和修改任务    (issues:write)              │
+│  ☐ 🔴 代你删除任务          (issues:delete)             │
 │                                                         │
 │  工作空间: acme · 以 王小明 (wang@acme.com) 身份授权    │
 │                                                         │
@@ -230,7 +244,7 @@ sequenceDiagram
 | 速率触顶 | 门户密钥行显示红色「已限流」标记与恢复倒计时 |
 | 授权页风险色 | 🟢只读 / 🟡写入 / 🔴删除与高危，🔴 scope 需逐个点开确认（BR-07） |
 | 撤销二次确认 | 撤销授权弹窗说明「应用将立即无法访问，已产生的数据不受影响」 |
-| 权限 | 门户登录即可访问（密钥=本人）；应用审核管理仅 `SYSTEM_ADMIN`；审计导出 WS_ADMIN |
+| 权限 | 门户登录即可访问（密钥=本人）；应用审核管理仅 `SYSTEM_ADMIN`（`system.integration.manage`，rbac §8.3）；门户调用日志导出（AuditLog 审计仍归 `system.audit.read`，SYSTEM_ADMIN） WS_ADMIN |
 
 ---
 
@@ -239,32 +253,21 @@ sequenceDiagram
 ### 4.1 数据模型
 
 ```python
-# apps/api/rp_openapi/models.py
-class ApiKey(BaseModel):
-    user = models.ForeignKey("rp_users.User", on_delete=models.CASCADE,
-                             related_name="api_keys")
-    name = models.CharField(max_length=64)
-    key_hash = models.CharField(max_length=64, unique=True)    # SHA-256
-    key_prefix = models.CharField(max_length=12)               # rp_sk_Ab3x
-    key_suffix = models.CharField(max_length=4)
-    scopes = models.JSONField(default=list)
-    ip_allowlist = models.JSONField(default=list)              # CIDR 列表 BR-11
-    expires_at = models.DateTimeField(null=True)               # null=永久
-    last_used_at = models.DateTimeField(null=True)
-    is_active = models.BooleanField(default=True)
+# apps/api/plane/db/models/user.py —— 密钥复用 AUTH-001 既有 APIToken（与 /api-tokens/ 体系同源，
+# 见 §4.4 仲裁），既有字段：user / name / key_hash（SHA-256）/ key_prefix（前 8 位，如 rp_live_）/
+# scopes（<resource>:<action> 数组）/ expires_at / last_used_at / is_active，本迭代不动；
+# 仅增量迁移以下字段：
+class APIToken(BaseModel):
+    ip_allowlist = models.JSONField(default=list)              # CIDR 列表（BR-11）
+    key_suffix = models.CharField(max_length=4)                # 尾 4 位展示段（门户列表）
 
-    class Meta:
-        db_table = "openapi_api_key"
-        indexes = [models.Index(fields=["user", "is_active"],
-                                name="idx_apikey_user")]
-
-
+# apps/api/plane/db/models/openapi.py
 class OAuthApplication(BaseModel):
     class ClientType(models.TextChoices):
         CONFIDENTIAL = "confidential", "机密（服务端应用）"
         PUBLIC = "public", "公共（SPA/CLI）"
 
-    owner = models.ForeignKey("rp_users.User", on_delete=models.CASCADE)
+    owner = models.ForeignKey("db.User", on_delete=models.CASCADE)
     name = models.CharField(max_length=64)
     client_id = models.CharField(max_length=32, unique=True)   # rp_app_…
     client_secret_hash = models.CharField(max_length=64, null=True)
@@ -277,7 +280,7 @@ class OAuthApplication(BaseModel):
         choices=[("self", "自用"), ("pending", "审核中"),
                  ("approved", "已上架"), ("rejected", "已拒绝")],
         default="self")                                        # BR-09
-    icon_asset = models.ForeignKey("rp_files.FileAsset", null=True,
+    icon_asset = models.ForeignKey("db.FileAsset", null=True,
                                    on_delete=models.SET_NULL)
 
     class Meta:
@@ -287,8 +290,8 @@ class OAuthApplication(BaseModel):
 class OAuthGrant(BaseModel):
     """授权码授权记录（用户×应用×scope 三元组）。"""
     app = models.ForeignKey(OAuthApplication, on_delete=models.CASCADE)
-    user = models.ForeignKey("rp_users.User", on_delete=models.CASCADE)
-    workspace = models.ForeignKey("rp_workspaces.Workspace",
+    user = models.ForeignKey("db.User", on_delete=models.CASCADE)
+    workspace = models.ForeignKey("db.Workspace",
                                   on_delete=models.CASCADE)
     scopes = models.JSONField(default=list)
     refresh_token_hash = models.CharField(max_length=64, unique=True)
@@ -306,9 +309,9 @@ class OAuthGrant(BaseModel):
 class ApiCallLog(BaseModel):
     credential_type = models.CharField(max_length=8)           # key/token
     credential_id = models.UUIDField()
-    user = models.ForeignKey("rp_users.User", null=True,
+    user = models.ForeignKey("db.User", null=True,
                              on_delete=models.SET_NULL)
-    workspace = models.ForeignKey("rp_workspaces.Workspace", null=True,
+    workspace = models.ForeignKey("db.Workspace", null=True,
                                   on_delete=models.SET_NULL)
     method = models.CharField(max_length=8)
     path = models.CharField(max_length=255)
@@ -326,26 +329,29 @@ class ApiCallLog(BaseModel):
 
 | 迁移要点 | 说明 |
 | --- | --- |
-| access token | JWT（RS256，2h），不落库；撤销靠 grant 删除 + Redis 黑名单（jti，TTL=2h） |
+| access token | JWT（RS256，1h，含 `sub`/`aud`/`scope`/`exp`/`jti`），不落库；撤销靠 grant 删除 + Redis 黑名单（jti，TTL=1h）（api-conventions §9.4） |
+| refresh 轮换 | refresh_token 为不透明随机串，仅存哈希；每次刷新签发新值并作废旧值，旧值复用即吊销整个授权链（§9.4 rotation，UT-09 / IT-01 覆盖） |
 | 调用日志分区 | `openapi_call_log` 按月分区（`PARTITION BY RANGE (created_at)`），30 天保留期由分区 DROP 执行（BR-05） |
 
 ### 4.2 认证类与 scope 网关
 
 ```python
-# apps/api/rp_openapi/authentication.py
+# apps/api/plane/api/authentication.py —— 落位 plane/api/（monorepo §2，Open API 专用包）
 class OpenApiAuthentication(BaseAuthentication):
-    """Session 之外的第二认证类；DRF DEFAULT_AUTHENTICATION 追加，不改旧路径。"""
+    """Session 之外的第二认证类，仅挂载 /api/v1/external/ 路由组，不改旧路径。
+    API Key 通道复用 plane/authentication/backends.py 的 APIKeyAuthentication（AUTH-001）。"""
 
     def authenticate(self, request):
+        api_key = request.headers.get("X-API-Key", "")
+        if api_key:                                    # 基线 §9.3：仅 X-API-Key 头，禁止 query 传递
+            return self._auth_api_key(request, api_key)
         header = request.headers.get("Authorization", "")
-        if header.startswith("Bearer rp_sk_"):
-            return self._auth_api_key(request, header[7:])
-        if header.startswith("Bearer eyJ"):
+        if header.startswith("Bearer "):               # OAuth access_token（JWT，§9.4）
             return self._auth_jwt(request, header[7:])
         return None                                    # 交给 Session 认证
 
     def _auth_api_key(self, request, raw: str):
-        key = ApiKey.objects.filter(
+        key = APIToken.objects.filter(
             key_hash=sha256(raw), is_active=True).select_related("user").first()
         if not key:
             raise AuthenticationFailed("AUTH_INVALID_TOKEN")
@@ -358,8 +364,9 @@ class OpenApiAuthentication(BaseAuthentication):
         return (key.user, None)
 
 
+# apps/api/plane/api/permissions.py
 class HasScope(BasePermission):
-    """视图级：required_scopes = ["issue:write"]；BR-01 交集在 RBAC 层天然成立。"""
+    """视图级：required_scopes = ["issues:write"]；BR-01 交集在 RBAC 层天然成立。"""
     def has_permission(self, request, view):
         required = getattr(view, "required_scopes", [])
         scopes = getattr(request, "scopes", None)
@@ -375,40 +382,44 @@ class HasScope(BasePermission):
 
 | 机制 | 实现 |
 | --- | --- |
-| 白名单路由 | `/api/v1/open/` 命名空间下**重新注册**精选视图集（`OPENAPI_WHITELIST` 注册表），物理隔离——未注册端点对凭证认证天然 404（BR-03） |
+| 白名单路由 | `/api/v1/external/` 命名空间下**重新注册**精选视图集（`OPENAPI_WHITELIST` 注册表；视图集落位 `plane/api/views/`，路由聚合于 `plane/api/urls.py`——monorepo §2 与 api-conventions §2.1 三套分组），物理隔离——未注册端点对凭证认证天然 404（BR-03） |
 | 凭证速率 | 滑窗 `orate:{cred_id}:{minute}`，默认 60/min，企业租户可调至 600；超限 `RATE_LIMIT_EXCEEDED` + 全套 `X-RateLimit-*` 头 |
 | 租户速率 | `AUTH-012` 租户桶已含凭证流量（同一中间件计数） |
 | 调用日志 | 中间件异步写（`on_commit` → `openapi_log` 队列批量 INSERT，500 条/批），请求路径零阻塞 |
 
 ### 4.4 API 端点（管理面）
 
+> **与既有 `/api-tokens/` 体系的仲裁（⑧）**：API Key 管理端点在 api-conventions §2.5/§9.3 已定义为 `/api/v1/api-tokens/`（AUTH-001 已交付模型与认证类，管理端点无承接文档）。本文档**不新设** `/developers/keys/` 端点，开发者门户「我的密钥」页直接复用该体系，仅扩展 scope / IP 白名单 / 尾缀展示字段；OAuth 应用与调用日志为全新资源，按 api-conventions §9.4 挂 `/api/v1/oauth/` 与 `/api/v1/users/me/` 既有命名空间。
+
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET/POST | `/api/v1/developers/keys/` | Key 列表 / 创建（唯一一次返回明文） |
-| DELETE | `/api/v1/developers/keys/{id}/` | 吊销 |
-| GET/POST | `/api/v1/developers/apps/` | 应用列表 / 注册 |
-| PATCH | `/api/v1/developers/apps/{id}/` | 改回调/图标/申请上架 |
-| GET | `/api/v1/developers/logs/` | 调用日志（`?credential_id=&status=&cursor=`） |
-| GET/POST/DELETE | `/oauth/authorize`、`/oauth/token`、`/oauth/revoke` | OAuth 协议端点 |
-| GET/DELETE | `/api/v1/workspaces/{slug}/authorized-apps/` | 用户已授权应用与撤销 |
-| GET | `/.well-known/openapi.json` | OpenAPI 3.1 spec（BR-12） |
+| GET/POST | `/api/v1/api-tokens/` | Key 列表 / 创建（唯一一次返回明文；复用既有体系，§2.5/§9.3） |
+| DELETE | `/api/v1/api-tokens/{id}/` | 吊销（§9.3：Redis 吊销位图即时失效） |
+| GET | `/api/v1/api-tokens/logs/` | 调用日志（`?credential_id=&status=&cursor=`，BR-05） |
+| GET/POST | `/api/v1/oauth/applications/` | 应用列表 / 注册 |
+| PATCH | `/api/v1/oauth/applications/{id}/` | 改回调/图标/申请上架 |
+| GET | `/api/v1/oauth/authorize/` | 授权页（api-conventions §9.4） |
+| POST | `/api/v1/oauth/token/` | 换取 / 刷新 token（§9.4；含 `client_credentials` 扩展，见 §2.5） |
+| POST | `/api/v1/oauth/revoke/` | 吊销 token（§9.4） |
+| GET | `/api/v1/oauth/introspect/`、`/api/v1/oauth/userinfo/` | token 自省 / 当前授权用户（§9.4 基线既有端点） |
+| GET/DELETE | `/api/v1/users/me/authorized-apps/` | 用户已授权应用与撤销（§2.4：users 不嵌套） |
+| GET | `/api/v1/external/schema/` | Open API 对外契约 spec，仅含白名单端点（BR-12；内部全量 schema 仍为 §10.6 的 `/api/v1/schema/`） |
 
-**成功示例** — `POST …/developers/keys/`：
+**成功示例** — `POST /api/v1/api-tokens/`：
 
 ```json
 {
   "status": "success",
   "data": {
-    "id": "01J6ZYK2M8NQ4PXRBTVH5WD3EA",
+    "id": "8a1f9c2e-6b3d-4a7e-9f11-2c4d5e6f7a8b",
     "name": "BI 抽数",
-    "key": "rp_sk_Ab3xT7kLm9fQ2wEr5yUi8oP1sD4fG6hJ",
-    "key_prefix": "rp_sk_Ab3x",
-    "key_suffix": "G6hJ",
-    "scopes": ["issue:read", "worklog:read"],
-    "expires_at": "2026-11-30T00:00:00Z",
+    "key": "rp_live_Ab3xT7kLm9fQ2wEr5yUi8oP1",
+    "key_prefix": "rp_live_",
+    "key_suffix": "8oP1",
+    "scopes": ["issues:read", "worklogs:read"],
+    "expires_at": "2026-11-30T00:00:00.000Z",
     "warning": "此密钥仅本次完整显示，请立即保存"
-  },
-  "meta": {"request_id": "01J6ZYL3N9OR5QYSCUW6XE4FB"}
+  }
 }
 ```
 
@@ -421,9 +432,9 @@ class HasScope(BasePermission):
     "code": "PERM_TOKEN_SCOPE_INSUFFICIENT",
     "message": "凭证 scope 不覆盖本次操作",
     "details": [{"field": "scope", "code": "REQUIRED",
-                 "message": "需要 scope: issue:write"}]
-  },
-  "meta": {"request_id": "01J6ZYM4O0PS6RZTDVX7YF5GC"}
+                 "message": "需要 scope: issues:write"}],
+    "request_id": "01J6ZYM4O0PS6RZTDVX7YF5GC"
+  }
 }
 ```
 
@@ -435,18 +446,20 @@ class HasScope(BasePermission):
   "error": {
     "code": "PERM_IP_NOT_ALLOWED",
     "message": "请求来源 IP 不在该密钥的白名单内",
-    "details": []
-  },
-  "meta": {"request_id": "01J6ZYN5P1QT7S1UEWY8ZG6HD"}
+    "details": [],
+    "request_id": "01J6ZYN5P1QT7S1UEWY8ZG6HD"
+  }
 }
 ```
 
 ### 4.5 前端 Store（密钥管理）
 
 ```typescript
-// apps/web/src/modules/developers/api-key.store.ts
+// packages/shared-state/src/developers/api-key.store.ts（@rp/shared-state——monorepo §2：
+// MobX store 统一上移共享包，不入 apps/web；配套 apps/web/app/services/developers.service.ts
+// （axios 客户端层）与 apps/web/app/routes/developers/（门户路由，monorepo §2 routes/ 结构））
 export class ApiKeyStore {
-  keys: IApiKey[] = [];
+  keys: IApiToken[] = [];
   newlyCreatedSecret: string | null = null;   // 仅创建瞬间持有
 
   constructor() { makeAutoObservable(this); }
@@ -488,15 +501,15 @@ export class ApiKeyStore {
 
 | 编号 | 用例 | 断言 |
 | --- | --- | --- |
-| UT-01 | Key 创建 | 明文仅响应一次；DB 存哈希；前缀格式 `rp_sk_` |
+| UT-01 | Key 创建 | 明文仅响应一次；DB 存哈希；前缀格式 `rp_<env>_`（`X-API-Key` 传递，§9.3） |
 | UT-02 | 过期 Key | 过期后请求 `AUTH_TOKEN_EXPIRED` |
 | UT-03 | IP 白名单 | 名单外 IP `PERM_IP_NOT_ALLOWED`；CIDR 边界正确 |
-| UT-04 | scope 交集 | 无 `issue:write` 的 Key 调写端点 `PERM_TOKEN_SCOPE_INSUFFICIENT` 且 details 精确 |
-| UT-05 | 权限永不放大 | 用户本无 `issue.delete` 时即使 Key 声明 `issue:delete` 仍 403（BR-01） |
+| UT-04 | scope 交集 | 无 `issues:write` 的 Key 调写端点 `PERM_TOKEN_SCOPE_INSUFFICIENT` 且 details 精确 |
+| UT-05 | 权限永不放大 | 用户本无 `issue.delete` 时即使 Key 声明 `issues:delete` 仍 403（BR-01） |
 | UT-06 | 白名单外 404 | 凭证调 `/admin/` 端点返回 404 而非 403 |
 | UT-07 | PKCE | 无 `code_challenge` 的 authorize 请求拒绝；verifier 不匹配 token 拒绝 |
 | UT-08 | state 防 CSRF | 回调 state 不符拒绝并告警 |
-| UT-09 | 撤销 | 撤销后 refresh 立即 `AUTH_TOKEN_REVOKED`；access jti 黑名单生效 |
+| UT-09 | 撤销与轮换 | 撤销后 refresh 立即 `AUTH_TOKEN_REVOKED`；access jti 黑名单生效；刷新后旧 refresh 复用即吊销整链（§9.4 rotation） |
 | UT-10 | 服务账号 | CC token 以 bot 身份操作，Activity 作者为应用名 |
 | UT-11 | 速率 | 61 次/分钟第 61 次 `RATE_LIMIT_EXCEEDED`，`Retry-After` 正确 |
 | UT-12 | 日志 | 调用落 `ApiCallLog`（无 query 串）；30 天分区清理生效 |
@@ -505,10 +518,10 @@ export class ApiKeyStore {
 
 | 编号 | 用例 | 断言 |
 | --- | --- | --- |
-| IT-01 | 授权码全流程 | 真实跳转流（测试客户端模拟用户同意）→ token → 调用 → 刷新 → 撤销 |
+| IT-01 | 授权码全流程 | 真实跳转流（测试客户端模拟用户同意）→ token → 调用 → 刷新（旧 refresh 失效）→ 撤销 |
 | IT-02 | CC 机器人 | 建任务 → Webhook 回调触发状态流转（CI 范式）全链 |
 | IT-03 | 三集成演示 | §1.3 三个演示集成脚本在沙盒全绿 |
-| IT-04 | 越权矩阵 | 24 scope × 白名单端点的允许/拒绝矩阵自动化全绿 |
+| IT-04 | 越权矩阵 | §2.3 全部 24 个 scope（全枚举，可程序化展开）× 白名单端点的允许/拒绝矩阵自动化全绿 |
 | IT-05 | spec 零漂移 | CI：`openapi.json` 与提交快照 diff 为空；破坏性 diff 阻断合并（BR-08 门禁） |
 | IT-06 | 租户桶叠加 | 凭证桶未满但租户桶满时按租户桶拒（`AUTH-012` 衔接） |
 
@@ -542,8 +555,8 @@ export class ApiKeyStore {
 
 | 交付面 | 内容 | 估算 |
 | --- | --- | --- |
-| Model / Migration | 4 表 + 月分区 + 迁移 | 1.5 d |
-| 后端 | 认证类 + scope 网关、白名单路由、OAuth 三端点、Key 管理、速率与日志管道 | 6.5 d |
+| Model / Migration | 3 新表（OAuth 应用 / 授权 / 调用日志）+ `APIToken` 增量字段迁移 + 月分区 | 1.5 d |
+| 后端 | 认证类 + scope 网关、白名单路由、OAuth 五端点（§9.4）、`/api-tokens/` 体系扩展、速率与日志管道 | 6.5 d |
 | 前端 | 门户 5 页（文档站接 Redocly）、授权同意页 | 4 d |
 | 文档与 spec | drf-spectacular 注解补全、CI 契约门禁、变更日志流程 | 2 d |
 | 测试 | UT-01~12、IT-01~06、E2E-01~03 | 3 d |

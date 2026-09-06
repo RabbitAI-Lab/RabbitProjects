@@ -24,6 +24,7 @@ import { LabelsAdminModal } from "./labels-admin";
 import { ViewSwitchBar } from "../components/views/ViewSwitchBar";
 import { FilterOpenButton, ViewChipsRow } from "../components/views/ViewFilterBar";
 import { useViewPage } from "../components/views/useViewPage";
+import { BulkOperations, TruncationStrip, useBulkSelection, useMarquee } from "../components/views/BulkOperations";
 import type { Issue, SubtreeData } from "@rp/types";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -171,6 +172,17 @@ export default function IssuesList() {
   const stores = useStores();
   const myRole = stores.permission.effectiveProjectRole(projectId, workspaceSlug);
   const canWrite = myRole >= 15;
+
+  // ── Sprint-3 Phase 3-B（BOARD-004 §3.1）：列表多选 + 批量工具条（C.78~C.83）──
+  const bulkSel = useBulkSelection({ projectId, canEdit: canWrite });
+  const tableWrapRef = useRef<HTMLDivElement | null>(null);
+  useMarquee(tableWrapRef, {
+    enabled: canWrite,
+    onHit: (ids, additive) => {
+      if (!additive) bulkSel.sel.clear();
+      bulkSel.sel.addMany(ids);
+    },
+  });
   /** C.51 成员表（头像堆叠姓名解析 + 快速指派候选） */
   const [members, setMembers] = useState<Array<{ id: string; user: { id: string; display_name: string; email: string }; role: number }>>([]);
   /** C.56 动态列：Schema 自定义字段 + 已选列（localStorage 持久化） */
@@ -767,22 +779,37 @@ export default function IssuesList() {
     const y = it.sub_issues_count ?? 0;
     const x = it.completed_sub_issues_count ?? 0;
     const full = y > 0 && x === y;
+    // C.78 列表行多选态（BOARD-004 §3.1）：行首复选框（hover 浮现）+ bg 高亮 + ⌘/Shift
+    const rowSelected = !isTemp && bulkSel.isSelected(it.id);
     return (
       <Fragment key={it.id}>
         <tr
           data-sb-scope="tree-row"
           data-tree-row=""
           data-id={it.id}
+          data-sel-id={isTemp ? undefined : it.id}
           role="treeitem"
           aria-level={depth}
           aria-expanded={kids ? exp : undefined}
+          aria-selected={rowSelected}
           tabIndex={0}
-          className={`group cursor-pointer hover:bg-neutral-50 ${isTemp ? "opacity-60" : ""} ${it.archived_at ? "opacity-60 hover:opacity-85" : ""} ${cycleIds.includes(it.id) ? "cycle-flash" : ""} ${draggingId === it.id ? "row-dragging" : ""}`}
-          onClick={() => openPeek(it.id)}
+          className={`group cursor-pointer hover:bg-neutral-50 ${rowSelected ? "bg-brand-50" : ""} ${isTemp ? "opacity-60" : ""} ${it.archived_at ? "opacity-60 hover:opacity-85" : ""} ${cycleIds.includes(it.id) ? "cycle-flash" : ""} ${draggingId === it.id ? "row-dragging" : ""}`}
+          onClick={(e) => {
+            if (!isTemp && bulkSel.onModifierClick(it.id, e, filterActive ? filtered.map((f) => f.id) : visibleRows.map((r) => r.it.id))) return;
+            openPeek(it.id);
+          }}
           onKeyDown={onRowKeyDown}
           onDragOver={tree && !isMobile ? (e) => onRowDragOver(e, it) : undefined}
           onDrop={tree && !isMobile ? (e) => onRowDrop(e, it) : undefined}
         >
+          <td className="border-b border-neutral-100 w-[34px] pr-0">
+            {!isTemp && (
+              <input type="checkbox" data-sb-scope="list-row-cb" aria-label={`选择 ${it.name}`} checked={rowSelected}
+                onChange={() => bulkSel.onCheckboxClick(it.id)}
+                onClick={(e) => e.stopPropagation()}
+                className={`w-[15px] h-[15px] accent-brand-500 cursor-pointer transition-opacity ${rowSelected || bulkSel.anySelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`} />
+            )}
+          </td>
           <td className="px-3 py-2.5 border-b border-neutral-100 whitespace-nowrap">
             <span className="inline-block align-middle" style={{ width: tree ? (depth - 1) * 20 : 0 }} aria-hidden="true" />
             {tree && (kids ? (
@@ -994,7 +1021,7 @@ export default function IssuesList() {
         {/* 行内快速加子任务输入行（C.38：目标行下方插入，缩进对齐目标行子级） */}
         {tree && quickSubOf === it.id && (
           <tr data-sb-scope="tree-quick-sub-row">
-            <td colSpan={6 + (wlColumn ? 1 : 0) + cfCols.length} className="border-b border-neutral-100 py-1">
+            <td colSpan={7 + (wlColumn ? 1 : 0) + cfCols.length} className="border-b border-neutral-100 py-1">
               <div className="flex items-center gap-2 h-[34px] px-2.5 my-1 border border-dashed border-neutral-300 rounded-md text-neutral-500 focus-within:border-brand-500 focus-within:bg-white transition-colors"
                 style={{ marginLeft: depth * 20 }}>
                 <span className="text-[13px]">＋</span>
@@ -1173,8 +1200,10 @@ export default function IssuesList() {
               </div>
             )}
           </div>
-          <div className="flex-1 overflow-y-auto p-5">
-            <div className="flex items-center gap-1.5 border border-dashed border-neutral-300 h-[38px] px-3 rounded-md mb-3.5 text-neutral-500 focus-within:border-brand-500 focus-within:bg-white">
+          <div className="flex-1 overflow-y-auto p-5 pb-24" ref={tableWrapRef}>
+            {/* ⌘A 截断黄条（C.79） */}
+            <TruncationStrip />
+            <div className="flex items-center gap-1.5 border border-dashed border-neutral-300 h-[38px] px-3 rounded-md mb-3.5 text-neutral-500 focus-within:border-brand-500 focus-within:bg-white" data-no-marquee>
               <span>+</span>
               <input id="tq-input" className="flex-1 bg-transparent outline-none text-[13px]" placeholder="输入任务标题后按回车快速创建…"
                 value={quick} onChange={(e) => setQuick(e.target.value)}
@@ -1200,6 +1229,16 @@ export default function IssuesList() {
             ) : (
               <table className="w-full border-collapse" role="tree" aria-label="任务树">
                 <thead><tr>
+                    {/* C.78 列头全选（BOARD-004 §3.1：全选当前视图结果集，截断 100） */}
+                    <th className="w-[34px] pr-0">
+                      <input type="checkbox" aria-label="全选当前视图任务" data-sb-scope="list-header-cb" className="w-[15px] h-[15px]"
+                        checked={bulkSel.sel.count > 0 && bulkSel.sel.count === (filterActive ? filtered.length : visibleRows.length)}
+                        onChange={() => {
+                          const ids = filterActive ? filtered.map((f) => f.id) : visibleRows.map((r) => r.it.id);
+                          if (bulkSel.sel.count > 0) bulkSel.sel.clear();
+                          else bulkSel.sel.selectViewResults(ids);
+                        }} />
+                    </th>
                     {[
                       ["编号", "w-24"], ["标题", ""], ["状态", "w-[120px]"], ["负责人", "w-[110px]"], ["截止时间", "w-[130px]"],
                       ...(wlColumn ? [["工时", "w-[96px]"]] : []),
@@ -1283,6 +1322,12 @@ export default function IssuesList() {
           </div>
         </div>
       )}
+
+      {/* 批量工具条 + 浮层/确认/失败定位（C.80~C.83；⌘A 作用域 = 当前可见行） */}
+      <BulkOperations workspaceSlug={workspaceSlug} projectId={projectId} canEdit={canWrite}
+        visibleIds={filterActive ? filtered.map((f) => f.id) : visibleRows.map((r) => r.it.id)}
+        states={vp.states} members={vp.members} labels={vp.labels}
+        onOpenIssue={openPeek} onMutated={load} />
 
       {peekId && <IssueDrawer issueId={peekId} slug={workspaceSlug!} projectId={projectId!} onClose={() => { closePeek(); load(); }} onChanged={() => load()} />}
       {showTaskModal && <NewTaskModal slug={workspaceSlug!} projectId={projectId!} projectName={project?.name ?? ""} onClose={() => setShowTaskModal(false)} onCreated={() => load()} />}

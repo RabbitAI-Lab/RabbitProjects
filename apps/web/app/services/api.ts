@@ -187,7 +187,7 @@ export const IssueTypeAPI = {
       `workspaces/${slug}/projects/${projectId}/issue-types/`),
 };
 
-/** COLLAB-001 §4.3 评论（C.32 + C.33）。
+/** COLLAB-001 §4.3 评论（C.32 + C.33）+ COLLAB-002 §4.2 两层结构。
  *  actor 形状以后端 `CommentSerializer.get_actor` 为准：`{id, display_name, avatar_url}`。
  *  **没有** `name` / `author` 字段——前端曾按 `actor.name` 取首字母，取到 undefined 兜底成「?」。 */
 export interface CommentActor {
@@ -195,11 +195,35 @@ export interface CommentActor {
   display_name: string;
   avatar_url?: string | null;
 }
+/** COLLAB-002 §4.2.2 reactions 聚合行（?expand=reactions 时追加 user_ids）。 */
+export interface CommentReactionAgg {
+  emoji: string;
+  count: number;
+  reacted_by_me: boolean;
+  user_ids?: string[];
+}
+/** COLLAB-002 §4.2.1：accessory.images 为服务端聚合的 asset_id 字符串列表
+ *  （客户端不直传 accessory，UT-18）；名称/GIF 判定由前端从净化后的
+ *  comment_html `<img src alt>` 解析（src 受控锚定 download/?variant=thumb）。 */
+export interface CommentImageMeta {
+  assetId: string;
+  name: string;
+  gif: boolean;
+  thumb: boolean;
+  src: string;
+}
 export interface CommentRow {
   id: string;
+  parent_id?: string | null;
+  root_id?: string | null;
   actor?: CommentActor | null;
   comment_html: string;
   mention_ids?: string[];
+  reply_to_actor?: CommentActor | null;
+  images?: string[];
+  reactions?: CommentReactionAgg[];
+  replies?: CommentRow[];
+  reply_count?: number;
   is_edited: boolean;
   is_deleted: boolean;
   created_at: string;
@@ -222,15 +246,30 @@ export interface ActivityRow {
 }
 
 export const CommentAPI = {
-  list: (slug: string, projectId: string, issueId: string) =>
+  /** COLLAB-002 §4.2-2：两层结构列表（顶层 + replies[] + reply_count + reactions 聚合）。
+   *  ?expand=reactions 追加 user_ids（名单浮层，§4.2-5）。 */
+  list: (slug: string, projectId: string, issueId: string, params: { expand?: "reactions"; per_page?: number; cursor?: string } = {}) =>
     api.get<CommentRow[]>(
-      `workspaces/${slug}/projects/${projectId}/issues/${issueId}/comments/`),
-  create: (slug: string, projectId: string, issueId: string, payload: { comment_html: string }) =>
-    api.post<{ id: string }>(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/comments/`, payload),
+      `workspaces/${slug}/projects/${projectId}/issues/${issueId}/comments/`, { params }),
+  /** COLLAB-002 §4.2-1：发表评论 / 回复（parent_id 归并生效）+ 图片（comment_json image 节点）。 */
+  create: (slug: string, projectId: string, issueId: string, payload: {
+    comment_html: string;
+    comment_json?: Record<string, unknown>;
+    parent_id?: string | null;
+  }) =>
+    api.post<CommentRow>(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/comments/`, payload),
   patch: (slug: string, projectId: string, issueId: string, commentId: string, payload: { comment_html: string }) =>
     api.patch(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/comments/${commentId}/`, payload),
   del: (slug: string, projectId: string, issueId: string, commentId: string) =>
     api.delete(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/comments/${commentId}/`),
+  /** COLLAB-002 §4.2-3：添加表情（幂等；body 带 emoji——路径参数仅 UUID/slug）。 */
+  reactOn: (slug: string, projectId: string, issueId: string, commentId: string, emoji: string) =>
+    api.post<{ emoji: string; count: number; reacted_by_me: boolean; changed: boolean }>(
+      `workspaces/${slug}/projects/${projectId}/issues/${issueId}/comments/${commentId}/reactions/`, { emoji }),
+  /** COLLAB-002 §4.2-4：撤销表情（幂等；emoji 走请求体而非路径）。 */
+  reactOff: (slug: string, projectId: string, issueId: string, commentId: string, emoji: string) =>
+    api.delete<{ emoji: string; count: number; reacted_by_me: boolean; changed: boolean }>(
+      `workspaces/${slug}/projects/${projectId}/issues/${issueId}/comments/${commentId}/reactions/`, { data: { emoji } }),
 };
 
 /** FILE-001 §4.3 附件（C.31）：presign → 直传 → complete → list → download → delete。
@@ -250,8 +289,12 @@ export interface AttachmentRow {
 }
 
 export const AttachmentAPI = {
-  /** POST .../attachments/presign/ —— 申请直传 URL */
-  presign: (slug: string, projectId: string, issueId: string, payload: { file_name: string; file_size: number; content_type: string }) =>
+  /** POST .../attachments/presign/ —— 申请直传 URL。
+   *  COLLAB-002 §2.3：entity_type=comment_image 评论图域（5MB + 图片白名单收紧，
+   *  不占 20 配额；缺省 issue 语义不变）。 */
+  presign: (slug: string, projectId: string, issueId: string, payload: {
+    file_name: string; file_size: number; content_type: string; entity_type?: "issue" | "comment_image";
+  }) =>
     api.post<{ asset_id: string; upload_url: string; fields: Record<string, string>; expires_at: string }>(
       `workspaces/${slug}/projects/${projectId}/issues/${issueId}/attachments/presign/`, payload),
   /** POST .../attachments/{asset_id}/complete/ —— 直传完成后确认 HEAD + 计数 +1 */
@@ -610,3 +653,60 @@ export interface GroupedEnvelope {
     warning?: string;
   };
 }
+
+/* ═══════════════ Sprint-3 Phase 3-B（BOARD-004 §4.2 / COLLAB-002 §4.2）═══════════════ */
+
+/** BOARD-004 §4.2.1 PATCH …/issues/bulk/ 成功响应 data。 */
+export interface BulkUpdateResult {
+  updated: number;
+  epoch: number;
+  action: string;
+  comment?: string;
+}
+/** BOARD-004 §4.2.2 批量归档响应 data（archived_count = 实际新置档行数口径）。 */
+export interface BulkArchiveResult {
+  archived_count: number;
+  affected_total: number;
+  epoch: number;
+}
+/** BOARD-004 §4.2.3 批量删除响应 data。 */
+export interface BulkDeleteResult {
+  deleted: number;
+  affected_total: number;
+  epoch: number;
+}
+/** BOARD-004 §4.2.4 危险动作预检响应 data（denied = 权限失败项前移）。 */
+export interface BulkPreviewResult {
+  selected: number;
+  with_subtree: number;
+  cascade_total: number;
+  affected_total: number;
+  links: number;
+  worklogs: number;
+  comments: number;
+  denied: Array<{ index: number; issue_key: string; reason: string }>;
+}
+
+export const BulkAPI = {
+  /** #1 PATCH …/issues/bulk/ —— 状态 / 优先级（patch）/ 指派 / 标签（集合三模式）。 */
+  patch: (slug: string, projectId: string, payload: {
+    issue_ids: string[];
+    patch?: { state_id?: string; priority?: string };
+    assignees?: { mode: "replace" | "add" | "remove"; assignee_ids: string[] };
+    labels?: { mode: "replace" | "add" | "remove"; label_ids: string[] };
+    comment?: string;
+  }) => api.patch<BulkUpdateResult>(`workspaces/${slug}/projects/${projectId}/issues/bulk/`, payload),
+  /** #2 POST …/issues/bulk/archive/ —— 整树级联归档（同步 200 豁免）。 */
+  archive: (slug: string, projectId: string, payload: { issue_ids: string[]; comment?: string }) =>
+    api.post<BulkArchiveResult>(`workspaces/${slug}/projects/${projectId}/issues/bulk/archive/`, payload),
+  /** #3 DELETE …/issues/bulk/ —— 软删 + 级联（confirm_count 数量确认，BR-10）。
+   *  危险动作默认带 Idempotency-Key（BR-14，UUID/批）。 */
+  del: (slug: string, projectId: string, payload: { issue_ids: string[]; confirm_count: number }) =>
+    api.delete<BulkDeleteResult>(`workspaces/${slug}/projects/${projectId}/issues/bulk/`, {
+      data: payload,
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+    }),
+  /** #4 POST …/issues/bulk/preview/ —— 危险动作预检（只读；issue.read）。 */
+  preview: (slug: string, projectId: string, payload: { issue_ids: string[]; action: "delete" | "archive" }) =>
+    api.post<BulkPreviewResult>(`workspaces/${slug}/projects/${projectId}/issues/bulk/preview/`, payload),
+};

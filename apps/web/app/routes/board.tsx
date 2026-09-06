@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import { Topbar } from "../components/Topbar";
 import { ProjectSidebar } from "../components/ProjectSidebar";
@@ -12,6 +12,7 @@ import { ViewSwitchBar } from "../components/views/ViewSwitchBar";
 import { FilterOpenButton, ViewChipsRow } from "../components/views/ViewFilterBar";
 import { GroupedBoard } from "../components/views/GroupedBoard";
 import { useViewPage } from "../components/views/useViewPage";
+import { BulkOperations, TruncationStrip, useBulkSelection, useMarquee } from "../components/views/BulkOperations";
 
 /** Sprint-3 Phase 3-A：BOARD-003 §3.1/§3.2 分组看板泛化 + 视图切换器工具条（C.64~C.67）。
  *  Sprint-1/2 冻结表面（C.29/C.30/C.44/C.45/C.51）在泛化看板上保留：
@@ -39,6 +40,23 @@ export default function Board() {
   const bumpReload = () => setReloadKey((n) => n + 1);
   /** 视图/临时筛选命中总数（meta.total_count；C.74 总计行）。 */
   const [totalCount, setTotalCount] = useState<number | null>(null);
+
+  // ── Sprint-3 Phase 3-B（BOARD-004 §3.1/§4.4）：看板多选 + 批量工具条（C.77~C.83）──
+  const bulkSel = useBulkSelection({ projectId, canEdit });
+  /** C.79 ⌘A 作用域：已载入卡片 id（GroupedBoard onCardsLoaded 上报）。 */
+  const [boardIds, setBoardIds] = useState<string[]>([]);
+  const boardIdsRef = useRef<string[]>([]);
+  boardIdsRef.current = boardIds;
+  const boardWrapRef = useRef<HTMLDivElement | null>(null);
+  useMarquee(boardWrapRef, {
+    enabled: canEdit,
+    onHit: (ids, additive) => {
+      if (!additive) bulkSel.sel.clear();
+      bulkSel.sel.addMany(ids);
+    },
+  });
+  const onCardsLoaded = useCallback((ids: string[]) => setBoardIds(ids), []);
+  const bumpReloadForBulk = () => setReloadKey((n) => n + 1);
 
   useEffect(() => {
     if (!workspaceSlug || !projectId) return;
@@ -122,9 +140,24 @@ export default function Board() {
           </div>
           {/* 视图条件 chips 行（C.74） */}
           <ViewChipsRow vp={vp} totalCount={totalCount} />
-          {/* 分组看板（五维泛化 C.66/C.67） */}
-          <GroupedBoard vp={vp} workspaceSlug={workspaceSlug} projectId={projectId} canEdit={canEdit} blockedIds={blockedIds} blockedTipOf={(id) => blockedTip[id] ?? "被未完成前置任务阻塞"} onLoadBlockedTip={(id) => void loadBlockedTip(id)}
-            onOpenIssue={openPeek} search={search} reloadKey={reloadKey} />
+          {/* ⌘A 截断黄条（C.79：已选前 100 / 共 N） */}
+          <div className="px-4 pt-2"><TruncationStrip /></div>
+          {/* 分组看板（五维泛化 C.66/C.67）+ 多选接线（C.77） */}
+          <div ref={boardWrapRef} className="flex-1 flex flex-col min-h-0">
+            <GroupedBoard vp={vp} workspaceSlug={workspaceSlug} projectId={projectId} canEdit={canEdit} blockedIds={blockedIds} blockedTipOf={(id) => blockedTip[id] ?? "被未完成前置任务阻塞"} onLoadBlockedTip={(id) => void loadBlockedTip(id)}
+              onOpenIssue={openPeek} search={search} reloadKey={reloadKey} onCardsLoaded={onCardsLoaded}
+              bulk={{
+                isSelected: bulkSel.isSelected,
+                anySelected: bulkSel.anySelected,
+                onCheck: bulkSel.onCheckboxClick,
+                // ⌘/Shift 作用域 = 当前看板可见卡片（列内 100 上限内的已载入集）
+                onModifierClick: (id, ev) => bulkSel.onModifierClick(id, ev, boardIdsRef.current),
+              }} />
+          </div>
+          {/* 批量工具条 + 浮层/确认/失败定位（C.80~C.83） */}
+          <BulkOperations workspaceSlug={workspaceSlug} projectId={projectId} canEdit={canEdit}
+            visibleIds={boardIds} states={vp.states} members={vp.members} labels={vp.labels}
+            onOpenIssue={openPeek} onMutated={bumpReloadForBulk} />
           <PeekPopover peek={peek} onClose={closeHoverPeek} />
           {peekId && <SharedDrawer issueId={peekId} slug={workspaceSlug!} projectId={projectId!} onClose={() => { closePeek(); bumpReload(); }} onChanged={bumpReload} />}
           {showTaskModal && <NewTaskModal slug={workspaceSlug!} projectId={projectId!} projectName={projName} onClose={() => setShowTaskModal(false)} onCreated={bumpReload} />}

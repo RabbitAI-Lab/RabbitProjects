@@ -15,6 +15,7 @@ export const HTTP = {
   CREATED:       201,
   ACCEPTED:      202,   // 已受理异步处理（Sprint-2 TASK-008 字段删除）
   NO_CONTENT:    204,
+  BAD_REQUEST:   400,   // 参数 / 校验失败（_contract.py STATUS 有而本表漏登——双源同步补齐，Phase 3-B 批量 400 失败定位用）
   UNAUTHORIZED:  401,  // DRF 未认证
   FORBIDDEN:     403,  // 越权 / 角色不足
   NOT_FOUND:     404,  // 资源不存在 / 越权 404（防 ID 枚举）

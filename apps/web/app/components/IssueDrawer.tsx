@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AssigneeAPI,
   AttachmentAPI,
-  CommentAPI,
   FieldAPI,
   IssueAPI,
   IssueTypeAPI,
@@ -14,7 +13,6 @@ import {
   unwrap,
   type ActivityGroup,
   type AttachmentRow,
-  type CommentRow,
   type CustomFieldDef,
   type DeleteSubtreeResult,
   type RelationRow,
@@ -25,7 +23,7 @@ import type { ApiError } from "../services/axios";
 import { useStores } from "../stores";
 import { StateBadge } from "./StateBadge";
 import { toast } from "./Toast";
-import { MentionPop, useMentionTrigger, type MentionCandidate } from "./MentionPop";
+import { CommentThreadTab } from "./CommentThread";
 import { IssueTreeDrawer } from "./IssueTreeDrawer";
 import {
   AddRelationModal,
@@ -282,9 +280,7 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
   const descDirtyRef = useRef(false);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [uploadPct, setUploadPct] = useState(0);
-  const [comments, setComments] = useState<CommentRow[]>([]);
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
-  const [commentDraft, setCommentDraft] = useState("");
   const [newSubName, setNewSubName] = useState("");
   /** TASK-004 §3.3/C.40：全屏树抽屉（分区头「查看全部 N 个 →」打开）；
    *  treeNodeIssueId = 树里点开的节点详情（盖在树之上，关闭回树、树状态保留）。 */
@@ -343,20 +339,6 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
   const [actActorFilter, setActActorFilter] = useState("");
   const [actFieldMenu, setActFieldMenu] = useState(false);
   const [actActorMenu, setActActorMenu] = useState(false);
-
-  // 候选池（C.33）：项目成员缓存（本文件内做最小占位实现：issue.assignee 视为 1 条；
-  // 真实 PROJ-002 列表接入由后续 PR 补，本组件保持接口稳定）
-  const mentionCandidates: MentionCandidate[] = useMemo(() => {
-    const list: MentionCandidate[] = [];
-    if (issue?.assignee) list.push({ id: issue.assignee.id, name: issue.assignee.name, email: "" });
-    return list;
-  }, [issue?.assignee]);
-
-  const mention = useMentionTrigger({
-    value: commentDraft,
-    setValue: setCommentDraft,
-    allCandidates: mentionCandidates,
-  });
 
   function refresh() {
     return IssueAPI.detail(slug, projectId, issueId).then((r) => {
@@ -426,13 +408,8 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [issue?.id, slug, projectId, issueId]);
 
-  // 切到对应 tab 时拉数据（C.25 时间线 + C.31 附件）
+  // 切到对应 tab 时拉数据（C.25 时间线 + C.31 附件；评论 Tab 数据由 CommentThreadTab 自管）
   useEffect(() => {
-    if (tab === "comments") {
-      CommentAPI.list(slug, projectId, issueId)
-        .then((r) => setComments(unwrap<typeof comments>(r) ?? []))
-        .catch(() => {});
-    }
     if (tab === "activity") {
       loadActivityGroups();
     }
@@ -654,33 +631,6 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
         : `已删除 ${issue?.issue_key ?? "任务"}`);
     } catch { toast("删除失败", "error"); }
     onChanged?.();
-  }
-
-  async function postComment() {
-    const text = commentDraft.trim();
-    if (!text) return;
-    const optimistic: CommentRow = {
-      id: "__opt__",
-      actor: { id: null, display_name: "我", avatar_url: null },
-      comment_html: text,
-      is_edited: false,
-      is_deleted: false,
-      created_at: new Date().toISOString(),
-      updated_at: null,
-    };
-    setComments((c) => [...c, optimistic]);
-    setCommentDraft("");
-    try {
-      await CommentAPI.create(slug, projectId, issueId, { comment_html: text });
-      // 重新拉以拿到真实 id + 时间
-      const r = await CommentAPI.list(slug, projectId, issueId);
-      setComments(unwrap<typeof comments>(r) ?? []);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "发表失败";
-      toast(msg, "error");
-      setComments((c) => c.filter((x) => x.id !== "__opt__"));
-      setCommentDraft(text);
-    }
   }
 
   /** C.61 动态 Tab：epoch 组时间线（服务端预聚合；?field= / ?actor_id= 过滤；游标锚定 epoch）。 */
@@ -957,7 +907,7 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
         <div role="tablist" aria-label="任务详情视图" className="flex border-b border-neutral-200 px-5">
           {([
             ["desc", "描述"],
-            ["comments", `💬 评论${comments.length ? " " + comments.length : ""}`],
+            ["comments", "💬 评论"],
             ["activity", "动态"],
             ["attachments", `附件${attachments.length ? " " + attachments.length : ""}`],
           ] as const).map(([k, label]) => (
@@ -1541,97 +1491,10 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
           )}
 
           {tab === "comments" && (
-            <div>
-              {/* 评论列表（C.32） */}
-              <ul className="flex flex-col gap-3" data-sb-scope="drawer-comments-list">
-                {comments.length === 0 && (
-                  <li className="text-[13px] text-neutral-500 py-4" data-sb-scope="drawer-comments-empty">
-                    还没有评论
-                  </li>
-                )}
-                {comments.map((c) => (
-                  <li key={c.id} className="flex gap-2" data-sb-scope="drawer-comment-row">
-                    {/* actor 只有 display_name / avatar_url（见 CommentSerializer.get_actor）；
-                        旧代码读 actor.name → undefined → 兜底渲染成「?」 */}
-                    {c.actor?.avatar_url ? (
-                      <img src={c.actor.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover shrink-0" />
-                    ) : (
-                      <span className="w-7 h-7 rounded-full bg-neutral-200 text-neutral-700 text-[11px] font-semibold flex items-center justify-center shrink-0" aria-hidden="true">
-                        {initialOf(c.actor?.display_name)}
-                      </span>
-                    )}
-                    <div className="flex-1">
-                      <div className="text-[12px] text-neutral-500">
-                        <b className="text-neutral-900">{c.actor?.display_name ?? "已注销用户"}</b>
-                        <span className="ml-2">{c.created_at?.slice(0, 16).replace("T", " ")}</span>
-                        {c.updated_at && <span className="ml-2" data-sb-scope="drawer-comment-edited">已编辑</span>}
-                      </div>
-                      {c.is_deleted ? (
-                        <div className="text-[13px] text-neutral-400 italic" data-sb-scope="drawer-comment-deleted">该评论已删除</div>
-                      ) : (
-                        <div
-                          className="text-[13px] mt-0.5"
-                          // C.33 锚点渲染：<span data-mention-id data-primary-600 蓝字>
-                          dangerouslySetInnerHTML={{ __html: c.comment_html }}
-                        />
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              {/* 输入框 + ⌘Enter + @ 补全（C.32 + C.33） */}
-              <div className="mt-4 border-t border-neutral-200 pt-3 relative">
-                {/* @ 补全浮层（C.33）—— 父容器 relative，浮层 absolute bottom-full */}
-                {mention.isOpen && (
-                  <MentionPop
-                    query={mention.query}
-                    candidates={mention.candidates}
-                    onPick={mention.onPick}
-                  />
-                )}
-                {mention.filteredEmpty && (
-                  <div
-                    data-sb-scope="mention-pop-empty"
-                    className="absolute bottom-full left-0 mb-1.5 w-[260px] bg-white border border-neutral-200 rounded-lg shadow-lg py-3 text-[13px] text-neutral-500 text-center z-30"
-                  >无成员</div>
-                )}
-                {/* 工具条（精简：@ B I 💬 🔗 —— C.32） */}
-                <div className="flex gap-0.5 px-2 py-1.5 mb-1.5 border border-neutral-200 rounded-md bg-neutral-50 text-[13px] text-neutral-500" aria-hidden>
-                  {["@", "B", "I", "💬", "🔗"].map((t, i) => (
-                    <span key={i} className="min-w-[26px] h-6 inline-flex items-center justify-center rounded px-1">{t}</span>
-                  ))}
-                </div>
-                <textarea
-                  aria-label="评论"
-                  data-sb-scope="drawer-comment-input"
-                  className="w-full border border-neutral-200 rounded-md p-2 text-[13px] min-h-[60px] focus:outline-none focus:border-brand-500"
-                  placeholder="评论…（⌘Enter 发表）"
-                  value={commentDraft}
-                  onChange={(e) => {
-                    const ta = e.target as HTMLTextAreaElement;
-                    mention.onChangeWithMention(ta.value, ta.selectionStart);
-                  }}
-                  onKeyDown={(e) => {
-                    if (mention.onKeyDown(e)) return;
-                    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                      e.preventDefault();
-                      postComment();
-                    }
-                  }}
-                />
-                <div className="flex items-center justify-between mt-2">
-                  <span className="text-[12px] text-neutral-400" data-sb-scope="drawer-comment-counter">
-                    {commentDraft.length}/5000
-                  </span>
-                  <button
-                    onClick={postComment}
-                    disabled={!commentDraft.trim()}
-                    className="h-[30px] px-3 bg-brand-500 text-white rounded-md text-[13px] hover:bg-brand-600 disabled:opacity-50"
-                    data-sb-scope="drawer-comment-submit"
-                  >发表</button>
-                </div>
-              </div>
-            </div>
+            /* COLLAB-002 §3.1 评论 Tab 线程化（C.84~C.88）：两层结构/折叠/反应栏/
+               图片网格+灯箱/回复态 Composer/父删子留（C.32/C.33 锚点与 ⌘Enter 沿用）。 */
+            <CommentThreadTab slug={slug} projectId={projectId} issueId={issueId}
+              canComment={myRole >= 10} members={members} myUserId={myUserId} />
           )}
 
           {tab === "activity" && (

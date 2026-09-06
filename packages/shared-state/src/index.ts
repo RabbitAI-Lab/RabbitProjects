@@ -396,6 +396,123 @@ export interface RootStore {
   filterTree: FilterTreeStore;
 }
 
+/* ═══════════════ Sprint-3 Phase 3-B（BOARD-004 §4.4）═══════════════ */
+
+/**
+ * SelectionStore（BOARD-004 §4.4）：全局批量选中池 —— 跨页/切视图保留、
+ * 切项目清空（§2.3 状态机注）、上限 100 阻止追加（§2.6 边界表）、dispatching
+ * 冻结（BR-13：请求期点选/区间无效）。本包不发起 HTTP：dispatching 由 app 层
+ * 批量动作处置，失败定位弹层消费 details[].field 解析 issue_ids[<index>]。
+ */
+export class SelectionStore {
+  static readonly LIMIT = 100;
+
+  selectedIds: Set<string> = new Set();
+  projectId: string | null = null;
+  /** BR-13：请求期冻结（防中途改选造成响应错配）。 */
+  dispatching = false;
+  /** ⌘A/全选截断黄条（C.79）：>100 时由 selectViewResults 置位，清空/知道了归零。 */
+  truncatedInfo: { selected: number; total: number } | null = null;
+
+  constructor() {
+    makeObservable(this, {
+      selectedIds: observable.ref,
+      projectId: observable,
+      dispatching: observable,
+      truncatedInfo: observable.ref,
+      count: computed,
+      bindProject: action,
+      toggle: action,
+      addMany: action,
+      range: action,
+      selectViewResults: action,
+      setDispatching: action,
+      clearTruncation: action,
+      clear: action,
+      removeMany: action,
+    });
+  }
+
+  get count(): number {
+    return this.selectedIds.size;
+  }
+
+  has(id: string): boolean {
+    return this.selectedIds.has(id);
+  }
+
+  /** 进入项目时重置作用域（防止跨项目批量误伤，§4.4）。 */
+  bindProject(projectId: string | undefined | null): void {
+    if (this.projectId !== projectId) {
+      this.projectId = projectId ?? null;
+      this.selectedIds = new Set();
+      this.truncatedInfo = null;
+    }
+  }
+
+  toggle(id: string): void {
+    if (this.dispatching) return; // BR-13：冻结期间点选无效
+    const next = new Set(this.selectedIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      if (next.size >= SelectionStore.LIMIT) return; // 上限阻止追加（已选项仍可移除）
+      next.add(id);
+    }
+    this.selectedIds = next;
+  }
+
+  /** 框选命中集（Shift = 在既有选中上追加）；达上限截断。 */
+  addMany(ids: string[]): void {
+    if (this.dispatching || ids.length === 0) return;
+    const next = new Set(this.selectedIds);
+    for (const id of ids) {
+      if (next.size >= SelectionStore.LIMIT) break;
+      next.add(id);
+    }
+    this.selectedIds = next;
+  }
+
+  /** Shift 区间选择：visibleIds 为当前视图可见顺序（§4.4 代码块同签名语义）。 */
+  range(fromId: string, toId: string, visibleIds: string[]): void {
+    if (this.dispatching) return; // BR-13
+    const a = visibleIds.indexOf(fromId);
+    const b = visibleIds.indexOf(toId);
+    if (a === -1 || b === -1) return;
+    const [lo, hi] = a < b ? [a, b] : [b, a];
+    this.addMany(visibleIds.slice(lo, hi + 1));
+  }
+
+  /** 全选视图结果集（前端显式展开，BR-08——服务端不隐式展开视图）。 */
+  selectViewResults(viewIds: string[]): { truncated: boolean; total: number } {
+    if (this.dispatching) return { truncated: false, total: this.selectedIds.size };
+    const total = viewIds.length;
+    const truncated = total > SelectionStore.LIMIT;
+    this.selectedIds = new Set(viewIds.slice(0, SelectionStore.LIMIT));
+    this.truncatedInfo = truncated ? { selected: SelectionStore.LIMIT, total } : null;
+    return { truncated, total };
+  }
+
+  setDispatching(v: boolean): void {
+    this.dispatching = v;
+  }
+
+  clearTruncation(): void {
+    this.truncatedInfo = null;
+  }
+
+  clear(): void {
+    this.selectedIds = new Set();
+    this.truncatedInfo = null;
+  }
+
+  /** 「移除失败项重试」（§3.4 一键重试）。 */
+  removeMany(ids: string[]): void {
+    const drop = new Set(ids);
+    this.selectedIds = new Set([...this.selectedIds].filter((i) => !drop.has(i)));
+  }
+}
+
 export function createRootStore(): RootStore {
   return {
     session: new SessionStore(),

@@ -57,7 +57,7 @@ function ReplaceConfirm({ kind, oldNames, newName, onCancel, onOk }: {
   );
 }
 
-export function GroupedBoard({ vp, workspaceSlug, projectId, canEdit, blockedIds, blockedTipOf, onLoadBlockedTip, onOpenIssue, search, reloadKey = 0 }: {
+export function GroupedBoard({ vp, workspaceSlug, projectId, canEdit, blockedIds, blockedTipOf, onLoadBlockedTip, onOpenIssue, search, reloadKey = 0, bulk, onCardsLoaded }: {
   vp: ViewPage;
   workspaceSlug?: string | undefined;
   projectId?: string | undefined;
@@ -69,6 +69,17 @@ export function GroupedBoard({ vp, workspaceSlug, projectId, canEdit, blockedIds
   search: string;
   /** 外部数据变更信号（创建任务/抽屉编辑后 +1 → 分组数据重拉） */
   reloadKey?: number;
+  /** BOARD-004 §3.1 多选接线（C.77）：⌘/Shift 点选 + 左上角标复选框 + 选中 ring。
+   *  由路由层 useBulkSelection 注入；未传时看板保持纯浏览态（零行为变化）。 */
+  bulk?: {
+    isSelected: (id: string) => boolean;
+    anySelected: boolean;
+    onCheck: (id: string) => void;
+    /** modifier 点击（⌘/Shift）——返回 true 表示已消费（不打开详情）。 */
+    onModifierClick: (id: string, ev: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }) => boolean;
+  };
+  /** C.79 ⌘A 作用域上报：已载入卡片 id（列加载/reload 后回调；路由层喂 BulkOperations）。 */
+  onCardsLoaded?: (ids: string[]) => void;
 }) {
   const { groupBy, effDisplay } = vp;
   const [cols, setCols] = useState<GroupCol[]>([]);
@@ -101,6 +112,7 @@ export function GroupedBoard({ vp, workspaceSlug, projectId, canEdit, blockedIds
       });
       setCols(next);
       setLoading(false);
+      onCardsLoaded?.(next.flatMap((c) => c.issues.map((i) => i.id))); // C.79 ⌘A 作用域
     })();
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceSlug, projectId, groupBy, vp.viewIdParam, vp.filtersParam, reloadKey, JSON.stringify(columnMetas.map((c) => c.key))]);
@@ -197,10 +209,12 @@ export function GroupedBoard({ vp, workspaceSlug, projectId, canEdit, blockedIds
   async function reload() {
     const env = await vp.fetchGrouped(groupBy);
     if (!env) return;
-    setCols((prev) => prev.map((c) => {
+    const next = cols.map((c) => {
       const bucket = env.data?.[c.key] ?? { results: [] as Issue[], total_results: 0 };
       return { ...c, issues: (bucket.results as Issue[]) ?? [], total: bucket.total_results ?? 0 };
-    }));
+    });
+    setCols(next);
+    onCardsLoaded?.(next.flatMap((c) => c.issues.map((i) => i.id)));
   }
 
   function cardMeta(it: Issue) {
@@ -366,17 +380,29 @@ export function GroupedBoard({ vp, workspaceSlug, projectId, canEdit, blockedIds
                   const tip = blockedTipOf(it.id);
                   const state = vp.states.find((s) => s.id === it.state_id);
                   const assignees = (it.assignee_ids ?? []).map(nameOf);
+                  // C.77 看板多选态（BOARD-004 §3.1）：ring-2 + 左上角标复选框 + aria-selected
+                  const selected = bulk ? bulk.isSelected(it.id) : false;
                   return (
                     <article key={it.id} data-card-id={it.id} data-sb-scope="board-card" draggable tabIndex={0}
-                      role="option" aria-selected="false" aria-label={`${it.name}，${state?.name ?? ""}`}
-                      className={`bcard bcard-vf relative bg-white border border-neutral-200 rounded-md p-2.5 pl-3.5 shadow-sm cursor-grab hover:shadow-md hover:border-neutral-300 transition ${dragId === it.id ? "opacity-40 scale-[0.98]" : ""} ${it.state_group === "cancelled" ? "opacity-60" : ""}`}
+                      data-sel-id={bulk ? it.id : undefined}
+                      role="option" aria-selected={selected} aria-label={`${it.name}，${state?.name ?? ""}`}
+                      className={`bcard bcard-vf group/card relative bg-white border rounded-md p-2.5 pl-3.5 shadow-sm cursor-grab hover:shadow-md hover:border-neutral-300 transition ${selected ? "border-brand-500 ring-2 ring-brand-100 shadow-[0_0_0_2px_#3f76ff_inset]" : "border-neutral-200"} ${dragId === it.id ? "opacity-40 scale-[0.98]" : ""} ${it.state_group === "cancelled" ? "opacity-60" : ""}`}
                       style={{ ["--bar" as string]: state?.color ?? "#9ca3af" }}
-                      onClick={() => onOpenIssue(it.id)}
+                      onClick={(e) => {
+                        if (bulk && bulk.onModifierClick(it.id, e)) return; // ⌘/Shift = 多选（C.77）
+                        onOpenIssue(it.id);
+                      }}
                       {...bind(it as unknown as PeekIssue)}
                       onMouseEnter={(e) => { if (blocked) onLoadBlockedTip(it.id); bind(it as unknown as PeekIssue).onMouseEnter?.(e); }}
                       onDragStart={(e) => { setDragId(it.id); e.dataTransfer.setData("text/plain", it.id); e.dataTransfer.effectAllowed = "move"; }}
                       onDragEnd={() => setDragId(null)}>
                       <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded" style={{ background: state?.color ?? "#9ca3af" }} aria-hidden="true" />
+                      {bulk && (
+                        <input type="checkbox" data-sb-scope="board-card-cb" aria-label={`选择 ${it.name}`} checked={selected}
+                          onChange={() => bulk.onCheck(it.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          className={`absolute top-1.5 left-1.5 w-[18px] h-[18px] accent-brand-500 z-[2] cursor-pointer transition-opacity ${selected || bulk.anySelected ? "opacity-100" : "opacity-0 group-hover/card:opacity-100"}`} />
+                      )}
                       {blocked && <span className="absolute top-1.5 right-1.5 text-amber-500 text-[13px]" role="img" title={tip} aria-label={`被未完成前置任务阻塞：${tip}`} data-sb-scope="board-blocked-badge">⛔</span>}
                       <div className="text-[13px] text-neutral-900 flex gap-1.5 items-start pl-1 pr-4">
                         <span className="font-mono text-[11px] px-1.5 py-px bg-neutral-100 rounded text-neutral-500 shrink-0">{it.issue_key}</span>

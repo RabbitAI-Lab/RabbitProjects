@@ -54,6 +54,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
             const r = await RealtimeAPI.token(routeRef.current.slug, ctx.projectId, {
               client_tab_id: ctx.clientTabId,
               issue_rooms: ctx.issueIds,
+              ...(ctx.fileIds.length ? { file_rooms: ctx.fileIds } : {}),
             });
             return unwrap(r);
           },
@@ -78,19 +79,25 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   // presence 表绑定 bus（presence.joined/left → PresenceStore，BR-11）
   useEffect(() => stores.presence.bindBus(liveEventBus), [stores.presence]);
 
-  // 路由感知上下文：项目房间 + 打开的任务抽屉（?peekIssue= → issue 房间）
+  // 路由感知上下文：项目房间 + 打开的任务抽屉（?peekIssue= → issue 房间）+
+  // 打开的预览抽屉（?previewFile= → file 房间，FILE-003 §4.4 第四类房间）
   const m = loc.pathname.match(/^\/([^/]+)\/projects\/([^/]+)/);
   const projectId = m?.[2] ?? null;
   const issueId = sp.get("peekIssue");
+  const previewFileId = sp.get("previewFile");
   useEffect(() => {
-    if (m?.[1]) routeRef.current.slug = m[1];
+    if (m?.[1]) routeRef.current.slug = m?.[1];
     if (!projectId || !stores.session.user) {
       client.clearContext();
       return;
     }
-    void client.setContext({ projectId, issueIds: issueId ? [issueId] : [] });
+    void client.setContext({
+      projectId,
+      issueIds: issueId ? [issueId] : [],
+      fileIds: previewFileId ? [previewFileId] : [],
+    });
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, issueId, stores.session.user?.id, client]);
+  }, [projectId, issueId, previewFileId, stores.session.user?.id, client]);
 
   // 卸载销毁（页面 unload 时连接随标签页关闭，服务端 60s 心跳自然清理）
   useEffect(() => () => client.destroy(), [client]);

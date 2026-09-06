@@ -1024,10 +1024,147 @@ export interface RealtimeTokenResult {
 }
 
 export const RealtimeAPI = {
-  /** #1 POST …/projects/{pid}/realtime-token/（project.read；issue 不可见 403 拒整票）。 */
-  token: (slug: string, projectId: string, payload: { client_tab_id: string; issue_rooms: string[] }) =>
+  /** #1 POST …/projects/{pid}/realtime-token/（project.read；issue 不可见 403 拒整票；
+   *  file_rooms = file:{asset_id} 第四类房间，FILE-003 §4.4——file.read + 可见性校验）。 */
+  token: (slug: string, projectId: string, payload: { client_tab_id: string; issue_rooms: string[]; file_rooms?: string[] }) =>
     api.post<RealtimeTokenResult>(`workspaces/${slug}/projects/${projectId}/realtime-token/`, payload),
-  /** #2 POST /users/me/realtime-token/renew/（旧 jti 轮换；issue_rooms 缺省沿用旧票房间集）。 */
-  renew: (payload: { token: string; client_tab_id: string; issue_rooms?: string[] }) =>
+  /** #2 POST /users/me/realtime-token/renew/（旧 jti 轮换；issue_rooms/file_rooms 缺省沿用旧票房间集）。 */
+  renew: (payload: { token: string; client_tab_id: string; issue_rooms?: string[]; file_rooms?: string[] }) =>
     api.post<RealtimeTokenResult>("users/me/realtime-token/renew/", payload),
+};
+
+/* ═══════════════ Sprint-4（FILE-003 §4.2 分片会话 / 版本 / 预览调度）═══════════════ */
+
+/** FILE-003 §4.2 #2 / services.upload_session.session_row：断点续传取片表。 */
+export interface UploadSessionRow {
+  session_id: string;
+  file_name: string;
+  file_size: number;
+  status: "uploading" | "completed" | "aborted" | "expired";
+  chunk_size: number;
+  total_chunks: number;
+  uploaded_chunks: number[];
+  expires_at: string;
+  asset_id: string | null;
+}
+
+/** FILE-003 §4.2 #3 / services.upload_session.presign_chunk：片预签名换发。 */
+export interface ChunkPresignRow {
+  part_number: number;
+  upload_url: string;
+  expires_in: number;
+}
+
+/** >50MB 强制分片（BR-01）——与后端直传端点拒收上限对称。 */
+export const CHUNK_UPLOAD_THRESHOLD = 50 * 1024 * 1024;
+/** 8MB/片（BR-02）——展示用（片大小真相在服务端 session_row.chunk_size）。 */
+export const CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
+/** 并行片数（§2.6）。 */
+export const CHUNK_PARALLELISM = 3;
+/** 片级重传上限（BR-03：MD5 与 ETag 不符该片重传 ≤3 次）。 */
+export const CHUNK_MAX_RETRIES = 3;
+
+export const FileUploadSessionAPI = {
+  /** #1 POST …/upload-sessions/（file.upload；201 回断点片表）。 */
+  init: (slug: string, projectId: string, payload: {
+    file_name: string; file_size: number; content_type: string; folder_id: string; content_md5?: string;
+  }) => api.post<UploadSessionRow>(`workspaces/${slug}/projects/${projectId}/upload-sessions/`, payload),
+  /** #2 GET …/upload-sessions/{sid}/（file.upload + 属主；断点片表）。 */
+  status: (slug: string, projectId: string, sessionId: string) =>
+    api.get<UploadSessionRow>(`workspaces/${slug}/projects/${projectId}/upload-sessions/${sessionId}/`),
+  /** #3 POST …/upload-sessions/{sid}/chunks/{n}/（换发该片预签名 UploadPart URL）。 */
+  chunkUrl: (slug: string, projectId: string, sessionId: string, chunkNumber: number) =>
+    api.post<ChunkPresignRow>(`workspaces/${slug}/projects/${projectId}/upload-sessions/${sessionId}/chunks/${chunkNumber}/`, {}),
+  /** #4 PATCH …/upload-sessions/{sid}/chunks/{n}/（登记片完成 etag + md5 核对）。 */
+  registerChunk: (slug: string, projectId: string, sessionId: string, chunkNumber: number, payload: {
+    etag: string; md5?: string;
+  }) => api.patch<{ part_number: number; uploaded_chunks: number[] }>(
+    `workspaces/${slug}/projects/${projectId}/upload-sessions/${sessionId}/chunks/${chunkNumber}/`, payload),
+  /** #5 POST …/upload-sessions/{sid}/complete/（ListParts 核对 + 合并 + 落库，201）。 */
+  complete: (slug: string, projectId: string, sessionId: string) =>
+    api.post<{ file: LibraryFileRow; version: FileVersionRow }>(
+      `workspaces/${slug}/projects/${projectId}/upload-sessions/${sessionId}/complete/`, {}),
+  /** #6 DELETE …/upload-sessions/{sid}/（Abort；204；残片 30 分钟后标记 abandoned）。 */
+  abort: (slug: string, projectId: string, sessionId: string) =>
+    api.delete(`workspaces/${slug}/projects/${projectId}/upload-sessions/${sessionId}/`),
+};
+
+/** FILE-003 §4.2 #7 / services.upload_session.version_row：版本行（新→旧，is_current 标当前）。 */
+export interface FileVersionRow {
+  version_id: string;
+  version_number: number;
+  size_bytes: number;
+  content_type: string;
+  md5: string | null;
+  source_version_id: string | null;
+  source_version_number: number | null;
+  uploaded_by: string | null;
+  is_current: boolean;
+  created_at: string;
+}
+
+/** FILE-003 §4.2.2 预览调度载荷（就绪 200 / 排队 202；archive/other → no_preview）。 */
+export interface PreviewDispatchRow {
+  kind: "image" | "pdf" | "text" | "video" | "archive" | "other";
+  ready: boolean;
+  state?: "transcoding" | "too_large" | "unsupported" | "no_preview";
+  preview_url?: string;
+  poster_url?: string;
+  poster_state?: string;
+  eta_seconds?: number;
+  fallback_download: boolean;
+}
+
+export const FileVersionsAPI = {
+  /** #7 GET …/files/{asset_id}/versions/（file.read + 可见性 404）。 */
+  list: (slug: string, projectId: string, assetId: string) =>
+    api.get<FileVersionRow[]>(`workspaces/${slug}/projects/${projectId}/files/${assetId}/versions/`),
+  /** #8 POST …/files/{asset_id}/versions/{vid}/rollback/（file.version.manage；201 新版本行）。 */
+  rollback: (slug: string, projectId: string, assetId: string, versionId: string) =>
+    api.post<{ version_id: string; version_number: number; source_version_number: number | null; object_key: string; created_at: string }>(
+      `workspaces/${slug}/projects/${projectId}/files/${assetId}/versions/${versionId}/rollback/`, {}),
+  /** 指定版本正文换发路径（#9 302 跳预签名 GET——diff/原图直接以它为 src/fetch）。 */
+  contentPath: (slug: string, projectId: string, assetId: string, versionId: string) =>
+    `workspaces/${slug}/projects/${projectId}/files/${assetId}/versions/${versionId}/content/`,
+};
+
+export const FilePreviewAPI = {
+  /** #10 GET …/files/{asset_id}/preview/（就绪 200 / 排队 202；r.status 区分）。 */
+  dispatch: (slug: string, projectId: string, assetId: string) =>
+    api.get<PreviewDispatchRow>(`workspaces/${slug}/projects/${projectId}/files/${assetId}/preview/`),
+  /** #11 衍生物换发路径（302；网格缩略/悬浮小卡 <img> 直接 src）。 */
+  derivativePath: (slug: string, projectId: string, assetId: string, kind: "thumbnail" | "preview" | "poster") =>
+    `workspaces/${slug}/projects/${projectId}/files/${assetId}/derivatives/${kind}/`,
+};
+
+/* ═══════════════ Sprint-4（FILE-004 §4.2 分享内部四端点）═══════════════ */
+
+/** FILE-004 §4.2.1 / §4.2.4 services.file_share.share_row。 */
+export interface ShareLinkRow {
+  id: string;
+  slug: string;
+  share_url: string;
+  permission: "view" | "download";
+  has_password: boolean;
+  expires_at: string | null;
+  status: "active" | "revoked" | "expired" | "invalidated";
+  access_count: number;
+  created_at: string;
+}
+
+export const FileShareAPI = {
+  /** #1 POST …/files/{asset_id}/share-links/（file.share + can_view_file；201）。 */
+  create: (slug: string, projectId: string, assetId: string, payload: {
+    permission: "view" | "download"; password?: string; expires_in_days?: number | null;
+  }) => api.post<ShareLinkRow>(`workspaces/${slug}/projects/${projectId}/files/${assetId}/share-links/`, payload),
+  /** #2 GET …/files/{asset_id}/share-links/（file.share；含失效态供管理弹层）。 */
+  list: (slug: string, projectId: string, assetId: string) =>
+    api.get<ShareLinkRow[]>(`workspaces/${slug}/projects/${projectId}/files/${assetId}/share-links/`),
+  /** #3 POST …/share-links/{link_id}/extend/（file.share + 创建者/ADMIN；BR-15 非幂等）。 */
+  extend: (slug: string, projectId: string, linkId: string, payload: { extend_days: number }) =>
+    api.post<{ id: string; expires_at: string | null; status: ShareLinkRow["status"] }>(
+      `workspaces/${slug}/projects/${projectId}/share-links/${linkId}/extend/`, payload),
+  /** #4 DELETE …/share-links/{link_id}/（吊销终态；204；BR-14 预签名 5 分钟自然过期）。 */
+  revoke: (slug: string, projectId: string, linkId: string) =>
+    api.delete(`workspaces/${slug}/projects/${projectId}/share-links/${linkId}/`),
 };

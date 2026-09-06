@@ -49,9 +49,11 @@ export function PopoverMenu({ items, onPick, close }: {
 }
 
 /** 通用确认弹层（role=alertdialog，C.116 删除确认 / C.117 还原与彻底删除）。 */
-export function ConfirmDialog({ title, body, children, okText, danger, onOk, onClose, width = 480 }: {
+export function ConfirmDialog({ title, body, children, okText, danger, onOk, onClose, width = 480, layer = 50 }: {
   title: string; body?: React.ReactNode; children?: React.ReactNode; okText: string; danger?: boolean;
   onOk: () => void; onClose: () => void; width?: number;
+  /** 层级：预览抽屉（z-71）内弹出的确认需抬到 z-90（mask/弹层否则被抽屉遮住）。 */
+  layer?: number;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -59,7 +61,8 @@ export function ConfirmDialog({ title, body, children, okText, danger, onOk, onC
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4"
+      style={{ zIndex: layer }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }} data-sb-scope="files-confirm-mask">
       <div className="bg-white rounded-xl shadow-lg p-5 max-w-full" role="alertdialog" aria-modal="true" aria-label={title}
         style={{ width }} data-sb-scope="files-confirm">

@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import {
+  CHUNK_UPLOAD_THRESHOLD,
   FileLibraryAPI,
+  FilePreviewAPI,
+  FileUploadSessionAPI,
   ProjectMemberAPI,
   ProjectAPI,
   unwrap,
   type FileFolderRow,
   type LibraryFileRow,
   type StorageUsage,
+  type UploadSessionRow,
 } from "../../services/api";
 import { toast } from "../Toast";
 import {
@@ -20,6 +24,16 @@ import {
   VisibilityEditor,
   type PopItem,
 } from "./FileDialogs";
+import {
+  ChunkResumeBanner,
+  ChunkUploadCard,
+  clearStored,
+  readStored,
+  useChunkUploads,
+  type ChunkStorageRow,
+} from "./ChunkUploader";
+import { PreviewDrawer } from "./PreviewDrawer";
+import { ShareDialog, ShareManageDialog } from "./ShareDialogs";
 import {
   TYPE_FILTERS,
   fileIcon,
@@ -36,7 +50,11 @@ import {
  *    Django 零字节流（§2.1 时序）；并行多文件（一次 ≤20，§2.6）。
  *  - 可见性剪枝在后端（folder_tree / list_files 单入口 can_view_file）——前端如实渲染；
  *    🔒/👥 角标来自行内 visibility 字段。
- *  - 权限差异演出：VIEWER 上传禁用（file.upload 403 前置）；可见性菜单项仅 ADMIN。 */
+ *  - 权限差异演出：VIEWER 上传禁用（file.upload 403 前置）；可见性菜单项仅 ADMIN。
+ *
+ *  T4-11 扩展（FILE-003/FILE-004 · C.119~C.124）：>50MB 分片上传（BR-01 强制）；
+ *  文件名/网格卡片点击 → PreviewDrawer（?previewFile= → file 房间 WS 联动）；
+ *  ⋯ 菜单「分享…/分享管理」实装；网格缩略图 + 列表悬浮 200ms 小卡（O4）。 */
 
 interface FilesMeta {
   total_count: number;
@@ -56,6 +74,23 @@ interface UploadItem {
 }
 
 type MenuFor = { kind: "file"; row: LibraryFileRow } | { kind: "folder"; row: FileFolderRow } | null;
+
+/** 网格卡片缩略图（C.122 / O4）：image → derivatives/thumbnail（302）；video → poster；
+ *  未就绪/不可预览类型回退类型大图标（img 留 DOM 仅隐藏——404 噪声已入 guard 白名单）。 */
+function GridThumb({ f, slug, projectId }: { f: LibraryFileRow; slug: string; projectId: string }) {
+  const [failed, setFailed] = useState(false);
+  const kind = f.type_category === "image" ? "thumbnail" : f.type_category === "video" ? "poster" : null;
+  const src = kind ? `/api/v1/${FilePreviewAPI.derivativePath(slug, projectId, f.id, kind)}` : null;
+  return (
+    <div className="h-[78px] rounded-md bg-neutral-100 flex items-center justify-center text-[30px] text-neutral-400 overflow-hidden relative" aria-hidden="true">
+      {src && (
+        <img src={src} alt="" onError={() => setFailed(true)} data-sb-scope="files-card-thumb"
+          className={`w-full h-full object-cover ${failed ? "hidden" : ""}`} />
+      )}
+      {(!src || failed) && fileIcon(f.type_category, f.name)}
+    </div>
+  );
+}
 
 export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
   slug: string; projectId: string; canUpload: boolean; isAdmin: boolean;
@@ -95,6 +130,16 @@ export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
   const [newDirOpen, setNewDirOpen] = useState(false);
   const [renameFolderFor, setRenameFolderFor] = useState<FileFolderRow | null>(null);
   const [quotaConfirm, setQuotaConfirm] = useState<{ used: number; quota: number; incoming: number; batch: File[] } | null>(null);
+  // ── T4-11：预览抽屉 / 分享弹层 / 分片上传 ──
+  const [previewFor, setPreviewFor] = useState<LibraryFileRow | null>(null);
+  const [shareFor, setShareFor] = useState<LibraryFileRow | null>(null);
+  const [shareMgrFor, setShareMgrFor] = useState<LibraryFileRow | null>(null);
+  const [chunkConfirm, setChunkConfirm] = useState<{ file: File; stored: ChunkStorageRow } | null>(null);
+  const [staleSessions, setStaleSessions] = useState<ChunkStorageRow[]>([]);
+  const expectResumeRef = useRef<ChunkStorageRow | null>(null);
+  const [hoverThumb, setHoverThumb] = useState<{ file: LibraryFileRow; top: number; right: number } | null>(null);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [, setSp] = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const xhrsRef = useRef(new Map<string, XMLHttpRequest>());
 
@@ -192,6 +237,53 @@ export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
     return () => clearTimeout(t);
   }, [reloadFiles]);
 
+  // ── T4-11：分片上传（>50MB 强制，BR-01）──
+  const chunk = useChunkUploads({
+    slug, projectId,
+    onComplete: () => { reloadFiles(); reloadTree(); reloadStorage(); },
+  });
+
+  /** localStorage 会话探测（C.119 断点恢复）：目录切换/无在途任务时刷新。 */
+  const noChunkActive = chunk.snaps.length === 0;
+  const refreshStale = useCallback(() => {
+    if (!curFolderId) { setStaleSessions([]); return; }
+    setStaleSessions(readStored(slug, projectId, curFolderId));
+  }, [slug, projectId, curFolderId]);
+  useEffect(() => {
+    const t = setTimeout(refreshStale, 0);
+    return () => clearTimeout(t);
+  }, [refreshStale, noChunkActive]);
+
+  /** 续传会话状态拉取（GET status → uploaded_chunks 断点片表）。
+   *  completed（刷新前最后一刻合并完成，客户端未收到回执）→ 不新建会话，直接刷列表。 */
+  const resumeSession = useCallback(async (sessionId: string): Promise<UploadSessionRow | null> => {
+    try {
+      const r = await FileUploadSessionAPI.status(slug, projectId, sessionId);
+      const row = unwrap<UploadSessionRow>(r);
+      if (row && row.status === "uploading") return row;
+      if (row && row.status === "completed") {
+        toast("该上传已完成（刷新前合并成功），已同步文件列表", "ok");
+        reloadFiles(); reloadStorage();
+        return null;
+      }
+      toast("会话已过期，将新建上传会话", "info");
+      return null;
+    } catch {
+      toast("会话不可用（可能已过期或非本人会话），将新建上传会话", "info");
+      return null;
+    }
+  }, [slug, projectId, reloadFiles, reloadStorage]);
+
+  // ── T4-11：预览抽屉开合（?previewFile= → RealtimeProvider 订 file 房间）──
+  const openPreview = useCallback((f: LibraryFileRow) => {
+    setPreviewFor(f);
+    setSp((prev) => { const n = new URLSearchParams(prev); n.set("previewFile", f.id); return n; }, { replace: true });
+  }, [setSp]);
+  const closePreview = useCallback(() => {
+    setPreviewFor(null);
+    setSp((prev) => { const n = new URLSearchParams(prev); n.delete("previewFile"); return n; }, { replace: true });
+  }, [setSp]);
+
   /** 时间筛选（最近一周）为客户端过滤（后端无时间参数——偏差登记）。 */
   const visibleRows = useMemo(() => {
     if (timeFilter !== "week") return files;
@@ -253,6 +345,16 @@ export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
     }
   }
 
+  /** 大文件（>50MB）入分片路径：先探 localStorage 会话（C.119 续传提示），再 init。 */
+  const startChunked = useCallback((f: File, folderId: string) => {
+    const stored = readStored(slug, projectId, folderId).find((r) => r.name === f.name && r.size === f.size);
+    if (stored) {
+      setChunkConfirm({ file: f, stored });
+      return;
+    }
+    chunk.start(f, folderId);
+  }, [slug, projectId, chunk]);
+
   function startUpload(list: File[]) {
     if (!canUpload) { toast("访客只读：file.upload 403（PERM_ROLE_INSUFFICIENT）", "warning"); return; }
     if (!curFolderId) { toast("请先在左侧选择目录（文件需存放于目录中）", "warning"); return; }
@@ -267,9 +369,17 @@ export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
           setQuotaConfirm({ used: st.used_bytes, quota: st.quota_bytes, incoming, batch });
           return;
         }
-        batch.forEach((f) => { void uploadOne(f, curFolderId); }); // 多文件并行
+        dispatchBatch(batch, curFolderId);
       })
-      .catch(() => { batch.forEach((f) => { void uploadOne(f, curFolderId); }); }); // 预检失败不阻断（presign 侧 409 兜底）
+      .catch(() => { dispatchBatch(batch, curFolderId); }); // 预检失败不阻断（presign 侧 409 兜底）
+  }
+
+  /** 批内分流：≤50MB 直传三步；>50MB 强制分片（BR-01，C.119）。 */
+  function dispatchBatch(batch: File[], folderId: string) {
+    for (const f of batch) {
+      if (f.size > CHUNK_UPLOAD_THRESHOLD) startChunked(f, folderId);
+      else void uploadOne(f, folderId);
+    }
   }
 
   function retryUpload(item: UploadItem) {
@@ -421,15 +531,18 @@ export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
     }
   }
 
-  // ── ⋯ 菜单（C.116：七操作 + 分享两项 T4-11 占位 noop）──
+  // ── ⋯ 菜单（C.116：七操作；C.123：分享两项 T4-11 实装——file.share 门槛后端收口，
+  //    VIEWER 不透出入口）──
   const fileMenuItems: PopItem[] = [
     { key: "download", label: "⬇ 下载" },
     { key: "rename", label: "✏️ 重命名" },
     { key: "move", label: "📦 移动到…" },
     { key: "attach", label: "🔗 附加到任务…" },
     { key: "sep1", label: "", sep: true },
-    { key: "share", label: "📤 分享…", todo: true },
-    { key: "sharemgr", label: "🗂 分享管理", todo: true },
+    ...(canUpload ? [
+      { key: "share", label: "📤 分享…" },
+      { key: "sharemgr", label: "🗂 分享管理" },
+    ] : []),
     ...(isAdmin ? [{ key: "vis", label: "👁 可见性…" }] : []),
     { key: "sep2", label: "", sep: true },
     { key: "del", label: "🗑 删除（回收站 30 天）", danger: true },
@@ -451,6 +564,8 @@ export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
       else if (key === "rename") { setRenameId(m.row.id); setRenameErr(null); }
       else if (key === "move") setMoveFor(m);
       else if (key === "attach") setAttachFor(m.row);
+      else if (key === "share") setShareFor(m.row);
+      else if (key === "sharemgr") setShareMgrFor(m.row);
       else if (key === "vis") setVisFor(m);
       else if (key === "del") setDelFor(m);
     } else {
@@ -514,14 +629,30 @@ export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
     }
     return (
       <span className="flex items-center gap-1.5 min-w-0">
-        {/* 预览入口：抽屉挂点归 T4-11（FILE-003）——本任务点击不崩即可 */}
-        <button type="button" className="truncate text-[13px] text-neutral-900 hover:underline" data-todo="t4-11"
-          title={`${f.name}（预览即将开放）`} onClick={() => { /* noop：T4-11 抽屉挂点 */ }}>{f.name}</button>
+        {/* 预览入口（C.120：文件名点击 → 预览抽屉；?previewFile= 同步 WS file 房间） */}
+        <button type="button" className="truncate text-[13px] text-neutral-900 hover:underline" data-sb-scope="files-name-preview"
+          title={`预览 ${f.name}`} onClick={() => openPreview(f)}>{f.name}</button>
         {f.visibility === "admins" && <span title="仅管理员可见" aria-label="仅管理员可见">🔒</span>}
         {f.visibility === "members" && <span title="指定成员可见" aria-label="指定成员可见">👥</span>}
       </span>
     );
   };
+
+  /** 列表行悬浮 200ms 小卡（C.122 / O4：仅 image 类型；衍生物 302 就位即显）。 */
+  const rowHoverProps = (f: LibraryFileRow) => ({
+    onMouseEnter: (e: React.MouseEvent) => {
+      if (f.type_category !== "image") return;
+      const row = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      if (hoverTimer.current) clearTimeout(hoverTimer.current);
+      hoverTimer.current = setTimeout(() => {
+        setHoverThumb({ file: f, top: row.top - 6, right: row.right });
+      }, 200);
+    },
+    onMouseLeave: () => {
+      if (hoverTimer.current) clearTimeout(hoverTimer.current);
+      setHoverThumb(null);
+    },
+  });
 
   const listBody = (
     <table className="w-full border-collapse text-[13px]" data-sb-scope="files-table">
@@ -537,7 +668,7 @@ export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
       </thead>
       <tbody>
         {visibleRows.map((f) => (
-          <tr key={f.id} data-sb-scope="files-row" data-file-id={f.id} className="group hover:bg-neutral-50">
+          <tr key={f.id} data-sb-scope="files-row" data-file-id={f.id} className="group hover:bg-neutral-50" {...rowHoverProps(f)}>
             <td className="px-2 py-1.5 border-b border-neutral-100">
               <span role="img" aria-label={fileTypeName(f.type_category, f.name)} title={fileTypeName(f.type_category, f.name)}>
                 {fileIcon(f.type_category, f.name)}
@@ -574,12 +705,11 @@ export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
     <div className="grid gap-3 pt-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))" }} data-sb-scope="files-grid">
       {visibleRows.map((f) => (
         <div key={f.id} role="button" tabIndex={0} aria-label={`${f.name}，${humanSize(f.size_bytes)}`}
-          data-sb-scope="files-card" data-file-id={f.id} data-todo="t4-11"
-          onClick={() => { /* 预览抽屉归 T4-11 */ }}
+          data-sb-scope="files-card" data-file-id={f.id}
+          onClick={() => openPreview(f)}
+          onKeyDown={(e) => { if (e.key === "Enter") openPreview(f); }}
           className="border border-neutral-200 rounded-xl p-2.5 flex flex-col gap-1.5 cursor-pointer bg-white hover:border-brand-400 hover:shadow-sm">
-          <div className="h-[78px] rounded-md bg-neutral-100 flex items-center justify-center text-[30px] text-neutral-400" aria-hidden="true">
-            {fileIcon(f.type_category, f.name)}
-          </div>
+          <GridThumb f={f} slug={slug} projectId={projectId} />
           <div className="text-[12.5px] text-neutral-900 line-clamp-2 break-all" title={f.name}>{f.name}</div>
           <div className="text-[11px] text-neutral-400">{humanSize(f.size_bytes)} · {f.uploaded_by_detail?.display_name ?? memberName(f.uploaded_by)}</div>
         </div>
@@ -772,15 +902,61 @@ export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
               className={`h-8 px-2.5 rounded-md text-[13px] ${view === "grid" ? "bg-white shadow-sm text-neutral-800 font-medium" : "text-neutral-500"}`}>▦ 网格</button>
           </div>
           <input ref={fileInputRef} type="file" multiple hidden data-sb-scope="files-upload-input"
-            onChange={(e) => { const fs = Array.from(e.target.files ?? []); e.target.value = ""; if (fs.length) startUpload(fs); }} />
+            onChange={(e) => {
+              const fs = Array.from(e.target.files ?? []);
+              e.target.value = "";
+              if (!fs.length) return;
+              // 断点恢复「继续（选择文件）」路径：同名同大小 → 复用会话续传；不匹配 → 弃旧建新
+              const expect = expectResumeRef.current;
+              expectResumeRef.current = null;
+              if (expect && curFolderId) {
+                const match = fs.find((f) => f.name === expect.name && f.size === expect.size);
+                if (match) {
+                  void resumeSession(expect.sessionId).then((session) => {
+                    chunk.start(match, curFolderId, session ?? undefined);
+                  });
+                  return;
+                }
+                toast(`所选文件与会话不匹配（需 ${expect.name}），旧会话将放弃`, "warning");
+                void FileUploadSessionAPI.abort(slug, projectId, expect.sessionId).catch(() => {});
+                clearStored(expect);
+                refreshStale();
+              }
+              startUpload(fs);
+            }} />
           <button type="button" disabled={!canUpload} onClick={() => fileInputRef.current?.click()} data-sb-scope="files-upload-btn"
             title={canUpload ? undefined : "访客只读（file.upload 403）"}
             className="h-8 px-3 rounded-md bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed text-[13px] text-white">＋ 上传</button>
         </div>
 
+        {/* localStorage 断点探测行（C.119：重进上传器「检测到未完成的上传 [继续] [放弃]」） */}
+        {noChunkActive && staleSessions.length > 0 && curFolderId && (
+          <ChunkResumeBanner rows={staleSessions}
+            onContinue={(row) => {
+              expectResumeRef.current = row;
+              fileInputRef.current?.click();
+            }}
+            onDiscard={(row) => {
+              void FileUploadSessionAPI.abort(slug, projectId, row.sessionId).catch(() => {});
+              clearStored(row);
+              refreshStale();
+              toast("已放弃：会话已取消（残片 30 分钟后标记 abandoned）", "info");
+            }} />
+        )}
+
         <div className="flex-1 min-h-0 flex flex-col px-5" data-sb-scope="files-body">
           {bodyContent()}
         </div>
+
+        {/* 列表悬浮 200ms 预览小卡（C.122 / O4——仅 image；fixed 定位贴行右侧） */}
+        {hoverThumb && (
+          <div className="fixed z-[80] w-[180px] h-[130px] rounded-lg shadow-xl bg-neutral-100 border border-neutral-200 overflow-hidden pointer-events-none"
+            style={{ top: hoverThumb.top, left: Math.min(hoverThumb.right + 12, window.innerWidth - 200) }}
+            role="img" aria-label={`${hoverThumb.file.name} 缩略预览`} data-sb-scope="files-hover-card" data-file-id={hoverThumb.file.id}>
+            <img src={`/api/v1/${FilePreviewAPI.derivativePath(slug, projectId, hoverThumb.file.id, "thumbnail")}`}
+              alt="" className="w-full h-full object-cover" />
+          </div>
+        )}
 
         {/* 拖入高亮（C.114：蓝色虚线框 + 「松开上传到 {目录}」） */}
         {dropOn && (
@@ -788,15 +964,20 @@ export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
             data-sb-scope="files-dropzone-hint">松开上传到「{curFolder?.name ?? "项目文件"}」</div>
         )}
 
-        {/* 上传进度浮层（C.115：role=status aria-live=polite + 里程碑播报 + 失败红 + 重试 + 取消） */}
-        {uploads.length > 0 && (
+        {/* 上传进度浮层（C.115：role=status aria-live=polite + 里程碑播报 + 失败红 + 重试 + 取消；
+            C.119：分片卡片（进度 role=progressbar + 片统计 + 暂停/取消/续传标识）） */}
+        {(uploads.length > 0 || chunk.snaps.length > 0) && (
           <div className="absolute right-5 bottom-14 w-[360px] bg-white border border-neutral-200 rounded-xl shadow-lg z-30 overflow-hidden"
             role="status" aria-live="polite" data-sb-scope="files-uploads">
             <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-neutral-200 text-[13px] font-medium">
-              ⬆ 上传中（{inFlight}）
+              ⬆ 上传中（{inFlight + chunk.snaps.filter((s) => s.state !== "done").length}）
               <span className="sr-only" data-sb-scope="files-upload-announce">{announce}</span>
-              <button type="button" aria-label="收起" onClick={() => setUploads([])} className="ml-auto w-6 h-6 rounded text-neutral-400 hover:bg-neutral-100">✕</button>
+              <button type="button" aria-label="收起" onClick={() => { setUploads([]); }} className="ml-auto w-6 h-6 rounded text-neutral-400 hover:bg-neutral-100">✕</button>
             </div>
+            {chunk.snaps.map((s) => (
+              <ChunkUploadCard key={s.key} snap={s}
+                onPause={chunk.pause} onResume={chunk.resume} onCancel={(k) => { void chunk.cancel(k); }} onRetry={chunk.retry} />
+            ))}
             {uploads.map((u) => (
               <div key={u.key} className={`px-3.5 py-2 flex flex-col gap-1.5 ${u.state === "failed" ? "bg-red-50/60" : ""}`} data-sb-scope="files-upload-row" data-upload-state={u.state}>
                 <div className="flex items-center gap-2 text-[12.5px] text-neutral-700">
@@ -871,8 +1052,44 @@ export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
       )}
       {quotaConfirm && (
         <QuotaConfirmDialog used={quotaConfirm.used} quota={quotaConfirm.quota} incoming={quotaConfirm.incoming}
-          onProceed={() => { const b = quotaConfirm.batch; const fid = curFolderId; setQuotaConfirm(null); if (fid) b.forEach((f) => { void uploadOne(f, fid); }); }}
+          onProceed={() => { const b = quotaConfirm.batch; const fid = curFolderId; setQuotaConfirm(null); if (fid) dispatchBatch(b, fid); }}
           onClose={() => setQuotaConfirm(null)} />
+      )}
+
+      {/* ── T4-11 弹层：断点恢复确认 / 预览抽屉 / 分享创建 / 分享管理 ── */}
+      {chunkConfirm && (
+        <ConfirmDialog title="检测到未完成的上传" okText="继续" width={440}
+          onOk={() => {
+            const { file: f, stored } = chunkConfirm;
+            setChunkConfirm(null);
+            const fid = stored.folderId;
+            void resumeSession(stored.sessionId).then((session) => {
+              chunk.start(f, fid, session ?? undefined);
+            });
+          }}
+          onClose={() => {
+            // 放弃：Abort 旧会话（BR-15：同名新会话会撞在途唯一约束）+ 清探测记录 + 新建
+            const { file: f, stored } = chunkConfirm;
+            setChunkConfirm(null);
+            void FileUploadSessionAPI.abort(slug, projectId, stored.sessionId).catch(() => {});
+            clearStored(stored);
+            refreshStale();
+            chunk.start(f, stored.folderId);
+          }}>
+          「{chunkConfirm.stored.name}」（{humanSize(chunkConfirm.stored.size)}）有未完成的分片会话——继续将从已传片断点续传（已传片零重传）。
+          <span className="block text-[12px] text-neutral-400 mt-1.5">「取消」= 放弃旧会话并重新上传。</span>
+        </ConfirmDialog>
+      )}
+      {previewFor && (
+        <PreviewDrawer slug={slug} projectId={projectId} file={previewFor} canWrite={canUpload}
+          memberName={memberName} onClose={closePreview} onChanged={() => { reloadFiles(); reloadStorage(); }} />
+      )}
+      {shareFor && (
+        <ShareDialog slug={slug} projectId={projectId} file={shareFor} onClose={() => setShareFor(null)} />
+      )}
+      {shareMgrFor && (
+        <ShareManageDialog slug={slug} projectId={projectId} file={shareMgrFor}
+          onClose={() => { setShareMgrFor(null); reloadFiles(); }} />
       )}
     </div>
   );

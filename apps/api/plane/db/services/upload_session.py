@@ -279,12 +279,17 @@ def presign_chunk(*, session: UploadSession, chunk_number: int) -> dict:
     }
 
 
+@transaction.atomic
 def register_chunk(*, session: UploadSession, chunk_number: int,
                    etag: str, md5: str | None = None) -> dict:
     """登记片完成（§4.2 #4）：ETag 落 uploaded_chunks 断点索引。
 
     BR-03：前端随片提交 ``md5``（Content-MD5 的十六进制）时与 MinIO 返回 ETag
     核对，不符 → 400（该片重传 ≤3 次由前端驱动）。
+
+    并发正确性：并行 3 片的 PATCH 同时落库——必须行锁重读后合并（先前视图层
+    传入的 session 快照直接改写保存，两个 PATCH 竞态时后写覆盖前写，uploaded_chunks
+    丢片 → 断点续传基线残缺，BR-06）。
     """
     _require_uploading(session)
     if not 1 <= chunk_number <= session.total_chunks:
@@ -294,6 +299,14 @@ def register_chunk(*, session: UploadSession, chunk_number: int,
         raise ChunkInvalidError(chunk_number)
     if md5 and md5.strip().lower() != etag.lower():
         raise ChunkInvalidError(chunk_number)  # UT-04：篡改片服务端拒记
+    locked_session = (
+        UploadSession.objects.select_for_update()
+        .filter(pk=session.pk, deleted_at__isnull=True)
+        .first()
+    )
+    if locked_session is None or locked_session.status != UploadSession.Status.UPLOADING:
+        raise SessionStateError(locked_session.status if locked_session else "completed")
+    session = locked_session
     chunks = [c for c in (session.uploaded_chunks or []) if c["n"] != chunk_number]
     chunks.append({"n": chunk_number, "etag": etag,
                    "size": min(session.chunk_size,

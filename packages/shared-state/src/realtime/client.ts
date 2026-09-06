@@ -29,8 +29,9 @@ export interface RealtimeTicket {
 
 /** app 层注入的传输适配（本包不发起 HTTP——monorepo-structure §4）。 */
 export interface RealtimeTransport {
-  /** POST …/projects/{pid}/realtime-token/（换票）。 */
-  fetchToken(ctx: { projectId: string; issueIds: string[]; clientTabId: string }): Promise<RealtimeTicket>;
+  /** POST …/projects/{pid}/realtime-token/（换票；fileIds → file_rooms 第四类房间，
+   *  FILE-003 §4.4：file:{asset_id}，订阅条件 = file.read + 可见性，换票时校验）。 */
+  fetchToken(ctx: { projectId: string; issueIds: string[]; fileIds: string[]; clientTabId: string }): Promise<RealtimeTicket>;
   /** POST /users/me/realtime-token/renew/（续签，旧 jti 轮换）。 */
   renewTicket(body: { token: string; client_tab_id: string; issue_rooms?: string[] }): Promise<RealtimeTicket>;
   /** WSS 连接地址（VITE_LIVE_BASE_URL 解析在 app 层 config）。 */
@@ -107,7 +108,7 @@ export class RealtimeClient {
   private ws: WebSocket | null = null;
   private backoff = new ExponentialBackoff();
   private ticket: RealtimeTicket | null = null;
-  private ctx: { projectId: string; issueIds: string[] } | null = null;
+  private ctx: { projectId: string; issueIds: string[]; fileIds: string[] } | null = null;
 
   private renewTimer: ReturnType<typeof setInterval> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -141,11 +142,13 @@ export class RealtimeClient {
 
   // ── 上下文（路由切换换票重订，§1.3）──
 
-  async setContext(ctx: { projectId: string; issueIds: string[] }): Promise<void> {
+  async setContext(ctx: { projectId: string; issueIds: string[]; fileIds?: string[] }): Promise<void> {
+    const next = { projectId: ctx.projectId, issueIds: ctx.issueIds, fileIds: ctx.fileIds ?? [] };
     const sameRooms =
-      this.ctx?.projectId === ctx.projectId &&
-      JSON.stringify([...this.ctx.issueIds].sort()) === JSON.stringify([...ctx.issueIds].sort());
-    this.ctx = ctx;
+      this.ctx?.projectId === next.projectId &&
+      JSON.stringify([...this.ctx.issueIds].sort()) === JSON.stringify([...next.issueIds].sort()) &&
+      JSON.stringify([...this.ctx.fileIds].sort()) === JSON.stringify([...next.fileIds].sort());
+    this.ctx = next;
     if (sameRooms && this.connected) return; // 房间未变：连接复用不重建
     await this.reticket();
   }
@@ -192,6 +195,7 @@ export class RealtimeClient {
       this.ticket = await this.transport.fetchToken({
         projectId: this.ctx.projectId,
         issueIds: this.ctx.issueIds,
+        fileIds: this.ctx.fileIds,
         clientTabId: this.clientTabId,
       });
       this.connect();
@@ -427,6 +431,7 @@ export class RealtimeClient {
         token: this.ticket.token,
         client_tab_id: this.clientTabId,
         ...(this.ctx && this.ctx.issueIds.length ? { issue_rooms: this.ctx.issueIds } : {}),
+        ...(this.ctx && this.ctx.fileIds.length ? { file_rooms: this.ctx.fileIds } : {}),
       });
       this.renewFailures = 0;
     } catch (e) {

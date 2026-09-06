@@ -16,7 +16,19 @@
  *  data-todo 占位（渲染存在、点击 noop），不测行为。
  */
 import { test, expect, type Page } from "@playwright/test";
+import { execSync } from "node:child_process";
 import { attachConsoleGuard, HTTP } from "./no-console-errors";
+
+// 造数自动清理（afterAll 幂等；S4_E2E_NO_CLEANUP=1 可跳过以保留现场调试）
+test.afterAll(() => {
+  if (process.env.S4_E2E_NO_CLEANUP) return;
+  try {
+    execSync("uv run --project apps/api python tests/e2e/_cleanup_s4.py", { stdio: "pipe", timeout: 180_000 });
+  } catch (e) {
+    console.warn("[cleanup] S4* 残留清理失败（不阻断报告；gate 以零残留为准）", e);
+  }
+});
+
 
 const WS = "workspace";
 const API_ORIGIN = process.env.E2E_BASE_URL ?? "http://localhost:3001";

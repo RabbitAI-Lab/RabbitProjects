@@ -103,6 +103,13 @@ class Issue(BaseModel):
                 condition=models.Q(archived_at__isnull=True, deleted_at__isnull=True),
                 name="idx_issue_active_by_project",
             ),
+            # GANTT-001 §4.1：视窗相交查询专用复合偏索引（start ≤ viewport_end AND
+            # target ≥ viewport_start 的相交判定 + 项目裁剪；偏条件排除软删/归档）
+            models.Index(
+                fields=["project", "start_date", "target_date"],
+                condition=models.Q(deleted_at__isnull=True, archived_at__isnull=True),
+                name="idx_issue_gantt_viewport",
+            ),
             GinIndex(fields=["custom_fields"], name="idx_issue_custom_fields"),
             GinIndex(name="idx_issue_desc_trgm", fields=["description_stripped"], opclasses=["gin_trgm_ops"]),
         ]

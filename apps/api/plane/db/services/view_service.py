@@ -24,9 +24,11 @@ CARD_FIELD_KEYS = frozenset(
 )
 #: display_props.icon 取值域（§3.4 八枚 emoji 预设）
 ICON_POOL = frozenset({"✨", "📦", "🐛", "👤", "📅", "🧪", "🔥", "🚒"})
-#: display_props 顶层键域（未知键静默忽略——读时配置的向前兼容）
+#: display_props 顶层键域（未知键静默忽略——读时配置的向前兼容）。
+#: collapsed 为 GANTT-001 BR-10 增补：甘特折叠状态持久化（issue id 字符串数组）。
 DISPLAY_PROP_KEYS = frozenset(
-    {"icon", "group_by", "order_by", "columns", "card_fields", "show_empty_groups", "sub_group_by"}
+    {"icon", "group_by", "order_by", "columns", "card_fields", "show_empty_groups", "sub_group_by",
+     "collapsed"}
 )
 
 
@@ -154,6 +156,16 @@ def validate_view_payload(
                 "VALIDATION_ERROR",
                 message="请求参数校验失败",
                 details=[{"field": "display_props.columns", "code": "INVALID", "message": "columns 必须为字符串数组"}],
+            )
+        collapsed = display_props.get("collapsed")  # GANTT-001 BR-10：折叠状态持久化
+        if collapsed is not None and (
+            not isinstance(collapsed, list) or not all(isinstance(c, str) for c in collapsed)
+        ):
+            raise AppException(
+                "VALIDATION_ERROR",
+                message="请求参数校验失败",
+                details=[{"field": "display_props.collapsed", "code": "INVALID",
+                          "message": "collapsed 必须为字符串数组（折叠的 issue id）"}],
             )
         _validate_group_by(schema_index, display_props.get("group_by"))
         _sanitize_card_fields(display_props, schema_index=schema_index)

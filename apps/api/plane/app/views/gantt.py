@@ -4,6 +4,7 @@
   GET  /workspaces/{slug}/projects/{pid}/gantt/                    视窗行取数
   POST /workspaces/{slug}/projects/{pid}/gantt/relations/bulk/     可见行连线批量
   GET  /workspaces/{slug}/projects/{pid}/gantt/unscheduled/        未排期任务列表
+  GET  /workspaces/{slug}/projects/{pid}/gantt/overdue-summary/    延期概览聚合（GANTT-002 §4.2.1）
 
 设计要点（规格 §1 硬承诺）：
   - 视窗取数：时间×行双重裁剪（BR-02 相交判定 + CursorPagination 行窗口），
@@ -11,18 +12,34 @@
   - 连线数据零二次加工：直接消费 TASK-005 冻结的 IssueLink 成对存储，
     仅增 violation 派生标记与镜像去重（§4.3.3）；
   - 进度单源：服务端按 §1.2 口径下发 progress/progress_source（BR-04）；
-  - tz 请求级解析（BR-05，RPT-001 同款范式）：?tz= > X-Client-TZ > Asia/Shanghai。
+  - tz 请求级解析（BR-05，RPT-001 同款范式）：?tz= > X-Client-TZ > Asia/Shanghai；
+  - 延期概览（GANTT-002 §2.3）：逾期口径与行级 is_overdue 真同源
+    （``is_overdue`` / ``overdue_q`` 唯一真源）；端点级限流 10/min·user
+    （Valkey 固定窗口，§4.2.1 契约要点 4）。
 """
 from __future__ import annotations
 
 import base64
+import logging
+import time
 import uuid
+from collections import defaultdict
 from datetime import date, datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
-from django.db.models import Count, F, OuterRef, Q, QuerySet, Subquery
+from django.db.models import (
+    Count,
+    F,
+    Min,
+    OuterRef,
+    Q,
+    QuerySet,
+    Subquery,
+)
 from django.db.models.functions import Coalesce
 from rest_framework.exceptions import ErrorDetail, NotFound, ValidationError
+from rest_framework.throttling import BaseThrottle
 from rest_framework.views import APIView
 
 from plane.app.filters.compiler import (
@@ -37,11 +54,13 @@ from plane.app.permissions import IsAuthenticated
 from plane.app.views._access import get_project_or_404
 from plane.base.exception import AppException
 from plane.base.response import success_response
-from plane.db.models import Issue, IssueLink, IssueView, Project
+from plane.db.models import Issue, IssueAssignee, IssueLink, IssueView, Project
 from plane.db.services.issue_hierarchy import issue_count_annotations
 from plane.db.services.stats import DEFAULT_TZ, _is_valid_tz
 from plane.db.services.view_service import resolve_view
 from plane.settings.features import MAX_ISSUE_DEPTH
+
+logger = logging.getLogger("plane.app.views.gantt")
 
 #: 行分页（BR-09 / §2.5）：默认 60、上限 100 静默截断
 GANTT_PER_PAGE_DEFAULT = 60
@@ -60,6 +79,33 @@ STATE_PROGRESS: dict[str, int] = {
 }
 #: 连线下发类型全集（镜像 is_blocked_by 由 FORWARD_TYPES 排除，§4.3.3）
 FORWARD_RELATION_TYPES = ("blocks", "relates_to", "duplicates")
+#: 明细截断上限（GANTT-002 §3.2 / §4.2.1 契约要点 1：按逾期天数降序前 20）
+GANTT_OVERDUE_ITEMS_MAX = 20
+#: 逾期豁免语义组（GANTT-002 §2.3 唯一口径常量）：行级 is_overdue 与
+#: overdue-summary 聚合共用——两处禁止重列完成/取消组（防口径漂移）。
+OVERDUE_EXEMPT_STATE_GROUPS: tuple[str, ...] = ("completed", "cancelled")
+
+
+def is_overdue(*, state_group: str, target_date: date | None, today: date) -> bool:
+    """逾期判定唯一实现（GANTT-001 §4.3.2 行级 is_overdue ＝ GANTT-002 §2.3
+    概览口径——真同源）：语义组不在豁免组且 ``target_date`` 非空且早于今天。
+    **不要求 start_date**——start 为空、仅 target 逾期的开放端条同样计入（§2.3）。"""
+    return (
+        state_group not in OVERDUE_EXEMPT_STATE_GROUPS
+        and target_date is not None
+        and target_date < today
+    )
+
+
+def overdue_q(today: date) -> Q:
+    """``is_overdue`` 的 SQL 集合投影（overdue-summary 聚合端点专用）——同一
+    口径、同一豁免组常量。state 为 NULL 的行按 unstarted 折算（与
+    ``_serialize_row`` 的 ``state.group if state else "unstarted"`` 一致：不豁免、
+    可逾期）——Django 的取反自动生成 ``NOT (group IN (…) AND group IS NOT NULL)``，
+    NULL state 行天然计入，无需显式 ``state__isnull`` 支路（IT-04 一致性用例守护）。"""
+    return Q(target_date__isnull=False, target_date__lt=today) & ~Q(
+        state__group__in=OVERDUE_EXEMPT_STATE_GROUPS
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -356,11 +402,8 @@ def _serialize_row(
         "progress_source": source,
         "state_group": state_group,
         "state_color": issue.state.color if issue.state else None,
-        "is_overdue": (
-            state_group not in ("completed", "cancelled")
-            and issue.target_date is not None
-            and issue.target_date < today
-        ),
+        "is_overdue": is_overdue(
+            state_group=state_group, target_date=issue.target_date, today=today),
         "assignee_ids": [str(a.id) for a in issue.assignees.all()],
         "is_aggregated": is_aggregated,
         "relation_count": getattr(issue, "relation_count", 0),
@@ -577,3 +620,202 @@ class GanttUnscheduledView(APIView):
         if degraded:
             meta["degraded"] = {"per_page": f"超出上限 {GANTT_PER_PAGE_MAX}，已截断"}
         return success_response(payload, meta=meta)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 端点级限流（GANTT-002 §4.2.1 契约要点 4：10 请求/分钟·user，Valkey 固定窗口）
+# ─────────────────────────────────────────────────────────────────────
+#: 高 CPU 聚合端点专用配额（api-conventions §7.2「报表聚合端点」行 / §7.1 L3）
+GANTT_AGG_RATE_LIMIT = 10
+GANTT_AGG_WINDOW = 60
+
+_agg_redis_client: Any = None
+_agg_redis_unavailable = False
+
+
+def _agg_redis() -> Any:
+    """Valkey 连接（进程级缓存 + 不可达降级短路，范式同 file_share/file_stats）。
+
+    降级语义：Redis 故障时限流**放行**（可用性优先，告警不阻断）——与
+    event_publisher / file_stats / file_share 同一降级纪律；INFRA-005 收编
+    配置时统一复核。"""
+    global _agg_redis_client, _agg_redis_unavailable
+    if _agg_redis_unavailable:
+        return None
+    if _agg_redis_client is None:
+        try:
+            import redis
+            from django.conf import settings
+
+            _agg_redis_client = redis.Redis.from_url(
+                settings.REDIS_URL, decode_responses=True,
+                socket_timeout=1, socket_connect_timeout=1,
+            )
+            _agg_redis_client.ping()
+        except Exception as exc:  # noqa: BLE001 —— 降级路径：限流让位于可用性
+            _agg_redis_unavailable = True
+            logger.warning("gantt.agg_throttle.redis_unavailable degrade=open exc=%s", exc)
+            return None
+    return _agg_redis_client
+
+
+def reset_gantt_redis_state() -> None:
+    """测试辅助：重置进程级 Redis 状态（每用例独立判定可用性）。"""
+    global _agg_redis_client, _agg_redis_unavailable
+    _agg_redis_client = None
+    _agg_redis_unavailable = False
+
+
+def gantt_agg_attempt_key(user_ident: str) -> str:
+    """计数键（§4.2.1 契约要点 4 原文口径）：``gantt-agg:{user_id}``。"""
+    return f"gantt-agg:{user_ident}"
+
+
+def gantt_agg_throttle_allow(user_ident: str) -> tuple[bool, dict[str, int]]:
+    """固定窗口计数：``INCR`` + 首次 ``EXPIRE``；超限返回 (False, 限流信息)。
+
+    返回的 info 供 429 响应头（``Retry-After`` / ``X-RateLimit-*``，§7.3 模板）；
+    与 file_share.throttle_allow 同范式。"""
+    client = _agg_redis()
+    if client is None:
+        return True, {"limit": GANTT_AGG_RATE_LIMIT, "remaining": GANTT_AGG_RATE_LIMIT,
+                      "reset": int(time.time()) + GANTT_AGG_WINDOW}
+    key = gantt_agg_attempt_key(user_ident)
+    count = client.incr(key)
+    if count == 1:
+        client.expire(key, GANTT_AGG_WINDOW)
+    ttl = client.ttl(key)
+    wait = ttl if isinstance(ttl, int) and ttl > 0 else GANTT_AGG_WINDOW
+    info: dict[str, int] = {
+        "limit": GANTT_AGG_RATE_LIMIT,
+        "remaining": max(0, GANTT_AGG_RATE_LIMIT - count),
+        "reset": int(time.time()) + wait,
+        "wait": wait,
+    }
+    return count <= GANTT_AGG_RATE_LIMIT, info
+
+
+class GanttAggregationThrottle(BaseThrottle):
+    """GANTT-002 §4.2.1 契约要点 4：聚合端点专用限流——10 请求/分钟，按
+    ``user_id`` 计数（键 ``gantt-agg:{user_id}``，固定窗口 60s）。
+
+    FILE-004 ``ShareUnlockThrottle`` 同范式（BR-07 先例）：Valkey 计数、Redis
+    不可达降级放行；超限抛 ``Throttled`` → 429 ``RATE_LIMIT_EXCEEDED`` +
+    ``Retry-After``（handlers 第 8 步），异常上附 ``rate_limit_info`` 供其补
+    ``X-RateLimit-*`` 三件套（§7.3 模板）。``INFRA-005`` 落地后收编配置、
+    不改语义。ident 取 authenticated user id（本端点 ``IsAuthenticated`` 先于
+    throttle 检查；匿名兜底取 IP——BulkRateThrottle 同款防御性写法）。"""
+
+    def allow_request(self, request, view) -> bool:  # noqa: FBT001 —— DRF 签名
+        from rest_framework.exceptions import Throttled
+
+        ident = (
+            str(request.user.id)
+            if request.user and getattr(request.user, "is_authenticated", False)
+            else self.get_ident(request)
+        )
+        allowed, info = gantt_agg_throttle_allow(ident)
+        if allowed:
+            return True
+        exc: Throttled = Throttled(wait=int(info.get("wait", 1) or 1))
+        exc.rate_limit_info = {  # type: ignore[attr-defined]
+            "limit": info["limit"], "remaining": 0, "reset": info["reset"],
+        }
+        raise exc
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 端点 4：GET …/gantt/overdue-summary/ —— 延期概览聚合（GANTT-002 §4.2.1）
+# ─────────────────────────────────────────────────────────────────────
+class GanttOverdueSummaryView(APIView):
+    """延期概览：逾期数 / 最长逾期天数 / 按执行人分布 + 前 20 条明细。
+
+    口径（§2.3）：统计三数字在**完整逾期集**上聚合（items 前 20 截断不影响）；
+    逾期谓词 = ``is_overdue`` / ``overdue_q`` 唯一真源（与 ``gantt/`` 行级
+    is_overdue 同源——含 start_date 为空、仅 target 逾期的开放端条）；
+    分布按 ``IssueAssignee`` 分组计数（多人任务每人各计 1，RPT-001 口径）；
+    ``by_assignee`` 与 ``items[].assignee_ids`` 各为单条批量查询（防逐行 N+1）。
+    筛选与甘特行集同源管道（``_filtered_base``：view_id 视图层 + ?filters=
+    临时层）；``today`` 按请求级 tz 折算（BR-05 同款）。聚合与时间视窗无关——
+    不接受 ``granularity/viewport_*``；无分页（聚合结果单包返回）。"""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [GanttAggregationThrottle]
+
+    def get(self, request, *args, **kwargs):
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
+        tz = _resolve_tz(request)
+        today = datetime.now(tz).date()  # BR-05：与行级 is_overdue 同一判定基准
+
+        base, _display_props = _filtered_base(request, project)
+        overdue = base.filter(overdue_q(today))
+
+        # 统计三数字：完整逾期集（§2.3），不基于 items 前 20 截断集。
+        # max_overdue_days 取完整集最早 target_date：today 固定时
+        # ``today - min(target)`` == ``max(today - target)``（严格单调等价）。
+        # SQL 侧不做日期减法——Django 的 Date-Date 运算按 duration 语义编译为
+        # ``interval '1 day' * (...)``，聚合侧 COALESCE(interval, 0) 在 PG 报
+        # 型不匹配；改为 Python 侧派生（同结果零语义差）。
+        agg = overdue.aggregate(
+            overdue_count=Count("id"),
+            earliest_target=Min("target_date"),
+        )
+        max_overdue_days = (
+            (today - agg["earliest_target"]).days if agg["earliest_target"] is not None else 0
+        )
+        # 明细前 20（§4.2.1 契约要点 1）：逾期天数降序——target_date 升序严格
+        # 等价（today 固定、严格单调），次键 id 稳定序；overdue_days 逐行派生。
+        rows = list(
+            overdue.order_by("target_date", "id")
+            .values("id", "sequence_id", "name", "target_date")[:GANTT_OVERDUE_ITEMS_MAX]
+        )
+        overdue_ids = list(overdue.values_list("id", flat=True))
+
+        # 明细行执行人：单条批量查询组装（§4.2.1 契约要点 2，防逐行 N+1）
+        items_assignees: dict[uuid.UUID, list[str]] = defaultdict(list)
+        if rows:
+            for issue_id, assignee_id in (
+                IssueAssignee.objects
+                .filter(issue_id__in=[r["id"] for r in rows], deleted_at__isnull=True)
+                .order_by("assignee_id")
+                .values_list("issue_id", "assignee_id")
+            ):
+                items_assignees[issue_id].append(str(assignee_id))
+        items = [
+            {
+                "id": str(r["id"]),
+                "issue_key": f"{project.identifier}-{r['sequence_id']}",  # 服务端拼接（unified-issue-model）
+                "name": r["name"],
+                "target_date": r["target_date"],
+                "overdue_days": (today - r["target_date"]).days,
+                "assignee_ids": items_assignees[r["id"]],
+            }
+            for r in rows
+        ]
+        # 分布：完整逾期集上单条聚合 SQL（display_name 经 annotate 别名展开，
+        # 键名对齐 §4.2.1 示例——不带 __ 路径；次键 assignee_id 保稳定序）
+        by_assignee = [
+            {
+                "assignee_id": str(r["assignee_id"]),
+                "display_name": r["display_name"],
+                "count": r["count"],
+            }
+            for r in (
+                IssueAssignee.objects
+                .filter(issue_id__in=overdue_ids, deleted_at__isnull=True)
+                .annotate(display_name=F("assignee__display_name"))
+                .values("assignee_id", "display_name")
+                .annotate(count=Count("issue"))
+                .order_by("-count", "assignee_id")
+            )
+        ]
+        return success_response(
+            {
+                "overdue_count": agg["overdue_count"],
+                "max_overdue_days": max_overdue_days,
+                "by_assignee": by_assignee,
+                "items": items,
+                "items_truncated": agg["overdue_count"] > len(rows),
+            },
+            meta={"today": today.isoformat()},
+        )

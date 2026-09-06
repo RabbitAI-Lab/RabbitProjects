@@ -5,9 +5,20 @@
 视窗参数与 tz 校验、批量上限、权限（BR-12）、筛选复用（BR-01）、工时对照
 （TASK-006 契约字段）、游标分页（api-conventions §6.2/§6.3）。
 性能门禁（IT-01/IT-02）在 tests/jmeter/sprint-4-bench-gantt.py（HTTP 采样口径）。
+
+GANTT-002 后端子集（§5 中后端相关用例，前缀 g002）：
+- UT-12/13/18：概览口径（completed 豁免）/ 多人分布（每人各计 1）/ 读权限；
+- IT-04：概览 vs 行级 is_overdue 同源性证明（同一数据集数字一致，含开放端条、
+  NULL state、今日边界、归档）；
+- UT-17/IT-07：端点级限流 10/min·user（真实 Valkey 计数，FILE-004 redis_clean
+  同款隔离纪律；键 gantt-agg:{user_id}，夹具 teardown 显式清键）；
+- 截断前 20 / 响应形状 / 筛选同源管道（view_id 与 ?filters=）/ tz 同基准。
+夹具纪律（坑 18）：断言一律 filter 到本测试作用域，禁全表 count()（_issue 的
+sequence 取数是项目作用域 filter）。
 """
 from __future__ import annotations
 
+import time
 import uuid
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -16,8 +27,10 @@ import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
+from plane.app.views import gantt as gantt_views
 from plane.db.models import (
     Issue,
+    IssueAssignee,
     IssueLink,
     IssueView,
     Project,
@@ -617,3 +630,247 @@ def test_it07_viewport_query_uses_gantt_index(env):
         cur.execute(
             "SELECT indexname FROM pg_indexes WHERE tablename = 'issues' AND indexname = 'idx_issue_gantt_viewport'")
         assert cur.fetchone() is not None
+
+
+# ═════════════════════════════════════════════════════════════════════
+# GANTT-002 后端子集：延期概览聚合（§4.2.1/§4.3.1）+ 端点级限流（§4.2.1 要点 4）
+# ═════════════════════════════════════════════════════════════════════
+TZ_SH = ZoneInfo("Asia/Shanghai")  # DEFAULT_TZ——概览/行集两端的默认「今天」基准
+
+
+def _today_sh() -> date:
+    """默认 tz 口径的「今天」——与端点内 ``datetime.now(tz).date()`` 同基准。"""
+    return datetime.now(TZ_SH).date()
+
+
+def _summary(client, env, **params):
+    qs = "".join(f"&{k}={v}" for k, v in params.items())
+    return client.get(
+        f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/gantt/overdue-summary/?{qs}")
+
+
+def _summary_ok(client, env, **params):
+    resp = _summary(client, env, **params)
+    assert resp.status_code == 200, resp.json()
+    body = resp.json()
+    return body["data"], body["meta"]
+
+
+@pytest.fixture(autouse=True)
+def agg_redis_clean():
+    """限流计数键测试隔离（FILE-004 redis_clean 同款纪律）：本文件 g002 用例
+    全部命中限流端点（每次请求 INCR），故 autouse——前置重置进程态 + 后置清
+    ``gantt-agg:*`` 键，不留跨用例状态（坑 18；键自带 60s TTL 兜底自过期）。
+    GANTT-001 用例不触达 Redis，仅承担无害的空清理。"""
+    gantt_views.reset_gantt_redis_state()
+    yield
+    client = gantt_views._agg_redis()
+    if client is not None:
+        keys = client.keys("gantt-agg:*")
+        if keys:
+            client.delete(*keys)
+    gantt_views.reset_gantt_redis_state()
+
+
+def _mk_user(email: str, display_name: str) -> User:
+    return User.objects.create_user(email=email, password="Rabbit123!", display_name=display_name)
+
+
+def test_g002_ut12_overdue_count_excludes_completed(env):
+    """UT-12 概览口径：6 条 target 已过含 1 completed → overdue_count 5；
+    completed 不入明细（§2.3 豁免组）。"""
+    past = _today_sh() - timedelta(days=10)
+    for i in range(4):
+        _issue(env, f"S{i}", start=None, target=past, state="started")
+    _issue(env, "BACK", start=None, target=past, state="backlog")
+    done = _issue(env, "DONE", start=past - timedelta(days=5), target=past, state="completed")
+    data, _ = _summary_ok(_client(env["owner"]), env)
+    assert data["overdue_count"] == 5
+    assert data["items_truncated"] is False
+    assert str(done.id) not in {i["id"] for i in data["items"]}
+
+
+def test_g002_ut13_multi_assignee_distribution(env):
+    """UT-13 多人分布：1 条逾期任务 2 执行人 → 两人各 +1（RPT-001 口径，
+    IssueAssignee 逐行计数）；未指派逾期行计入总数不计分布；by_assignee 降序。"""
+    zhang = _mk_user("g002-zhang@rabbit.dev", "张三")
+    li = _mk_user("g002-li@rabbit.dev", "李四")
+    t = _today_sh()
+    a = _issue(env, "A", start=None, target=t - timedelta(days=9), state="started")
+    b = _issue(env, "B", start=None, target=t - timedelta(days=3), state="started")
+    _issue(env, "N", start=None, target=t - timedelta(days=2), state="started")  # 未指派
+    for u in (zhang, li):
+        IssueAssignee.objects.create(issue=a, assignee=u, created_by=env["owner"])
+    IssueAssignee.objects.create(issue=b, assignee=zhang, created_by=env["owner"])
+    data, _ = _summary_ok(_client(env["owner"]), env)
+    assert data["overdue_count"] == 3
+    by = {r["assignee_id"]: r["count"] for r in data["by_assignee"]}
+    assert by == {str(zhang.id): 2, str(li.id): 1}  # 多人任务每人各计 1
+    counts = [r["count"] for r in data["by_assignee"]]
+    assert counts == sorted(counts, reverse=True)
+    assert {r["display_name"] for r in data["by_assignee"]} == {"张三", "李四"}
+    item_a = next(i for i in data["items"] if i["id"] == str(a.id))
+    assert set(item_a["assignee_ids"]) == {str(zhang.id), str(li.id)}
+
+
+def test_g002_ut18_viewer_reads_non_member_404(env):
+    """UT-18 概览读权限：VIEWER 200（gantt.read 只读聚合正常）；非成员 404。"""
+    _issue(env, "A", start=None, target=_today_sh() - timedelta(days=5), state="started")
+    resp = _summary(_client(env["viewer"]), env)
+    assert resp.status_code == 200
+    assert resp.json()["data"]["overdue_count"] == 1
+    stranger = _mk_user("g002-stranger@rabbit.dev", "路人")
+    assert _summary(_client(stranger), env).status_code == 404
+
+
+def test_g002_it04_summary_consistent_with_row_is_overdue(env):
+    """IT-04 概览一致性＝同源性证明：overdue-summary 与 ``gantt/`` 行级
+    is_overdue 在同一数据集上数字一致——含开放端条（start NULL 仅 target
+    逾期）、NULL state（折算 unstarted）、完成/取消豁免、今日边界（严格 <）、
+    双 NULL、归档（§2.3 与 GANTT-001 is_overdue 真同源）。"""
+    t = _today_sh()
+    open_end = _issue(env, "OPEN", start=None, target=t - timedelta(days=9), state="started")  # 开放端条计入
+    deep = _issue(env, "DEEP", start=t - timedelta(days=40), target=t - timedelta(days=30), state="unstarted")
+    _issue(env, "DONE", start=t - timedelta(days=8), target=t - timedelta(days=6), state="completed")
+    _issue(env, "CANCEL", start=t - timedelta(days=8), target=t - timedelta(days=6), state="cancelled")
+    _issue(env, "FUTURE", start=t, target=t + timedelta(days=5), state="started")
+    _issue(env, "EDGE", start=t - timedelta(days=2), target=t, state="started")  # target=今天 → 不过期（严格 <）
+    _issue(env, "DN", start=None, target=None, state="started")  # 双 NULL 不可能逾期
+    seq = Issue.objects.filter(project=env["proj"]).count() + 1
+    no_state = Issue.objects.create(  # state FK 为 NULL → unstarted 折算 → 逾期（两端口径须一致）
+        name="NS", project=env["proj"], sequence_id=seq, sort_order=seq * 100.0,
+        start_date=t - timedelta(days=5), target_date=t - timedelta(days=2), created_by=env["owner"])
+    archived = _issue(env, "ARCH", start=t - timedelta(days=8), target=t - timedelta(days=6), state="started")
+    archived.archived_at = datetime.now(ZoneInfo("UTC"))
+    archived.save(update_fields=["archived_at"])
+
+    client = _client(env["owner"])
+    vs, ve = (t - timedelta(days=60)).isoformat(), (t + timedelta(days=60)).isoformat()
+    data, meta = _summary_ok(client, env)
+    assert meta["today"] == t.isoformat()
+    rows_data, rows_meta = _rows(client, env, start=vs, end=ve, per_page=100)
+    flagged = {r["id"] for r in rows_data["rows"] if r["is_overdue"]}
+
+    expected = {str(open_end.id), str(deep.id), str(no_state.id)}
+    assert data["overdue_count"] == 3 == len(expected)
+    assert {i["id"] for i in data["items"]} == expected
+    assert flagged == expected  # 同源性：概览明细集 == 行级 is_overdue 标记集
+    assert rows_meta["today"] == meta["today"]  # 同一「今天」基准（BR-05）
+    assert data["max_overdue_days"] == 30  # DEEP 30 > OPEN 9 > NS 2
+    by_id = {i["id"]: i for i in data["items"]}
+    assert by_id[str(deep.id)]["overdue_days"] == 30
+    assert by_id[str(open_end.id)]["overdue_days"] == 9
+    assert by_id[str(open_end.id)]["issue_key"] == f"GNT-{open_end.sequence_id}"
+
+    # 换请求 tz 后两端仍同基准一致（数字本身随 tz 变化，一致性不变）
+    data2, meta2 = _summary_ok(client, env, tz="Pacific/Kiritimati")
+    rows_data2, rows_meta2 = _rows(client, env, start=vs, end=ve, per_page=100, tz="Pacific/Kiritimati")
+    flagged2 = {r["id"] for r in rows_data2["rows"] if r["is_overdue"]}
+    assert {i["id"] for i in data2["items"]} == flagged2
+    assert data2["overdue_count"] == len(flagged2)
+    assert meta2["today"] == rows_meta2["today"]
+
+
+def test_g002_items_truncated_at_20_desc_order(env):
+    """§4.2.1 契约要点 1：items 按逾期天数降序前 20 截断（items_truncated=true）；
+    统计三数字仍为完整集口径（overdue_count=23 / max=23）。"""
+    t = _today_sh()
+    for i in range(23):
+        _issue(env, f"I{i}", start=None, target=t - timedelta(days=i + 1), state="started")
+    data, _ = _summary_ok(_client(env["owner"]), env)
+    assert data["overdue_count"] == 23
+    assert data["max_overdue_days"] == 23
+    assert len(data["items"]) == 20
+    assert data["items_truncated"] is True
+    days = [i["overdue_days"] for i in data["items"]]
+    assert days == sorted(days, reverse=True)  # 23..4
+    assert days[0] == data["max_overdue_days"]
+
+
+def test_g002_contract_shape_and_empty(env):
+    """§4.2.1 JSON 形状：data 五键 / item 六键 / by_assignee 三键 / meta.today；
+    空项目零逾期形态；granularity/viewport_* 不参与聚合（忽略不报错）。"""
+    client = _client(env["owner"])
+    data, meta = _summary_ok(client, env)
+    assert data == {"overdue_count": 0, "max_overdue_days": 0,
+                    "by_assignee": [], "items": [], "items_truncated": False}
+    assert set(meta) == {"today"}
+    _issue(env, "A", start=None, target=_today_sh() - timedelta(days=5), state="started")
+    data2, _ = _summary_ok(client, env)
+    assert set(data2) == {"overdue_count", "max_overdue_days", "by_assignee", "items", "items_truncated"}
+    item = data2["items"][0]
+    assert set(item) == {"id", "issue_key", "name", "target_date", "overdue_days", "assignee_ids"}
+    assert item["assignee_ids"] == []
+    # 视窗/粒度参数与聚合无关——携带不改变结果（§4.2.1 注）
+    data3, _ = _summary_ok(client, env, granularity="day",
+                           viewport_start="2026-01-01", viewport_end="2026-01-31")
+    assert data3 == data2
+
+
+def test_g002_filter_pipeline_same_source(env):
+    """§4.2.1 参数：view_id 视图层与 ?filters= 临时层——与甘特行集同一筛选
+    管道（_filtered_base，GANTT-001 BR-01 语义），聚合只统计命中筛选的逾期行。"""
+    t = _today_sh() - timedelta(days=5)
+    urgent = _issue(env, "U", start=None, target=t, state="started", priority="urgent")
+    low = _issue(env, "L", start=None, target=t, state="started", priority="low")
+    view = IssueView.objects.create(
+        workspace=env["ws"], project=env["proj"], owner=env["owner"], name="仅紧急",
+        layout=IssueView.Layout.GANTT,
+        filters={"op": "AND", "conditions": [
+            {"field": "priority", "operator": "in", "value": ["urgent"]}]})
+    client = _client(env["owner"])
+    data, _ = _summary_ok(client, env, view_id=view.id)
+    assert data["overdue_count"] == 1 and data["items"][0]["id"] == str(urgent.id)
+    # 临时筛选（?filters=）同管道
+    import urllib.parse
+
+    dsl = urllib.parse.quote(
+        '{"op":"AND","conditions":[{"field":"priority","operator":"in","value":["low"]}]}')
+    data2, _ = _summary_ok(client, env, filters=dsl)
+    assert data2["overdue_count"] == 1 and data2["items"][0]["id"] == str(low.id)
+    # 不带筛选 → 全量
+    data3, _ = _summary_ok(client, env)
+    assert data3["overdue_count"] == 2
+
+
+def test_g002_ut17_it07_throttle_10_per_min_per_user(env):
+    """UT-17/IT-07：同一 user 60s 固定窗口内第 11 次 → 429 RATE_LIMIT_EXCEEDED +
+    Retry-After + X-RateLimit 三件套（§4.2.1 契约要点 4、api-conventions §7.3）；
+    键维度 user_id（他人不受牵连）；窗口流逝（清键 == 60s 固定窗口过）恢复。"""
+    _issue(env, "A", start=None, target=_today_sh() - timedelta(days=5), state="started")
+    client = _client(env["owner"])
+    for i in range(10):  # 配额内逐次 200
+        assert _summary(client, env).status_code == 200, f"attempt {i}"
+    resp = _summary(client, env)  # 第 11 次 → 429
+    assert resp.status_code == 429
+    body = resp.json()
+    assert body["error"]["code"] == "RATE_LIMIT_EXCEEDED"
+    assert int(resp.headers["Retry-After"]) >= 1
+    assert resp.headers["X-RateLimit-Limit"] == "10"      # §7.3 模板三件套
+    assert resp.headers["X-RateLimit-Remaining"] == "0"
+    assert int(resp.headers["X-RateLimit-Reset"]) > time.time()
+    # 键维度 user_id（§4.2.1 原文键 gantt-agg:{user_id}）：另一用户不受牵连
+    assert _summary(_client(env["viewer"]), env).status_code == 200
+    # IT-07 窗口恢复：清计数键等价 60s 固定窗口流逝 → 配额重置
+    redis_client = gantt_views._agg_redis()
+    assert redis_client is not None, "限流用例要求真实 Valkey（rp-redis，FILE-004 同款前提）"
+    redis_client.delete(gantt_views.gantt_agg_attempt_key(str(env["owner"].id)))
+    assert _summary(client, env).status_code == 200
+
+
+def test_g002_assignee_batch_no_n_plus_one(env):
+    """§4.2.1 契约要点 2：items[].assignee_ids 与 by_assignee 各为单条批量查询
+    ——issue_assignees 表查询数不随明细行数增长（≤2，防逐行 N+1）。"""
+    zhang = _mk_user("g002-bz@rabbit.dev", "批量张")
+    li = _mk_user("g002-bl@rabbit.dev", "批量李")
+    t = _today_sh() - timedelta(days=5)
+    for i in range(6):
+        a = _issue(env, f"I{i}", start=None, target=t - timedelta(days=i), state="started")
+        IssueAssignee.objects.create(issue=a, assignee=zhang, created_by=env["owner"])
+        IssueAssignee.objects.create(issue=a, assignee=li, created_by=env["owner"])
+    client = _client(env["owner"])
+    with CaptureQueriesContext(connection) as ctx:
+        resp = _summary(client, env)
+        assert resp.status_code == 200, resp.json()
+    ia_queries = [q["sql"] for q in ctx.captured_queries if '"issue_assignees"' in q["sql"]]
+    assert len(ia_queries) <= 2, ia_queries

@@ -353,8 +353,7 @@ class ProjectTemplate(BaseModel):
     "status": "closed",
     "transitioned_at": "2026-09-07T08:14:22.013Z",
     "affected_issues": 17
-  },
-  "meta": {"request_id": "01J9XY4PQ2R3S4T5U6V7W8X9Y0"}
+  }
 }
 ```
 

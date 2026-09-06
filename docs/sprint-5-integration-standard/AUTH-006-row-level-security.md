@@ -366,8 +366,7 @@ CI AST 规则（`scripts/lint_access.py`，ruff 插件形态）：
     "skipped": [
       {"user_id": "01J8KR5MN0P1Q2R3S4T5U6V7", "reason": "already_has_role"}
     ]
-  },
-  "meta": {"request_id": "01J9XZ6TU4V5W6X7Y8Z9A0B1C2"}
+  }
 }
 ```
 
@@ -396,8 +395,7 @@ POST /api/v1/workspaces/{slug}/members/{member_id}/enable/
     "is_active": false,
     "disabled_at": "2026-09-07T09:41:03.227Z",
     "revoked": {"sessions": 3, "api_keys": 1, "ws_connections": 2}
-  },
-  "meta": {"request_id": "01J9XZ7WX5Y6Z7A8B9C0D1E2F3"}
+  }
 }
 ```
 

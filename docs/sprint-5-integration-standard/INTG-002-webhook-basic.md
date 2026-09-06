@@ -423,7 +423,6 @@ class WebhookDelivery(BaseModel):
     "created_at": "2026-09-07T02:14:33.018Z"
   },
   "meta": {
-    "request_id": "01J9XW4M0K5N8Q2R3T4V6X7Y8Z",
     "per_page": null, "page": null, "total_count": null, "total_pages": null,
     "next_cursor": null, "prev_cursor": null,
     "next_page_results": false, "prev_page_results": false, "count": null
@@ -477,7 +476,6 @@ class WebhookDelivery(BaseModel):
     "event_id": "9d2e3f4a-5b6c-4d8e-9f0a-1b2c3d4e5f6a"
   },
   "meta": {
-    "request_id": "01J9XWB9ND3P5Q7R9T1V3X5Z7B",
     "per_page": null, "page": null, "total_count": null, "total_pages": null,
     "next_cursor": null, "prev_cursor": null,
     "next_page_results": false, "prev_page_results": false, "count": null

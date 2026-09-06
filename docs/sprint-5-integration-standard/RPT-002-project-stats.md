@@ -306,8 +306,7 @@ sequenceDiagram
       "created": [{"date": "2026-08-09", "count": 3}, {"date": "2026-08-10", "count": 0}],
       "completed": [{"date": "2026-08-09", "count": 5}, {"date": "2026-08-10", "count": 2}]
     }
-  },
-  "meta": {"request_id": "01J9XX1AB2C3D4E5F6G7H8J9K0"}
+  }
 }
 ```
 
@@ -352,7 +351,7 @@ sequenceDiagram
     "totals": {"open_count": 143, "done_count_30d": 210, "overdue_count": 17,
                "estimate_minutes_open": 74400, "logged_minutes_30d": 59160}
   },
-  "meta": {"request_id": "01J9XX3YZ4A5B6C7D8E9F0G1H2", "next_cursor": "100:1:0"}
+  "meta": {"next_cursor": "100:1:0"}
 }
 ```
 

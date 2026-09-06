@@ -1147,7 +1147,7 @@ Argon2 密码哈希 + Session + CSRF 双提交 + 注册事务内原子初始化�
 
 ---
 
-## 附录 C（续 2）· Sprint 3 Phase 3-A 新增表面 C.64~C.78（BOARD-003 / TASK-011）
+## 附录 C（续 2）· Sprint 3 Phase 3-A 新增表面 C.64~C.76（BOARD-003 / TASK-011）
 
 > 依据 ADR-0010 纪律 ①：Sprint-3 视图与筛选体系（BOARD-003 §3.1~§3.7 + TASK-011 §3.1~§3.4）新增/变更 UI 表面先行登记，每行标规格出处；跨文档裁决 R1~R5 与原型开放点 O1~O5 已定稿（原型 FROZEN 2026-09-06，docs/design/sprint-3-hifi-prototype.html 头部注释）。视觉/交互验收基准 = 该冻结原型。COLLAB-002/003/004 表面（C 批）与 BOARD-004 批量表面（B 批）不在本批登记。本批涉及的前端写端点：`POST/PATCH/DELETE …/views/`（BOARD-003 §4.2-1/2/4/5）、`PATCH /users/me/settings/`（§4.2 注 BR-10）、分组信封 `GET …/issues/?group_by=&view_id=&filters=`（BOARD-003 §4.2-6 + TASK-011 §4.2.2）。
 

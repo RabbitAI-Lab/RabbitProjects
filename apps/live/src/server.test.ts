@@ -311,8 +311,8 @@ describe("心跳超时（BR-04，UT-06）——独立小间隔实例", () => {
       await new Promise<void>((resolve) => ws.on("open", () => resolve()));
       // 模拟死客户端：吞掉服务端 ping（客户端收不到 ping 即不会 pong）
       const conn = hb.registry.connectionsOfUser(sub).values().next().value;
-      expect(conn).toBeDefined();
-      (conn?.ws as WebSocket).ping = () => {};
+      if (!conn) throw new Error("connection not found");
+      (conn.ws as WebSocket).ping = () => {};
       expect(await closed).toBe(4004);
     } finally {
       await hb.close();

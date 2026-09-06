@@ -40,6 +40,11 @@ def env(db):
     other = User.objects.create_user(email="view-other@rabbit.dev", password="Rabbit123!")
     ws = Workspace.objects.create(name="W", slug=f"w-view-{owner.id.hex[:8]}", owner=owner, created_by=owner)
     proj = Project.objects.create(name="P", identifier="VW", workspace=ws, created_by=owner)
+    from plane.db.models import WorkspaceMember, WorkspaceRole
+
+    # HTTP 面用例（详情端点）需过 get_workspace_or_404 的 WS 成员校验
+    WorkspaceMember.objects.create(workspace=ws, member=owner, role=WorkspaceRole.OWNER, created_by=owner)
+    WorkspaceMember.objects.create(workspace=ws, member=other, role=WorkspaceRole.MEMBER, created_by=owner)
     ProjectMember.objects.create(project=proj, member=other, role=ProjectRole.CONTRIBUTOR, created_by=owner)
     return {"owner": owner, "other": other, "ws": ws, "proj": proj}
 
@@ -252,6 +257,51 @@ class TestResolveView:
         filters, degraded = resolve_view(view, project=env["proj"], user=env["owner"])
         assert degraded is None
         assert len(filters["conditions"]) == 1
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 详情端点（GET/PATCH/DELETE HTTP 面——retrieve 缺省 for_write 回归锚）
+# ─────────────────────────────────────────────────────────────────────
+class TestViewDetailEndpoint:
+    def _url(self, env, view_id):
+        return f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/views/{view_id}/"
+
+    def _client(self, user):
+        from rest_framework.test import APIClient
+
+        c = APIClient()
+        c.force_authenticate(user=user)
+        return c
+
+    def test_get_own_view_200(self, env):
+        view = _mk_view(env, name="我的", display_props={"icon": "🚒"})
+        resp = self._client(env["owner"]).get(self._url(env, view.id))
+        assert resp.status_code == 200
+        assert resp.json()["data"]["name"] == "我的"
+
+    def test_get_nonexistent_404_not_500(self, env):
+        """Phase 3-A 发现的回归：retrieve() 缺省 for_write 曾致 500（TypeError）。"""
+        import uuid as uuid_module
+
+        resp = self._client(env["owner"]).get(self._url(env, uuid_module.uuid4()))
+        assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+    def test_get_system_view_by_member_200(self, env):
+        seed_project_views(env["proj"])
+        view = IssueView.objects.filter(project=env["proj"], is_system=True).first()
+        assert self._client(env["other"]).get(self._url(env, view.id)).status_code == 200
+
+    def test_patch_own_view(self, env):
+        view = _mk_view(env, name="旧名")
+        resp = self._client(env["owner"]).patch(self._url(env, view.id), {"name": "新名"}, format="json")
+        assert resp.status_code == 200
+        assert resp.json()["data"]["name"] == "新名"
+
+    def test_delete_view_204(self, env):
+        view = _mk_view(env, name="待删")
+        assert self._client(env["owner"]).delete(self._url(env, view.id)).status_code == 204
+        assert not IssueView.objects.filter(pk=view.pk).exists()
 
 
 # ─────────────────────────────────────────────────────────────────────

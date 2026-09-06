@@ -96,7 +96,7 @@ class IssueViewDetailView(RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = IssueViewSerializer
 
-    def _get_view(self, *, for_write: bool):
+    def _get_view(self, *, for_write: bool = False):
         project, _, _ = get_project_or_404(self.kwargs["slug"], self.kwargs["project_id"], self.request.user)
         try:
             view = IssueView.objects.get(

@@ -104,15 +104,15 @@ test("C.1-C.8 全屏字段级 parity 扫描", async ({ page }) => {
     await expect.soft(page.getByRole("button", { name: q, exact: true })).toBeVisible();
   }
   // 状态下拉：默认待办 + 打开后含全四态（含已取消）
-  await page.locator("button").filter({ hasText: /待办/ }).nth(0).click();
+  await page.getByRole("dialog").locator("button").filter({ hasText: /待办/ }).first().click();
   for (const st of ["待办", "进行中", "已完成", "已取消"]) {
     await expect.soft(page.getByRole("button", { name: new RegExp(`^${st}$`) }).first()).toBeVisible();
   }
-  await page.locator("button").filter({ hasText: /待办/ }).nth(0).click(); // 再次点击收起菜单
+  await page.getByRole("dialog").locator("button").filter({ hasText: /待办/ }).first().click(); // 再次点击收起菜单
   // 负责人下拉：指派给我
-  await page.locator("button").filter({ hasText: /未分配/ }).first().click();
+  await page.getByRole("dialog").locator("button").filter({ hasText: /未分配/ }).first().click();
   await expect.soft(page.getByText(/指派给我/)).toBeVisible();
-  await page.locator("button").filter({ hasText: /未分配/ }).first().click(); // 收起
+  await page.getByRole("dialog").locator("button").filter({ hasText: /未分配/ }).first().click(); // 收起
   // 创建一个任务供后续断言
   await page.getByPlaceholder("任务标题").fill("Parity 任务");
   await page.getByRole("button", { name: /创建任务/ }).last().click();

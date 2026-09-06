@@ -183,10 +183,14 @@ test.describe("Sprint-3 Phase 3-A 视图与筛选（BOARD-003 / TASK-011 · C.64
     await switchGroup(page, "按优先级");
     const urgentCol = page.locator('section[data-sb-scope="bcol"]', { hasText: /紧急/ }).first();
     await expect(urgentCol).toBeVisible({ timeout: 10_000 });
+    // 源卡落在「中」列（priority=medium）——列重建完成后可见再拖（分组切换 120ms 渐隐重排）
+    const srcCard = page.locator(`article[data-card-id="${issue.id}"]`).first();
+    await expect(srcCard).toBeVisible({ timeout: 10_000 });
+    await page.waitForTimeout(250);
     // 行为三件套：拖卡 → PATCH issues/{id}（priority=urgent，§2.4 表）→ 卡片迁入紧急列
     const patch = page.waitForResponse((r: Response) =>
       new RegExp(`/issues/${issue.id}/`).test(r.url()) && r.request().method() === "PATCH");
-    await page.locator(`article[data-card-id="${issue.id}"]`).dragTo(urgentCol, { targetPosition: { x: 140, y: 80 } });
+    await srcCard.dragTo(urgentCol, { targetPosition: { x: 140, y: 200 } });
     const pres = await patch;
     expect(pres.status()).toBe(HTTP.OK);
     const body = pres.request().postDataJSON() as { priority?: string };

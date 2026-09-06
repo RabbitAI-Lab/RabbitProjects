@@ -514,31 +514,37 @@ def wire_direct_version(*, staging: FileAsset, stat_size: int, actor) -> FileAss
 
     BR-07 直传同名匹配在 complete 侧收口（presign 仅登记暂存行，零回改）：
     新名 → 暂存行即最终行（五态翻转）；同名 → 并入既有行，暂存行硬删（从未
-    入列表，不产生回收站条目；对象已由新版本行引用，零孤儿）。
+    入列表，不产生回收站条目；对象由新版本行引用，零孤儿）。
+
+    事务包裹（bugfix）：``_new_version`` 内 ``select_for_update`` 要求事务
+    上下文——分片路径 ``complete_session`` 有 ``@transaction.atomic`` 而
+    本直传路径缺包裹，runserver（ATOMIC_REQUESTS=False）下 complete 恒
+    TransactionManagementError → 500；pytest 事务包裹曾掩盖该缺陷。
     """
-    key = staging.storage_path  # 先取值——同名分支将删暂存行
-    desc = SimpleNamespace(
-        file_name=(staging.attributes or {}).get("name", ""),
-        file_size=stat_size,  # size 以 HEAD 实测为准（presign 声明值仅暂存）
-        content_type=(staging.attributes or {}).get("mime", ""),
-        content_md5=None,  # 直传无整件 MD5（分片路径才有，§4.2.1）
-        created_by=staging.created_by,
-    )
-    existing = _match_live_asset(
-        project_id=staging.project_id,
-        folder_id=staging.folder_id,
-        name=desc.file_name,
-        exclude_pk=staging.pk,
-    )
-    if existing is None:  # 新名：暂存行即最终行（FILE-001 原语义）
-        target = staging
-        staging.status = FileAsset.Status.UPLOADED
-        staging.is_uploaded = True
-        staging.save(update_fields=["status", "is_uploaded", "updated_at"])
-    else:  # 同名：并入既有行（v2+，沿用原可见性 BR-07）
-        target = existing
-        staging.delete()  # 硬删不产生回收站条目；对象由新版本行引用
-    version = _new_version(target, desc, key=key, actor=actor)
+    with transaction.atomic():
+        key = staging.storage_path  # 先取值——同名分支将删暂存行
+        desc = SimpleNamespace(
+            file_name=(staging.attributes or {}).get("name", ""),
+            file_size=stat_size,  # size 以 HEAD 实测为准（presign 声明值仅暂存）
+            content_type=(staging.attributes or {}).get("mime", ""),
+            content_md5=None,  # 直传无整件 MD5（分片路径才有，§4.2.1）
+            created_by=staging.created_by,
+        )
+        existing = _match_live_asset(
+            project_id=staging.project_id,
+            folder_id=staging.folder_id,
+            name=desc.file_name,
+            exclude_pk=staging.pk,
+        )
+        if existing is None:  # 新名：暂存行即最终行（FILE-001 原语义）
+            target = staging
+            staging.status = FileAsset.Status.UPLOADED
+            staging.is_uploaded = True
+            staging.save(update_fields=["status", "is_uploaded", "updated_at"])
+        else:  # 同名：并入既有行（v2+，沿用原可见性 BR-07）
+            target = existing
+            staging.delete()  # 硬删不产生回收站条目；对象由新版本行引用
+        version = _new_version(target, desc, key=key, actor=actor)
     transaction.on_commit(lambda: _enqueue_derive(str(version.id)))
     return target
 

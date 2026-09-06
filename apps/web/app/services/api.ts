@@ -910,6 +910,111 @@ export interface BatchDetailMeta {
   limit: number;
 }
 
+/* ═══════════════ Sprint-4（FILE-002 §4.2 项目文件库）═══════════════ */
+
+/** FILE-002 §4.2 #1：目录树行（扁平行 + parent_id/depth，前端组树；可见性剪枝后仅含
+ *  「到根的全部祖先均可见」的目录；file_count 为可见子树聚合——计数不透出不可见子孙）。 */
+export interface FileFolderRow {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  depth: number;
+  visibility: FileVisibility;
+  allowed_members: string[];
+  file_count: number;
+  children_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type FileVisibility = "all" | "admins" | "members";
+
+/** FILE-002 §4.2.1 / services.file_library.file_row：meta 九字段 + total_size_bytes
+ *  （仅文件列表）；回收站行另含 deleted_at（trash_rows 追加）。 */
+export interface LibraryFileRow {
+  id: string;
+  name: string;
+  size_bytes: number;
+  content_type: string;
+  type_category: "image" | "document" | "video" | "archive" | "other";
+  visibility: FileVisibility;
+  folder_id: string | null;
+  issue_id: string | null;
+  uploaded_by: string | null;
+  /** §4.2.1 注：仅 ?expand=uploaded_by 时追加（原 ID 字段照常保留）。 */
+  uploaded_by_detail?: { id: string; display_name: string };
+  download_count: number;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+}
+
+/** FILE-002 §4.2.3：配额用量四字段。 */
+export interface StorageUsage {
+  quota_bytes: number;
+  used_bytes: number;
+  pending_bytes: number;
+  usage_ratio: number;
+}
+
+/** FILE-002 §4.2 端点表 #1~#14（全部强制尾斜杠；files/trash|storage 字面量段）。 */
+export const FileLibraryAPI = {
+  /** #1 目录树（file.read；按请求者可见性剪枝）。 */
+  folders: (slug: string, projectId: string) =>
+    api.get<FileFolderRow[]>(`workspaces/${slug}/projects/${projectId}/folders/`),
+  /** #2 新建目录（folder.manage；同层同名 409 RESOURCE_ALREADY_EXISTS）。 */
+  createFolder: (slug: string, projectId: string, payload: { name: string; parent_id?: string | null }) =>
+    api.post<FileFolderRow>(`workspaces/${slug}/projects/${projectId}/folders/`, payload),
+  /** #3 改名/移动（folder.manage）；可见性（file.permission.manage 仅 ADMIN）。 */
+  patchFolder: (slug: string, projectId: string, folderId: string, payload: {
+    name?: string; parent_id?: string | null; visibility?: FileVisibility; allowed_members?: string[];
+  }) => api.patch<FileFolderRow>(`workspaces/${slug}/projects/${projectId}/folders/${folderId}/`, payload),
+  /** #4 删除（整树软删；回传 folders_deleted/files_deleted）。 */
+  deleteFolder: (slug: string, projectId: string, folderId: string) =>
+    api.delete<{ id: string; folders_deleted: number; files_deleted: number }>(
+      `workspaces/${slug}/projects/${projectId}/folders/${folderId}/`),
+  /** #5 目录文件列表（游标 + name/type/uploaded_by 筛选 + meta.total_size_bytes）。 */
+  files: (slug: string, projectId: string, folderId: string, params: {
+    name?: string; type?: string; uploaded_by?: string; ordering?: string;
+    per_page?: number; cursor?: string; expand?: string;
+  } = {}) =>
+    api.get<LibraryFileRow[]>(`workspaces/${slug}/projects/${projectId}/folders/${folderId}/files/`, { params }),
+  /** #6 上传预签名（FILE-001 §4.3.2 协议复用：asset_id/upload_url/fields/expires_in）。 */
+  presign: (slug: string, projectId: string, folderId: string, payload: {
+    file_name: string; file_size: number; content_type: string;
+  }) =>
+    api.post<{ asset_id: string; upload_url: string; fields: Record<string, string>; expires_at: string; expires_in: number }>(
+      `workspaces/${slug}/projects/${projectId}/folders/${folderId}/files/presign/`, payload),
+  /** #14 完成确认（幂等；200 回文件元数据行）。 */
+  complete: (slug: string, projectId: string, assetId: string) =>
+    api.post<LibraryFileRow>(`workspaces/${slug}/projects/${projectId}/files/${assetId}/complete/`, {}),
+  /** #7 下载预签名（5 分钟；200 {download_url, expires_in} → window.open）。 */
+  downloadUrl: (slug: string, projectId: string, assetId: string) =>
+    api.get<{ download_url: string; expires_in: number }>(
+      `workspaces/${slug}/projects/${projectId}/files/${assetId}/download-url/`),
+  /** #8 重命名/移动/双挂（file.update，R1）；可见性（file.permission.manage）。 */
+  patchFile: (slug: string, projectId: string, assetId: string, payload: {
+    name?: string; folder_id?: string | null; issue_id?: string | null;
+    visibility?: FileVisibility; allowed_members?: string[];
+  }) => api.patch<LibraryFileRow>(`workspaces/${slug}/projects/${projectId}/files/${assetId}/`, payload),
+  /** #9 删除（软删进回收站；204）。 */
+  delFile: (slug: string, projectId: string, assetId: string) =>
+    api.delete(`workspaces/${slug}/projects/${projectId}/files/${assetId}/`),
+  /** #10 回收站还原（BR-07 冲突落根 + (恢复) 后缀）。 */
+  restore: (slug: string, projectId: string, assetId: string) =>
+    api.post<LibraryFileRow>(`workspaces/${slug}/projects/${projectId}/files/${assetId}/restore/`, {}),
+  /** #11 回收站列表（R1 同键过滤：ADMIN 全量 / CONTRIBUTOR 仅本人删除项）。 */
+  trash: (slug: string, projectId: string, params: { per_page?: number; cursor?: string } = {}) =>
+    api.get<LibraryFileRow[]>(`workspaces/${slug}/projects/${projectId}/files/trash/`, { params }),
+  /** #13 彻底删除（仅 ADMIN；引用计数判对象，BR-06）。 */
+  purge: (slug: string, projectId: string, assetId: string) =>
+    api.delete<{ id: string; purged: boolean }>(`workspaces/${slug}/projects/${projectId}/files/${assetId}/purge/`),
+  /** #12 配额用量（file.read）。 */
+  storage: (slug: string, projectId: string) =>
+    api.get<StorageUsage>(`workspaces/${slug}/projects/${projectId}/files/storage/`),
+};
+
 /** COLLAB-004 §4.2 换票 / 续签（§4.2.1 信封 data：token/rooms/expires_at/renew_after）。 */
 export interface RealtimeTokenResult {
   token: string;

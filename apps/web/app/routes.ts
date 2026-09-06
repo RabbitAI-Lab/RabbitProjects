@@ -29,6 +29,9 @@ export default [
     route(":workspaceSlug/projects/:projectId/table", "routes/table.tsx"),
     // Sprint-4（GANTT-001 §3.1 / C.98）：甘特视图（替换 table 路由 gantt 占位的禁用态）
     route(":workspaceSlug/projects/:projectId/gantt", "routes/gantt.tsx"),
+    // Sprint-4（FILE-002 §3.1 / C.112）：项目文件库 + 回收站（左树右表双视图）
+    route(":workspaceSlug/projects/:projectId/files", "routes/files.tsx"),
+    route(":workspaceSlug/projects/:projectId/files/trash", "routes/files-trash.tsx"),
     // Sprint-3 Phase 3-C（COLLAB-003 §3.1）：项目动态流页（侧栏「动态」入口）
     route(":workspaceSlug/projects/:projectId/activity", "routes/activity.tsx"),
     route(":workspaceSlug/projects/:projectId/settings", "routes/project-settings.tsx"),

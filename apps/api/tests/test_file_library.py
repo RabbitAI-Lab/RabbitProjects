@@ -234,8 +234,8 @@ def test_ut01_folder_same_name_conflict(env):
         with transaction.atomic():  # savepoint：避免污染外层测试事务
             FileFolder.objects.create(project=env["proj"], parent=None, name="设计稿",
                                       created_by=env["owner"])
-    # 非根层偏条件唯一约束：不同层同名允许
-    sub = _mk_folder(env, "子目录", parent=FileFolder.objects.get(name="设计稿"))
+    # 非根层偏条件唯一约束：不同层同名允许（作用域到本项目，防共享库同名污染——坑 18）
+    sub = _mk_folder(env, "子目录", parent=FileFolder.objects.get(project=env["proj"], name="设计稿"))
     assert sub.name == "子目录"
 
 

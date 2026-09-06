@@ -27,6 +27,7 @@ import base64
 
 from rest_framework import status
 from rest_framework.exceptions import NotFound
+from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from plane.app.serializers.file_library import (
@@ -377,7 +378,10 @@ class FileDetailView(APIView):
             )
         _require_not_archived(project)
         svc.soft_delete_file(asset=asset, actor=request.user)
-        return success_response(None, status_code=status.HTTP_204_NO_CONTENT)
+        # 204 禁带 body（C1 例外，auth.py 同款）——success_response(None, 204) 会给
+        # 无体状态码渲染 32 字节 JSON，keep-alive 下游把残留字节解析成下一响应的
+        # 状态行 → 代理层 500/连接错位（e2e 双 context 连续 DELETE 稳定复现）
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class FileRestoreView(APIView):

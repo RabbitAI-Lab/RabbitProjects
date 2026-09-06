@@ -24,6 +24,7 @@ from __future__ import annotations
 from django.http import HttpResponseRedirect
 from rest_framework import status
 from rest_framework.exceptions import NotFound
+from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from plane.app.serializers.file_versions import (
@@ -188,7 +189,9 @@ class UploadSessionDetailView(APIView):
             svc.abort_session(session=session)
         except Exception as exc:  # noqa: BLE001
             _map_session_error(exc)
-        return success_response(None, status_code=status.HTTP_204_NO_CONTENT)
+        # 204 禁带 body（C1 例外）——success_response(None, 204) 渲染 32 字节 JSON
+        # 会造成 keep-alive 响应流错位（file_library.py 同款 bugfix）
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class UploadSessionChunkView(APIView):

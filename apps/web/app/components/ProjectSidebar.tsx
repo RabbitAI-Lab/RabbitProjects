@@ -40,6 +40,11 @@ export function ProjectSidebar({ projectName, identifier }: { projectName: strin
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h9M4 12h13M4 18h7"/><circle cx="18" cy="6" r="1.6" fill="currentColor" stroke="none"/><circle cx="11" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="16" cy="18" r="1.6" fill="currentColor" stroke="none"/></svg>
         甘特
       </NavLink>
+      {/* Sprint-4（FILE-002 §3.1 / C.112）：文件库入口（左树右表双视图 + 回收站） */}
+      <NavLink to={`${base}/files`} className={({ isActive }) => item(isActive)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+        文件
+      </NavLink>
       {/* Sprint-3 Phase 3-C（COLLAB-003 §3.1 / 原型 O5）：动态流页入口（pulse 图标） */}
       <NavLink to={`${base}/activity`} className={({ isActive }) => item(isActive)}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>

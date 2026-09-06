@@ -7,7 +7,7 @@
 | 优先级 | P3（企业版核心级 · 身份面） |
 | 所属模块 | M1-AUTH｜账号与权限 |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-05 |
+| 最后更新日期 | 2026-09-05（R1 修复 10 项：信封重写、单例配置改 PATCH、14 天滑动会话对齐 AUTH-001、/api/v1 前缀 + sign-in 命名、新增 route/ 端点契约、强制 SSO 统一 403 PERM_SSO_REQUIRED、Cookie 丢失改 401、python3-saml/authlib/Fernet 登记、member 外键 + plane 路径、enforce_sso 职责分工；R2 修复：claim/ 端点完整契约 + sso_txn pending_claim 机制、connection-check 统一 POST、SSO 门时序唯一定义、route/ 增 prefer_sso、bindings 列表端点；R3 复评 PASS 9.5×5） |
 | 上游依赖 | `AUTH-001/004`（账号体系与密码登录）、`AUTH-007`（部门树——JIT 部门映射落点）、`AUTH-008`（JIT 角色映射落点） |
 | 下游消费 | `AUTH-010`（SSO 登录/配置变更入审计）、`AUTH-011`（P4 LDAP/SCIM 同源身份面）、`AUTH-012`（P4 多租户按 IdP 隔离） |
 | 上游依据 | `docs/需求文档.md` §3.1 企业版专属（SSO 单点登录）、§8.2 账号 P3 列 |

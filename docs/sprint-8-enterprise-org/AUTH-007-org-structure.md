@@ -7,7 +7,7 @@
 | 优先级 | P3（企业版核心级 · 组织治理三问之「谁在组织里」） |
 | 所属模块 | M1-AUTH｜账号与权限 |
 | 文档状态 | 待评审（Draft） |
-| 最后更新日期 | 2026-09-05 |
+| 最后更新日期 | 2026-09-05（R1 修复 10 项：department.manage / workspace.member.manage 统一、role 改整数等级、信封+错误码重写、path 物化路径落地、岗位复用 company_role、expand_grant 停用分支 + member_id/created_by、§5.4 四主体权限矩阵、bulk-move 路径 + 分页 meta、UUID v4 主键；R2 修复：_depth_of 深度口径 off-by-one、批次 FK 改 SET_NULL+快照列、≤20 人分批复用 add_members、PATCH members 错误码对齐 TEAM-002；R3 复评 PASS 9.5×5） |
 | 上游依赖 | `TEAM-001/002`（WorkspaceMember 成员体系）、`rbac-permission-model.md`（四层 Permission 体系）、`PROJ-002`（项目成员模型——批量授权的落点） |
 | 下游消费 | `AUTH-008`（按部门批量挂接自定义角色）、`AUTH-009`（SSO JIT 部门映射的落点）、`AUTH-010`（部门变更入审计）、`RPT-004`（按部门负载统计） |
 | 上游依据 | `docs/需求文档.md` §3.1 企业版专属（部门层级组织架构）、§8.2 组织架构 P3 列 |

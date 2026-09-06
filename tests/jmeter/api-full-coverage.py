@@ -242,7 +242,166 @@ tmp = ((b or {}).get("data") or {}).get("id")
 expect("PD-9", "删除项目 → 204", "DELETE", f"/api/v1/workspaces/{ws2}/projects/{tmp}/", HTTP["NO_CONTENT"], None, {"X-CSRFToken": csrf()})
 expect("PD-10", "删后 GET → 404", "GET", f"/api/v1/workspaces/{ws2}/projects/{tmp}/", HTTP["NOT_FOUND"])
 
-print(f"\n{'═' * 40}\n接口契约覆盖：{PASS} 通过 / {FAIL} 失败（13 端点 × 方法 × 正/负例）")
+# ═══ Sprint-3 新端点族（BOARD-003/004、TASK-011、COLLAB-002/003/004）═══
+# 注：internal/realtime/verify-rooms/ 为 live→api 服务间端点（X-Internal-Key，proxy
+# 对 /api/v1/internal/ 前缀不路由），不在外部契约矩阵——由 sprint-3-flow COLLAB-004
+# 段与 apps/api/tests/test_realtime_ticket.py 覆盖。
+
+print("═══ 15. views/ 视图 CRUD 五端点（BOARD-003 §4.2）═══")
+views = f"/api/v1/workspaces/{ws}/projects/{proj}/views/"
+_, b = expect("VW-1", "视图列表 → 200", "GET", views, HTTP["OK"])
+vlist = (b or {}).get("data") or []
+case("VW-2", "内置五视图随项目种子（is_system）",
+     sum(1 for v in vlist if v.get("is_system")) == 5
+     and {"需求池", "缺陷列表", "我的待办", "本周到期", "测试执行"} <= {v.get("name") for v in vlist})
+_, b = expect("VW-3", "创建视图（3 层嵌套 filters，TASK-011 合法）", "POST", views, HTTP["CREATED"],
+              {"name": "Full Cov View", "layout": "kanban",
+               "filters": {"op": "AND", "conditions": [
+                   {"field": "priority", "operator": "in", "value": ["urgent"]},
+                   {"op": "OR", "conditions": [
+                       {"field": "priority", "operator": "in", "value": ["high"]}]}]}},
+              {"X-CSRFToken": csrf()})
+vid = ((b or {}).get("data") or {}).get("id")
+case("VW-4", "201 回显 access=personal / is_system=false",
+     ((b or {}).get("data") or {}).get("access") == "personal"
+     and ((b or {}).get("data") or {}).get("is_system") is False)
+_, b = expect("VW-5", "视图详情 → 200", "GET", f"{views}{vid}/", HTTP["OK"])
+expect("VW-6", "PATCH 改名 → 200", "PATCH", f"{views}{vid}/", HTTP["OK"],
+       {"name": "Full Cov View 2"}, {"X-CSRFToken": csrf()})
+expect("VW-7", "PATCH 不存在 view → 404", "PATCH", f"{views}00000000-0000-0000-0000-000000000000/",
+       HTTP["NOT_FOUND"], {"name": "X"}, {"X-CSRFToken": csrf()})
+builtin_vid = next((v["id"] for v in vlist if v.get("is_system")), None)
+_, b = expect("VW-8", "DELETE 内置视图 → 403 PERM_DENIED", "DELETE", f"{views}{builtin_vid}/",
+              HTTP["FORBIDDEN"], None, {"X-CSRFToken": csrf()})
+case("VW-9", "错误码 == PERM_DENIED", ((b or {}).get("error") or {}).get("code") == CODES["permDenied"])
+_, b = expect("VW-10", "access=shared → 400", "POST", views, HTTP["BAD_REQUEST"],
+              {"name": "Shared", "access": "shared"}, {"X-CSRFToken": csrf()})
+case("VW-11", "details (field=access, code=INVALID)", err_field(b, "access", "INVALID") is not None)
+expect("VW-12", "DELETE 自建视图 → 204", "DELETE", f"{views}{vid}/", HTTP["NO_CONTENT"],
+       None, {"X-CSRFToken": csrf()})
+expect("VW-13", "删后 GET → 404", "GET", f"{views}{vid}/", HTTP["NOT_FOUND"])
+
+print("═══ 16. users/me/settings/ 偏好两端点（BOARD-003 BR-10）═══")
+_, b = expect("ST-1", "GET settings → 200", "GET", "/api/v1/users/me/settings/", HTTP["OK"])
+_, b = expect("ST-2", "PATCH 设默认视图 → 200", "PATCH", "/api/v1/users/me/settings/", HTTP["OK"],
+              {"board.default_view_id": {proj: builtin_vid}}, {"X-CSRFToken": csrf()})
+case("ST-3", "偏好回显", ((b or {}).get("data") or {}).get("board.default_view_id", {}).get(proj) == builtin_vid)
+_, b = expect("ST-4", "GET 回读持久化", "GET", "/api/v1/users/me/settings/", HTTP["OK"])
+case("ST-5", "GET 含 board.default_view_id",
+     ((b or {}).get("data") or {}).get("board.default_view_id", {}).get(proj) == builtin_vid)
+_, b = expect("ST-6", "未知偏好键 → 400 INVALID_PARAM", "PATCH", "/api/v1/users/me/settings/",
+              HTTP["BAD_REQUEST"], {"hack.key": 1}, {"X-CSRFToken": csrf()})
+case("ST-7", "错误码 == VALIDATION_INVALID_PARAM",
+     ((b or {}).get("error") or {}).get("code") == CODES["invalidParam"])
+_, b = expect("ST-8", "PATCH null 取消默认 → 200", "PATCH", "/api/v1/users/me/settings/", HTTP["OK"],
+              {"board.default_view_id": {proj: None}}, {"X-CSRFToken": csrf()})
+
+print("═══ 17. issues/bulk/ 四端点（BOARD-004 §4.2）═══")
+bulk = f"/api/v1/workspaces/{ws}/projects/{proj}/issues/bulk/"
+bulk_ids = []
+for n in ("Bulk A", "Bulk B", "Bulk C"):
+    _, b = req("POST", f"/api/v1/workspaces/{ws}/projects/{proj}/issues/",
+               {"name": n}, {"X-CSRFToken": csrf()})
+    bulk_ids.append(((b or {}).get("data") or {}).get("id"))
+_, b = expect("BK-1", "preview 预检 → 200（selected/affected 统计）", "POST", f"{bulk}preview/",
+              HTTP["OK"], {"issue_ids": bulk_ids, "action": "delete"}, {"X-CSRFToken": csrf()})
+case("BK-2", "preview {selected, affected_total, denied}",
+     {"selected", "affected_total", "denied"} <= set((b or {}).get("data") or {}))
+_, b = expect("BK-3", "PATCH 批量优先级 → 200", "PATCH", bulk, HTTP["OK"],
+              {"issue_ids": bulk_ids, "patch": {"priority": "high"}}, {"X-CSRFToken": csrf()})
+case("BK-4", "data {updated:3, epoch, action:priority}",
+     ((b or {}).get("data") or {}).get("updated") == 3
+     and ((b or {}).get("data") or {}).get("action") == "priority")
+_, b = expect("BK-5", "101 条 → 400 VALIDATION_BULK_LIMIT_EXCEEDED", "PATCH", bulk,
+              HTTP["BAD_REQUEST"],
+              {"issue_ids": [f"00000000-0000-0000-0000-{i:012d}" for i in range(101)],
+               "patch": {"priority": "low"}},
+              {"X-CSRFToken": csrf()})
+case("BK-6", "details (field=issue_ids, code=LIMIT)",
+     err_field(b, "issue_ids", "LIMIT") is not None
+     and ((b or {}).get("error") or {}).get("code") == CODES["bulkLimit"])
+_, b = expect("BK-7", "bulk/archive/ 归档 → 200", "POST", f"{bulk}archive/", HTTP["OK"],
+              {"issue_ids": bulk_ids[:2]}, {"X-CSRFToken": csrf()})
+case("BK-8", "archived_count=2", ((b or {}).get("data") or {}).get("archived_count") == 2)
+_, b = expect("BK-9", "重复归档幂等 → 200 count=0", "POST", f"{bulk}archive/", HTTP["OK"],
+              {"issue_ids": bulk_ids[:2]}, {"X-CSRFToken": csrf()})
+_, b = expect("BK-10", "DELETE confirm_count 错配 → 400", "DELETE", bulk, HTTP["BAD_REQUEST"],
+              {"issue_ids": bulk_ids, "confirm_count": 2}, {"X-CSRFToken": csrf()})
+_, b = expect("BK-11", "DELETE 批量删除 → 200", "DELETE", bulk, HTTP["OK"],
+              {"issue_ids": bulk_ids, "confirm_count": 3}, {"X-CSRFToken": csrf()})
+case("BK-12", "deleted=3 / affected_total=3",
+     ((b or {}).get("data") or {}).get("deleted") == 3
+     and ((b or {}).get("data") or {}).get("affected_total") == 3)
+
+print("═══ 18. comments reactions 两端点（COLLAB-002 §4.2.3）═══")
+_, b = req("POST", f"/api/v1/workspaces/{ws}/projects/{proj}/issues/{i1}/comments/",
+           {"comment_html": "<p>full cov 评论</p>"}, {"X-CSRFToken": csrf()})
+cm_id = ((b or {}).get("data") or {}).get("id")
+case("RX-0", "前置：发评论 → 201", bool(cm_id))
+rx = f"/api/v1/workspaces/{ws}/projects/{proj}/issues/{i1}/comments/{cm_id}/reactions/"
+_, b = expect("RX-1", "POST reaction → 200 changed=true", "POST", rx, HTTP["OK"],
+              {"emoji": "👍"}, {"X-CSRFToken": csrf()})
+case("RX-2", "聚合 {emoji, count:1, reacted_by_me, changed}",
+     ((b or {}).get("data") or {}) == {"emoji": "👍", "count": 1, "reacted_by_me": True, "changed": True})
+_, b = expect("RX-3", "重复 POST 幂等 → changed=false", "POST", rx, HTTP["OK"],
+              {"emoji": "👍"}, {"X-CSRFToken": csrf()})
+case("RX-4", "count 不变", ((b or {}).get("data") or {}).get("count") == 1
+     and ((b or {}).get("data") or {}).get("changed") is False)
+_, b = expect("RX-5", "DELETE 撤销 → 200 changed=true", "DELETE", rx, HTTP["OK"],
+              {"emoji": "👍"}, {"X-CSRFToken": csrf()})
+_, b = expect("RX-6", "白名单外 emoji → 400 NOT_A_CHOICE", "POST", rx, HTTP["BAD_REQUEST"],
+              {"emoji": "🧟"}, {"X-CSRFToken": csrf()})
+case("RX-7", "details (field=emoji, code=NOT_A_CHOICE)", err_field(b, "emoji", "NOT_A_CHOICE") is not None)
+
+print("═══ 19. projects/activities/ 动态流（COLLAB-003 §4.2，+epoch 分支）═══")
+acts = f"/api/v1/workspaces/{ws}/projects/{proj}/activities/"
+_, b = expect("AC-1", "动态流首页 → 200", "GET", acts, HTTP["OK"])
+meta_ac = (b or {}).get("meta") or {}
+case("AC-2", "meta 9 字段 + per_page=30（组数口径）",
+     all(k in meta_ac for k in ("next_cursor", "prev_cursor", "next_page_results",
+                                "prev_page_results", "count", "total_count",
+                                "total_pages", "page", "per_page"))
+     and meta_ac.get("per_page") == 30)
+case("AC-3", "kind ∈ {activity,comment,batch} 三态行域",
+     {r.get("kind") for r in (b or {}).get("data") or []} <= {"activity", "comment", "batch"})
+_, b = expect("AC-4", "非法 event → 400 INVALID_PARAM", "GET", f"{acts}?event=foo",
+              HTTP["BAD_REQUEST"])
+case("AC-5", "details (field=event, code=NOT_A_CHOICE)", err_field(b, "event", "NOT_A_CHOICE") is not None)
+_, b = expect("AC-6", "?epoch=abc 非数值 → 400（寻址型参数）", "GET", f"{acts}?epoch=abc",
+              HTTP["BAD_REQUEST"])
+_, b = expect("AC-7", "?epoch= 合法数值 → 200 明细（meta 截断豁免）", "GET", f"{acts}?epoch=1",
+              HTTP["OK"])
+case("AC-8", "明细 meta 仅 count/total_count/truncated/limit",
+     set((b or {}).get("meta") or {}) == {"count", "total_count", "truncated", "limit"})
+_, b = expect("AC-9", "per_page=999 → 截断 50 + degraded", "GET", f"{acts}?per_page=999", HTTP["OK"])
+case("AC-10", "meta.per_page=50 + degraded 提示",
+     ((b or {}).get("meta") or {}).get("per_page") == 50
+     and "per_page" in str((((b or {}).get("meta") or {}).get("degraded") or {})))
+
+print("═══ 20. realtime-token 两端点（COLLAB-004 §4.2）═══")
+rt = f"/api/v1/workspaces/{ws}/projects/{proj}/realtime-token/"
+_, b = expect("RT-1", "换票 → 200", "POST", rt, HTTP["OK"],
+              {"client_tab_id": "0f1e2d3c-4b5a-4678-9cde-f0123456789a",
+               "issue_rooms": [i1]}, {"X-CSRFToken": csrf()})
+rtok = ((b or {}).get("data") or {}).get("token") or ""
+case("RT-2", "token 三段 JWT + rooms 装配（project/user）",
+     rtok.count(".") == 2
+     and f"project:{proj}" in (((b or {}).get("data") or {}).get("rooms") or [])
+     and any(r.startswith("user:") for r in (((b or {}).get("data") or {}).get("rooms") or [])))
+_, b = req("POST", "/api/v1/users/me/realtime-token/renew/",
+           {"token": rtok, "client_tab_id": "0f1e2d3c-4b5a-4678-9cde-f0123456789a"},
+           {"X-CSRFToken": csrf()})
+case("RT-3", "续签 → 200 或（公钥未配置环境）503 SERVER_LIVE_SERVICE_UNAVAILABLE",
+     b is not None and ((b or {}).get("error") or {}).get("code") in
+     (None, CODES["liveUnavailable"]), f"got code={((b or {}).get('error') or {}).get('code')}")
+_, b = expect("RT-4", "issue_rooms 非法 UUID → 400 INVALID_PARAM", "POST", rt, HTTP["BAD_REQUEST"],
+              {"client_tab_id": "tab-1", "issue_rooms": ["not-a-uuid"]}, {"X-CSRFToken": csrf()})
+case("RT-5", "错误码 == VALIDATION_INVALID_PARAM",
+     ((b or {}).get("error") or {}).get("code") == CODES["invalidParam"])
+expect("RT-6", "client_tab_id 缺失 → 400", "POST", rt, HTTP["BAD_REQUEST"],
+       {"issue_rooms": []}, {"X-CSRFToken": csrf()})
+
+print(f"\n{'═' * 40}\n接口契约覆盖：{PASS} 通过 / {FAIL} 失败（19 端点族 × 方法 × 正/负例）")
 if FAILURES:
     print("\n".join("  ✗ " + f for f in FAILURES))
     sys.exit(1)

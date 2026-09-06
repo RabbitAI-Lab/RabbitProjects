@@ -22,6 +22,7 @@ export const HTTP = {
   CONFLICT:      409,  // identifier 重复
   TOO_MANY:      429,  // 限流
   SRV_ERR:       500,
+  SRV_UNAVAILABLE: 503, // 依赖服务不可用（COLLAB-004 live 降级，与 _contract.py 同步）
 } as const;
 
 /** 关键错误码（INFRA-004 §4.2 映射后）

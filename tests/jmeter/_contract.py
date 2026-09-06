@@ -32,6 +32,7 @@ HTTP = {
     "CONFLICT": 409,      # 唯一性冲突 / 上限
     "TOO_MANY": 429,      # 限流
     "SRV_ERR": 500,       # 期望失败用
+    "SRV_UNAVAILABLE": 503,  # 依赖服务不可用（COLLAB-004 live 探测降级 SERVER_LIVE_SERVICE_UNAVAILABLE）
 }
 
 #: 错误码常量（须存在于 apps/api/plane/base/error_codes.py 的 75 码注册表）
@@ -58,6 +59,16 @@ CODES = {
     "transitionBlocked": "RESOURCE_TRANSITION_BLOCKED",  # 未完成前置拦截完成（T005）
     "cfInvalid": "VALIDATION_CUSTOM_FIELD_INVALID",      # 自定义字段值校验（T008）
     "queueError": "SERVER_QUEUE_ERROR",                  # 死信堆积告警（T010）
+    # ── Sprint-3（BOARD-003/004、TASK-011、COLLAB-002/003/004，均为既有注册码） ──
+    "permDenied": "PERM_DENIED",                         # 内置视图锁定 / 换票 issue 不可见拒整票（B003/C004）
+    "projectArchived": "PERM_PROJECT_ARCHIVED",          # 归档项目只读（C002 评论/表情、B004 整批）
+    "invalidCursor": "VALIDATION_INVALID_CURSOR",        # 动态流组边界游标损坏（C003）
+    "bulkLimit": "VALIDATION_BULK_LIMIT_EXCEEDED",       # 批量 100 条上限（B004 BR-01）
+    "rateLimited": "RATE_LIMIT_EXCEEDED",                # 批量 throttle 10/min（B004 BR-06，429+Retry-After）
+    "fileSize": "VALIDATION_FILE_SIZE_EXCEEDED",         # 评论图 5MB 收紧（C002 BR-08）
+    "fileType": "VALIDATION_FILE_TYPE_NOT_ALLOWED",      # 评论图 png/jpg/gif/webp 白名单（C002 BR-08）
+    "tokenExpired": "AUTH_TOKEN_EXPIRED",                # 实时票据过期/无效续签拒绝（C004 BR-02）
+    "liveUnavailable": "SERVER_LIVE_SERVICE_UNAVAILABLE",  # live 探测降级（C004 §2.5，503）
 }
 
 #: 统一信封字段路径（INFRA-004 C1）
@@ -93,12 +104,16 @@ class Client:
         self.jar = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
 
-    def req(self, method: str, path: str, data=None, headers=None):
+    def req(self, method: str, path: str, data=None, headers=None, want_headers=False):
         """返回 (status_code, parsed_body)；4xx/5xx 不抛异常，交由调用方断言。
 
         非 JSON 响应（如 DEBUG 下未捕获异常返回的 HTML 错误页）不得让测试工具自身崩溃——
         那会把「被测端点坏了」误报成「测试脚本坏了」。此时返回
         {"_raw": "<前 300 字>", "_content_type": ...} 供调用方判定。
+
+        want_headers=True 时返回 (status, body, headers_dict)——断言协议头
+        （429 Retry-After / Idempotency-Replayed 等）用；headers 键名原样保留
+        大小写规范形式（HTTPResponse.headers / HTTPError.headers 同源）。
         """
         body = json.dumps(data).encode() if data is not None else None
         h = {"Accept": "application/json", "Content-Type": "application/json", "Referer": self.base + "/"}
@@ -110,9 +125,12 @@ class Client:
         r = urllib.request.Request(self.base + urllib.parse.quote(path, safe="/?&=:%+,"), data=body, method=method, headers=h)
         try:
             with self.opener.open(r, timeout=15) as resp:
-                return resp.status, _decode(resp.read(), resp.headers.get("Content-Type", ""))
+                pair = (resp.status, _decode(resp.read(), resp.headers.get("Content-Type", "")))
+                hdrs = dict(resp.headers.items())
         except urllib.error.HTTPError as e:
-            return e.code, _decode(e.read(), e.headers.get("Content-Type", ""))
+            pair = (e.code, _decode(e.read(), e.headers.get("Content-Type", "")))
+            hdrs = dict(e.headers.items())
+        return (pair[0], pair[1], hdrs) if want_headers else pair
 
     def csrf(self) -> str:
         """登录态变化（Django login() 会 rotate CSRF）后必须重新拉（CLAUDE.md 坑 #2）。"""

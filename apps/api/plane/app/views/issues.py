@@ -152,11 +152,14 @@ class IssueListCreateView(ListCreateAPIView):
     def _base_queryset(self, project, *, include_archived=False):
         # TASK-009 BR-11：默认排除归档树（命中偏索引 idx_issue_active_by_project）；
         # ?archived=true 反向查归档视图（issueQuery FilterSet applied 回显）
+        # created_by 进 select_related：IssueSerializer.get_created_by 触 FK 取用户，
+        # 分组端点每列 25 行 × N 列的逐行用户查询曾把 1 万任务数据集的分组请求
+        # 推到 P95>200ms / 查询数三位数（BOARD-003 IT-02/IT-10 基准门禁暴露）
         qs = Issue.objects.filter(project=project, deleted_at__isnull=True)
         if not include_archived:
             qs = qs.filter(archived_at__isnull=True)
         return (
-            qs.select_related("project", "state", "issue_type")
+            qs.select_related("project", "state", "issue_type", "created_by")
             .prefetch_related("issue_assignees", "issue_labels")
         )
 
@@ -202,18 +205,26 @@ class IssueListCreateView(ListCreateAPIView):
         q_obj = filterset.build_query(request.query_params) & view_q & adhoc_q
 
         annotations = issue_count_annotations()
+        qs_base = self._base_queryset(project, include_archived=include_archived)
         if tree_references_blocked([view_tree, adhoc_tree]):
             # 白名单 "blocked" 键映射的注解列（§4.3.1）——仅在树引用时注入
-            annotations["_is_blocked"] = blocked_exists_annotation()
-        qs = (
-            self._base_queryset(project, include_archived=include_archived)
-            .annotate(
-                # 计数 annotate —— 列表与卡片渲染消费
-                **annotations,
+            # （须在 filter 前注解：q_obj 引用该列）
+            qs_base = qs_base.annotate(_is_blocked=blocked_exists_annotation())
+        if dimension:
+            # 分组分支（BOARD-003 IT-02/IT-10 SQL 预算）：计数注解（sub_issues/
+            # completed/spent 逐行相关子查询）不进列扫描 / 合并计数 / 总计数查询——
+            # 1 万任务数据集下注解随 2000 行/列扫描逐行求值曾把分组请求推到
+            # P95>200ms；改为每列先轻量页取 ≤25 个 id，再对页内行水合注解
+            qs = qs_base.filter(q_obj).distinct()  # M2M 筛选避免重复行（FLT-12 守护）
+        else:
+            qs = (
+                qs_base.annotate(
+                    # 计数 annotate —— 列表与卡片渲染消费
+                    **annotations,
+                )
+                .filter(q_obj)
+                .distinct()  # M2M 筛选避免重复行（FLT-12 守护）
             )
-            .filter(q_obj)
-            .distinct()  # M2M 筛选避免重复行（FLT-12 守护）
-        )
 
         # ── 排序（含 priority 语义权重，BR-05）──
         qs, warning = filterset.apply_order(qs, request.query_params.get("order_by"))
@@ -229,6 +240,7 @@ class IssueListCreateView(ListCreateAPIView):
             return self._grouped_response(
                 request, project, qs, base_unfiltered, filterset, warning,
                 dimension, view_applied, applied_extra, degraded, view_id_out=view_meta,
+                count_annotations=annotations,
             )
 
         # ── 平铺列表：游标分页（轻量实现：created_at-desc + id + offset 编码）──
@@ -293,6 +305,7 @@ class IssueListCreateView(ListCreateAPIView):
     def _grouped_response(
         self, request, project, base_qs, base_unfiltered, filterset, warning,
         dimension, view_applied, applied_extra, degraded, view_id_out,
+        count_annotations=None,
     ):
         """分组响应（BOARD-003 §4.2.2，BOARD-002 契约的维度泛化）。
 
@@ -300,6 +313,10 @@ class IssueListCreateView(ListCreateAPIView):
         total_results（筛选后）/ unfiltered_total_results（筛选前）；键 = 裸列值
         （State UUID / 枚举值 / 成员·标签 UUID / 选项值 / __none__），响应不内嵌
         组元数据（BR-16）——列头名称与颜色由前端配置源渲染。
+
+        行取数两步（BOARD-003 IT-02 SQL 预算）：轻量页取 id（无计数注解——相关
+        子查询不随整列扫描逐行求值）→ 页内 ≤25 行水合注解；组内序两步同键，
+        行序与单查询口径一致。
         """
         per_group = self._parse_group_per_page()
         columns = get_group_columns(project, dimension)
@@ -315,11 +332,16 @@ class IssueListCreateView(ListCreateAPIView):
             offset = self._parse_cursor_offset()
             rows = []
             if total:
-                rows = list(
-                    base_qs.filter(group_filter_q(dimension, key)).order_by(*ordering)[
-                        offset : offset + per_group
-                    ]
+                page_ids = list(
+                    base_qs.filter(group_filter_q(dimension, key))
+                    .order_by(*ordering)
+                    .values_list("id", flat=True)[offset : offset + per_group]
                 )
+                if page_ids:
+                    hydrate = base_qs.filter(id__in=page_ids)
+                    if count_annotations:
+                        hydrate = hydrate.annotate(**count_annotations)
+                    rows = list(hydrate.order_by(*ordering))
             next_cursor = (
                 self._encode_cursor(offset + per_group, group_id=key) if offset + per_group < total else None
             )

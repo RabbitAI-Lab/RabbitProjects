@@ -97,8 +97,9 @@ PG schema 准备（Django migrate 在 PG 上有已知问题，见下面"坑"）�
 - 实现偏差 → ADR 登记 → 后续 Sprint 回改文档
 - GateGuard 事实陈述、lint/commitlint 钩子是刻意保留的纪律，不要绕过
 
-### 测试脚本规范（写 e2e/接口/静态检查时强制）
+### 测试脚本规范（写用例与 e2e/接口/静态检查时强制）
 
+- **先 CodeGraph 圈影响面，再写用例/脚本（强制）**：编写测试用例（含 test-cases.md 的用例设计）与实现任何测试脚本前，必须先用 CodeGraph 评估被测符号的影响范围——`codegraph callers/callees <符号>` 找上下游调用方、`codegraph impact <符号>` 看改动波及面、`codegraph affected <files...>` 列受影响测试文件、MCP 工具 `codegraph_explore` 一次取相关符号源码+调用链。用例的正负例边界、回归锚点、需联改的既有用例以调用图为准，禁止凭文件名或记忆圈范围（索引用 `codegraph sync` 自动维护；新会话自动连接 MCP，CLI 始终可用）。
 - **API 真相源唯一**：`tests/jmeter/_contract.py` 是后端契约的事实来源（HTTP 状态码 + 错误码 + 信封字段路径）；`tests/e2e/no-console-errors.ts` 的 `API_TRUTH` 镜像同一份契约。**所有接口脚本、e2e 与静态断言必须 import 这两份，禁止各自硬编码**——双源必漂。（sprint-0 曾把该表放在 `sprint-0-flow.py` 顶部，但那个脚本没有 `__main__` 守卫、一 import 就跑完整条流程，实际无法被复用，见 ADR-0012 E4）
 - **Playwright spec 必装 console guard**：`attachConsoleGuard(page)` + `expect.soft(errors).toEqual([])`（见 `no-console-errors.ts` 白名单示例：vite HMR / DevTools 下载提示）
 - **跨 test 状态边界**：每个 `test.describe` 必须自带 `beforeEach`/`afterEach`——`signOut/clearCookies/重置 store` 显式调用，**禁止依赖 Worker 复用 page 自动清理**（实测根因：跨 spec 缓存 `isBootstrapped=true`，下一个 spec 守卫直接 return 不重检）

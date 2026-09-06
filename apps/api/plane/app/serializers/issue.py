@@ -273,16 +273,41 @@ class IssueWriteSerializer(serializers.Serializer):
 # 服务函数
 # ─────────────────────────────────────────────────────────────────────
 def sync_labels(issue, label_ids, actor_id) -> None:
-    """TASK-002 §2.3 标签 PUT 全量替换 —— 差分方式：删除旧关联 + bulk_create 新关联。
+    """TASK-002 §2.3 标签 PUT 全量替换 —— 精确差分写（ADR-0020 修复）。
 
-    幂等：相同集合再次提交 → diff 为空，无变更。IssueLabel 不含软删除列（B-02 决策），
-    直接 physical delete + create，事务内完成。
+    原实现「软删全部 + 重建」在无条件唯一键 ``uniq_issue_label`` 下，集合重叠的
+    重提交（含幂等重 PUT）会因软删行仍占用键位而 IntegrityError（TASK-002 潜伏
+    缺陷，BOARD-004 批量侧实测发现）。修复口径与 BOARD-004 批量标签写路径同源：
+    - removed（含历史幽灵行）物理删除——软删不释放键位；
+    - added 中的幽灵行复活（仅活跃标签可达：标签删除走 labels.py:175 软删自身
+      关联行，其标签已非活跃、不可能进入 added 集）；
+    - 幂等：相同集合再次提交零写（行 id 不变，供上层 diff/断言依赖）。
     """
     issue_id = issue.id
-    IssueLabel.objects.filter(issue_id=issue_id).delete()
-    IssueLabel.objects.bulk_create(
-        [IssueLabel(issue_id=issue_id, label_id=lid, created_by_id=actor_id) for lid in label_ids]
-    )
+    current = {
+        str(lid)
+        for lid in IssueLabel.objects.filter(issue_id=issue_id).values_list("label_id", flat=True)
+    }
+    new_ids = [lid for lid in label_ids if str(lid) not in current]
+    new_set = {str(lid) for lid in label_ids}
+    removed = current - new_set
+    if removed:
+        # 物理删除（含软删幽灵行）：all_objects 绕过软删管理器，避免键位残留
+        IssueLabel.all_objects.filter(issue_id=issue_id, label_id__in=removed).delete()
+    if new_ids:
+        ghosts = IssueLabel.all_objects.filter(
+            issue_id=issue_id, label_id__in=new_ids, deleted_at__isnull=False
+        )
+        ghost_ids = {str(lid) for lid in ghosts.values_list("label_id", flat=True)}
+        if ghost_ids:
+            ghosts.update(deleted_at=None)
+        IssueLabel.objects.bulk_create(
+            [
+                IssueLabel(issue_id=issue_id, label_id=lid, created_by_id=actor_id)
+                for lid in new_ids
+                if str(lid) not in ghost_ids
+            ]
+        )
 
 
 def diff_labels(old_ids: set[str], new_ids: set[str]) -> tuple[list[str], list[str]]:

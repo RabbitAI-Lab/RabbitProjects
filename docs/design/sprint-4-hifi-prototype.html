@@ -22,6 +22,11 @@ RabbitProjects · Sprint 4 高保真可交互原型（单文件自包含，无�
     选择器不匹配（虚线样式失效）⑦ space 三态切换在 hash 不变时不渲染 ⑧ 演示
     dock 层级/让位策略（抽屉打开自动收起、关闭恢复）。
   · 视觉复检：甘特（黑块修复后复扫）/ 文件库 / space 匿名页三域截图复核通过。
+  · 冻结后勘误 1（2026-09-06，用户走查发现）：表头日期列与任务条错位随日期递增——
+    totalW 按跨度（69 天）而非天数（70 天含末日）声明容器宽，列合计超容器触发
+    flex-shrink 等比压缩（每列 ~35.49px < 36px），而条定位按严格天数×列宽，每过
+    一天累积 ~0.51px。修复：宽度按天数计数 + .g-col flex:0 0 auto 兜底；三粒度
+    像素级复测 delta=0.00（周粒度参照点差一天为预期），全量自检 67 断言复跑通过。
   · 下游基准：本文件冻结后即为 Sprint-4 前端实现的视觉/交互验收基准；UI 表面
     清单随实现批次登记为 docs/sprint-0-poc/test-cases.md 附录 C.98+（ADR-0010 ①，
     每行标 GANTT-00X §3.x / FILE-00X §3.x 出处）。
@@ -208,7 +213,7 @@ a:hover{text-decoration:underline}
 .g-body.panning{cursor:grabbing}
 .g-content{position:absolute;top:0;left:0;will-change:transform}
 .g-hrow{height:40px;position:absolute;top:0;display:flex;align-items:center}
-.g-col{height:100%;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--ink-3);border-right:1px solid var(--line);white-space:nowrap;overflow:hidden}
+.g-col{height:100%;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--ink-3);border-right:1px solid var(--line);white-space:nowrap;overflow:hidden;flex:0 0 auto}
 .g-col.wknd{background:rgba(0,0,0,.06)}
 .g-col.hol{background:rgba(0,0,0,.1)}
 .g-col .sub{font-size:10px;color:var(--ink-4);margin-left:4px}
@@ -498,11 +503,12 @@ const S={
  // space
  spaceState:"pwd", spaceErr:0, spaceLocked:false, spacePerm:"both",
 };
-/* 甘特日期轴：8/17（周一）~ 10/25（周日），70 天 */
+/* 甘特日期轴：8/17（周一）~ 10/25（周日），70 天（宽度按天数计数含末日整列——非跨度，
+   否则容器声明比列合计少一天宽，flex-shrink 会等比压缩每列 → 表头与任务条错位随日期递增） */
 const RANGE0=d2(2026,8,17), RANGE1=d2(2026,10,25);
 const HOLIDAYS={"2026-09-25":"中秋"};
 const GRAN={day:{ppd:36,label:"日"},week:{ppd:13,label:"周"},month:{ppd:9,label:"月"}};
-const totalW=()=>days(RANGE0,RANGE1)*GRAN[S.gran].ppd;
+const totalW=()=>(days(RANGE0,RANGE1)+1)*GRAN[S.gran].ppd;
 const dX=t=>days(RANGE0,t)*GRAN[S.gran].ppd;
 const xD=x=>new Date(RANGE0.getTime()+Math.round(x/GRAN[S.gran].ppd)*DAY);
 

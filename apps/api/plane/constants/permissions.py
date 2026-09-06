@@ -45,6 +45,14 @@ PERMISSION_MATRIX: dict[str, dict[str, int]] = {
         "issue.bulk.update": ProjectRole.CONTRIBUTOR,
         "comment.create": ProjectRole.COMMENTER,
         "file.upload": ProjectRole.CONTRIBUTOR,
+        # ── FILE-002 §2.4 BR-13（rbac §8.2 矩阵原码，不造新码）──
+        # R1 对象级受限项（CONTRIBUTOR 仅本人上传）在视图层叠加，与门槛是
+        # 「门槛 + 附加规则」关系（AUTH-005 §4.4 注）。
+        "file.read": ProjectRole.VIEWER,              # 受可见性过滤（R6 / BR-08）
+        "file.update": ProjectRole.CONTRIBUTOR,       # + R1：CONTRIBUTOR 仅本人上传
+        "file.delete": ProjectRole.CONTRIBUTOR,       # + R1：CONTRIBUTOR 仅本人上传（回收站同键过滤）
+        "file.permission.manage": ProjectRole.ADMIN,  # 可见性配置（目录与文件同码）
+        "folder.manage": ProjectRole.CONTRIBUTOR,     # 目录新建/改名/移动/删除
     },
 }
 
@@ -79,6 +87,11 @@ PERMISSION_LABELS: dict[str, str] = {
     "issue.bulk.update": "批量操作任务",
     "comment.create": "发表评论",
     "file.upload": "上传文件",
+    "file.read": "查看文件",
+    "file.update": "编辑文件",
+    "file.delete": "删除文件",
+    "file.permission.manage": "管理文件可见性",
+    "folder.manage": "管理文件目录",
 }
 
 

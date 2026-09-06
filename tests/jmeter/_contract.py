@@ -69,6 +69,9 @@ CODES = {
     "fileType": "VALIDATION_FILE_TYPE_NOT_ALLOWED",      # 评论图 png/jpg/gif/webp 白名单（C002 BR-08）
     "tokenExpired": "AUTH_TOKEN_EXPIRED",                # 实时票据过期/无效续签拒绝（C004 BR-02）
     "liveUnavailable": "SERVER_LIVE_SERVICE_UNAVAILABLE",  # live 探测降级（C004 §2.5，503）
+    # ── Sprint-4（FILE-002 项目文件库，均为既有注册码） ──
+    "quotaStorage": "QUOTA_STORAGE_EXCEEDED",            # 工作空间配额耗尽（F002 §2.5，409；details 子码 QUOTA）
+    "uploadMismatch": "VALIDATION_FILE_UPLOAD_MISMATCH",  # complete HEAD 大小不匹配（F002 IT-02）
 }
 
 #: 统一信封字段路径（INFRA-004 C1）

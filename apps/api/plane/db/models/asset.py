@@ -1,15 +1,23 @@
 """FileAsset —— 全系统唯一文件通道（FILE-001 §4.1）。
 
-P1 挂载点：issue（任务附件）、avatar（AUTH-004 头像）。
-P2+ 通过 entity_type 注册制扩展，零 DDL。
+P1 挂载点：issue（任务附件）、avatar（AUTH-004 头像）、comment_image（COLLAB-002）。
+P2+ 通过 entity_type 注册制扩展，零 DDL；FILE-002 注册 ``project_file``
+（文件库，entity_id = FileFolder.id），并按 FILE-002 §1.7 第 1 行登记新增
+``folder`` / ``issue`` 两个可空外键作为多态列之上的冗余读列（双挂反查与目录树联查）。
 """
 from django.db import models
 
 from plane.db.models.base import BaseModel
+from plane.db.models.file import FileFolder
 
 
 class FileAsset(BaseModel):
-    """文件资产 —— 对标 Plane FileAsset，参见 `docs/sprint-1-mvp/FILE-001-task-attachment.md` §4.1。"""
+    """文件资产 —— 对标 Plane FileAsset，参见 `docs/sprint-1-mvp/FILE-001-task-attachment.md` §4.1。
+
+    FILE-001 §1.4 两条协议锁定原样遵守：
+      ① 存储键 {workspace_id}/{project_id}/{entity_type}/{entity_id}/{ulid}.{ext}；
+      ② 状态机五态（uploading/uploaded/abandoned + deleted_at 软删 + 硬删 purged 终态）。
+    """
 
     class Status(models.TextChoices):
         UPLOADING = "uploading", "直传中"
@@ -20,9 +28,11 @@ class FileAsset(BaseModel):
         """注册制（FILE-001 §2.4 BR-12）：新增宿主须在 §1.4 矩阵登记并经架构评审。"""
         ISSUE = "issue", "任务"
         AVATAR = "avatar", "头像"
-        # COLLAB-002 图片评论挂载点（FILE-001 §1.4 注册位）：entity_id 落当前 issue，
+        # COLLAB-002 评论图片挂载点（FILE-001 §1.4 注册位）：entity_id 落当前 issue，
         # 不占单任务 20 附件配额、不入附件区列表。
         COMMENT_IMAGE = "comment_image", "评论图片"
+        # FILE-002 §1.4 注册位：文件库文件——entity_id = FileFolder.id（§1.2 双重身份表）。
+        PROJECT_FILE = "project_file", "项目文件库"
 
     workspace = models.ForeignKey(
         "db.Workspace",
@@ -75,6 +85,57 @@ class FileAsset(BaseModel):
         verbose_name="上传人",
     )
 
+    # ── FILE-002 §4.1.1 扩展（§1.7 第 1 行：P2 迭代内演进，冗余读外键）────
+    folder = models.ForeignKey(
+        FileFolder,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="files",
+        verbose_name="所属目录（文件库身份，= entity_id）",
+        help_text="entity_type=project_file 时与 entity_id 同值同步（写入侧保证）",
+    )
+    issue = models.ForeignKey(
+        "db.Issue",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="dual_mount_files",
+        verbose_name="双挂任务（第二视图入口，可空）",
+    )
+    visibility = models.CharField(
+        max_length=16,
+        choices=FileFolder.Visibility.choices,
+        default=FileFolder.Visibility.ALL,
+        verbose_name="可见性（默认随目录，可独立收紧）",
+    )
+    allowed_members = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name="指定可见成员（UUID 列表，members 态生效）",
+    )
+    download_count = models.PositiveIntegerField(default=0, verbose_name="下载次数")
+
+    # ── FILE-003 预留列（本次迁移一并建列，后续零列级 DDL；逻辑不实现）────
+    # 目标形态是 FK("db.FileVersion") / OneToOneField("db.UploadSession")，但两个
+    # 模型属 FILE-003 交付物、当前不存在——Django 无法解析未定义目标。故先以
+    # UUID 列落库（列名与目标 FK 列名一致：current_version_id / upload_session_id，
+    # upload_session 侧唯一约束一并预建），FILE-003 到场时 AlterField 为 FK/OneToOne
+    # 仅追加引用约束，不再动列（偏差登记见任务报告 / ADR-0022）。
+    current_version = models.UUIDField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name="当前版本（FILE-003 预留）",
+    )
+    upload_session = models.UUIDField(
+        null=True,
+        blank=True,
+        editable=False,
+        unique=True,
+        verbose_name="分片上传会话（FILE-003 预留）",
+    )
+
     class Meta(BaseModel.Meta):
         db_table = "file_assets"
         verbose_name = "文件资产"
@@ -85,6 +146,16 @@ class FileAsset(BaseModel):
             models.Index(fields=["status", "created_at"], name="idx_asset_status_time"),
             # 存储治理：按工作空间统计体积（配额与报表）
             models.Index(fields=["workspace", "status"], name="idx_asset_ws_status"),
+            # ── FILE-002 §4.1.1 ──
+            # 目录文件列表取数：WHERE project=? AND folder=? AND deleted_at IS NULL
+            models.Index(fields=["project", "folder"], name="idx_asset_project_folder"),
+            # 双挂反查：任务附件区列表 = entity_type=issue 行 ∪ issue 外键非空行（§1.2）
+            models.Index(fields=["issue"], name="idx_asset_issue"),
+            # 名称/上传人/时间筛选取数（GIN trgm 名称模糊索引在 §4.1.3 迁移 RunSQL 落表）
+            models.Index(
+                fields=["project", "uploaded_by", "created_at"],
+                name="idx_asset_project_uploader",
+            ),
         ]
         # 白名单双层防御：DB CheckConstraint 由 §0003 迁移通过 RunSQL 以原生 PG `~*` 落表
         # （Django ORM 的 __regex 仅桥接 PG `~`，不区分大小写在原生层表达）。

@@ -28,3 +28,7 @@ FIELD_SCHEMA_CACHE_TTL_SECONDS: int = 3600
 
 #: ── Sprint-3 BOARD-003 视图（BR-02：含内置五视图，超出 → 409 LIMIT）──
 MAX_VIEWS_PER_PROJECT: int = 20
+
+#: ── Sprint-4 FILE-002 项目文件库（§2.6 边界条件）──
+#: 目录深度上限（根=1，BR-01；复用 TASK-004 层级治理经验，环防护走同款 CTE）
+MAX_FOLDER_DEPTH: int = 5

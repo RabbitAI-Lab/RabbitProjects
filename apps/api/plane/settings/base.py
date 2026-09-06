@@ -164,9 +164,15 @@ AWS_ACCESS_KEY_ID = env("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY", "")
 AWS_S3_BUCKET_NAME = env("AWS_S3_BUCKET_NAME", "rp-uploads")
 
+# ── FILE-002 工作空间存储配额（BR-11「存 WS 设置，默认 10GB，可配置」──
+# 仓库无 Workspace 设置模型，以环境级配置承载（规格 §4.1.3 DDL 清单亦无 WS 列；
+# 偏差登记见 FILE-002 任务报告 / ADR-0022）。
+WS_STORAGE_QUOTA_BYTES = int(env("WS_STORAGE_QUOTA_BYTES", str(10 * 1024 ** 3)))
+
 # ── 功能常量（Sprint-2 TASK-004 §4.1：层级三层防线 + 子树上限）──
 from plane.settings.features import (  # noqa: E402,F401
     CTE_GUARD_DEPTH,
+    MAX_FOLDER_DEPTH,
     MAX_ISSUE_DEPTH,
     MAX_SUB_ISSUES_PER_PARENT,
     SUBTREE_NODE_LIMIT,

@@ -78,8 +78,11 @@ http {
         # presign 返回的是同源 /uploads/<bucket>/<key>?X-Amz-…，
         # 缺这段会落到 `location /` 被 web_upstream 吃掉 → 上传静默失败。
         # Host 必须透传上游主机名：SigV4 把 host 纳入签名，改写成 $host 会 403。
+        # FILE-002 §1.7 第 5 行：直传上限独立于全局 CLIENT_MAX_BODY_SIZE——
+        # 文件库 50MB 直传 + 头部/签名余量 → 60m 缺省（规格「30m→60m」的参数化落地；
+        # 独立 UPLOADS_MAX_BODY_SIZE 可向上调，其余指令维持）。
         location ^~ /uploads/ {
-            client_max_body_size ${CLIENT_MAX_BODY_SIZE};
+            client_max_body_size ${UPLOADS_MAX_BODY_SIZE};
             proxy_set_header Host $proxy_host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.utils import timezone
 
 from plane.base.exception import AppException
@@ -233,10 +233,12 @@ class AssetService:
 
     # ─── list ──────────────────────────────────────────────────
     def list_for_issue(self, *, issue: Issue) -> list[dict]:
+        # FILE-002 §1.2：任务附件区列表 = entity_type=issue 行 ∪ issue 外键非空行
+        # （双挂——文件库文件「附加到任务」后在任务侧可见；一行两视图入口）
         qs = (
             FileAsset.objects.filter(
-                entity_type=FileAsset.EntityType.ISSUE,
-                entity_id=issue.id,
+                Q(entity_type=FileAsset.EntityType.ISSUE, entity_id=issue.id)
+                | Q(issue_id=issue.id),
                 status=FileAsset.Status.UPLOADED,
             )
             .order_by("-created_at")

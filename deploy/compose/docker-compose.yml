@@ -333,6 +333,8 @@ services:
       # FILE-001 §4.7：/uploads/ 直传反代到 MinIO（附件 / 头像直传）
       MINIO_UPSTREAM: minio:9000
       CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-100M}
+      # FILE-002 §1.7 第 5 行：/uploads/ 直传上限独立配置——文件库 50MB + 余量 → 60m 缺省
+      UPLOADS_MAX_BODY_SIZE: ${UPLOADS_MAX_BODY_SIZE:-60m}
     ports:
       - "${NGINX_PORT:-80}:80"
     depends_on:

@@ -23,6 +23,7 @@ app = Celery(
         "plane.bgtasks.event_publisher",   # COLLAB-004 T3-11：实时事件扇出（rp:events）
         "plane.bgtasks.field_cleanup",     # TASK-008：删除字段值清理 / 视图剔除
         "plane.bgtasks.field_index",       # TASK-008：表达式偏索引 CONCURRENTLY 建/删
+        "plane.bgtasks.file_stats",        # FILE-002：下载计数 Redis→beat 批量落库
         "plane.bgtasks.issue_assignee",
         "plane.bgtasks.issue_activity",    # TASK-010：幂等三层 Worker（activity 队列）
         "plane.bgtasks.issue_hierarchy",

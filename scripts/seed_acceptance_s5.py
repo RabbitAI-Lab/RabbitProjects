@@ -16,11 +16,10 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-import time
 import urllib.request
 
 sys.path.insert(0, "tests/jmeter")
-from _contract import Client, HTTP, q  # noqa: E402
+from _contract import HTTP, Client, q
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
 TAG = "S5 验收演示"
@@ -35,7 +34,7 @@ MOCK_500 = "http://127.0.0.1:8091/rp"
 def psql(sql: str) -> str:
     r = subprocess.run(
         ["docker", "exec", "-i", "rp-pg", "psql", "-U", "rp", "-d", "rabbit_projects", "-Atc", sql],
-        capture_output=True, text=True, timeout=120)
+        capture_output=True, text=True, timeout=120, check=False)
     if r.returncode != 0:
         raise RuntimeError(r.stderr[:200])
     return r.stdout.strip()
@@ -85,16 +84,15 @@ def _purge_by_ident(ident: str) -> None:
 
 def ensure_user(admin: Client, spec: dict) -> Client:
     c = Client(BASE)
-    code, body = c.req("POST", "/api/v1/auth/sign-in/",
-                       {"email": spec["email"], "password": spec["password"]},
-                       {"X-CSRFToken": c.csrf()})
+    code, _ = c.req("POST", "/api/v1/auth/sign-in/",
+                    {"email": spec["email"], "password": spec["password"]},
+                    {"X-CSRFToken": c.csrf()})
     if code == HTTP["OK"]:
         return c
     admin.req("POST", f"/api/v1/workspaces/{q(WS)}/invitations/",
               {"emails": [spec["email"]], "role": 10},
               {"X-CSRFToken": admin.csrf()})
     c2 = Client(BASE)
-    ts = int(time.time() * 1000) % 10**8
     code2, b2 = c2.req("POST", "/api/v1/auth/sign-up/",
                        {"email": spec["email"], "password": spec["password"],
                         "display_name": spec["name"]},
@@ -137,7 +135,6 @@ def main() -> None:
         assert c3 == HTTP["CREATED"], (name, c3, b3)
         return b3["data"]
 
-    today = time.strftime("%Y-%m-%d")
     for i in range(1, 9):
         mk(f"基线任务{i}", sequence_id=i, sort_order=i * 100,
            state_id=groups[["unstarted", "started", "started", "completed",

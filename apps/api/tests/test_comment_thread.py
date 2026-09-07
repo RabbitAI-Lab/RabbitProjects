@@ -371,7 +371,8 @@ class TestReactions:
         client.post(self._url(env, c), {"emoji": "👍"})
         client.delete(self._url(env, c), {"emoji": "👍"})
         assert CommentReaction.objects.filter(comment=c).count() == 0
-        assert CommentReaction.all_objects.filter(comment=c).count() == 1   # 软删行留存（作用域化：共享 dev PG 会被主栈 e2e 直写污染）
+        # 软删行留存（作用域化：共享 dev PG 会被主栈 e2e 直写污染）
+        assert CommentReaction.all_objects.filter(comment=c).count() == 1
         again = client.post(self._url(env, c), {"emoji": "👍"}).json()["data"]
         assert again["changed"] is True and again["count"] == 1
         assert CommentReaction.objects.filter(comment=c).count() == 1

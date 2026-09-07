@@ -948,7 +948,7 @@ def test_it09_session_exemption_three_stages(env):
 
     # 第二段：会话 abort（失效）→ uploading 资产行回归 30min 扫描
     with patch(MPU_ABORT):
-        dp.expire_upload_sessions.run(restrict_workspace_id=ws_id) == {"expired": 0}
+        dp.expire_upload_sessions.run(restrict_workspace_id=ws_id)
         # 40min 会话未到 24h——用 abort 端点语义（甲属主）
         assert jia.delete(_session_url(env, sid)).status_code == 204
     session.refresh_from_db()

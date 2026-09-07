@@ -20,8 +20,10 @@ class WorkspaceListCreateView(ListCreateAPIView):
     serializer_class = WorkspaceSerializer
 
     def get_queryset(self):
+        # AUTH-006 BR-01：accessible_by 起步（§2.1「工作空间」行 = 仅我所在；
+        # 谓词单源 plane/access/matrix.workspace_q，AC-01/AC-03 守护）
         return (
-            Workspace.objects.filter(workspace_member__member=self.request.user, workspace_member__is_active=True)
+            Workspace.objects.accessible_by(self.request.user)
             .annotate(total_projects=Count("projects", filter=Q(projects__deleted_at__isnull=True)))
             .order_by("-created_at")
         )

@@ -49,7 +49,9 @@ SOFT_DELETED_COMMENT_TEXT = "删除了一条评论"
 _COMMENT_SNIPPET_LEN = 80
 
 #: §2.3 事件语义化过滤表——activity 行 (verb, field) 匹配域（封闭白名单，BR-08）。
-#: ``comment`` 组无 activity 谓词（评论合流源，§4.3.1 矩阵）。
+#: ``comment`` 组无 activity 谓词（评论合流源，§4.3.1 矩阵）；``lifecycle`` 组
+#: issue 分支恒排除（PROJ-003 §2.3 补登——语义落在 project 域分支，见
+#: ``_stream_view_sql`` 矩阵）。
 _EVENT_GROUP_PREDICATES: dict[str, str | None] = {
     "created": "a.verb = 'created'",
     "state": "a.verb = 'updated' AND a.field = 'state'",
@@ -66,6 +68,7 @@ _EVENT_GROUP_PREDICATES: dict[str, str | None] = {
     "archived": "a.verb = 'updated' AND a.field = 'archived_at'",
     "deleted": "a.verb = 'deleted'",
     "comment": None,
+    "lifecycle": "1 = 0",
 }
 #: event 白名单展示序（details 可用值提示用，§4.2.1 失败响应）
 EVENT_CHOICES: tuple[str, ...] = tuple(_EVENT_GROUP_PREDICATES)
@@ -102,6 +105,16 @@ _STREAM_VIEW = """
            COALESCE(c.accessory, '{{}}'::jsonb) -> 'reply_to' ->> 'actor_id' AS reply_to_id
       FROM issue_comments c
      WHERE {comment_where}
+    UNION ALL
+    SELECT a.id, 'project' AS kind, a.actor_id, a.verb, a.field,
+           a.old_value, a.new_value, a.comment AS text, a.epoch,
+           CASE WHEN a.epoch IS NULL THEN 'a~' || a.id::text
+                ELSE 'a' || a.epoch::text END AS group_key,
+           NULL::uuid AS issue_id, a.created_at,
+           NULL::uuid AS root_id,
+           NULL::text AS reply_to_id
+      FROM issue_activities a
+     WHERE {project_where}
 """
 
 
@@ -139,17 +152,30 @@ def _stream_view_sql(
     *,
     event: str | None,
     actor_id: uuid.UUID | None,
+    project_id: uuid.UUID,
 ) -> tuple[str, dict[str, Any]]:
-    """按 actor × event 过滤矩阵（§4.3.1）装配 UNION ALL 视图。
+    """按 actor × event 过滤矩阵（§4.3.1 + PROJ-003 §4.3.1 扩域）装配 UNION ALL 视图。
 
-    矩阵：event=comment → activity 行排除（1=0）；event=其它语义组 → comment 行
-    恒排除；缺省 → 两源全保留。actor_id 在 event 决定的行类型域上恒 AND 叠加。
-    评论侧不滤软删（软删评论以「删除了一条评论」行保留，§2.6）。
+    矩阵：event=comment → activity 行排除（1=0）；event=其它 issue 语义组 →
+    comment 行与 project 域行恒排除；event=lifecycle → issue/comment 行恒排除、
+    project 域行按 `(verb='created' OR field='status')` 保留；缺省 → 三源全保留。
+    actor_id 在 event 决定的行类型域上恒 AND 叠加（project 域行同理参与——
+    PROJ-003 §4.3.1 注的「不参与 actor 排除」按对称矩阵口径实现，偏差随
+    Sprint-5 ADR 登记）。评论侧不滤软删（软删评论以「删除了一条评论」行
+    保留，§2.6）。空任务集项目（chunks 无非空分片）issue/comment 分支 1=0——
+    project 域行仍可上流（ANY(空数组) 的类型推断在 PG 不可靠，显式短路）。
     """
-    params: dict[str, Any] = {"soft_deleted_text": SOFT_DELETED_COMMENT_TEXT}
+    params: dict[str, Any] = {
+        "soft_deleted_text": SOFT_DELETED_COMMENT_TEXT,
+        "project_id": project_id,
+    }
+    has_issues = any(chunk for chunk in chunks)
 
-    activity_where = [_issue_id_where(chunks, "a", params), "a.deleted_at IS NULL"]
-    if event == "comment":
+    activity_where: list[str] = []
+    if has_issues:
+        activity_where.append(_issue_id_where(chunks, "a", params))
+    activity_where.append("a.deleted_at IS NULL")
+    if event == "comment" or event == "lifecycle" or not has_issues:
         activity_where.append("1 = 0")
     elif event is not None:
         activity_where.append(str(_EVENT_GROUP_PREDICATES[event]))  # 白名单已校验
@@ -157,15 +183,30 @@ def _stream_view_sql(
         activity_where.append("a.actor_id = %(actor_id)s")
         params["actor_id"] = actor_id
 
-    comment_where = [_issue_id_where(chunks, "c", params)]
-    if event is not None and event != "comment":
+    comment_where: list[str] = []
+    if has_issues:
+        comment_where.append(_issue_id_where(chunks, "c", params))
+    if event is not None and event != "comment" or not has_issues:
         comment_where.append("1 = 0")
     if actor_id is not None:
         comment_where.append("c.actor_id = %(actor_id)s")
 
+    project_where = [
+        "a.issue_id IS NULL",
+        "a.project_id = %(project_id)s",
+        "a.deleted_at IS NULL",
+    ]
+    if event == "lifecycle":
+        project_where.append("(a.verb = 'created' OR a.field = 'status')")
+    elif event is not None:
+        project_where.append("1 = 0")
+    if actor_id is not None:
+        project_where.append("a.actor_id = %(actor_id)s")
+
     sql = _STREAM_VIEW.format(
         activity_where="\n       AND ".join(activity_where),
         comment_where="\n       AND ".join(comment_where),
+        project_where="\n       AND ".join(project_where),
         snippet_len=_COMMENT_SNIPPET_LEN,
     )
     return sql, params
@@ -314,8 +355,12 @@ def _plain_row(r: dict[str, Any]) -> dict[str, Any]:
             "issue_id": str(r["issue_id"]) if r["issue_id"] else None,
             "created_at": r["created_at"],
         }
+    # project 域行（lifecycle / file.* / 后续 github.*）：形态同 activity、
+    # kind='project' 且无 issue 归属——file 事件语义由 field 前缀区分，
+    # lifecycle 里程碑由 comment='milestone' 读取位标识（PROJ-003 §4.3.1）。
+    kind = r["kind"]
     return {
-        "kind": "activity",
+        "kind": kind,
         "id": str(r["id"]),
         "epoch": _epoch_int(r["epoch"]),
         "actor_id": str(r["actor_id"]) if r["actor_id"] else None,
@@ -334,7 +379,8 @@ def assemble_stream(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     归并按组键字典（组首现位置 = 视觉位），不依赖物理相邻——comment 行
     时间上穿插也不拆散 epoch 组；同任务同 epoch 不折叠（任务级一组语义）。
     折叠键 = ``group_key``（非裸 epoch）：epoch 为空的历史行为 ``a~<id>``
-    单行组，不得与其它空 epoch 行误折。
+    单行组，不得与其它空 epoch 行误折。project 域行（kind='project'）同
+    comment 直出原位——不参与任务批量折叠（无 issue 归属）。
     """
     runs: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
@@ -342,8 +388,8 @@ def assemble_stream(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             runs.setdefault(r["group_key"], []).append(r)
     out: list[dict[str, Any]] = []
     emitted: set[str] = set()
-    for r in rows:                                # 全局时间序遍历：comment 行原位直出
-        if r["kind"] == "comment":
+    for r in rows:                                # 全局时间序遍历：comment/project 行原位直出
+        if r["kind"] in ("comment", "project"):
             out.append(_plain_row(r))
         elif r["group_key"] not in emitted:
             emitted.add(r["group_key"])
@@ -386,16 +432,9 @@ def fetch_stream_page(
             raise AppException("VALIDATION_INVALID_CURSOR")
 
     ids = project_issue_ids(project_id)
-    empty = {
-        "rows": [], "has_next": False, "next_cursor": None,
-        "page": page_index + 1, "total_count": 0, "total_groups": 0,
-        "total_count_estimated": False, "stream_cursor": None,
-    }
-    if not ids:
-        return empty
-
-    chunks = _chunk_issue_ids(ids)
-    view_sql, base_params = _stream_view_sql(chunks, event=event, actor_id=actor_id)
+    chunks = _chunk_issue_ids(ids) if ids else [[]]
+    view_sql, base_params = _stream_view_sql(
+        chunks, event=event, actor_id=actor_id, project_id=project_id)
 
     # 第一步：组边界（+1 探测 has_next）；游标页走组级 keyset（BR-10）
     boundary_params = {**base_params, "groups": per_page + 1}

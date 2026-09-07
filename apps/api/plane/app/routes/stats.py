@@ -4,7 +4,12 @@
 """
 from django.urls import path
 
-from plane.app.views.stats import MyIssuesListView, PersonalStatsView
+from plane.app.views.stats import (
+    MyIssuesListView,
+    PersonalStatsView,
+    ProjectMemberStatsView,
+    ProjectStatsView,
+)
 
 urlpatterns = [
     # 四卡 + 7 日趋势
@@ -18,5 +23,18 @@ urlpatterns = [
         "users/me/issues/",
         MyIssuesListView.as_view(),
         name="users-me-issues",
+    ),
+    # ── Sprint-5（RPT-002 §4.2）：项目维度双端点 ──
+    # 项目进度（五组/完成率/逾期/工时/趋势）
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/stats/",
+        ProjectStatsView.as_view(),
+        name="project-stats",
+    ),
+    # 成员任务量（分组聚合 + 未指派 + 合计）
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/stats/members/",
+        ProjectMemberStatsView.as_view(),
+        name="project-stats-members",
     ),
 ]

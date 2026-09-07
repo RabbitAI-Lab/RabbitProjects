@@ -105,22 +105,12 @@ def list_for_user(
 
 
 def _accessible_projects(*, user, workspace) -> QuerySet:
-    """权限最外层：WS_ADMIN+ 全可见 / 其余显式成员（rbac §6.2）。
+    """权限最外层（rbac §6.2）——Sprint-5 起收敛为 access/matrix.py 单源调用
+    （AUTH-006 §2.2：矩阵 Q 唯一实现地，视图/服务层禁止手写可见性谓词）。
 
-    实现：通过 WorkspaceMember.role 取当前用户空间角色；
-    ADMIN+ 直接给全空间 active 非软删项目；否则取其作为 active ProjectMember 的项目集。
+    matrix.project_q 语义与本函数原实现一致，另收编 BR-11 draft 行
+    （draft 仅创建者 ∪ WS_ADMIN+ 可见）。
     """
-    from plane.db.models import WorkspaceMember
-    from plane.db.models.roles import WorkspaceRole
+    from plane.access.matrix import project_q
 
-    ws_member = WorkspaceMember.objects.filter(
-        workspace=workspace, member=user, is_active=True, deleted_at__isnull=True
-    ).first()
-    base = Project.objects.filter(workspace_id=workspace.id, deleted_at__isnull=True)
-    if ws_member is not None and ws_member.role >= WorkspaceRole.ADMIN:
-        return base
-    return base.filter(
-        project_projectmember__member=user,
-        project_projectmember__is_active=True,
-        project_projectmember__deleted_at__isnull=True,
-    ).distinct()
+    return Project.objects.filter(project_q(user, workspace.id)).distinct()

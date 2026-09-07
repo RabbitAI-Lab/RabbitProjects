@@ -21,10 +21,14 @@ PERMISSION_MATRIX: dict[str, dict[str, int]] = {
         "workspace.member.read": WorkspaceRole.MEMBER,
         "workspace.member.invite": WorkspaceRole.ADMIN,
         "workspace.member.manage": WorkspaceRole.ADMIN,   # + R2 层级保护（业务层）
+    "team.stats.read": WorkspaceRole.ADMIN,           # Sprint-5 TEAM-003（ADR-0025：rbac §8.1 Report 分区新行）
+
         "workspace.member.remove": WorkspaceRole.ADMIN,   # + R2
         "workspace.member.leave": WorkspaceRole.MEMBER,   # + R3 末位保护（业务层）
         "workspace.transfer": WorkspaceRole.OWNER,
         "project.create": WorkspaceRole.MEMBER,           # R5 可配置（默认开）
+        # ── Sprint-5 INTG-001（rbac §8.1 已登记：WS 级安装/回调）──
+        "integration.manage": WorkspaceRole.ADMIN,
     },
     "project": {  # AUTH-005 §2.4.2（P1 子集）
         "project.read": ProjectRole.VIEWER,
@@ -35,6 +39,9 @@ PERMISSION_MATRIX: dict[str, dict[str, int]] = {
         "project.favorite": ProjectRole.VIEWER,           # PROJ-002 §4.2.6 个人态收藏
         "project.archive": ProjectRole.ADMIN,             # PROJ-002 §4.2.7 active↔archived
         "project.label.manage": ProjectRole.ADMIN,
+        # ── Sprint-5 INTG-001/002（rbac §8.2：绑定/配置/同步日志 = PROJ_ADMIN）──
+        "integration.config": ProjectRole.ADMIN,
+        "integration.link": ProjectRole.CONTRIBUTOR,
         "issue.create": ProjectRole.CONTRIBUTOR,
         "issue.update": ProjectRole.CONTRIBUTOR,
         "issue.state.transition": ProjectRole.CONTRIBUTOR,
@@ -72,6 +79,10 @@ PERMISSION_LABELS: dict[str, str] = {
     "workspace.member.read": "查看成员列表",
     "workspace.member.invite": "邀请成员",
     "workspace.member.manage": "管理成员角色",
+    "team.stats.read": "查看团队成员活跃度",
+    "integration.manage": "管理集成安装",
+    "integration.config": "配置项目集成",
+    "integration.link": "关联外部对象",
     "workspace.member.remove": "移除成员",
     "workspace.member.leave": "退出团队",
     "workspace.transfer": "转让所有权",

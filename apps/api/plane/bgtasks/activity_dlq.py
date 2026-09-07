@@ -44,10 +44,22 @@ def dlq_client():
 def record_dead_letter(sender=None, task_id=None, exception=None, args=None, **kwargs):
     """任务最终失败被 reject 入 activity.dlq 时同步写元数据（TTL 7 天，零 DDL）。
 
+    覆盖双轨道（Sprint-5 扩域）：issue_activity / project_activity 共用队列拓扑，
+    ``task`` 字段区分归属（Sprint-5 前的存量条目无该字段 → 按 issue_activity 读）。
+
     retries 由异常类型推导（信号载荷不含该值）：MaxRetriesExceededError=3（轨道
     走完），其余（不可恢复快速失败）=0。
     """
-    if getattr(sender, "name", None) != "plane.bgtasks.issue_activity.issue_activity":
+    name = getattr(sender, "name", None)
+    if name == "plane.bgtasks.issue_activity.issue_activity":
+        task = "issue_activity"
+        key_builder = build_event_key
+    elif name == "plane.bgtasks.project_activity.project_activity":
+        task = "project_activity"
+        from plane.bgtasks.project_activity import build_project_event_key
+
+        key_builder = build_project_event_key
+    else:
         return
     (payload,) = args or (None,)
     if not payload:
@@ -59,7 +71,8 @@ def record_dead_letter(sender=None, task_id=None, exception=None, args=None, **k
         r = dlq_client()
         message_id = str(task_id or uuid.uuid4())
         r.hset(f"{DLQ_KEY_PREFIX}{message_id}", mapping={
-            "event_key": build_event_key(payload),
+            "event_key": key_builder(payload),
+            "task": task,
             "payload": json.dumps(payload, ensure_ascii=False),
             "error_summary": f"{type(root).__name__}: {root}",
             "retries": getattr(sender, "max_retries", 3)
@@ -98,6 +111,8 @@ def replay_dead_letter(message_id: str) -> dict | None:
     """重放：hash 读 payload → 三层去重前置判定（已落库则 dedup_skipped）→ re-dispatch。
 
     hash 先删（列表即刻不再显示）；队列本体消息经 drain 异步清除（最终一致）。
+    Sprint-5 扩域：``task`` 字段分轨（project_activity 按 project 域四键判重、
+    重投对应轨道；无字段的存量条目按 issue_activity 读）。
     """
     r = dlq_client()
     key = f"{DLQ_KEY_PREFIX}{message_id}"
@@ -110,11 +125,21 @@ def replay_dead_letter(message_id: str) -> dict | None:
     r.delete(key)
     from plane.db.models import IssueActivity
 
-    dedup_skipped = IssueActivity.objects.filter(
-        issue_id=payload.get("issue_id"), actor_id=payload.get("actor_id"),
-        epoch=payload.get("epoch"), verb=payload.get("verb")).exists()
-    if not dedup_skipped:
-        issue_activity.delay(payload)
+    if dec.get("task") == "project_activity":
+        dedup_skipped = IssueActivity.objects.filter(
+            project_id=payload.get("project_id"), actor_id=payload.get("actor_id"),
+            epoch=payload.get("epoch"), verb=payload.get("verb"),
+            field=payload.get("field") or None).exists()
+        if not dedup_skipped:
+            from plane.bgtasks.project_activity import project_activity
+
+            project_activity.delay(payload)
+    else:
+        dedup_skipped = IssueActivity.objects.filter(
+            issue_id=payload.get("issue_id"), actor_id=payload.get("actor_id"),
+            epoch=payload.get("epoch"), verb=payload.get("verb")).exists()
+        if not dedup_skipped:
+            issue_activity.delay(payload)
     return {"message_id": message_id, "replayed": not dedup_skipped, "dedup_skipped": dedup_skipped}
 
 

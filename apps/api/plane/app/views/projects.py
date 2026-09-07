@@ -2,6 +2,7 @@ from django.db import transaction
 from rest_framework import status
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from plane.app.permissions import IsAuthenticated
 from plane.app.serializers.project import ProjectSerializer, ProjectWriteSerializer, StateSerializer
@@ -110,12 +111,28 @@ class ProjectListCreateView(ListCreateAPIView):
                         "suggestion": suggestion,
                     }],
             )
+        # ── Sprint-5（PROJ-003 §1.4.1/§4.2.5）：可选初态 + 模板实例化 ──
+        initial_status = request.data.get("initial_status", "active")
+        if initial_status not in ("draft", "active"):
+            raise AppException(
+                "VALIDATION_ERROR", message="initial_status 非法",
+                details=[{"field": "initial_status", "code": "NOT_A_CHOICE",
+                          "message": "must be one of: draft, active"}])
+        template_id = request.data.get("template_id")
+        template = None
+        if template_id:
+            from plane.db.models import ProjectTemplate
+
+            template = ProjectTemplate.objects.filter(pk=template_id).first()
+            if template is None or (template.workspace_id and template.workspace_id != ws.id):
+                raise AppException("RESOURCE_NOT_FOUND", message="模板不存在")
         with transaction.atomic():
             project = Project.objects.create(
                 workspace_id=ws.id,
                 name=s.validated_data["name"],
                 description=s.validated_data.get("description", ""),
                 identifier=identifier,
+                status=initial_status,  # §1.4.1 新建可选初态（draft/active，默认 active）
                 created_by=request.user,
             )
             # 创建者写一条 ProjectMember(ADMIN)
@@ -126,13 +143,98 @@ class ProjectListCreateView(ListCreateAPIView):
                 role=ProjectRole.ADMIN,
                 created_by=request.user,
             )
-            # 种子四态（待办/进行中/已完成/已取消）
-            seed_project_states(project)
+            if template is not None:
+                # 模板四件套实例化（BR-11 单事务；快照非引用）
+                from plane.db.services.project_lifecycle import ProjectLifecycleService
+
+                ProjectLifecycleService.apply_template(project, template, actor=request.user)
+            else:
+                # 种子四态（待办/进行中/已完成/已取消）
+                seed_project_states(project)
             # 种子内置五视图（BOARD-003 §4.1.2 双触发之二：与 seed_project_states 同事务钩子）
             seed_project_views(project)
+            # 状态日志首行（from='' to=初态）+ project.created 生命周期事件（draft 静默 BR-03）
+            from plane.db.models import ProjectStatusLog
+
+            ProjectStatusLog.objects.create(
+                project=project, from_status="", to_status=initial_status,
+                operator=request.user)
+            if initial_status == "active":
+                from plane.bgtasks.project_activity import enqueue_project_activity
+
+                transaction.on_commit(lambda: enqueue_project_activity(
+                    project_id=project.id, actor_id=request.user.id, verb="created",
+                    field=None, new_value="active", comment="milestone"))
+                # INTG-002：project.created（draft 静默 BR-03——draft 初态不扇出）
+                def _wh_created(p=project):
+                    from plane.db.services.webhook_outbound import dispatch_events
+
+                    dispatch_events("project.created", {
+                        "event_id": None,
+                        "data": {"id": str(p.id), "identifier": p.identifier,
+                                 "name": p.name, "status": "active",
+                                 "transitioned_at": None},
+                    }, project_id=p.id)
+
+                transaction.on_commit(_wh_created)
         return created_response(
             _serialize_project(project, request.user),
             location=request.build_absolute_uri(f"/api/v1/workspaces/{ws.slug}/projects/{project.id}/"),
+        )
+
+
+# ── Sprint-5（PROJ-003 §4.2）：生命周期三端点 ──────────────────────────
+class ProjectTransitionView(APIView):
+    """POST …/projects/{id}/transitions/ —— 状态转换（唯一入口，BR-01）。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        from plane.db.services.project_lifecycle import ProjectLifecycleService
+
+        project, _, _ = _get_project_or_404(
+            kwargs["slug"], kwargs["project_id"], request.user)
+        if (project.current_user_role or 0) < ProjectRole.ADMIN:
+            raise AppException("PERM_ROLE_INSUFFICIENT", message="需要项目管理员权限")
+        to_status = request.data.get("to_status")
+        data = ProjectLifecycleService().transition(
+            project, to_status=to_status, actor=request.user,
+            force=bool(request.data.get("force")),
+            reason=str(request.data.get("reason") or ""))
+        return success_response(data)
+
+
+class ProjectStatusLogView(APIView):
+    """GET …/projects/{id}/status-logs/ —— 状态历史（只增，BR-13）。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        from plane.db.services.project_lifecycle import ProjectLifecycleService
+
+        project, _, _ = _get_project_or_404(
+            kwargs["slug"], kwargs["project_id"], request.user)
+        rows = ProjectLifecycleService.status_logs(project)
+        return success_response(rows, meta={"count": len(rows), "total_count": len(rows)})
+
+
+class ProjectDuplicateView(APIView):
+    """POST …/projects/{id}/duplicate/ —— closed 副本重开（§2.5）。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        from plane.db.services.project_lifecycle import ProjectLifecycleService
+
+        project, _, _ = _get_project_or_404(
+            kwargs["slug"], kwargs["project_id"], request.user)
+        if (project.current_user_role or 0) < ProjectRole.ADMIN:
+            raise AppException("PERM_ROLE_INSUFFICIENT", message="需要项目管理员权限")
+        copy = ProjectLifecycleService().duplicate(source=project, actor=request.user)
+        return created_response(
+            _serialize_project(copy, request.user),
+            location=request.build_absolute_uri(
+                f"/api/v1/workspaces/{kwargs['slug']}/projects/{copy.id}/"),
         )
 
 

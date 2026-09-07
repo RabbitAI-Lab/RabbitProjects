@@ -10,6 +10,7 @@ sprint-0 把这两个 helper 分别放在 views/workspaces.py 与 views/projects
 """
 from rest_framework.exceptions import NotFound
 
+from plane.base.exception import AppException
 from plane.db.models import Project, ProjectMember, Workspace, WorkspaceMember
 from plane.db.models.roles import ProjectRole, WorkspaceRole
 
@@ -51,3 +52,19 @@ def get_project_or_404(slug, project_id, user):
         proj_role = pm.role
     project.current_user_role = proj_role
     return project, pm, member
+
+
+# ── Sprint-5（PROJ-003 §4.3.3）：只读态查表守卫 ──────────────────────────
+#: 状态 → 错误码（archived=PROJ-002 语义原样；closed=终态单向门）
+READ_ONLY_STATUS = {"archived": "PERM_PROJECT_ARCHIVED", "closed": "PERM_PROJECT_CLOSED"}
+_READ_ONLY_MSG = {
+    "archived": "项目已归档，只读",
+    "closed": "项目已关闭，不允许修改",
+}
+
+
+def require_project_writable(project) -> None:
+    """archived / closed 只读守卫（唯一收口——各视图/服务禁止再手写状态比对）。"""
+    code = READ_ONLY_STATUS.get(project.status)
+    if code:
+        raise AppException(code, message=_READ_ONLY_MSG[project.status])

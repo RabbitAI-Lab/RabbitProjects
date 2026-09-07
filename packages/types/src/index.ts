@@ -60,6 +60,8 @@ export interface WorkspaceMember {
     display_name: string;
     email: string;
     avatar_url: string | null;
+    /** 账号启停（AUTH-006 §3.3 灰标口径） */
+    is_active: boolean;
   };
   /** 20/15/10/5（WorkspaceRole） */
   role: number;

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
@@ -173,6 +174,17 @@ def publish_comment_created(*, comment_id: str, issue_id: str, project_id: str,
                     "project_id": str(project_id), "actor_id": str(actor_id)},
                    EVENT_MAP["comment.created"]({
                        "issue_id": str(issue_id), "project_id": str(project_id)}))
+    # ── INTG-002 出站 Webhook（Sprint-5）：comment.created（锚=IssueComment.id）──
+    try:
+        from plane.db.services.webhook_outbound import dispatch_events as _dw
+
+        _dw("comment.created", {
+            "event_id": str(comment_id),
+            "data": {"issue_id": str(issue_id), "actor_id": str(actor_id)},
+        }, project_id=uuid.UUID(str(project_id)))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("webhook.comment_dispatch_failed comment=%s err=%s",
+                       comment_id, exc)
 
 
 def publish_activity_created(*, project_id: str, issue_id: str,
@@ -338,5 +350,29 @@ def publish_activity_events(*, issue_id: str, actor_id: str | None, verb: str,
             publish_for_issue(
                 "issue.updated", issue_id=iid, project_id=pid, actor_id=actor,
                 payload={"brief": field or verb, **common}, batch_id=batch_id)
+        # ── INTG-002 出站 Webhook 扇出（Sprint-5）：issue 族三事件同点直调 ──
+        _dispatch_webhook_for_issue(field=field, verb=verb, issue_id=iid,
+                                    project_id=pid, actor_id=actor,
+                                    activity_id=str(activity_id))
     except Exception as exc:  # noqa: BLE001 —— 扇出尽力而为，绝不阻断 Activity 落库主流程
         logger.warning("event_publisher.activity_hook_failed issue=%s exc=%s", issue_id, exc)
+
+
+def _dispatch_webhook_for_issue(*, field, verb, issue_id, project_id,
+                                actor_id, activity_id) -> None:
+    """INTG-002 §2.2：issue.created/updated/state.changed（锚=IssueActivity.id）。"""
+    try:
+        from plane.db.services.webhook_outbound import dispatch_events
+
+        if verb == "created" and not field:
+            event = "issue.created"
+        elif field == "state":
+            event = "issue.state.changed"
+        else:
+            event = "issue.updated"
+        dispatch_events(event, {
+            "event_id": activity_id,
+            "data": {"issue_id": str(issue_id), "actor_id": actor_id},
+        }, project_id=uuid.UUID(str(project_id)))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("webhook.issue_dispatch_failed issue=%s err=%s", issue_id, exc)

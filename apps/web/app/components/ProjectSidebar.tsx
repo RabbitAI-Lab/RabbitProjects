@@ -50,10 +50,25 @@ export function ProjectSidebar({ projectName, identifier }: { projectName: strin
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>
         动态
       </NavLink>
+      {/* Sprint-5（RPT-002 §3.1 / C.131）：项目统计 */}
+      <NavLink to={`${base}/stats`} className={({ isActive }) => item(isActive)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3v16a2 2 0 0 0 2 2h16M7 15l3-4 3 3 5-7"/></svg>
+        统计
+      </NavLink>
       <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider px-2.5 py-2 mt-1">管理</div>
       <NavLink to={`${base}/settings`} className={({ isActive }) => item(isActive)}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/></svg>
         项目设置
+      </NavLink>
+      {/* Sprint-5（INTG-001 §3.1 / C.132）：集成设置 */}
+      <NavLink to={`${base}/settings/integrations`} className={({ isActive }) => item(isActive)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        集成
+      </NavLink>
+      {/* Sprint-5（INTG-002 §3.1 / C.133）：Webhook 管理 */}
+      <NavLink to={`${base}/settings/webhooks`} className={({ isActive }) => item(isActive)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        Webhook
       </NavLink>
       {/* Sprint-2（TASK-008 §3.1 / C.52）：字段管理（项目设置 → 字段） */}
       <NavLink to={`${base}/settings/fields`} className={({ isActive }) => item(isActive)}>

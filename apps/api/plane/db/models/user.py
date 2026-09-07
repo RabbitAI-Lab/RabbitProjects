@@ -51,6 +51,14 @@ class User(AbstractUser):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     deleted_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    # Sprint-5（AUTH-006 §4.1）：禁用审计面——is_active 为开关本体（Django 原生，
+    # DRF SessionAuthentication 拒 inactive → 禁用后 API 面 0 秒 401），
+    # disabled_at/by 仅记录何时被谁禁用；enable 清空两列。
+    disabled_at = models.DateTimeField(null=True, blank=True, verbose_name="禁用时间")
+    disabled_by = models.ForeignKey(
+        "self", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="disabled_users", verbose_name="禁用操作人",
+    )
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []

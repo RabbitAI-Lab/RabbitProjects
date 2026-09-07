@@ -857,7 +857,8 @@ export interface StreamMeta {
   total_count_estimated?: boolean;
 }
 
-/** §2.3 event 语义组（与后端 EVENT_CHOICES 白名单同源；未知值 400 BR-08）。 */
+/** §2.3 event 语义组（与后端 EVENT_CHOICES 白名单同源；未知值 400 BR-08）。
+ * lifecycle 为 Sprint-5 扩域补登（PROJ-003 §2.3 → COLLAB-003 §2.3 回改登记）。 */
 export const STREAM_EVENT_GROUPS: Array<{ key: string; label: string }> = [
   { key: "created", label: "创建" },
   { key: "state", label: "状态" },
@@ -872,6 +873,7 @@ export const STREAM_EVENT_GROUPS: Array<{ key: string; label: string }> = [
   { key: "archived", label: "归档" },
   { key: "deleted", label: "删除" },
   { key: "comment", label: "评论" },
+  { key: "lifecycle", label: "生命周期" },
 ];
 
 /** stream_cursor 解析（§4.2.1 要点 2）：自右向左取最后一段为 UUID、其余整体为时间戳。 */
@@ -1167,4 +1169,192 @@ export const FileShareAPI = {
   /** #4 DELETE …/share-links/{link_id}/（吊销终态；204；BR-14 预签名 5 分钟自然过期）。 */
   revoke: (slug: string, projectId: string, linkId: string) =>
     api.delete(`workspaces/${slug}/projects/${projectId}/share-links/${linkId}/`),
+};
+
+
+// ════════════════════════════════════════════════════════════════
+// Sprint-5 域服务（AUTH-006 / TEAM-003 / PROJ-003 / RPT-002 / INTG-001/002）
+// ════════════════════════════════════════════════════════════════
+
+/** AUTH-006 §2.3/§4.4：批量角色（部分成功语义）+ 账号启停。 */
+export interface BulkRoleResult {
+  updated: number;
+  skipped: Array<{ user_id: string; reason: string }>;
+  failed: Array<{ user_id: string; reason: string; message?: string }>;
+}
+
+export const MemberAdminAPI = {
+  bulkRole: (slug: string, payload: { user_ids: string[]; role: number }) =>
+    api.post<BulkRoleResult>(`workspaces/${slug}/members/bulk-role/`, payload),
+  disable: (slug: string, memberRowId: string) =>
+    api.post<{ user_id: string; is_active: boolean; disabled_at: string | null;
+              revoked: { sessions: number; api_keys: number; ws_connections: number } }>(
+      `workspaces/${slug}/members/${memberRowId}/disable/`),
+  enable: (slug: string, memberRowId: string) =>
+    api.post<{ user_id: string; is_active: boolean; disabled_at: null }>(
+      `workspaces/${slug}/members/${memberRowId}/enable/`),
+  bulkRoleProject: (slug: string, projectId: string, payload: { member_ids: string[]; role: number }) =>
+    api.post<BulkRoleResult>(
+      `workspaces/${slug}/projects/${projectId}/members/bulk-role/`, payload),
+};
+
+/** TEAM-003 §4.2：治理四区块。 */
+export interface WorkspaceLabelRow {
+  id: string; name: string; color: string; description: string; created_at: string;
+}
+
+export const GovernanceAPI = {
+  archive: (slug: string) =>
+    api.post<{ slug: string; archived_at: string | null; affected_projects: number; idempotent: boolean }>(
+      `workspaces/${slug}/archive/`),
+  restore: (slug: string) =>
+    api.post<{ slug: string; archived_at: null; idempotent: boolean }>(
+      `workspaces/${slug}/restore/`),
+  listLabels: (slug: string) =>
+    api.get<WorkspaceLabelRow[]>(`workspaces/${slug}/labels/`),
+  createLabel: (slug: string, payload: { name: string; color: string; description?: string }) =>
+    api.post<WorkspaceLabelRow>(`workspaces/${slug}/labels/`, payload),
+  updateLabel: (slug: string, id: string, payload: Partial<{ name: string; color: string; description: string }>) =>
+    api.patch<WorkspaceLabelRow>(`workspaces/${slug}/labels/${id}/`, payload),
+  deleteLabel: (slug: string, id: string) =>
+    api.delete<{ id: string; deleted_at: string; affected_issues: number }>(
+      `workspaces/${slug}/labels/${id}/`),
+  getDefaultStates: (slug: string) =>
+    api.get<{ name: string; version: number; groups: Array<{
+      group: string; color?: string; states: Array<{ name: string; sequence: number }> }> }>(
+      `workspaces/${slug}/default-states/`),
+  putDefaultStates: (slug: string, payload: { name?: string; groups: Array<{
+      group: string; color?: string; states: Array<{ name: string; sequence: number }> }> }) =>
+    api.put<{ name: string; version: number; groups: unknown[] }>(
+      `workspaces/${slug}/default-states/`, payload),
+  activityStats: (slug: string, days = 30) =>
+    api.get<{
+      active_members_7d: number; active_members_30d: number; total_members: number;
+      contribution_distribution: Array<{ week: string; buckets: Record<string, number> }>;
+      login_days_histogram: Record<string, number>;
+      top_actions: { issue: number | null; comment: number | null } | null;
+    }>(`workspaces/${slug}/activity-stats/`, { params: { days } }),
+};
+
+/** PROJ-003 §4.2：生命周期 + 模板。 */
+export type ProjectStatus = "draft" | "active" | "archived" | "closed";
+
+export const LifecycleAPI = {
+  transition: (slug: string, projectId: string, payload: { to_status: ProjectStatus; force?: boolean; reason?: string }) =>
+    api.post<{ id: string; status: ProjectStatus; transitioned_at: string | null;
+              affected_issues: number; idempotent: boolean }>(
+      `workspaces/${slug}/projects/${projectId}/transitions/`, payload),
+  statusLogs: (slug: string, projectId: string) =>
+    api.get<Array<{ id: string; from_status: string; to_status: string;
+                    operator: { id: string; display_name: string } | null;
+                    reason: string; transitioned_at: string }>>(
+      `workspaces/${slug}/projects/${projectId}/status-logs/`),
+  duplicate: (slug: string, projectId: string) =>
+    api.post<unknown>(`workspaces/${slug}/projects/${projectId}/duplicate/`),
+  listTemplates: (slug: string) =>
+    api.get<Array<{ id: string; name: string; description: string; is_builtin: boolean;
+                    states_snapshot: unknown[]; labels_snapshot: unknown[];
+                    folders_snapshot: unknown[] }>>(`workspaces/${slug}/project-templates/`),
+};
+
+/** RPT-002 §4.2：项目统计双端点。 */
+export const ProjectStatsAPI = {
+  progress: (slug: string, projectId: string, params: { days?: number; tz?: string } = {}) =>
+    api.get<{
+      project_id: string; as_of: string;
+      state_distribution: Record<string, number>; total: number;
+      completion_rate: number | null; overdue_count: number;
+      worklog_summary: { estimate_minutes: number; logged_minutes: number;
+                         remaining_minutes: number; overrun_minutes: number;
+                         unestimated_count: number };
+      trend: { days: number; created: Array<{ date: string; count: number }>;
+               completed: Array<{ date: string; count: number }> };
+    }>(`workspaces/${slug}/projects/${projectId}/stats/`, { params }),
+  members: (slug: string, projectId: string, params: { role?: string; order_by?: string } = {}) =>
+    api.get<{
+      rows: Array<{ member_id: string; display_name: string; avatar_url: string | null;
+                    role: number; is_active: boolean; open_count: number;
+                    done_count_30d: number; overdue_count: number;
+                    estimate_minutes_open: number; logged_minutes_30d: number }>;
+      unassigned: { open_count: number; overdue_count: number; estimate_minutes_open: number };
+      totals: { open_count: number; done_count_30d: number; overdue_count: number;
+                estimate_minutes_open: number; logged_minutes_30d: number };
+    }>(`workspaces/${slug}/projects/${projectId}/stats/members/`, { params }),
+};
+
+/** INTG-001 §4.2：GitHub 集成。 */
+export interface GithubBindingRow {
+  id: string; installation_id: number; repository_full_name: string;
+  repository_node_id: string; sync_status: "syncing" | "paused" | "stale" | "unbound";
+  default_issue_type_id: string | null; last_synced_at: string | null;
+  webhook_secret_shown_once?: string; webhook_registered?: boolean;
+}
+
+export const GithubIntegrationAPI = {
+  installEntry: (slug: string) =>
+    api.get<{ install_url: string; state: string; expires_in: number }>(
+      `workspaces/${slug}/integrations/github/app/`),
+  repositories: (slug: string, projectId: string, installationId: number) =>
+    api.get<Array<{ full_name: string; node_id: string; private: boolean; html_url: string }>>(
+      `workspaces/${slug}/projects/${projectId}/integrations/github/repositories/`,
+      { params: { installation_id: installationId } }),
+  listBindings: (slug: string, projectId: string) =>
+    api.get<GithubBindingRow[]>(
+      `workspaces/${slug}/projects/${projectId}/integrations/github/bindings/`),
+  createBinding: (slug: string, projectId: string, payload: {
+      repository_full_name: string; repository_node_id?: string;
+      installation_id?: number; default_issue_type_id?: string | null }) =>
+    api.post<GithubBindingRow>(
+      `workspaces/${slug}/projects/${projectId}/integrations/github/bindings/`, payload),
+  updateBinding: (slug: string, projectId: string, id: string, payload: {
+      sync_status?: "syncing" | "paused"; default_issue_type_id?: string | null }) =>
+    api.patch<GithubBindingRow>(
+      `workspaces/${slug}/projects/${projectId}/integrations/github/bindings/${id}/`, payload),
+  deleteBinding: (slug: string, projectId: string, id: string) =>
+    api.delete(`workspaces/${slug}/projects/${projectId}/integrations/github/bindings/${id}/`),
+  syncLogs: (slug: string, projectId: string) =>
+    api.get<Array<{ id: string; repository: string; scope: string; direction: string;
+                    winner_side: string; winner_payload: unknown; loser_payload: unknown;
+                    occurred_at: string }>>(
+      `workspaces/${slug}/projects/${projectId}/integrations/github/sync-logs/`),
+};
+
+/** INTG-002 §4.2：出站 Webhook。 */
+export interface WebhookEndpointRow {
+  id: string; url: string; events: string[];
+  is_active: "active" | "disabled" | "auto_disabled";
+  consecutive_failures: number; created_at: string;
+  secret_shown_once?: string;
+}
+
+export interface WebhookDeliveryRow {
+  id: string; event: string; event_id: string;
+  status: "pending" | "success" | "retrying" | "dead" | "cancelled";
+  attempts: Array<{ n: number; at: string; code: number; latency_ms: number; error: string | null }>;
+  attempt_count: number; next_retry_at: string | null; replay_of: string | null;
+  payload: Record<string, unknown>; created_at: string;
+}
+
+export const WebhookAPI = {
+  list: (slug: string, projectId: string) =>
+    api.get<WebhookEndpointRow[]>(`workspaces/${slug}/projects/${projectId}/webhooks/`),
+  create: (slug: string, projectId: string, payload: { url: string; events: string[] }) =>
+    api.post<WebhookEndpointRow>(`workspaces/${slug}/projects/${projectId}/webhooks/`, payload),
+  update: (slug: string, projectId: string, id: string, payload: { url?: string; events?: string[] }) =>
+    api.patch<WebhookEndpointRow>(`workspaces/${slug}/projects/${projectId}/webhooks/${id}/`, payload),
+  disable: (slug: string, projectId: string, id: string) =>
+    api.post<WebhookEndpointRow>(`workspaces/${slug}/projects/${projectId}/webhooks/${id}/disable/`),
+  enable: (slug: string, projectId: string, id: string) =>
+    api.post<WebhookEndpointRow>(`workspaces/${slug}/projects/${projectId}/webhooks/${id}/enable/`),
+  remove: (slug: string, projectId: string, id: string) =>
+    api.delete(`workspaces/${slug}/projects/${projectId}/webhooks/${id}/`),
+  ping: (slug: string, projectId: string, id: string) =>
+    api.post<{ ping: string }>(`workspaces/${slug}/projects/${projectId}/webhooks/${id}/ping/`),
+  deliveries: (slug: string, projectId: string, id: string, params: {
+      status?: string; event?: string; cursor?: string } = {}) =>
+    api.get<WebhookDeliveryRow[]>(
+      `workspaces/${slug}/projects/${projectId}/webhooks/${id}/deliveries/`, { params }),
+  replay: (slug: string, projectId: string, id: string, deliveryId: string) =>
+    api.post<WebhookDeliveryRow>(
+      `workspaces/${slug}/projects/${projectId}/webhooks/${id}/deliveries/${deliveryId}/`),
 };

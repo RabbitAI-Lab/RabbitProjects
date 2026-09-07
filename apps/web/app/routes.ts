@@ -37,6 +37,9 @@ export default [
     route(":workspaceSlug/projects/:projectId/settings", "routes/project-settings.tsx"),
     // Sprint-2（TASK-008 §3.1 / C.52）：项目设置 → 字段
     route(":workspaceSlug/projects/:projectId/settings/fields", "routes/project-fields.tsx"),
+    route(":workspaceSlug/projects/:projectId/stats", "routes/project-stats.tsx"),
+    route(":workspaceSlug/projects/:projectId/settings/integrations", "routes/project-integrations.tsx"),
+    route(":workspaceSlug/projects/:projectId/settings/webhooks", "routes/project-webhooks.tsx"),
     // Sprint-2（TASK-010 §3.2 / C.62）：admin 死信补偿页（系统级顶层资源，不嵌 workspace）
     route("admin/dead-letters", "routes/admin-dead-letters.tsx"),
     ...settingsRoutes,

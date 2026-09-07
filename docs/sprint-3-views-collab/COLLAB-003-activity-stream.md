@@ -150,6 +150,21 @@ sequenceDiagram
 >
 > 白名单为**封闭取舍**：`name`（标题）/ `description` / `issue_type` / `labels` 族事件按 `TASK-010` §1.2 矩阵存在且正常上流（IT-01 全矩阵），但本迭代流内过滤白名单不开放（P3 复议）——先收拢周会扫读高频组，避免语义组碎片化。
 
+> **Sprint-5 扩域补登（PROJ-003 §2.3 待回改登记 + ADR-0022 D-2 收口，2026-09-07 实现同步）**：
+> ① 新增第四类语义组 `lifecycle`——匹配 `issue_activities` 的 **project 域行**
+> （`issue_id IS NULL AND project_id = <项目>`，`(verb='created' OR field='status')`）：
+> 生命周期事件（PROJ-003 `record_project_activity`，milestone 行 comment='milestone'
+> 折叠为菱形节点）；上表冻结原文不动，白名单实际值 = 上表 13 组 + `lifecycle`；
+> ② project 域行并入 `§4.3.1 _STREAM_VIEW` 第三条 UNION ALL 分支（kind='project'，
+> 无 issue 归属、不参与任务批量折叠、原位直出）；空任务集项目同样可上流 project 域行；
+> ③ **file 域事件上流**（FILE-002 BR-12 / FILE-003 BR-13 / FILE-004 BR-13 动态流半边）：
+> 上传/重命名/移动/删除/恢复/新版本/回滚/分享创建/吊销/延期，经
+> `issue_activities` project 域行承载（field 列 = `file.uploaded` / `file.renamed` /
+> `file.moved` / `file.deleted` / `file.restored` / `file.version.created` /
+> `file.version.rolled_back` / `file.share.created|revoked|extended`）——BR-12 原文
+> 「不入 IssueActivity」语义按「不入任务域（issue_id 键）」读，双轨承载为
+> PROJ-003 §4.3.1 定稿设计。
+
 ### 2.4 业务规则表
 
 | 编号 | 规则 | 判定位置 | 违反后果 |

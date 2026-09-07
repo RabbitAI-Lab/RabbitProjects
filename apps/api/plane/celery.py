@@ -23,6 +23,7 @@ app = Celery(
         "plane.bgtasks.derive_preview",     # FILE-003：预览派生 + 会话/衍生物/版本治理
         "plane.bgtasks.event_publisher",   # COLLAB-004 T3-11：实时事件扇出（rp:events）
         "plane.bgtasks.field_cleanup",     # TASK-008：删除字段值清理 / 视图剔除
+        "plane.bgtasks.github_sync",       # INTG-001：GitHub 入站事件路由（Sprint-5）
         "plane.bgtasks.field_index",       # TASK-008：表达式偏索引 CONCURRENTLY 建/删
         "plane.bgtasks.file_stats",        # FILE-002：下载计数 Redis→beat 批量落库
         "plane.bgtasks.issue_assignee",
@@ -30,9 +31,11 @@ app = Celery(
         "plane.bgtasks.issue_hierarchy",
         "plane.bgtasks.issue_link",
         "plane.bgtasks.notifications",
+        "plane.bgtasks.project_activity",  # Sprint-5：project 域 Activity 幂等轨道（activity 队列）
         "plane.bgtasks.share_sweep",       # FILE-004：过期分享清扫（beat 每小时）
         "plane.bgtasks.worklog",
         "plane.bgtasks.workspace_invite",
+        "plane.db.services.webhook_outbound",   # INTG-002：出站投递/清理/到期扫描
     ],
 )
 app.config_from_object("django.conf:settings", namespace="CELERY")
@@ -49,6 +52,14 @@ app.conf.beat_schedule = {
         "task": "plane.bgtasks.share_sweep.sweep_expired_shares",
         "schedule": crontab(minute=0),
     },
+    "purge-webhook-deliveries": {
+        "task": "plane.db.services.webhook_outbound.purge_webhook_deliveries",
+        "schedule": crontab(hour=3, minute=30),       # 每日 03:30 滚动清理（§4.1）
+    },
+    "retry-due-webhook-deliveries": {
+        "task": "plane.db.services.webhook_outbound.retry_due_deliveries",
+        "schedule": crontab(minute="*/5"),             # 自调度丢失兜底（§4.3）
+    },
 }
 
 
@@ -59,7 +70,12 @@ app.conf.beat_schedule = {
 from kombu import Exchange, Queue  # noqa: E402
 
 app.conf.task_acks_on_failure_or_timeout = False
-app.conf.task_routes = {"plane.bgtasks.issue_activity.issue_activity": {"queue": "activity"}}
+app.conf.task_routes = {
+    "plane.bgtasks.issue_activity.issue_activity": {"queue": "activity"},
+    # Sprint-5：project 域轨道与薄壳同入 activity 队列（共用 DLX activity.dlq）
+    "plane.bgtasks.project_activity.project_activity": {"queue": "activity"},
+    "plane.bgtasks.project_activity.record_project_activity": {"queue": "activity"},
+}
 app.conf.task_queues = (
     Queue("activity", Exchange("activity", type="direct"), routing_key="activity",
           queue_arguments={

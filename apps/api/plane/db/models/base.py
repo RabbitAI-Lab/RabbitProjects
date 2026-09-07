@@ -10,8 +10,39 @@ class SoftDeleteQuerySet(models.QuerySet):
             return self.update(deleted_at=timezone.now()), {}
         return super().delete()
 
+    # ── 行级可见性通道（AUTH-006 §4.2；全体模型经 SoftDeleteManager 继承）──
+    # 语义：accessible_by/accessible_in 起步即过滤（BR-01）；unsafe_all 为唯一
+    # 例外出口（BR-08：必须带 reason 且进例外登记）。
+    def accessible_by(self, user, *, workspace_id=None):
+        from plane.access.matrix import MATRIX, matrix_family_for
 
-class SoftDeleteManager(models.Manager):
+        family = matrix_family_for(self.model)
+        if workspace_id is None and family != "workspaces":
+            raise ValueError("accessible_by 需显式 workspace_id（工作空间族除外）")
+        return self.filter(MATRIX[family](user, workspace_id))
+
+    def accessible_in(self, workspace, user):
+        return self.accessible_by(user, workspace_id=workspace.id)
+
+    def unsafe_all(self, *, reason: str):
+        import logging as _logging
+
+        from plane.access import matrix as _matrix
+
+        table = self.model._meta.db_table  # noqa: SLF001
+        allowed = _matrix.UNSAFE_EXCEPTIONS.get(__file__, set())
+        _logging.getLogger("plane.access").warning(
+            "unsafe_all model=%s reason=%s registered=%s", table, reason,
+            reason in allowed or __file__ in _matrix.UNSAFE_EXCEPTIONS,
+        )
+        _matrix._unsafe_counters[f"{table}:{reason}"] = (
+            _matrix._unsafe_counters.get(f"{table}:{reason}", 0) + 1)
+        return self.all()
+
+
+class SoftDeleteManager(models.Manager.from_queryset(SoftDeleteQuerySet)):  # type: ignore[misc]  # 动态基类，mypy 无法静态推导
+    """from_queryset 派生：QuerySet 方法（accessible_by/unsafe_all 等）经管理器转发。"""
+
     def get_queryset(self) -> SoftDeleteQuerySet:
         return SoftDeleteQuerySet(self.model, using=self._db).filter(deleted_at__isnull=True)
 

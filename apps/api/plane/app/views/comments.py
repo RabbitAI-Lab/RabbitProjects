@@ -25,7 +25,7 @@ from rest_framework.views import APIView
 from plane.app.comments.reaction_service import ReactionService
 from plane.app.permissions import IsAuthenticated
 from plane.app.serializers.comment import CommentSerializer, CommentWriteSerializer
-from plane.app.views._access import get_project_or_404
+from plane.app.views._access import get_project_or_404, require_project_writable
 from plane.base.exception import AppException
 from plane.base.response import created_response, success_response
 from plane.db.models import Issue, IssueComment, ProjectRole, User
@@ -227,8 +227,7 @@ class CommentListCreateView(GenericAPIView):
         issue, project = _get_issue(kwargs["slug"], kwargs["project_id"],
                                        kwargs["issue_id"], request.user)
         _require_comment_create(project, request.user)
-        if project.status == "archived":
-            raise AppException("PERM_PROJECT_ARCHIVED", message="项目已归档，评论只读")
+        require_project_writable(project)  # archived/closed 只读（PROJ-003 §4.3.3）
         s = CommentWriteSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         comment, extras = CommentService().create(
@@ -313,8 +312,7 @@ class CommentReactionToggleView(APIView):
     def _get_comment(self, slug, project_id, issue_id, comment_id, user):
         issue, project = _get_issue(slug, project_id, issue_id, user)
         _require_comment_create(project, user)
-        if project.status == "archived":
-            raise AppException("PERM_PROJECT_ARCHIVED", message="项目已归档，评论只读")
+        require_project_writable(project)  # archived/closed 只读（PROJ-003 §4.3.3）
         try:
             comment = IssueComment.objects.get(
                 id=comment_id, issue_id=issue.id, deleted_at__isnull=True,

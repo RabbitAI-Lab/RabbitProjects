@@ -811,6 +811,11 @@ class AccessibleQuerySetMixin:
 
 class ProjectQuerySet(AccessibleQuerySetMixin, models.QuerySet):
     def _scoped_for(self, user):
+        # 【Sprint-5 待回改登记（AUTH-006 §4.1 注 B）】公开项目可见通道未实现：
+        # 需增加 `_is_public` 分支（Exists(visibility='public', 同 workspace)）并对
+        # WS_ONLY 应用 `_is_public | _is_member | _ws_admin` 合取语义；落地前
+        # Project.visibility 列已上线（默认 private），public 行为 = private。
+        # 实现侧单源已收敛至 apps/api/plane/access/matrix.py（AUTH-006 §2.2）。
         # 工作空间 Owner/Admin：该 workspace 下全部项目可见
         ws_admin = WorkspaceMember.objects.filter(
             member=user, is_active=True,
@@ -880,7 +885,10 @@ class IssueManager(models.Manager.from_queryset(IssueQuerySet)):
 
 ```python
 # apps/api/plane/app/views/base.py
-class BaseViewSet(ModelViewSet):
+class BaseViewSet(ModelViewSet):  # 【Sprint-5 命名统一登记（AUTH-006 §4.3）】
+    # 功能名 AccessibleModelViewSet——签名与行为同本类，仅强调「行级过滤 + CI 守护」；
+    # 以 api-conventions.md §10.1 为准（BaseAPIView 及 Workspace/Project 派生）。
+    # CI 守护已落地 scripts/lint_access.py（AC-01~05）。
     """全站 ViewSet 基类：强制行级过滤。"""
 
     model = None
@@ -1003,7 +1011,8 @@ if ws_role is not None and ws_role >= WorkspaceRole.ADMIN:
 | Workspace | read | `workspace.read` | ✅ | ✅ | ✅ | ⚠️ 仅基础信息 |
 | Workspace | update（名称/描述/头像） | `workspace.update` | ✅ | ✅ | ❌ | ❌ |
 | Workspace | delete（解散） | `workspace.delete` | ✅ | ❌ | ❌ | ❌ |
-| Workspace | archive（归档） | `workspace.archive` | ✅ | ✅ | ❌ | ❌ |
+| Workspace | archive（归档） | `workspace.archive` | ✅ | ⚠️ 仅 OWNER（ADR-0023 收窄：空间级生死语义，Sprint-5 已落地） | ❌ | ❌ |
+| Workspace | restore（恢复） | `workspace.restore` | ✅ | ❌ | ❌ | ❌ |（ADR-0023 新增行——与 archive 同 Owner-only）
 | Workspace | transfer_ownership | `workspace.transfer` | ✅ | ❌ | ❌ | ❌ |
 | Workspace Setting | manage（标签/状态/字段模板） | `workspace.setting.manage` | ✅ | ✅ | ❌ | ❌ |
 | Workspace Member | read（成员列表） | `workspace.member.read` | ✅ | ✅ | ✅ | ❌ |
@@ -1028,6 +1037,7 @@ if ws_role is not None and ws_role >= WorkspaceRole.ADMIN:
 | Wiki（P3） | update | `wiki.update` | ✅ | ✅ | ✅ | ❌ |
 | Wiki（P3） | manage（权限/模板） | `wiki.manage` | ✅ | ✅ | ❌ | ❌ |
 | Report | read（跨项目统计） | `report.read` | ✅ | ✅ | ⚠️ 仅本人参与项目 | ❌ |
+| Report | read（团队成员活跃度） | `team.stats.read` | ✅ | ✅ | ❌ | ❌ |（ADR-0025 新增行：治理面语义，Sprint-5 已落地——实现于 WorkspaceActivityStatsView）
 | Report | export | `report.export` | ✅ | ✅ | ❌ | ❌ |
 
 ### 8.2 项目级资源

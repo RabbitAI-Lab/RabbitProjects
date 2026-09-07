@@ -444,6 +444,12 @@ class Project(BaseModel):
     status = models.CharField(
         max_length=16, choices=Status.choices, default=Status.ACTIVE, db_index=True, verbose_name="项目状态"
     )
+    visibility = models.CharField(  # Sprint-5 已落地（AUTH-006 §4.1 注 B 登记）：
+        # private 默认 / public——公开项目对 WS_ONLY 只读可见通道待本节与
+        # rbac §6.2 _scoped_for 公开分支一并回改后解锁；落地前 public 行为=private
+        max_length=8, choices=[("private", "私有"), ("public", "公开")],
+        default="private", db_index=True, verbose_name="可见性",
+    )
 
     class Meta(BaseModel.Meta):
         db_table = "projects"
@@ -585,6 +591,10 @@ class State(BaseModel):
 | `cancelled` | 移出范围（scope change） | 折叠展示 | 不计入 | 划线 |
 
 ### 2.7 Label — 标签
+> **Sprint-5 实现偏离登记（ADR-0024）**：P2 已落地独立 `WorkspaceLabel` 表
+> （`workspace_labels`，TEAM-003 §4.1）而非本节 P3 计划的「`Label.workspace` 可空
+> 外键」方案——覆盖链路以 `Label.overrides_global_id` 承载；P3 组织级标签下发
+> 收敛方案待架构组重新评估。
 
 ```python
 class Label(BaseModel):

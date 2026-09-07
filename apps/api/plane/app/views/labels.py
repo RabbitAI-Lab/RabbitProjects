@@ -43,12 +43,31 @@ class LabelListCreateView(APIView):
             ))
             .order_by("sort_order", "created_at")
         )
+        # Sprint-5（TEAM-003 §2.2）：全局标签并集下发——未被项目覆盖
+        # （overrides_global_id 指向）的全局行以 origin=global 形态追加
+        from plane.db.models import WorkspaceLabel
+
+        overridden = set(qs.filter(overrides_global_id__isnull=False)
+                         .values_list("overrides_global_id", flat=True))
+        local_names = set(qs.values_list("name", flat=True))
+        globals_ = (WorkspaceLabel.objects
+                    .filter(workspace_id=project.workspace_id, deleted_at__isnull=True)
+                    .exclude(id__in=overridden))
         # 直接以 serialize 形式返回（含 usage_count 通过 SerializerMethodField 走 attr）
         data = []
         for label in qs:
             d = LabelSerializer(label).data
             d["usage_count"] = label._usage
             data.append(d)
+        for g in globals_.order_by("created_at", "id"):
+            if g.name in local_names and not any(
+                    str(x.get("overrides_global_id")) == str(g.id) for x in data):
+                continue  # 同名本地行优先（覆盖展示），除非该行就是覆盖行
+            data.append({
+                "id": str(g.id), "name": g.name, "color": g.color,
+                "origin": "global", "is_active": True,
+                "usage_count": 0,
+            })
         return success_response(
             data,
             meta={

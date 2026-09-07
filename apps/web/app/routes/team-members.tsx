@@ -20,7 +20,7 @@ import { ConfirmRemoveModal } from "../components/ConfirmRemoveModal";
 import { TransferOwnershipModal, filterTransferCandidates } from "../components/TransferOwnershipModal";
 import { InviteMemberModal } from "../components/InviteMemberModal";
 import { useStores } from "../stores";
-import { WorkspaceAPI, WorkspaceMemberAPI, unwrap } from "../services/api";
+import { MemberAdminAPI, WorkspaceAPI, WorkspaceMemberAPI, unwrap } from "../services/api";
 import { WorkspaceRole } from "../stores/permission";
 import type { WorkspaceInvite, WorkspaceMember, WorkspaceSummary } from "@rp/types";
 
@@ -64,6 +64,10 @@ function TeamMembersInner() {
   const [pendingOpen, setPendingOpen] = useState(true);
   const [actionMenuFor, setActionMenuFor] = useState<string | null>(null);
   const [roleMenuFor, setRoleMenuFor] = useState<string | null>(null);
+  // ── Sprint-5（AUTH-006 §3.1/§3.2 / C.126/C.127）：批量角色 + 账号启停 ──
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [disableTarget, setDisableTarget] = useState<WorkspaceMember | null>(null);
   const [removeTarget, setRemoveTarget] = useState<WorkspaceMember | null>(null);
   const [transferOpen, setTransferOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -293,6 +297,7 @@ function TeamMembersInner() {
                   <table className="w-full text-[13px]">
                     <thead className="bg-neutral-50 text-neutral-500 text-[12px]">
                       <tr>
+                        <th scope="col" className="text-left font-medium px-3.5 py-2 w-8" aria-label="选择"></th>
                         <th scope="col" className="text-left font-medium px-3.5 py-2 w-[200px]">成员</th>
                         <th scope="col" className="text-left font-medium px-3.5 py-2">邮箱</th>
                         <th scope="col" className="text-left font-medium px-3.5 py-2 w-[140px]">角色</th>
@@ -307,12 +312,24 @@ function TeamMembersInner() {
                         const canEditRole = canManage && !isOwner && !isMe && m.role < (myMember?.role ?? 0);
                         const canRemoveThis = canRemove && !isOwner && !isMe && m.role < (myMember?.role ?? 0);
                         return (
-                          <tr key={m.id} data-mem={m.user.display_name}>
+                          <tr key={m.id} data-mem={m.user.display_name} className={selected.has(m.id) ? "bg-brand-50/40" : undefined}>
+                            <td className="px-3.5 py-2.5">
+                              {!isOwner && !isMe ? (
+                                <input type="checkbox" aria-label={`选择成员 ${m.user.display_name}`}
+                                  checked={selected.has(m.id)} data-sb-scope="member-select"
+                                  onChange={() => setSelected((cur) => {
+                                    const n = new Set(cur);
+                                    if (n.has(m.id)) n.delete(m.id); else n.add(m.id);
+                                    return n;
+                                  })} />
+                              ) : null}
+                            </td>
                             <td className="px-3.5 py-2.5">
                               <span className="inline-flex items-center gap-2">
                                 <span
                                   className="w-6 h-6 rounded-md text-white text-xs font-semibold flex items-center justify-center shrink-0"
-                                  style={{ background: hashColor(m.user.id) }}
+                                  style={{ background: hashColor(m.user.id),
+                                           opacity: (m.user as { is_active?: boolean }).is_active === false ? 0.4 : 1 }}
                                   aria-hidden="true"
                                 >{m.user.display_name.slice(0, 1)}</span>
                                 <span className="truncate max-w-[140px]">{m.user.display_name}{isMe && <span className="text-neutral-400">（我）</span>}</span>
@@ -365,6 +382,56 @@ function TeamMembersInner() {
               )}
             </div>
           )}
+        {/* Sprint-5（AUTH-006 §3.1 / C.126）：批量角色浮条 */}
+        {selected.size > 0 && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-30 bg-white border border-neutral-200 shadow-lg rounded-xl px-4 py-2.5 flex items-center gap-3"
+            role="status" data-sb-scope="bulk-role-bar">
+            <span className="text-[13px] text-neutral-600">已选 {selected.size} 人</span>
+            <button onClick={() => setBulkOpen(true)}
+              className="h-8 px-3 rounded-md bg-brand-500 text-white text-[13px]">批量改角色</button>
+            <button onClick={() => setSelected(new Set())} aria-label="清除选择"
+              className="h-8 px-3 rounded-md border border-neutral-300 text-[13px]">清除</button>
+          </div>
+        )}
+        {bulkOpen && (
+          <div className="fixed inset-0 z-40 bg-black/30 flex items-center justify-center p-4"
+            onMouseDown={(e) => e.target === e.currentTarget && setBulkOpen(false)}>
+            <div className="bg-white rounded-xl p-6 w-[420px] max-w-full" role="dialog" aria-modal="true"
+              aria-label="批量改角色" data-sb-scope="bulk-role-dialog">
+              <div className="text-[15px] font-semibold mb-4">批量改角色（{selected.size} 人）</div>
+              <BulkRoleForm ids={[...selected]}
+                onDone={(msg) => { setBulkOpen(false); setSelected(new Set()); toast(msg, "ok"); reloadAfterMutation(); }}
+                onCancel={() => setBulkOpen(false)} />
+            </div>
+          </div>
+        )}
+        {disableTarget && (
+          <div className="fixed inset-0 z-40 bg-black/30 flex items-center justify-center p-4"
+            onMouseDown={(e) => e.target === e.currentTarget && setDisableTarget(null)}>
+            <div className="bg-white rounded-xl p-6 w-[480px] max-w-full" role="alertdialog" aria-modal="true"
+              aria-label="禁用账号" data-sb-scope="disable-dialog">
+              <div className="text-[15px] font-semibold mb-3">禁用账号 {disableTarget.user.display_name}？</div>
+              <ul className="text-[13px] text-neutral-600 space-y-1.5 mb-4">
+                <li>· 所有登录会话与 API Key 立即失效</li>
+                <li>· 其任务、评论、工时记录保留并显示「已禁用」标记</li>
+                <li>· 负责的开放任务不会自动改派</li>
+              </ul>
+              <p className="text-[12.5px] text-amber-700 mb-4">⚠ 可通过「启用」恢复，但原 API Key 需重新生成。</p>
+              <div className="flex justify-end gap-2">
+                <button autoFocus onClick={() => setDisableTarget(null)}
+                  className="h-9 px-4 rounded-md border border-neutral-300 text-[13px]">取消</button>
+                <button onClick={() => {
+                  MemberAdminAPI.disable(workspaceSlug!, disableTarget.id).then((r) => {
+                    const d = (r as unknown as { data: { revoked: { sessions: number; api_keys: number; ws_connections: number } } }).data;
+                    toast(`已禁用——会话 ${d.revoked.sessions} · API Key ${d.revoked.api_keys} · WS ${d.revoked.ws_connections}`, "ok");
+                    setDisableTarget(null); reloadAfterMutation();
+                  }, (e) => toast(e instanceof Error ? e.message : "禁用失败", "error"));
+                }}
+                  className="h-9 px-4 rounded-md bg-red-600 text-white text-[13px]">确认禁用</button>
+              </div>
+            </div>
+          </div>
+        )}
         </main>
       </div>
 
@@ -628,4 +695,42 @@ function maskEmail(email: string) {
   const domain = email.slice(at + 1);
   if (local.length <= 2) return `${local.slice(0, 1)}***@${domain}`;
   return `${local.slice(0, 1)}***${local.slice(-1)}@${domain}`;
+}
+
+
+/** C.126 批量改角色弹层（MEMBER/GUEST 单选 + 部分成功回执）。 */
+function BulkRoleForm({ ids, onDone, onCancel }: {
+  ids: string[]; onDone: (msg: string) => void; onCancel: () => void;
+}) {
+  const { workspaceSlug } = useParams<{ workspaceSlug: string }>();
+  const [role, setRole] = useState<number>(10);
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const r = await MemberAdminAPI.bulkRole(workspaceSlug!, { user_ids: ids, role });
+      const d = (r as unknown as { data: { updated: number; skipped: Array<{ reason: string }>; failed: unknown[] } }).data;
+      onDone(`已更新 ${d.updated} 人 · 跳过 ${d.skipped.length} 人${d.failed.length ? ` · 失败 ${d.failed.length} 人` : ""}`);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "批量操作失败", "error");
+    } finally { setBusy(false); }
+  };
+  return (
+    <div>
+      <div className="space-y-2 mb-5" role="radiogroup" aria-label="目标角色">
+        {([[10, "成员（MEMBER）"], [5, "访客（GUEST）"]] as const).map(([value, label]) => (
+          <label key={value} className="flex items-center gap-2 text-[13.5px] text-neutral-700">
+            <input type="radio" name="bulk-role" checked={role === value} onChange={() => setRole(value)} />
+            {label}
+          </label>
+        ))}
+      </div>
+      <div className="flex justify-end gap-2">
+        <button onClick={onCancel} className="h-9 px-4 rounded-md border border-neutral-300 text-[13px]">取消</button>
+        <button disabled={busy} data-sb-scope="bulk-role-apply"
+          onClick={() => void submit()}
+          className="h-9 px-4 rounded-md bg-brand-500 text-white text-[13px] disabled:opacity-50">应用</button>
+      </div>
+    </div>
+  );
 }

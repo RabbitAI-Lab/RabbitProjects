@@ -146,6 +146,47 @@ check TC-INF4-014 "sprint-1-flow 从 _contract 取契约常量，未各自硬编
 check TC-INF4-015 "Python/TS 两侧 API 真相源状态码逐键一致（跨语言比对）" \
   "python3 scripts/check-api-truth.py"
 
+# ── Sprint 1 · 空转断言扫描（TC-INF4-016，sprint-1 验收教训）──
+# goto 假资源（__no_such/__bogus/__definitely）只允许出现在「错误分支」测试里
+# （测试名含 错误/失效/invalid/不白屏）。v1 用括号计数提取 test 块——字符串里的
+# { 会打断深度计数导致漏报（C.18-remove 就是这样逃过扫描的）；v2 改按 goto
+# 调用点审计：向上找最近的 test( 标题判上下文。
+check TC-INF4-016 "e2e 无空转断言（假资源 goto 仅限错误分支测试）" \
+  "python3 tests/e2e/_scan_vacuous.py"
+
+# ── Sprint-5 · 行级可见性守护（TC-AUTH6-001，sprint-5 体系化）──
+# AC-01~05 + AC-06（视图直改 .status 红屏）；BR-01 收敛面；
+# EXCEPTIONS 登记见 scripts/lint_access.py——破例必须文档化（BR-08）。
+check TC-AUTH6-001 "行级可见性守护（AC-01~05 + AC-06 视图直改 status）" \
+  "python3 scripts/lint_access.py"
+
+# ── Sprint-5 · 越权矩阵参数化（TC-AUTH6-002，T5-10）──
+# 四主体（SYSTEM_ADMIN / WS_OWNER / WS_MEMBER / WS_GUEST）×四资源层
+# （Workspace / Project / Issue / WebhookEndpoint）笛卡尔积断言全绿。
+# docker 未跑则跳过——与上方 TC-INF3-*-db 同策略。
+if docker exec rp-pg pg_isready -U rp -d rabbit_projects >/dev/null 2>&1; then
+  check TC-AUTH6-002 "越权矩阵四主体×四资源层笛卡尔积全绿" \
+    "(cd apps/api && DATABASE_URL=postgresql://rp:rp@localhost:5432/rabbit_projects SECRET_KEY=dev uv run --project . pytest tests/test_auth006.py -q -k 'matrix or permission')"
+fi
+
+# ── api-ci 平价（TC-API-CI-*，与 .github/workflows/api-ci.yml 三步逐条对齐）──
+# 8436e69 首加；ed08c73 重写 TC-INF4-016 时整块误删，2026-09-07 CI ruff 红后才复现回收。
+# 退出码必须走子 shell 括号：首版 `… ; cd - >/dev/null` 的分号会吞掉工具退出码
+# （ruff 红也恒报 ✓）。pytest 依赖 dev PG（settings/test 复用 dev 库、事务回滚零残留），
+# 容器未跑则跳过（与上方 TC-INF3-*-db 同策略）。汇总块在所有 check 之后，任何
+# 一条 ✗ 都计入退出码（原版汇总在 TC-INF4-016 之前，其失败不拦门）。
+API_CI_ENV="DATABASE_URL=postgresql://rp:rp@localhost:5432/rabbit_projects SECRET_KEY=dev"
+check TC-API-CI-001 "api-ci 平价：ruff（apps/api cwd，与 CI 同命令）" \
+  "(cd apps/api && uv run --project . ruff check .)"
+check TC-API-CI-002 "api-ci 平价：mypy plane 全绿" \
+  "(cd apps/api && env $API_CI_ENV uv run --project . mypy plane)"
+if docker exec rp-pg pg_isready -U rp -d rabbit_projects >/dev/null 2>&1; then
+  check TC-API-CI-003 "api-ci 平价：pytest 全过（dev PG）" \
+    "(cd apps/api && env $API_CI_ENV uv run --project . pytest -q)"
+else
+  echo "⊘ PG 容器未运行，跳过 TC-API-CI-003（pytest 需 dev PG）"
+fi
+
 echo ""
 echo "════════════════════════════════════"
 echo "静态检查：$PASS 通过 / $FAIL 失败"
@@ -154,11 +195,3 @@ if [ ${#FAILED_IDS[@]} -gt 0 ]; then
   exit 1
 fi
 echo "全部通过 ✓"
-
-# ── Sprint 1 · 空转断言扫描（TC-INF4-016，sprint-1 验收教训）──
-# goto 假资源（__no_such/__bogus/__definitely）只允许出现在「错误分支」测试里
-# （测试名含 错误/失效/invalid/不白屏）。v1 用括号计数提取 test 块——字符串里的
-# { 会打断深度计数导致漏报（C.18-remove 就是这样逃过扫描的）；v2 改按 goto
-# 调用点审计：向上找最近的 test( 标题判上下文。
-check TC-INF4-016 "e2e 无空转断言（假资源 goto 仅限错误分支测试）" \
-  "python3 tests/e2e/_scan_vacuous.py"

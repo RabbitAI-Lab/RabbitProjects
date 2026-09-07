@@ -20,6 +20,16 @@ class Project(BaseModel):
     status = models.CharField(
         max_length=16, choices=Status.choices, default=Status.ACTIVE, db_index=True, verbose_name="项目状态"
     )
+    # Sprint-5（AUTH-006 §4.1 注 B）：可见性枚举先行定义、默认 private——
+    # 「公开项目对 WS_ONLY 只读可见」通道待架构回改（unified-issue-model §2.4
+    # 加列登记 + rbac §6.2 _scoped_for 公开分支）后解锁；落地前 public 行为=private。
+    visibility = models.CharField(
+        max_length=8,
+        choices=[("private", "私有"), ("public", "公开")],
+        default="private",
+        db_index=True,
+        verbose_name="可见性",
+    )
 
     class Meta(BaseModel.Meta):
         db_table = "projects"
@@ -40,6 +50,57 @@ class Project(BaseModel):
 
     def __str__(self) -> str:
         return f"[{self.identifier}] {self.name}"
+
+
+class ProjectStatusLog(BaseModel):
+    """生命周期只增日志（PROJ-003 BR-13）。任何 transition 写一行，永不更新。"""
+
+    project = models.ForeignKey(
+        "db.Project", on_delete=models.CASCADE, related_name="status_logs",
+        verbose_name="项目",
+    )
+    from_status = models.CharField(max_length=16, verbose_name="源状态")   # '' 表示创建
+    to_status = models.CharField(max_length=16, verbose_name="目标状态")
+    operator = models.ForeignKey(
+        "db.User", on_delete=models.SET_NULL, null=True, related_name="+",
+        verbose_name="操作人",
+    )
+    reason = models.CharField(max_length=512, blank=True, default="", verbose_name="原因")
+    meta = models.JSONField(default=dict, verbose_name="扩展")  # {open_count, forced, affected_issue_ids}
+
+    class Meta(BaseModel.Meta):
+        db_table = "project_status_logs"
+        verbose_name = "项目状态日志"
+        indexes = [models.Index(fields=["project", "-created_at"], name="idx_projstatuslog_time")]
+
+
+class ProjectTemplate(BaseModel):
+    """项目模板：配置四件套快照（非引用，PROJ-003 边界 #7）。内置 3 套 + 空间自定义。"""
+
+    workspace = models.ForeignKey(
+        "db.Workspace", on_delete=models.CASCADE,
+        related_name="project_templates", null=True, blank=True, verbose_name="工作空间",
+    )  # null = 内置
+    name = models.CharField(max_length=128, verbose_name="模板名")
+    description = models.CharField(max_length=512, blank=True, default="", verbose_name="描述")
+    is_builtin = models.BooleanField(default=False, verbose_name="内置模板")
+    states_snapshot = models.JSONField(verbose_name="状态快照")       # [{name, group, color, sort_order}]
+    labels_snapshot = models.JSONField(default=list, verbose_name="标签快照")     # [{name, color}]
+    fields_snapshot = models.JSONField(default=list, verbose_name="字段快照")
+    folders_snapshot = models.JSONField(default=list, verbose_name="目录快照")    # [{name, parent_path}]
+    created_by = models.ForeignKey(
+        "db.User", on_delete=models.SET_NULL, null=True, related_name="+", verbose_name="创建人",
+    )
+
+    class Meta(BaseModel.Meta):
+        db_table = "project_templates"
+        verbose_name = "项目模板"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "name"], name="uniq_projtpl_ws_name",
+                condition=models.Q(is_builtin=False),
+            ),
+        ]
 
 
 class ProjectMember(BaseModel):

@@ -62,6 +62,7 @@ MIDDLEWARE = [
     "plane.base.middleware.AuditContextMiddleware",  # ④
     "plane.base.middleware.ResponseEnvelopeMiddleware",  # ⑤
     "plane.base.middleware.MaintenanceModeMiddleware",  # ⑥
+    "plane.base.middleware.WorkspaceArchiveMiddleware",  # ⑦ Sprint-5 TEAM-003 归档写保护
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",

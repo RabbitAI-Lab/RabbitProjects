@@ -62,7 +62,8 @@ def _base_url(request) -> str:
 
 
 def _publish(event: str, link: FileShareLink, actor) -> None:
-    """BR-13：on_commit 投内部事件（匿名访问路径不经此——防刷屏）。"""
+    """BR-13：on_commit 投内部事件——WS（file.share.*）+ 动态流双半边
+    （动态流为 Sprint-5 T5-02 管道扩域补齐）；匿名访问路径不经此——防刷屏。"""
     from plane.bgtasks.event_publisher import publish_share_event
 
     publish_share_event(
@@ -71,6 +72,19 @@ def _publish(event: str, link: FileShareLink, actor) -> None:
         asset_id=str(link.asset_id),
         share_id=str(link.id),
         actor_id=str(actor.id) if getattr(actor, "id", None) else None,
+    )
+    from plane.db.services.file_stream import emit_file_activity
+
+    name = (link.asset.attributes or {}).get("name", "")
+    stream = {
+        "file.share.created": ("share_created", f"创建了文件「{name}」的分享链接"),
+        "file.share.revoked": ("share_revoked", f"吊销了文件「{name}」的分享链接"),
+        "file.share.extended": ("share_extended", f"延长了文件「{name}」分享链接的有效期"),
+    }
+    action, comment = stream[event]
+    emit_file_activity(
+        project_id=link.asset.project_id, asset_id=link.asset_id,
+        actor_id=getattr(actor, "id", None), action=action, comment=comment,
     )
 
 

@@ -27,7 +27,7 @@ from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.views import APIView
 
 from plane.app.permissions import IsAuthenticated
-from plane.app.views._access import get_project_or_404
+from plane.app.views._access import get_project_or_404, require_project_writable
 from plane.base.exception import AppException
 from plane.base.response import success_response
 from plane.db.models import Issue, Label, ProjectRole, State
@@ -182,8 +182,7 @@ def _gate_bulk_write(project) -> None:
     """批级写门槛：issue.bulk.update（CONTRIBUTOR+；VIEWER/COMMENTER 全拒，BE-14）。"""
     if project.current_user_role < ProjectRole.CONTRIBUTOR:
         raise AppException("PERM_ROLE_INSUFFICIENT")
-    if project.status == "archived":  # TASK-009 BR-13：已归档项目整批 403
-        raise AppException("PERM_PROJECT_ARCHIVED")
+    require_project_writable(project)  # archived/closed 整批 403（PROJ-003）
 
 
 def _translate_bulk_error(exc: BulkActionError) -> AppException:

@@ -16,6 +16,12 @@ class Label(BaseModel):
         verbose_name="是否启用",
         help_text="停用后不可新挂载；已挂载卡片淡显保留（BR-05）",
     )
+    # Sprint-5（TEAM-003 §4.1）：全局下发覆盖链——origin=global 为下发态，
+    # 项目覆盖 = local 行 overrides_global_id 指向全局标签（§4.3.2 合并判定）
+    origin = models.CharField(max_length=8, default="local", verbose_name="来源")
+    overrides_global_id = models.UUIDField(
+        null=True, blank=True, db_index=True, verbose_name="覆盖的全局标签",
+    )
 
     class Meta(BaseModel.Meta):
         db_table = "labels"

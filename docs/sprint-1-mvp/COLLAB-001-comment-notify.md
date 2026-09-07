@@ -162,6 +162,14 @@ flowchart TD
 
 ### 2.3 通知事件源表（P1 四类）
 
+> **Sprint-5 扩域补登（INTG-002 §2.3 待回改登记，2026-09-07 实现同步）**：
+> 通知类型闭集四类 → 五类——新增第五类 `webhook.auto_disabled`（Webhook 端点
+> 连败 50 次自动停用时通知创建者，INTG-002 BR-08；锚定 §2.3 表外的系统事件，
+> 不入本表四类行内——冻结原文不动纪律）。此外本迭代通知中心还承载了
+> `workspace.member_disabled/enabled/role_changed`（AUTH-006，TEAM-002 语域）、
+> `workspace.archived/restored`（TEAM-003）、`integration.merge_blocked`
+> （INTG-001）等系统事件——均为 COLLAB-001 通道复用，非本表类型面扩编。
+
 | 事件 | 触发 | 接收人 | title 文案 | data 载荷 |
 | --- | --- | --- | --- | --- |
 | `issue.assigned` | 指派集合**新增**成员（含创建时首派） | 新增被指派人 − 操作者 | 「{actor} 将 {RBT-128} 指派给你」 | `{issue_id, project_id, workspace_slug, issue_key, actor}` |

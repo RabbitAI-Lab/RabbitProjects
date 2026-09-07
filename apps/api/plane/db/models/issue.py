@@ -14,6 +14,14 @@ class Issue(BaseModel):
         HIGH = "high", "高"
         URGENT = "urgent", "紧急"
 
+    # Sprint-5（INTG-001 §4.1.1 幂等锚点亮 + §4.1.2 PR/Commit 内联聚合）
+    external_source = models.CharField(
+        max_length=16, null=True, blank=True, db_index=True, verbose_name="外部来源")
+    external_id = models.CharField(
+        max_length=64, null=True, blank=True, verbose_name="外部对象 node_id")
+    github_context = models.JSONField(
+        default=dict, blank=True, verbose_name="GitHub 聚合",
+        help_text='{"prs": [], "commits": []}（事件驱动增量，展示层直读）')
     project = models.ForeignKey("db.Project", on_delete=models.CASCADE, related_name="issues", verbose_name="所属项目")
     name = models.CharField(max_length=512, verbose_name="标题")
 
@@ -87,6 +95,13 @@ class Issue(BaseModel):
                 condition=models.Q(deleted_at__isnull=True),
                 name="uniq_issue_sequence_per_project",
             ),
+            # INTG-001 BR-04 幂等锚（软删兼容条件唯一）
+            models.UniqueConstraint(
+                fields=["project", "external_source", "external_id"],
+                condition=models.Q(external_source__isnull=False,
+                                   deleted_at__isnull=True),
+                name="uniq_external_anchor_per_project",
+            ),
             models.CheckConstraint(
                 check=models.Q(start_date__isnull=True)  # type: ignore[call-arg]  # Django 5.1 起 check→condition，暂用旧名（运行时兼容）
                 | models.Q(target_date__isnull=True)
@@ -144,6 +159,10 @@ class IssueAssignee(BaseModel):
 class IssueLabel(BaseModel):
     issue = models.ForeignKey("db.Issue", on_delete=models.CASCADE, related_name="issue_labels")
     label = models.ForeignKey("db.Label", on_delete=models.CASCADE, related_name="issue_labels")
+    # Sprint-5（TEAM-003 §4.1 ④）：全局标签软删时的名字快照（BR-06——
+    # 「该条任务引用在删除时刻看到的名字」，事务内 §4.3.4 写入）
+    name_snapshot = models.CharField(max_length=50, blank=True, default="",
+                                     verbose_name="名字快照")
 
     class Meta(BaseModel.Meta):
         db_table = "issue_labels"
@@ -152,6 +171,16 @@ class IssueLabel(BaseModel):
 
 
 class IssueActivity(BaseModel):
+    """任务域 / 项目域双轨操作日志（PROJ-003 §4.1 迁移要点 ⑤，Sprint-5 管道扩域）。
+
+    双轨指向互斥（CHECK 约束）：``issue_id XOR project_id``——issue 域行
+    （issue_id 非空）承载 TASK-010 任务动态；project 域行（project_id 非空）
+    承载生命周期（PROJ-003）与文件域事件（FILE-002 BR-12 / FILE-003 BR-13 /
+    FILE-004 BR-13，ADR-0022 D-2 管道扩域收口）。规格「存量行按
+    issue.project_id 投影回填」与 XOR 约束互斥且冗余（issue 域经
+    issue_ids 集合取数已覆盖），实现取 XOR 不回填——偏差随 Sprint-5 ADR 登记。
+    """
+
     class Verb(models.TextChoices):
         CREATED = "created", "创建"
         UPDATED = "updated", "更新"
@@ -159,6 +188,10 @@ class IssueActivity(BaseModel):
 
     issue = models.ForeignKey(
         "db.Issue", on_delete=models.CASCADE, null=True, related_name="issue_activities", verbose_name="工作项"
+    )
+    project = models.ForeignKey(
+        "db.Project", on_delete=models.CASCADE, null=True, blank=True,
+        related_name="project_activities", verbose_name="项目（project 域行）",
     )
     actor = models.ForeignKey(
         "db.User", on_delete=models.SET_NULL, null=True, related_name="issue_activities", verbose_name="操作人"
@@ -176,10 +209,21 @@ class IssueActivity(BaseModel):
         db_table = "issue_activities"
         verbose_name = "工作项操作日志"
         ordering = ("created_at",)
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(issue__isnull=True) ^ models.Q(project__isnull=True),
+                name="chk_activity_issue_project_xor",
+            ),
+        ]
         indexes = [
             models.Index(fields=["issue", "created_at"], name="idx_activity_issue_time"),
             models.Index(fields=["actor", "created_at"], name="idx_activity_actor_time"),
             models.Index(fields=["field"], name="idx_activity_field"),
+            models.Index(
+                fields=["project", "-created_at"],
+                condition=models.Q(issue__isnull=True),
+                name="idx_activity_project_time",
+            ),
         ]
 
 

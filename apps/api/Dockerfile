@@ -27,6 +27,13 @@ RUN if [ "$INSTALL_TRANSCODE_TOOLS" = "1" ]; then \
         libreoffice-writer libreoffice-calc libreoffice-impress ffmpeg \
       && rm -rf /var/lib/apt/lists/*; \
     fi
+# ── INFRA-005 §4.4.1：备份工具链（仅 worker——daily_backup 三校验需要
+# pg_dump/pg_restore；bookworm postgresql-client=15 与 compose db 15.7 同大版本）──
+ARG INSTALL_BACKUP_TOOLS=0
+RUN if [ "$INSTALL_BACKUP_TOOLS" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends postgresql-client \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY apps/api/ /app/

@@ -60,6 +60,15 @@ app.conf.beat_schedule = {
         "task": "plane.db.services.webhook_outbound.retry_due_deliveries",
         "schedule": crontab(minute="*/5"),             # 自调度丢失兜底（§4.3）
     },
+    # ── INFRA-005 §4.4（Sprint-6）：备份体系 ──
+    "daily-backup": {
+        "task": "plane.bgtasks.backup.daily_backup",
+        "schedule": crontab(hour=3, minute=7),         # BR-07：每日 03:07 错峰
+    },
+    "cleanup-old-backups": {
+        "task": "plane.bgtasks.backup.cleanup_old_backups",
+        "schedule": crontab(hour=4, minute=7),         # BR-08：30 天保留双保险（ilm 第一道）
+    },
 }
 
 

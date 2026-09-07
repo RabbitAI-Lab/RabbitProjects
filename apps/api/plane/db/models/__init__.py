@@ -1,5 +1,6 @@
 from .account import PasswordResetToken
 from .asset import FileAsset
+from .backup import BackupRun
 from .base import BaseModel, SoftDeleteManager, SoftDeleteQuerySet
 from .comment import CommentReaction, IssueComment
 from .custom_field import CustomFieldDefinition
@@ -23,6 +24,7 @@ __all__ = [
     "BaseModel",
     "SoftDeleteManager",
     "SoftDeleteQuerySet",
+    "BackupRun",
     "User",
     "WebhookDelivery",
     "WebhookEndpoint",

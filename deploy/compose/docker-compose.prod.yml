@@ -90,6 +90,10 @@ services:
 
   worker:
     <<: *app
+    build:
+      args:
+        # INFRA-005 §4.4.1：worker 内置 pg_dump/pg_restore（daily_backup 三校验）
+        INSTALL_BACKUP_TOOLS: "1"
     # BR-13：rp-internal（DB/Redis/MQ/MinIO）+ rp-egress（Webhook 443 / SMTP
     # 587/465 出站专用面；域名级白名单 P4）
     networks: !override {rp-internal: {}, rp-egress: {}}

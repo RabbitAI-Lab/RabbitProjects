@@ -151,6 +151,10 @@ REST_FRAMEWORK = {
 #: 演示经 env ``RATE_LIMIT_ENABLED=1`` 临时开启（§7.2.1 限流矩阵压测入口）。
 RATE_LIMIT_ENABLED = env_bool("RATE_LIMIT_ENABLED", False)
 
+#: 备份产物三校验①的大小阈值（INFRA-005 BR-07）：低于即判「异常偏小」失败
+#:（空库/错库/半途截断）。dev 空库调试可 env 调小。
+BACKUP_MIN_SIZE_BYTES = int(env("BACKUP_MIN_SIZE_BYTES", str(1024 * 1024)))
+
 SPECTACULAR_SETTINGS = {"TITLE": "RabbitProjects API", "VERSION": "0.1.0"}
 
 # ── CORS：精确白名单，禁止 "*"（§13.4）────────────────────

@@ -144,6 +144,58 @@ def put_object(*, bucket: str, key: str, body: bytes, content_type: str) -> None
         raise StorageUnavailable(str(exc)) from exc
 
 
+def upload_fileobj(*, bucket: str, key: str, path: str) -> None:
+    """流式上传本地文件（INFRA-005 备份产物——pg_dump 动辄百 MB 级，不走内存）。
+
+    服务端加密 AES256 优先（BR-07）；MinIO 未配 KMS 时 SSE 请求被拒——降级
+    明文上传 + warn（known-debt：生产启用 KMS 后回收该降级）。降级重传必须
+    新开文件句柄：boto3 失败路径不保证句柄可 seek（实测 seek of closed file）。
+    """
+    client = _client()
+    sse_failed = False
+    try:
+        with open(path, "rb") as fh:
+            try:
+                client.upload_fileobj(
+                    fh, bucket, key,
+                    ExtraArgs={"ServerSideEncryption": "AES256"})
+            except (ClientError, BotoCoreError) as sse_exc:
+                # 仅 SSE-S3 被拒（无 KMS）才降级明文；凭据/网络类错误直抛
+                if not any(k in str(sse_exc) for k in ("KMS", "ncryption", "InvalidArgument")):
+                    raise
+                logger.warning(
+                    "storage_sse_degraded bucket=%s key=%s err=%s（MinIO 无 KMS，明文重传）",
+                    bucket, key, sse_exc)
+                sse_failed = True
+        if sse_failed:
+            with open(path, "rb") as fh:
+                client.upload_fileobj(fh, bucket, key)
+    except (BotoCoreError, ClientError, EndpointConnectionError) as exc:
+        logger.warning("storage_upload_failed bucket=%s key=%s err=%s", bucket, key, exc)
+        raise StorageUnavailable(str(exc)) from exc
+
+
+def list_objects(*, bucket: str, prefix: str) -> list[dict[str, Any]]:
+    """列举对象（INFRA-005 cleanup_old_backups 的 30 天双保险清扫）。
+
+    返回 [{key, size, last_modified(datetime)}]；空前缀返回空（防全桶扫）。
+    """
+    if not prefix:
+        return []
+    client = _client()
+    out: list[dict[str, Any]] = []
+    try:
+        paginator = client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                out.append({"key": obj["Key"], "size": obj["Size"],
+                            "last_modified": obj["LastModified"]})
+    except (BotoCoreError, ClientError, EndpointConnectionError) as exc:
+        logger.warning("storage_list_failed bucket=%s prefix=%s err=%s", bucket, prefix, exc)
+        raise StorageUnavailable(str(exc)) from exc
+    return out
+
+
 def presigned_get_url(
     *,
     bucket: str,

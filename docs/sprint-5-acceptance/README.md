@@ -1,4 +1,4 @@
-# Sprint-5 验收录屏（13 幕全过，2026-09-07 实录；sprint-3/4 同模式）
+# Sprint-5 验收录屏（13 幕 mock 全过 + 第 14 幕真 GitHub 联调，2026-09-07 实录；sprint-3/4 同模式）
 
 > 概览 §6 七条验收条款的幕映射：§6-2 GitHub 集成（幕 1~4）｜§6-3 Webhook 出站（幕 5~8）｜§6-4 项目统计（幕 9~10）｜§6-5 生命周期 + 模板（幕 11）｜§6-6 团队治理（幕 12）｜§6-7 行级隔离（幕 13 a/b）。
 >
@@ -23,6 +23,7 @@
 | 11 | 生命周期全链（active→archived→active + 模板实化）| PROJ-003 §3.2/§3.3/§2.5 / 概览 §6-5 | 8s | ✓ |
 | 12 | 团队治理四区块（归档/全局标签/状态模板/活跃度）| TEAM-003 §3.1 / 概览 §6-6 | 6s | ✓ |
 | 13 | 矩阵可见性端到端（a/b）| AUTH-006 §3.3 / 概览 §6-7 | 4s | ✓ |
+| 14 | 真 GitHub 联调全链（a/b，github.com 实站）| INTG-001 §2.1/§2.2/§2.3 / 概览 §6-2 | 99s | ✓ |
 
 ## 双视口成对视频（a/b 并排观看）
 
@@ -52,7 +53,8 @@ ONLY="双向同步三向" node scripts/acceptance_video_s5.mjs   # 单幕重录�
 
 ## 已知事项
 
-1. **GitHub mock（已实跑全链，2026-09-07）**：`scripts/mock_github_receiver.py`(8090) 扮演 github.com——入站事件（opened/edited/closed/reopened/merged/push）以真实 GitHub 事件族名发 `X-GitHub-Event` 头、按绑定 secret 现算 `X-Hub-Signature-256` 签名投到本站 webhook 端点，**RabbitProjects 的验签/幂等/查重/worker 路由全链真实执行**（幕 02 三向/幕 03 合并流转/幕 04 挂载均为 HTTP→broker→worker→DB 实弹，worker 日志 `mounted:1`/`updated:name` 可复核）。真实 GitHub App 凭证（App ID + RSA 私钥）联调为用户提供项（OAuth App 凭证不适用于安装流），到位后补第 14 幕。
+1. **GitHub mock（已实跑全链，2026-09-07）**：`scripts/mock_github_receiver.py`(8090) 扮演 github.com——入站事件（opened/edited/closed/reopened/merged/push）以真实 GitHub 事件族名发 `X-GitHub-Event` 头、按绑定 secret 现算 `X-Hub-Signature-256` 签名投到本站 webhook 端点，**RabbitProjects 的验签/幂等/查重/worker 路由全链真实执行**（幕 02 三向/幕 03 合并流转/幕 04 挂载均为 HTTP→broker→worker→DB 实弹，worker 日志 `mounted:1`/`updated:name` 可复核）。
+1a. **真 GitHub 联调（第 14 幕已实拍，2026-09-07）**：GitHub App `rabbit-projects`（App ID 4859835）已安装于 RabbitAI-Lab 组织（installation 159744359）；因 App 未含「Repository webhooks」写权限，repo webhook 注册改走 **App 级 webhook**（`PATCH /app/hook/config` 指向公网穿透域名，签名 secret 与绑定行一致）；入站七链全实弹（建任务/改名/关闭流转/重开/评论镜像/PR 合并自动完成/双 Commit 挂载），出站三链全实弹（标题 `[S5AC-n]` 前缀回写、评论推送、installation token 全 API）；联调暴露并修复两缺陷：issue key 正则漏含数字前缀（已修）、**BR-06 评论双向同步整条缺失（worker 路由 + 出站任务均零实现，已补齐）**。目标仓库 `RabbitAI-Lab/RabbitTest`（公开，b 视口匿名可视为证）。复跑前置：GITHUB_APP_ID/GITHUB_APP_PRIVATE_KEY/GITHUB_WEBHOOK_BASE 三 env 注入 API+worker + 穿透指向 8000 + `node scripts/acceptance_video_s14_real_github.mjs`（独立录制器，不跑 seed、不依赖 mock）。
 2. **5xx 故障注入（已实跑）**：`scripts/mock_500_receiver.py`(8091) 恒 500 + `PUT /__mode` 可切 200——幕 06 演示真实退避（投递→500→退避→死信红点→切 200→重放成功），7 次完整退避表（含 6h 尾档）由 sprint-5-flow/test_intg002 全链断言（`apply_async(countdown=)` 序列覆盖 1s/10s/60s/600/3600/21600 全表）。
 3. **WebSocket 主动踢出未实现**（A-1#9' 偏差）：禁用账号的 401 收口在 API 面（DRF SessionAuthentication 拒 inactive）已即时，WS 主动推送待 sprint-6 INFRA-005 增强——本录屏幕 13 仅演示 API 端 401。
 4. **公开项目 WS_ONLY 通道未实现**（A-1#1）：本录屏不演示"WS_ONLY 访问公开项目"——架构回改后由 sprint-6 收尾补录。

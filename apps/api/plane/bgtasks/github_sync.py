@@ -3,8 +3,11 @@
 规范化事件路由：
   issues.opened → 建任务（BR-05）+ 回写标题前缀 [RBT-n]
   issues.edited / closed / reopened → 字段 diff 更新（后写胜出 BR-07）
+  issue_comment.created → 评论入站（BR-06 第 4 类字段，系统账号代发）
   pull_request.closed ∧ merged → 合并自动流转（走 TASK-005 守卫，BR-10 无旁路）
   push → Commit 挂载（RBT-数字 正则提取 + sha×任务 去重，BR-11）
+出站（本系统 → GitHub）：任务评论 → Issue 评论（sync_comment_outbound，
+事务后投递；系统账号代发的入站评论不回投——防环）
 
 系统账号：``rp-integration``（懒创建，BR-15——Activity ⚙ 来源区分）；
 写路径全部走既有服务/守卫，绝不旁路直改 Issue。
@@ -57,6 +60,7 @@ def _route(event: dict) -> str:
         "issue.edited": _on_issue_edited,
         "issue.closed": _on_issue_closed,
         "issue.reopened": _on_issue_reopened,
+        "comment.created": _on_comment_created,
         "pull_request.merged": _on_pr_merged,
         "push": _on_push,
     }.get(kind)
@@ -201,6 +205,89 @@ def _on_issue_closed(event: dict) -> str:
 
 def _on_issue_reopened(event: dict) -> str:
     return _transition_by_github_state(event, closed=False)
+
+
+def _on_comment_created(event: dict) -> str:
+    """GitHub Issue 评论 → 站内评论（BR-06 白名单第 4 类；actor=系统账号代发）。
+
+    幂等由视图层 Delivery SETNX 承担；未映射任务（issue 无 node_id 锚）静默丢弃。
+    """
+    issue = _locate_issue(event)
+    if issue is None:
+        return "dropped"
+    gh_comment = event.get("comment") or {}
+    body = (gh_comment.get("body") or "").strip()
+    if not body:
+        return "dropped"
+    from plane.db.models import IssueComment
+
+    sender = event.get("sender") or "github"
+    IssueComment.objects.create(
+        issue=issue,
+        actor=system_account(),
+        comment_html=_html(f"@{sender}（GitHub）：\n{body}"),
+        comment_json={},
+    )
+    return "commented"
+
+
+@shared_task(bind=True, max_retries=3, retry_backoff=True)
+def sync_comment_outbound(self, comment_id: str) -> str:
+    """任务评论 → GitHub Issue 评论（BR-06；挂点 CommentService 事务后）。
+
+    防环：系统账号代发的评论（即入站镜像）不回投。
+    """
+    from plane.db.models import IssueComment
+
+    comment = (IssueComment.objects
+               .filter(pk=comment_id, deleted_at__isnull=True)
+               .select_related("issue", "actor").first())
+    if comment is None:
+        return "dropped"
+    issue = comment.issue
+    if issue.external_source != "github" or not comment.actor:
+        return "skipped"
+    if comment.actor.email == SYSTEM_ACCOUNT_EMAIL:
+        return "echo-skipped"
+    ctx = issue.github_context or {}
+    number = ctx.get("number")
+    if not number:
+        return "skipped"
+    binding = _binding_for_issue(issue)
+    if binding is None:
+        return "no-binding"
+    from plane.db.models import Project
+    from plane.integrations.github import GitHubApiError, GitHubClient
+
+    identifier = (Project.objects.filter(pk=issue.project_id)
+                  .values_list("identifier", flat=True).first() or "?")
+    client = GitHubClient(binding.installation_id)
+    try:
+        client.create_issue_comment(
+            binding.repository_full_name, int(number),
+            f"{comment.actor.display_name}（RabbitProjects {identifier}-{issue.sequence_id}）：\n"
+            f"{comment.comment_stripped}",
+            token_cache=binding.token_cache)
+    except GitHubApiError:
+        binding.token_cache = client.last_token_cache or binding.token_cache
+        binding.save(update_fields=["token_cache", "updated_at"])
+        raise  # 让 celery 退避重试
+    binding.token_cache = client.last_token_cache or binding.token_cache
+    binding.save(update_fields=["token_cache", "updated_at"])
+    return "pushed"
+
+
+def _binding_for_issue(issue):
+    """任务 → 绑定：github_context.url 里的仓库名精确匹配，退而取项目首个 syncing 绑定。"""
+    from plane.db.models import IntegrationInstallation
+
+    qs = IntegrationInstallation.objects.filter(
+        project_id=issue.project_id, deleted_at__isnull=True, sync_status="syncing")
+    url = str((issue.github_context or {}).get("url") or "").lower()
+    for b in qs:
+        if b.repository_full_name and b.repository_full_name in url:
+            return b
+    return qs.first()
 
 
 def _transition_by_github_state(event: dict, *, closed: bool) -> str:

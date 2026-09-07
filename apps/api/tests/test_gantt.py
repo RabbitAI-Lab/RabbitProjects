@@ -463,7 +463,6 @@ def test_ut19_request_tz_today_and_overdue(env):
     边界判定改用恒差 25h 的 Pacific/Kiritimati(+14) vs Pacific/Pago_Pago(-11)
     （两时区「今天」恒差 ≥1 日，断言与运行时刻无关）。
     """
-    ny_today = datetime.now(ZoneInfo("America/New_York")).date()
     kiri_today = datetime.now(ZoneInfo("Pacific/Kiritimati")).date()
     pago_today = datetime.now(ZoneInfo("Pacific/Pago_Pago")).date()
     assert kiri_today > pago_today  # 前置自检：恒差成立
@@ -605,11 +604,12 @@ def test_it07_viewport_query_uses_gantt_index(env):
     真实数据量的计划断言（BitmapOr 合并等形态）在 sprint-4-bench-gantt.py
     以 1 万行数据集 EXPLAIN (ANALYZE) 复核。
     """
-    from plane.app.views.gantt import GanttRowsView
     from django.test import RequestFactory
 
+    from plane.app.views.gantt import GanttRowsView
+
     for i in range(5):
-        _issue(env, f"I{i}", start="2026-09-0%d" % (i + 1), target="2026-09-10")
+        _issue(env, f"I{i}", start=f"2026-09-0{i + 1}", target="2026-09-10")
     rf = RequestFactory()
     req = rf.get(
         f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/gantt/"

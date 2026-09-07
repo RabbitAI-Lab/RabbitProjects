@@ -62,6 +62,7 @@
 | # | 幕 | 用户路径叙述 | 验收条款 |
 | --- | --- | --- | --- |
 | 13 | 矩阵可见性端到端（a/b）| a 视口：MEMBER 看见项目并能写评论；b 视口：同 WS 下 OUTSIDER 直连项目 404 → 归档后 a 视口写操作 403 PERM_WORKSPACE_ARCHIVED | AUTH-006 §3.3 / 概览 §6-7 |
+| 14 | 真 GitHub 联调全链（a/b·补录）| a 视口：集成页真实绑定行（rabbitai-lab/rabbittest）→ GitHub 实时建 issue 落任务列表 → S5AC-14 抽屉 GitHub 区块（真 PR #4 + 双 commit sha）→ S5AC-13 评论输入；b 视口：github.com 公开仓库匿名页——issue #2 双向评论（a 视口评论 reload 即现）、issues 列表 `[S5AC-*]` 前缀、PR #4 已合并。App 级 webhook 经公网穿透入站，出站走 installation token | INTG-001 §2.1/§2.2/§2.3 / 概览 §6-2 |
 
 ## 与 sprint-4 acceptance 的差异
 

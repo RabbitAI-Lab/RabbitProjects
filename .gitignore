@@ -37,3 +37,4 @@ docs/sprint-4-acceptance/videos/
 deploy/keys/
 
 docs/sprint-5-acceptance/videos/
+apps/api/.coverage

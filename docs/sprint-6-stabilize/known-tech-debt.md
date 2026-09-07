@@ -17,7 +17,7 @@
 | 8 | MinIO KMS 启用后回收 SSE 降级 | 运维侧 KMS 配置；代码降级路径+告警已就位——INFRA-006 |
 | 9 | SearchRateThrottle 挂载 | V1.0 无全局搜索端点（类+配额已就位）——Sprint-7 搜索端点 |
 | 10 | admin 运维面 drill 触发/产物下载预签名两端口 | restore-drill.sh 与 mc 已承载操作面——Sprint-7 admin 控制台深化 |
-| 11 | GitHub App per-repo webhook 回归（G-1） | 前置=用户在 GitHub App 补「Repository webhooks」写权限；入站双模式已通用——待用户操作后回归 |
+| 11 | ~~GitHub App per-repo webhook 回归（G-1）~~ **已收口（2026-09-08）** | 用户补权限+组织重批后回归全过：绑仓端点 `webhook_registered:true`、仓上 hook active（675944498，四事件族）、探针清理防双投递、ping 全链 202（隧道+验签闭环）；探针=`scripts/g1-webhook-regress.sh`（幂等）。附注：App 权限变更不自动作用于已存在 installation——需组织 owner 重批（本次排查结论） |
 | 12 | C 表三件：api-conventions §13.3 限流章节 / INTG-002 §9 风险表补登 / §4.1 口径对齐 | 文档回改批次——Sprint-7 首批文档轮（§7.1 L1 补注已本轮完成） |
 | 13 | E2E 浏览器兼容矩阵（Chrome/Edge/Firefox/Safari） | 需多浏览器 runner 基建——Sprint-7 QA 面；Chromium 全绿 |
 

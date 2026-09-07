@@ -1011,7 +1011,8 @@ if ws_role is not None and ws_role >= WorkspaceRole.ADMIN:
 | Workspace | read | `workspace.read` | ✅ | ✅ | ✅ | ⚠️ 仅基础信息 |
 | Workspace | update（名称/描述/头像） | `workspace.update` | ✅ | ✅ | ❌ | ❌ |
 | Workspace | delete（解散） | `workspace.delete` | ✅ | ❌ | ❌ | ❌ |
-| Workspace | archive（归档） | `workspace.archive` | ✅ | ✅ | ❌ | ❌ |
+| Workspace | archive（归档） | `workspace.archive` | ✅ | ⚠️ 仅 OWNER（ADR-0023 收窄：空间级生死语义，Sprint-5 已落地） | ❌ | ❌ |
+| Workspace | restore（恢复） | `workspace.restore` | ✅ | ❌ | ❌ | ❌ |（ADR-0023 新增行——与 archive 同 Owner-only）
 | Workspace | transfer_ownership | `workspace.transfer` | ✅ | ❌ | ❌ | ❌ |
 | Workspace Setting | manage（标签/状态/字段模板） | `workspace.setting.manage` | ✅ | ✅ | ❌ | ❌ |
 | Workspace Member | read（成员列表） | `workspace.member.read` | ✅ | ✅ | ✅ | ❌ |
@@ -1036,6 +1037,7 @@ if ws_role is not None and ws_role >= WorkspaceRole.ADMIN:
 | Wiki（P3） | update | `wiki.update` | ✅ | ✅ | ✅ | ❌ |
 | Wiki（P3） | manage（权限/模板） | `wiki.manage` | ✅ | ✅ | ❌ | ❌ |
 | Report | read（跨项目统计） | `report.read` | ✅ | ✅ | ⚠️ 仅本人参与项目 | ❌ |
+| Report | read（团队成员活跃度） | `team.stats.read` | ✅ | ✅ | ❌ | ❌ |（ADR-0025 新增行：治理面语义，Sprint-5 已落地——实现于 WorkspaceActivityStatsView）
 | Report | export | `report.export` | ✅ | ✅ | ❌ | ❌ |
 
 ### 8.2 项目级资源

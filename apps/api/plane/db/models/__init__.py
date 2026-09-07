@@ -15,7 +15,7 @@ from .state import State
 from .user import User
 from .view import IssueView
 from .worklog import WorkLog
-from .workspace import Workspace, WorkspaceMember, WorkspaceMemberInvite
+from .workspace import Workspace, WorkspaceLabel, WorkspaceLoginDailyAggregate, WorkspaceMember, WorkspaceMemberInvite
 
 __all__ = [
     "BaseModel",
@@ -24,6 +24,8 @@ __all__ = [
     "User",
     "Workspace",
     "WorkspaceMember",
+    "WorkspaceLoginDailyAggregate",
+    "WorkspaceLabel",
     "WorkspaceMemberInvite",
     "Project",
     "ProjectMember",

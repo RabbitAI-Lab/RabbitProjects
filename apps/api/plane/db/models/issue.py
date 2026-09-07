@@ -144,6 +144,10 @@ class IssueAssignee(BaseModel):
 class IssueLabel(BaseModel):
     issue = models.ForeignKey("db.Issue", on_delete=models.CASCADE, related_name="issue_labels")
     label = models.ForeignKey("db.Label", on_delete=models.CASCADE, related_name="issue_labels")
+    # Sprint-5（TEAM-003 §4.1 ④）：全局标签软删时的名字快照（BR-06——
+    # 「该条任务引用在删除时刻看到的名字」，事务内 §4.3.4 写入）
+    name_snapshot = models.CharField(max_length=50, blank=True, default="",
+                                     verbose_name="名字快照")
 
     class Meta(BaseModel.Meta):
         db_table = "issue_labels"

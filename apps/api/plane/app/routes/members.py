@@ -5,6 +5,14 @@ Sprint-5（AUTH-006）：批量改角色 / 账号禁用 / 账号启用。
 """
 from django.urls import path
 
+from plane.app.views.workspace_governance import (
+    WorkspaceActivityStatsView,
+    WorkspaceArchiveView,
+    WorkspaceDefaultStatesView,
+    WorkspaceLabelDetailView,
+    WorkspaceLabelListCreateView,
+    WorkspaceRestoreView,
+)
 from plane.app.views.workspace_members import (
     InvitationAcceptView,
     InvitationPrecheckView,
@@ -84,5 +92,37 @@ urlpatterns = [
         "invitations/<str:token>/accept/",
         InvitationAcceptView.as_view(),
         name="invitation-accept",
+    ),
+
+    # ── Sprint-5（TEAM-003 §4.2）：治理五组端点 ──
+    path(
+        "workspaces/<slug:slug>/labels/",
+        WorkspaceLabelListCreateView.as_view(),
+        name="workspace-labels-list-create",
+    ),
+    path(
+        "workspaces/<slug:slug>/labels/<uuid:label_id>/",
+        WorkspaceLabelDetailView.as_view(),
+        name="workspace-labels-detail",
+    ),
+    path(
+        "workspaces/<slug:slug>/default-states/",
+        WorkspaceDefaultStatesView.as_view(),
+        name="workspace-default-states",
+    ),
+    path(
+        "workspaces/<slug:slug>/activity-stats/",
+        WorkspaceActivityStatsView.as_view(),
+        name="workspace-activity-stats",
+    ),
+    path(
+        "workspaces/<slug:slug>/archive/",
+        WorkspaceArchiveView.as_view(),
+        name="workspace-archive",
+    ),
+    path(
+        "workspaces/<slug:slug>/restore/",
+        WorkspaceRestoreView.as_view(),
+        name="workspace-restore",
     ),
 ]

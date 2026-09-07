@@ -21,6 +21,8 @@ PERMISSION_MATRIX: dict[str, dict[str, int]] = {
         "workspace.member.read": WorkspaceRole.MEMBER,
         "workspace.member.invite": WorkspaceRole.ADMIN,
         "workspace.member.manage": WorkspaceRole.ADMIN,   # + R2 层级保护（业务层）
+    "team.stats.read": WorkspaceRole.ADMIN,           # Sprint-5 TEAM-003（ADR-0025：rbac §8.1 Report 分区新行）
+
         "workspace.member.remove": WorkspaceRole.ADMIN,   # + R2
         "workspace.member.leave": WorkspaceRole.MEMBER,   # + R3 末位保护（业务层）
         "workspace.transfer": WorkspaceRole.OWNER,
@@ -72,6 +74,7 @@ PERMISSION_LABELS: dict[str, str] = {
     "workspace.member.read": "查看成员列表",
     "workspace.member.invite": "邀请成员",
     "workspace.member.manage": "管理成员角色",
+    "team.stats.read": "查看团队成员活跃度",
     "workspace.member.remove": "移除成员",
     "workspace.member.leave": "退出团队",
     "workspace.transfer": "转让所有权",

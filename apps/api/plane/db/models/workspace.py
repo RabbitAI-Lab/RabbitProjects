@@ -109,6 +109,16 @@ class Workspace(BaseModel):
     owner = models.ForeignKey(
         "db.User", on_delete=models.CASCADE, related_name="owner_workspaces", verbose_name="所有者"
     )
+    # Sprint-5（TEAM-003 §4.1）：归档审计列 + 基础状态模板快照
+    archived_at = models.DateTimeField(null=True, blank=True, verbose_name="归档时间")
+    archived_by = models.ForeignKey(
+        "db.User", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="archived_workspaces", verbose_name="归档操作人",
+    )
+    default_states = models.JSONField(
+        default=list, blank=True, verbose_name="基础状态模板快照",
+        help_text='{"version": n, "groups": [...]}（§2.3；空 = 未覆盖内置默认）',
+    )
 
     class Meta(BaseModel.Meta):
         db_table = "workspaces"
@@ -138,4 +148,51 @@ class WorkspaceMember(BaseModel):
         indexes = [
             models.Index(fields=["member", "workspace", "role"]),
             models.Index(fields=["workspace", "role"]),
+        ]
+
+
+class WorkspaceLabel(BaseModel):
+    """全局标签：下发到全部项目（TEAM-003 BR-05 并集语义）。"""
+
+    workspace = models.ForeignKey(
+        "db.Workspace", on_delete=models.CASCADE, related_name="global_labels",
+        verbose_name="工作空间",
+    )
+    name = models.CharField(max_length=50, verbose_name="标签名")
+    color = models.CharField(max_length=7, verbose_name="颜色")  # #RRGGBB
+    description = models.CharField(max_length=255, blank=True, default="", verbose_name="描述")
+
+    class Meta(BaseModel.Meta):
+        db_table = "workspace_labels"
+        verbose_name = "全局标签"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "name"], name="uniq_wslabel_ws_name",
+                condition=models.Q(deleted_at__isnull=True),
+            ),
+        ]
+
+
+class WorkspaceLoginDailyAggregate(BaseModel):
+    """登录命中表（TEAM-003 §4.3.3）：workspace × member × date 存在性——
+    无操作内容、无更细时间戳（隐私红线 BR-09 的存储层纪律）；唯一约束兜底幂等。"""
+
+    workspace = models.ForeignKey(
+        "db.Workspace", on_delete=models.CASCADE, related_name="login_hits",
+        verbose_name="工作空间",
+    )
+    member = models.ForeignKey(
+        "db.User", on_delete=models.CASCADE, related_name="workspace_login_hits",
+        verbose_name="成员",
+    )
+    hit_date = models.DateField(db_index=True, verbose_name="命中日期")
+
+    class Meta(BaseModel.Meta):
+        db_table = "workspace_login_daily"
+        verbose_name = "工作空间登录命中"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "member", "hit_date"],
+                name="uniq_wslogin_day",
+            ),
         ]

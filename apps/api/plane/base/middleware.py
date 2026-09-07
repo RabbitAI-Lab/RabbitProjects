@@ -218,3 +218,51 @@ class MaintenanceModeMiddleware:
                 headers={"Retry-After": "300", "X-Request-Id": req_id},
             )
         return self.get_response(request)
+
+
+# ── ⑦ WorkspaceArchiveMiddleware（TEAM-003 §4.3.1——Sprint-5）────────────
+_WS_PATH_RE = re.compile(r"^/api/v1/workspaces/(?P<slug>[^/]+)(/.*)?$")
+#: 幂等动作豁免表（§4.2.1 命名偏离登记：archive/restore 同构 POST 动作通道）
+_WS_ARCHIVE_EXEMPT = re.compile(r"^/(archive|restore)/$")
+
+
+class WorkspaceArchiveMiddleware:
+    """归档工作空间全站写保护（BR-02 单入口）：workspace_slug 解析后查 archived_at，
+    命中即短路写方法（GET/HEAD/OPTIONS 放行）。信封形态与全局错误规范一致。"""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            m = _WS_PATH_RE.match(request.path)
+            if m:
+                rest = m.group(2) or "/"
+                from plane.db.models import Workspace
+
+                ws = Workspace.objects.filter(
+                    slug=m.group("slug"), deleted_at__isnull=True,
+                ).only("archived_at").first()
+                if ws is not None and ws.archived_at and not _WS_ARCHIVE_EXEMPT.match(rest):
+                    from rest_framework.status import HTTP_403_FORBIDDEN
+
+                    request_id = current_request_id() or ulid_new()
+                    return JsonResponse(
+                        {
+                            "status": "error",
+                            "error": {
+                                "code": "PERM_WORKSPACE_ARCHIVED",
+                                "message": "工作空间已归档，当前操作被禁止",
+                                "details": [
+                                    {"field": "archived_at", "code": "READ_ONLY",
+                                     "message": ws.archived_at.isoformat()},
+                                    {"field": "restore_hint", "code": "INFO",
+                                     "message": "请联系工作空间所有者恢复"},
+                                ],
+                                "request_id": request_id,
+                            },
+                        },
+                        status=HTTP_403_FORBIDDEN,
+                        content_type="application/json",
+                    )
+        return self.get_response(request)

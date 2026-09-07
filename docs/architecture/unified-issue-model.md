@@ -591,6 +591,10 @@ class State(BaseModel):
 | `cancelled` | 移出范围（scope change） | 折叠展示 | 不计入 | 划线 |
 
 ### 2.7 Label — 标签
+> **Sprint-5 实现偏离登记（ADR-0024）**：P2 已落地独立 `WorkspaceLabel` 表
+> （`workspace_labels`，TEAM-003 §4.1）而非本节 P3 计划的「`Label.workspace` 可空
+> 外键」方案——覆盖链路以 `Label.overrides_global_id` 承载；P3 组织级标签下发
+> 收敛方案待架构组重新评估。
 
 ```python
 class Label(BaseModel):

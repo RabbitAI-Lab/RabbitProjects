@@ -104,7 +104,8 @@ class SignUpView(APIView):
         # AUTH-004 §4.3.5：登录后维护用户会话索引（吊销工具依赖）
         if request.session.session_key:
             transaction.on_commit(
-                lambda: track_session(user.id, request.session.session_key)
+                lambda: (track_session(user.id, request.session.session_key),
+                         _record_hits(user))
             )
         return created_response(
             _envelope_user_with_workspaces(user),
@@ -135,6 +136,7 @@ class SignInView(APIView):
         # AUTH-004 §4.3.5：登录即建立索引（reset/change 才能吊销其他设备）
         if request.session.session_key:
             track_session(user.id, request.session.session_key)
+            _record_hits(user)
         return success_response(_envelope_user_with_workspaces(user))
 
 
@@ -236,3 +238,12 @@ def _client_ip(request) -> str | None:
     if xff:
         return xff.split(",")[0].strip() or None
     return request.META.get("REMOTE_ADDR") or None
+
+def _record_hits(user) -> None:
+    """登录命中表（TEAM-003 §4.3.3）——失败静默（统计面不阻塞登录）。"""
+    try:
+        from plane.db.services.workspace_governance import record_login_hits
+
+        record_login_hits(user)
+    except Exception:  # noqa: BLE001
+        pass

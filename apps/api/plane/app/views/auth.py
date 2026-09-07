@@ -24,6 +24,7 @@ from plane.app.serializers.user import (
 )
 from plane.base.exception import AppException
 from plane.base.response import created_response, success_response
+from plane.base.throttling import BASE_THROTTLES, AuthBurstRateThrottle
 from plane.db.models import User, Workspace, WorkspaceMember
 from plane.db.models.roles import WorkspaceRole
 from plane.db.seeds.issue_types import seed_issue_types
@@ -61,6 +62,7 @@ class SignUpView(APIView):
     """POST /api/v1/auth/sign-up/ —— 注册 + 自动初始化个人默认团队（事务原子）。"""
 
     permission_classes = [AllowAny]
+    throttle_classes = [*BASE_THROTTLES, AuthBurstRateThrottle]  # §7.2：10/min·IP
 
     @transaction.atomic
     def post(self, request):
@@ -115,6 +117,7 @@ class SignUpView(APIView):
 
 class SignInView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [*BASE_THROTTLES, AuthBurstRateThrottle]  # §7.2：10/min·IP
 
     def post(self, request):
         s = SignInSerializer(data=request.data)
@@ -187,6 +190,7 @@ class ForgotPasswordView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_classes = [*BASE_THROTTLES, AuthBurstRateThrottle]  # §7.2：10/min·IP
 
     def post(self, request):
         s = ForgotPasswordSerializer(data=request.data)
@@ -212,6 +216,7 @@ class ResetPasswordView(APIView):
     """POST /api/v1/auth/reset-password/ —— 令牌消费 + 全部会话吊销（§4.2.8）。"""
 
     permission_classes = [AllowAny]
+    throttle_classes = [*BASE_THROTTLES, AuthBurstRateThrottle]  # §7.2：10/min·IP
 
     def post(self, request):
         s = ResetPasswordSerializer(data=request.data)

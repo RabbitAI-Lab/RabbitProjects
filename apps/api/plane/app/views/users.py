@@ -35,6 +35,7 @@ from plane.app.serializers.user import (
 )
 from plane.base.exception import AppException
 from plane.base.response import success_response
+from plane.base.throttling import BASE_THROTTLES, PresignRateThrottle
 from plane.db.models import IssueView
 
 
@@ -63,6 +64,8 @@ class AvatarPresignView(APIView):
     """POST /api/v1/users/me/avatar/presign/ —— §4.2.2"""
 
     permission_classes = [IsAuthenticated]
+    # §7.2 文件预签名申请 30/min·user（INFRA-005；头像直传同口径）
+    throttle_classes = [*BASE_THROTTLES, PresignRateThrottle]
 
     def post(self, request):
         s = AvatarPresignSerializer(data=request.data)

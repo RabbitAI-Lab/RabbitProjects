@@ -141,7 +141,55 @@ def signup(c, tag):
     return email, body["data"]["default_workspace_slug"]
 
 
+#: 本脚本数据域（identifier S5A1~S5A7 + 副本 S5A3C）：projects 的 FK 子表
+#: 全序清理（对齐 tests/e2e/_cleanup_s5.py 的坑 22 纪律；docstring 早已承诺
+#: 「结束按前缀清理」但从未实现——2026-09-07 补，残留 S5A3C 的 t1 任务曾打爆
+#: test_rpt002 的全局 Issue.objects.get(name="t1")）
+_FLOW_CLEAN_STEPS = (
+    "DELETE FROM comment_reactions WHERE comment_id IN (SELECT id FROM issue_comments WHERE issue_id IN (SELECT id FROM issues WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%')))",
+    "DELETE FROM issue_comments WHERE issue_id IN (SELECT id FROM issues WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%'))",
+    "DELETE FROM issue_activities WHERE issue_id IN (SELECT id FROM issues WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%'))",
+    "DELETE FROM work_logs WHERE issue_id IN (SELECT id FROM issues WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%'))",
+    "DELETE FROM issue_assignees WHERE issue_id IN (SELECT id FROM issues WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%'))",
+    "DELETE FROM issue_labels WHERE issue_id IN (SELECT id FROM issues WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%'))",
+    "DELETE FROM issue_links WHERE issue_id IN (SELECT id FROM issues WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%'))",
+    "DELETE FROM integration_sync_conflict_logs WHERE issue_id IN (SELECT id FROM issues WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%'))",
+    "DELETE FROM issues WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%')",
+    "DELETE FROM issue_activities WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%')",
+    "DELETE FROM labels WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%')",
+    "DELETE FROM states WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%')",
+    "DELETE FROM project_members WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%')",
+    "DELETE FROM issue_views WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%')",
+    "DELETE FROM project_status_logs WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%')",
+    "DELETE FROM project_favorites WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%')",
+    "DELETE FROM file_folders WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%')",
+    "DELETE FROM upload_sessions WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%')",
+    "DELETE FROM file_assets WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%')",
+    "DELETE FROM custom_field_definitions WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%')",
+    "DELETE FROM webhook_deliveries WHERE endpoint_id IN (SELECT id FROM webhook_endpoints WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%'))",
+    "DELETE FROM webhook_endpoints WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%')",
+    "DELETE FROM integration_sync_conflict_logs WHERE binding_id IN (SELECT id FROM integration_installations WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%'))",
+    "DELETE FROM integration_installations WHERE project_id IN (SELECT id FROM projects WHERE identifier LIKE 'S5A%')",
+    "DELETE FROM notifications WHERE receiver_id IN (SELECT id FROM users WHERE email LIKE 's5%')",
+    "DELETE FROM workspace_members WHERE member_id IN (SELECT id FROM users WHERE email LIKE 's5%')",
+    "DELETE FROM projects WHERE identifier LIKE 'S5A%'",
+)
+
+
+def cleanup_flow_domain() -> None:
+    """幂等清空本脚本数据域（开局清扫历史残留 + 收尾清理本次数据）。"""
+    for _sql in _FLOW_CLEAN_STEPS:
+        try:
+            _pg(_sql)
+        except RuntimeError:
+            pass  # 缺表/缺行不阻断——清理是卫生活不是断言
+    left = _pg("SELECT count(*) FROM projects WHERE identifier LIKE 'S5A%';")
+    if left != "0":
+        print(f"⚠ S5A 域残留 {left} 个项目（清理不完整，请人工核查）")
+
+
 def main() -> int:
+    cleanup_flow_domain()  # 开局清扫：上次崩溃运行可能留下半域数据
     # 注册 + 显式拉 csrf（CLAUDE.md 坑 #2：所有客户端首请求前）
     for _c in (ADMIN, MEMBER, VIEWER, OWNER2):
         _c.req("GET", "/api/v1/auth/csrf-token/")
@@ -314,10 +362,12 @@ def main() -> int:
        code21 == 200 and "rows" in body21["data"] and
        "unassigned" in body21["data"] and "totals" in body21["data"])
 
-    # R4-2: 限流（BR-13：10/min/用户）；本脚本发 11 次后第 12 次 429
-    # 注：APIClient（force_authenticate）跨 test 复用计数；先清缓存
-    from django.core.cache import cache as dj_cache
-    dj_cache.clear()
+    # R4-2: 限流（BR-13：10/min/用户，INFRA-005 收编后为固定窗口）
+    # 计数落在 API 进程的 LocMem——本脚本的 Client 是 HTTP 模式，脚本进程的
+    # cache.clear() 清不到 runserver（既有设计缺陷，固定窗口语义把预挤占确定性
+    # 暴露）；且 R4-01/02 已为 ADMIN 计 2 次。等翻入下一分钟窗口再发 11 次，
+    # 从 0 计数、确定性断言（探针实测：新窗口内恰 10×200 + 第 11 次 429）。
+    time.sleep(61 - (time.time() % 60) + 1)
     rate_codes = []
     for _ in range(11):
         c, _ = ADMIN.get(f"/api/v1/workspaces/{ws_admin}/projects/{proj_r['id']}/stats/?days=30")
@@ -542,13 +592,14 @@ def main() -> int:
     if code35 == 201:
         victim_id = _pg(f"SELECT id FROM users WHERE email='{test_victim_email}';").strip()
         _pg(f"INSERT INTO workspace_members(id, workspace_id, member_id, role, is_active, created_by_id, created_at, updated_at) "
-            f"SELECT gen_random_uuid(), '{victim_id}'::uuid, 10, true, '{admin_id}'::uuid, NOW(), NOW() FROM workspaces WHERE slug='{ws_admin}';")
+            f"SELECT gen_random_uuid(), (SELECT id FROM workspaces WHERE slug='{ws_admin}'), '{victim_id}'::uuid, 10, true, '{admin_id}'::uuid, NOW(), NOW() FROM workspaces WHERE slug='{ws_admin}';")
         v_row = _pg(f"SELECT id FROM workspace_members WHERE workspace_id=(SELECT id FROM workspaces WHERE slug='{ws_admin}') AND member_id='{victim_id}';").strip()
         ADMIN.post(f"/api/v1/workspaces/{ws_admin}/members/{v_row}/disable/")
         time.sleep(2)  # 通知 on_commit 异步
         notif = _pg(f"SELECT count(*) FROM notifications WHERE receiver_id='{victim_id}' AND event='workspace.member_disabled';").strip()
         ck("S5-C7-02", f"禁用通知投递（{notif} 条）", int(notif) >= 1)
 
+    cleanup_flow_domain()  # 收尾清理（崩溃路径靠下次开局清扫兜底）
     print(f"\n{'═' * 40}\nSprint 5 接口流程：{PASS} 通过 / {FAIL} 失败 / {SKIP} 跳过")
     if FAILURES:
         print("\n".join("  ✗ " + f for f in FAILURES))

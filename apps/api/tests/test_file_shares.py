@@ -91,16 +91,12 @@ def env(db):
 
 @pytest.fixture()
 def redis_clean():
-    """BR-07 计数键测试隔离：前置重置进程态 + 后置清本用例触达的键。"""
-    svc.reset_redis_state()
-    touched: set[str] = set()
-    yield touched
-    client = svc._redis()
-    if client is not None:
-        keys = client.keys("share-unlock:*")
-        if keys:
-            client.delete(*keys)
-    svc.reset_redis_state()
+    """BR-07 计数键测试隔离——INFRA-005 收编后计数走 django cache（LocMem），
+    前后置整体清空即等效原「重置进程态 + 清 share-unlock:* 键」。"""
+    from django.core.cache import cache
+    cache.clear()
+    yield
+    cache.clear()
 
 
 def _mk_asset(env, name="首页改版-v3.fig", mime="image/png", ext=".png",
@@ -270,7 +266,10 @@ def test_ut05_it08_brute_force_lockout_sixth_429(env, redis_clean):
     slug2 = asset2.share_links.first().slug
     assert pub.post(f"{_pub(slug2)}/unlock/", {"password": "nope"}).status_code == 401
     # 加速时钟（清键 = 10 分钟窗口流逝）→ 恢复可试
-    svc.clear_attempts(slug, "127.0.0.1")
+    from django.core.cache import cache
+
+    from plane.base.throttling import ShareUnlockRateThrottle
+    cache.delete(ShareUnlockRateThrottle().key_for(slug, "127.0.0.1"))
     assert pub.post(f"{_pub(slug)}/unlock/", {"password": "nope"}).status_code == 401
 
 
@@ -282,8 +281,12 @@ def test_it08_success_unlock_resets_counter(env, redis_clean):
     for _ in range(4):
         assert pub.post(f"{_pub(slug)}/unlock/", {"password": "nope"}).status_code == 401
     assert pub.post(f"{_pub(slug)}/unlock/", {"password": "demo-2026"}).status_code == 200
-    # 成功清零：后续仍有 5 次满额
-    assert svc.remaining_attempts(slug, "127.0.0.1") == svc.PASSWORD_ATTEMPTS
+    # 成功清零：后续仍有 5 次满额（INFRA-005 收编——计数键已删）
+    from django.core.cache import cache
+
+    from plane.base.throttling import ShareUnlockRateThrottle
+    key = ShareUnlockRateThrottle().key_for(slug, "127.0.0.1")
+    assert int(cache.get(key) or 0) == 0
 
 
 # ────────────────────────────────────────────────────────────────

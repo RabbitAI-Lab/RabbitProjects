@@ -43,6 +43,10 @@ class HealthView(APIView):
     """
 
     permission_classes = [AllowAny]
+    # BR-05（INFRA-005 §2.3）：健康检查不消耗配额也不被限——L2 全局四类经
+    # DEFAULT_THROTTLE_CLASSES 生效后，显式空声明维持 INFRA-002 §4.10 口径
+    #（DRF 的 throttle_classes 是整体替换，空列表即豁免）
+    throttle_classes: list = []
 
     def get(self, request):
         try:

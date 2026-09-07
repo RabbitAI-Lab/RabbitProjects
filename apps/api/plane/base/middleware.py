@@ -122,12 +122,19 @@ def _actor_var_user_id():
     return current_actor().get("user_id")
 
 
-# ── ③ RateLimitHeaderMiddleware（P1 空实现，INFRA-005 填充）──
-class RateLimitHeaderMiddleware:
-    """为所有响应注入 X-RateLimit-Limit / -Remaining / -Reset 三件套（§4.4）。
+# ── ③ RateLimitHeaderMiddleware（INFRA-005 §4.3.3 填充；P1 空实现兑现）──
+_rl_logger = logging.getLogger("plane.api.ratelimit")
 
-    P1 仅注入占位值（limit=-1 表示未启用）；INFRA-005 接入 Redis 计数后
-    替换为真实配额。位置必须在 Logging 之内——被限流拒绝的请求也要留日志。
+
+class RateLimitHeaderMiddleware:
+    """全响应注入 X-RateLimit-*（BR-02）；429 兜底 Retry-After（§7.3）。
+
+    数据来源：DRF throttle 在 allow_request 内写入 request._throttle_state
+    （plane.base.throttling 基类——limit/remaining/reset/wait/subject/scope，
+    落在 DRF Request 包装之下的原生 HttpRequest 上）。无该状态的响应（健康
+    检查、非 DRF 路径）沿用 INFRA-004 §4.6 ③ 占位语义：三头注入 -1
+    （「未参与计数」）——头永不缺席。位置必须在 Logging 之内——被限流拒绝
+    的请求也要留日志。
     """
 
     def __init__(self, get_response):
@@ -135,9 +142,27 @@ class RateLimitHeaderMiddleware:
 
     def __call__(self, request):
         response = self.get_response(request)
-        response.headers.setdefault("X-RateLimit-Limit", "-1")
-        response.headers.setdefault("X-RateLimit-Remaining", "-1")
-        response.headers.setdefault("X-RateLimit-Reset", "-1")
+        state = getattr(request, "_throttle_state", None)
+        if state:
+            response.headers["X-RateLimit-Limit"] = str(state["limit"])
+            response.headers["X-RateLimit-Remaining"] = str(state["remaining"])
+            response.headers["X-RateLimit-Reset"] = str(state["reset"])   # Unix 秒
+        else:
+            response.headers.setdefault("X-RateLimit-Limit", "-1")
+            response.headers.setdefault("X-RateLimit-Remaining", "-1")
+            response.headers.setdefault("X-RateLimit-Reset", "-1")
+        if response.status_code == 429:
+            # Retry-After 来源优先级：异常处理器装配值（INFRA-004 §2.3 异常收敛
+            # 决策表第 11 行）→ throttle 写入的窗口剩余 wait → 静态兜底 60。
+            # 绝不读客户端入站头（META["HTTP_RETRY_AFTER"] 是对方发来的请求头，方向相反）
+            wait = response.headers.get("Retry-After") \
+                or (state or {}).get("wait") or 60
+            response.headers["Retry-After"] = str(max(1, int(wait)))
+            _rl_logger.info(
+                "event=rate_limited path=%s scope=%s subject=%s request_id=%s",
+                request.path, (state or {}).get("scope", "-"),
+                (state or {}).get("subject", "-"),
+                current_request_id())                    # BR-14（request_context 同源）
         return response
 
 

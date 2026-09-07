@@ -88,10 +88,9 @@ class MyIssuesListView(GenericAPIView):
 # ─────────────────────────────────────────────────────────────────────
 # 项目统计（RPT-002 §4.2——Sprint-5 T5-06）
 # ─────────────────────────────────────────────────────────────────────
-from django.core.cache import cache  # noqa: E402
-
 from plane.app.views._access import get_project_or_404  # noqa: E402
 from plane.base.exception import AppException  # noqa: E402
+from plane.base.throttling import BASE_THROTTLES, ReportRateThrottle  # noqa: E402
 from plane.db.models.roles import ProjectRole  # noqa: E402
 from plane.db.services.stats import (  # noqa: E402
     DEFAULT_TZ,
@@ -101,42 +100,19 @@ from plane.db.services.stats import (  # noqa: E402
     _is_valid_tz,
 )
 
-#: 报表聚合限流（BR-13：10 req/min·user；手工实现保 429 信封 + X-RateLimit 头
-#: ——DRF throttle_classes 的 Throttled 异常不经信封处理器，见 base/handlers）
-_REPORT_RATE_PER_MIN = 10
+#: 报表聚合限流（BR-13：10 req/min·user）——INFRA-005 收编：sprint-5 手工
+#: ``_report_throttle`` 退役，改挂 ReportRateThrottle（DRF Throttled 经
+#: handlers 第 8 步出 429 信封 + Retry-After，§7.3 契约完整兑现）
 _TREND_DAYS = (7, 14, 30, 90)
-
-
-def _report_throttle(user) -> tuple[bool, dict[str, str]]:
-    """(放行?, 头)。窗口固定 60s 滑动计数（cache 计数器，dev LocMem/生产 Redis）。"""
-    import time
-
-    key = f"rpt-throttle:{user.id}"
-    now = time.time()
-    window = 60
-    hits = [t for t in (cache.get(key) or []) if now - t < window]
-    allowed = len(hits) < _REPORT_RATE_PER_MIN
-    if allowed:
-        hits.append(now)
-    cache.set(key, hits, timeout=window)
-    remaining = max(0, _REPORT_RATE_PER_MIN - len(hits))
-    reset = int(now + window - (hits[0] - now if hits else 0)) if hits else int(now + window)
-    return allowed, {
-        "X-RateLimit-Limit": str(_REPORT_RATE_PER_MIN),
-        "X-RateLimit-Remaining": str(remaining if allowed else 0),
-        "X-RateLimit-Reset": str(reset),
-    }
 
 
 class ProjectStatsView(GenericAPIView):
     """GET …/projects/{pid}/stats/ —— 项目进度（五组/完成率/逾期/工时/趋势）。"""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [*BASE_THROTTLES, ReportRateThrottle]
 
     def get(self, request, *args, **kwargs):
-        allowed, rate_headers = _report_throttle(request.user)
-        if not allowed:
-            raise AppException("RATE_LIMIT_EXCEEDED", message="请求过于频繁，请稍后再试")
         project, _, _ = get_project_or_404(
             kwargs["slug"], kwargs["project_id"], request.user)
         days = self._days(request)
@@ -150,7 +126,7 @@ class ProjectStatsView(GenericAPIView):
         if not archived:  # 基座已默认排除归档——显式参数留档（与 TASK-009 同语义）
             pass
         return success_response(
-            data, headers={"Cache-Control": "no-store", **rate_headers})
+            data, headers={"Cache-Control": "no-store"})
 
     @staticmethod
     def _days(request) -> int:
@@ -171,13 +147,11 @@ class ProjectMemberStatsView(GenericAPIView):
     """GET …/projects/{pid}/stats/members/ —— 成员任务量（分组聚合 + 未指派）。"""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [*BASE_THROTTLES, ReportRateThrottle]
 
     def get(self, request, *args, **kwargs):
         from zoneinfo import ZoneInfo
 
-        allowed, rate_headers = _report_throttle(request.user)
-        if not allowed:
-            raise AppException("RATE_LIMIT_EXCEEDED", message="请求过于频繁，请稍后再试")
         project, _, _ = get_project_or_404(
             kwargs["slug"], kwargs["project_id"], request.user)
         roles = self._roles(request)
@@ -192,7 +166,7 @@ class ProjectMemberStatsView(GenericAPIView):
         data = MemberStatsService().members(
             project, roles=roles, order_by=order_by, today=today)
         return success_response(
-            data, headers={"Cache-Control": "no-store", **rate_headers},
+            data, headers={"Cache-Control": "no-store"},
             meta={"per_page": 50})
 
     @staticmethod

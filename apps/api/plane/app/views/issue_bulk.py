@@ -23,13 +23,13 @@ import uuid
 
 from django.conf import settings as dj_settings
 from rest_framework.response import Response
-from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.views import APIView
 
 from plane.app.permissions import IsAuthenticated
 from plane.app.views._access import get_project_or_404, require_project_writable
 from plane.base.exception import AppException
 from plane.base.response import success_response
+from plane.base.throttling import BASE_THROTTLES, BulkRateThrottle
 from plane.db.models import Issue, Label, ProjectRole, State
 from plane.db.services import issue_bulk as bulk_svc
 from plane.db.services.issue_bulk import (
@@ -44,27 +44,9 @@ from plane.utils.exceptions import AppValidationError, field_error
 
 logger = logging.getLogger(__name__)
 
-
-# ─────────────────────────────────────────────────────────────────────
-# Throttle（BR-06：批量端点族 10/min/用户）
-# ─────────────────────────────────────────────────────────────────────
-class BulkRateThrottle(SimpleRateThrottle):
-    """10 次/分钟/用户（api-conventions §7.2 批量端点行；独立 scope）。
-
-    类属性直设 rate：REST_FRAMEWORK 未配 DEFAULT_THROTTLE_RATES 槽位
-    （INFRA-005 填充前），避免为此改全局配置。
-    """
-
-    scope = "issue_bulk"
-    rate = "10/min"
-
-    def get_cache_key(self, request, view):
-        ident = (
-            str(request.user.id)
-            if request.user and getattr(request.user, "is_authenticated", False)
-            else self.get_ident(request)
-        )
-        return f"throttle_{self.scope}:{ident}"
+# Throttle（BR-06：批量端点族 10/min/用户）——INFRA-005 收编：本文件原
+# ``BulkRateThrottle`` 自带实现退役，改用 ``plane.base.throttling`` 框架类
+#（scope ``issue_bulk`` 并入 ``bulk``，10/min·user 语义不变）。
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -206,7 +188,7 @@ class IssueBulkView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
-    throttle_classes = [BulkRateThrottle]
+    throttle_classes = [*BASE_THROTTLES, BulkRateThrottle]
 
     def patch(self, request, *args, **kwargs):
         return _with_idempotency(request, lambda: self._handle_update(request, **kwargs))
@@ -304,7 +286,7 @@ class IssueBulkArchiveView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
-    throttle_classes = [BulkRateThrottle]
+    throttle_classes = [*BASE_THROTTLES, BulkRateThrottle]
 
     def post(self, request, *args, **kwargs):
         return _with_idempotency(request, lambda: self._handle(request, **kwargs))
@@ -366,7 +348,7 @@ class IssueBulkPreviewView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
-    throttle_classes = [BulkRateThrottle]
+    throttle_classes = [*BASE_THROTTLES, BulkRateThrottle]
 
     def post(self, request, *args, **kwargs):
         project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)

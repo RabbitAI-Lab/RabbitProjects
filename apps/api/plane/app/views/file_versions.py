@@ -40,6 +40,7 @@ from plane.app.views.file_library import (
 )
 from plane.base.exception import AppException
 from plane.base.response import success_response
+from plane.base.throttling import BASE_THROTTLES, PresignRateThrottle
 from plane.constants.permissions import threshold_of
 from plane.db.models import FileAsset, FileVersion, ProjectRole, UploadSession
 from plane.db.services import upload_session as svc
@@ -126,6 +127,10 @@ def _map_session_error(exc: Exception) -> None:
 # ── 会话五端点（§4.2 #1~#6）────────────────────────────────────────
 class UploadSessionInitView(APIView):
     """POST …/upload-sessions/ —— 发起分片会话（file.upload，§4.2.1）。"""
+    # §7.2 文件预签名申请 30/min·user（INFRA-005）——挂会话发起；chunks/
+    # 换发属会话内合法高频（大文件百片级）不挂，防刷对象是会话不是片
+    throttle_classes = [*BASE_THROTTLES, PresignRateThrottle]
+
 
     def post(self, request, *args, **kwargs):
         project, _, _ = get_project_or_404(

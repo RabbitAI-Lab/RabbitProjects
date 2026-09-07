@@ -27,7 +27,6 @@ import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
-from plane.app.views import gantt as gantt_views
 from plane.db.models import (
     Issue,
     IssueAssignee,
@@ -661,18 +660,14 @@ def _summary_ok(client, env, **params):
 
 @pytest.fixture(autouse=True)
 def agg_redis_clean():
-    """限流计数键测试隔离（FILE-004 redis_clean 同款纪律）：本文件 g002 用例
-    全部命中限流端点（每次请求 INCR），故 autouse——前置重置进程态 + 后置清
-    ``gantt-agg:*`` 键，不留跨用例状态（坑 18；键自带 60s TTL 兜底自过期）。
-    GANTT-001 用例不触达 Redis，仅承担无害的空清理。"""
-    gantt_views.reset_gantt_redis_state()
+    """限流计数键测试隔离——INFRA-005 收编后甘特聚合限流走 django cache
+    （LocMem；原 ``gantt-agg:*`` 键族退役）：本文件 g002 用例全部命中限流端点
+    （每次请求计数），故 autouse，前后置整体清空不留跨用例状态（坑 18；
+    键自带 60s TTL 兜底自过期）。"""
+    from django.core.cache import cache
+    cache.clear()
     yield
-    client = gantt_views._agg_redis()
-    if client is not None:
-        keys = client.keys("gantt-agg:*")
-        if keys:
-            client.delete(*keys)
-    gantt_views.reset_gantt_redis_state()
+    cache.clear()
 
 
 def _mk_user(email: str, display_name: str) -> User:
@@ -855,9 +850,9 @@ def test_g002_ut17_it07_throttle_10_per_min_per_user(env):
     # 键维度 user_id（§4.2.1 原文键 gantt-agg:{user_id}）：另一用户不受牵连
     assert _summary(_client(env["viewer"]), env).status_code == 200
     # IT-07 窗口恢复：清计数键等价 60s 固定窗口流逝 → 配额重置
-    redis_client = gantt_views._agg_redis()
-    assert redis_client is not None, "限流用例要求真实 Valkey（rp-redis，FILE-004 同款前提）"
-    redis_client.delete(gantt_views.gantt_agg_attempt_key(str(env["owner"].id)))
+    #（INFRA-005 收编：django cache LocMem，不再依赖真实 Valkey）
+    from django.core.cache import cache
+    cache.clear()
     assert _summary(client, env).status_code == 200
 
 

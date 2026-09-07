@@ -122,9 +122,30 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "ATOMIC_REQUESTS": True,  # §10.5：单资源写操作默认事务包裹
-    "DEFAULT_THROTTLE_CLASSES": [],  # INFRA-005 填充
+    # INFRA-005 §4.3.2 L2 全局四类（BR-04 判定顺序）。注意：与规格「settings/
+    # production.py 增量」不同，这里放 base 全量 + RATE_LIMIT_ENABLED 运行时
+    # 门控（类内 gated 位）——settings 级 prod-only 会与 ViewSet 级
+    # [*BASE_THROTTLES, X] 展开模式冲突（dev 被带起 L2 打爆 flow/pytest，或
+    # prod 静默摘除视图级 L2），偏差见 plane/base/throttling.py 模块 docstring。
+    "DEFAULT_THROTTLE_CLASSES": [
+        "plane.base.throttling.ApiKeyRateThrottle",    # ① Key
+        "plane.base.throttling.OAuthAppRateThrottle",  # ② OAuth（复合键）
+        "plane.base.throttling.UserRateThrottle",      # ③ Session 用户
+        "plane.base.throttling.AnonRateThrottle",      # ④ 匿名 IP
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "user": "60/min", "apikey": "60/min", "oauth": "60/min", "anon": "30/min",
+        "auth": "10/min", "report": "10/min", "search": "30/min",
+        "presign": "30/min", "bulk": "10/min", "share_unlock": "5/10m",
+    },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
+
+#: L2 全局限流 + AuthBurst 门控开关（INFRA-005）：dev/test 缺省关（jMeter
+#: flow 六套与 pytest 会被全局 60/min 打爆——收编类 Report/Bulk/ShareUnlock
+#: 不受此开关控制，保持 sprint-4/5 既有全环境生效面）；prod 置 True；验收
+#: 演示经 env ``RATE_LIMIT_ENABLED=1`` 临时开启（§7.2.1 限流矩阵压测入口）。
+RATE_LIMIT_ENABLED = env_bool("RATE_LIMIT_ENABLED", False)
 
 SPECTACULAR_SETTINGS = {"TITLE": "RabbitProjects API", "VERSION": "0.1.0"}
 

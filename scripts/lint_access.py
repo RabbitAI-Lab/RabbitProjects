@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """AUTH-006 CI AST 行级守护（§4.3）—— AC-01~05 规则扫描。
 
 用法：
@@ -116,10 +115,12 @@ def scan_matrix_families() -> list[str]:
                     isinstance(t, ast.Name) and t.id == "MATRIX" for t in node.targets):
                 families = {k.value for k in node.value.keys}  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001 —— 解析失败落到行扫描结果
-        pass
+        return
     if families != EXPECTED_FAMILIES:
-        return [f"AC-05 matrix.MATRIX 键 {sorted(families)} 与守护期望 "
-                f"{sorted(EXPECTED_FAMILIES)} 漂移（BR-09 三处同步）"]
+        return [
+            f"AC-05 matrix.MATRIX 键 {sorted(families)} 与守护期望 "
+            f"{sorted(EXPECTED_FAMILIES)} 漂移（BR-09 三处同步）"
+        ]
     return []
 
 

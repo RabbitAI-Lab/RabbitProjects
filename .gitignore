@@ -35,3 +35,5 @@ docs/sprint-4-acceptance/videos/
 
 # COLLAB-004 live 票据密钥对（scripts/gen_live_keys.sh 产物，仅本地/compose env 注入）
 deploy/keys/
+
+docs/sprint-5-acceptance/videos/

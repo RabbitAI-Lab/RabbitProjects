@@ -30,7 +30,7 @@ import uuid
 from django.db import transaction
 
 from plane.base.exception import AppException
-from plane.db.models import Issue, IssueAssignee, Project, ProjectMember, User
+from plane.db.models import Issue, IssueAssignee, ProjectMember, User
 from plane.db.models.roles import ProjectRole
 from plane.utils.exceptions import AppValidationError, field_error
 
@@ -173,8 +173,9 @@ def sync_assignees_full(
         .select_related("project")
         .get(id=issue_id, deleted_at__isnull=True)
     )
-    if issue.project.status == Project.Status.ARCHIVED:  # BR-13
-        raise AppException("PERM_PROJECT_ARCHIVED")
+    from plane.app.views._access import require_project_writable
+
+    require_project_writable(issue.project)  # archived/closed（PROJ-003 §4.3.3）
     if issue.archived_at:  # §2.4 统一入口兜底（DELETE 自退不在拦截器覆盖内）
         raise IssueArchivedForAssignment()
 

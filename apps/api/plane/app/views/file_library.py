@@ -37,7 +37,7 @@ from plane.app.serializers.file_library import (
     FolderCreateSerializer,
     FolderUpdateSerializer,
 )
-from plane.app.views._access import get_project_or_404
+from plane.app.views._access import get_project_or_404, require_project_writable
 from plane.base.exception import AppException
 from plane.base.response import success_response
 from plane.constants.permissions import threshold_of
@@ -63,8 +63,7 @@ def _require_role(project, min_role: int, *, permission_key: str) -> None:
 
 
 def _require_not_archived(project) -> None:
-    if project.status == "archived":  # BR-14：归档后文件库只读
-        raise AppException("PERM_PROJECT_ARCHIVED", message="项目已归档，文件库只读")
+    require_project_writable(project)  # archived/closed 只读（PROJ-003 §4.3.3 收口）
 
 
 def _get_folder(*, project, folder_id) -> FileFolder:

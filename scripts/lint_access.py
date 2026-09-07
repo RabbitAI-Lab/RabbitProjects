@@ -62,6 +62,11 @@ def scan_views() -> list[str]:
                         violations.append(
                             f"AC-01 {rel}:{item.lineno} {node.name}.get_queryset 未调 "
                             "super()/accessible_queryset/accessible_by（AUTH-006 BR-01）")
+            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Attribute) \
+                    and node.targets[0].attr == "status":
+                violations.append(
+                    f"AC-06 {rel}:{node.lineno} 视图直改 .status ——状态迁移唯一入口为"
+                    " ProjectLifecycleService.transition（PROJ-003 BR-01）")
             if isinstance(node, ast.Call) and "AC-02" not in allowed:
                 f = node.func
                 if (isinstance(f, ast.Attribute) and f.attr == "all"

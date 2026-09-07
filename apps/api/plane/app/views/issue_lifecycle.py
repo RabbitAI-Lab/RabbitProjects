@@ -10,7 +10,7 @@ from rest_framework.exceptions import NotFound
 from rest_framework.views import APIView
 
 from plane.app.permissions import IsAuthenticated
-from plane.app.views._access import get_project_or_404
+from plane.app.views._access import get_project_or_404, require_project_writable
 from plane.base.exception import AppException
 from plane.base.response import created_response, success_response
 from plane.db.models import Issue, ProjectRole
@@ -36,8 +36,7 @@ class IssueDuplicateView(APIView):
         project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         if project.current_user_role < ProjectRole.CONTRIBUTOR:
             raise AppException("PERM_ROLE_INSUFFICIENT")
-        if project.status == "archived":
-            raise AppException("PERM_PROJECT_ARCHIVED")
+        require_project_writable(project)  # archived/closed 只读（PROJ-003）
         issue = _issue_or_404(kwargs, project)
         options = DuplicateOptions(
             include_subtrees=bool(request.data.get("include_subtrees", True)),

@@ -9,7 +9,7 @@ from .issue import Issue, IssueActivity, IssueAssignee, IssueLabel, IssueLink
 from .issue_type import IssueType
 from .label import Label
 from .notification import Notification
-from .project import Project, ProjectFavorite, ProjectMember, SystemAdmin
+from .project import Project, ProjectFavorite, ProjectMember, ProjectStatusLog, ProjectTemplate, SystemAdmin
 from .roles import ProjectRole, WorkspaceRole
 from .state import State
 from .user import User
@@ -28,6 +28,8 @@ __all__ = [
     "Project",
     "ProjectMember",
     "ProjectFavorite",
+    "ProjectTemplate",
+    "ProjectStatusLog",
     "SystemAdmin",
     "IssueType",
     "State",

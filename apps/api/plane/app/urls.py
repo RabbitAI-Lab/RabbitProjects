@@ -14,7 +14,18 @@ from plane.app.views.activity_dlq_admin import (
 )
 from plane.app.views.auth import MeView, SignInView, SignOutView, SignUpView, csrf_token
 from plane.app.views.issues import IssueDetailView, IssueListCreateView
-from plane.app.views.projects import ProjectDetailView, ProjectListCreateView, ProjectStateListView
+from plane.app.views.project_templates import (
+    ProjectTemplateDetailView,
+    ProjectTemplateListCreateView,
+)
+from plane.app.views.projects import (
+    ProjectDetailView,
+    ProjectDuplicateView,
+    ProjectListCreateView,
+    ProjectStateListView,
+    ProjectStatusLogView,
+    ProjectTransitionView,
+)
 from plane.app.views.workspaces import WorkspaceDetailView, WorkspaceListCreateView
 from plane.base.exception import AppException
 from plane.base.response import success_response
@@ -72,6 +83,17 @@ urlpatterns = [
     path("workspaces/", WorkspaceListCreateView.as_view(), name="workspaces-list-create"),
     path("workspaces/<slug:slug>/", WorkspaceDetailView.as_view(), name="workspaces-detail"),
     path("workspaces/<slug:slug>/projects/", ProjectListCreateView.as_view(), name="projects-list-create"),
+    # ── Sprint-5（PROJ-003 §4.2）──
+    path("workspaces/<slug:slug>/projects/<uuid:project_id>/transitions/",
+         ProjectTransitionView.as_view(), name="project-transitions"),
+    path("workspaces/<slug:slug>/projects/<uuid:project_id>/status-logs/",
+         ProjectStatusLogView.as_view(), name="project-status-logs"),
+    path("workspaces/<slug:slug>/projects/<uuid:project_id>/duplicate/",
+         ProjectDuplicateView.as_view(), name="project-duplicate"),
+    path("workspaces/<slug:slug>/project-templates/",
+         ProjectTemplateListCreateView.as_view(), name="project-templates-list-create"),
+    path("workspaces/<slug:slug>/project-templates/<uuid:template_id>/",
+         ProjectTemplateDetailView.as_view(), name="project-templates-detail"),
     path("workspaces/<slug:slug>/projects/<uuid:project_id>/", ProjectDetailView.as_view(), name="projects-detail"),
     path(
         "workspaces/<slug:slug>/projects/<uuid:project_id>/states/",

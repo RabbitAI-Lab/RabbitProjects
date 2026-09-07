@@ -233,6 +233,15 @@ class CommentListCreateView(GenericAPIView):
         comment, extras = CommentService().create(
             issue=issue, actor=request.user, payload=s.validated_data
         )
+        # INTG-001 BR-06 评论出站：GitHub 映射任务的应用内评论 → Issue 评论
+        # （事务后投递；系统账号代发的入站镜像由任务侧防环跳过）
+        if issue.external_source == "github":
+            from django.db import transaction
+
+            from plane.bgtasks.github_sync import sync_comment_outbound
+
+            transaction.on_commit(
+                lambda: sync_comment_outbound.delay(str(comment.id)))
         reply_to_map = {}
         if extras.get("reply_to_actor"):
             reply_to_map[str(comment.id)] = extras["reply_to_actor"]

@@ -19,6 +19,7 @@ dependencies = [
     "pillow>=12.3.0",
     "pyjwt>=2.10,<3",
     "cryptography>=43",
+    "requests>=2.34.2",
 ]
 
 [dependency-groups]

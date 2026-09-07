@@ -150,6 +150,12 @@ export interface Issue {
   completed_sub_issues_count?: number;
   attachment_count?: number;
   archived_at?: string | null;
+  /** Sprint-5（INTG-001 §3.3）：GitHub 内联聚合——{ number, prs: [], commits: [] }。 */
+  github_context?: {
+    number?: number;
+    prs?: Array<{ number: number; title?: string; url?: string; merged_at?: string }>;
+    commits?: Array<{ sha: string; message: string; url?: string; author?: string }>;
+  } | null;
   /** TASK-006 §4.2.3：估算（分钟；IssueSerializer 只读下发，写走 PATCH estimate_minutes）。 */
   estimate_minutes?: number | null;
   /** TASK-006：已耗（分钟；列表/详情 queryset annotate，缺省 0）。 */

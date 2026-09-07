@@ -17,10 +17,11 @@ const {
 type Call = { method: string; url: string; body?: unknown; params?: Record<string, unknown> };
 
 /** axios 序列化后的 body 是 JSON 串——比较前解包。 */
-const parseBody = (c: Call) => (typeof c.body === "string" ? JSON.parse(c.body) : c.body);
+const parseBody = (c: Call | undefined): unknown =>
+  c ? (typeof c.body === "string" ? JSON.parse(c.body) : c.body) : undefined;
 let calls: Call[] = [];
 
-api.defaults.adapter = (async (cfg: Record<string, any>) => {
+(api.defaults as { adapter?: unknown }).adapter = (async (cfg: Record<string, any>) => {
   calls.push({ method: cfg.method, url: cfg.url, body: cfg.data, params: cfg.params });
   return { data: { status: "success", data: { ok: 1 } }, status: 200,
            statusText: "OK", headers: {}, config: cfg };
@@ -42,7 +43,7 @@ describe("AUTH-006 MemberAdminAPI（§4.4）", () => {
       `post workspaces/${WS}/members/m1/enable/`,
       `post workspaces/${WS}/projects/${PID}/members/bulk-role/`,
     ]);
-    expect(parseBody(calls[0])).toEqual({ user_ids: ["u1"], role: 10 });
+    expect(parseBody(calls[0]!) as Record<string, unknown>).toEqual({ user_ids: ["u1"], role: 10 });
   });
 });
 
@@ -66,7 +67,7 @@ describe("TEAM-003 GovernanceAPI（§4.2）", () => {
       `put workspaces/${WS}/default-states/`,
       `get workspaces/${WS}/activity-stats/`,
     ]);
-    expect(calls[7].params).toMatchObject({ days: 30 });
+    expect(calls[7]!.params).toMatchObject({ days: 30 });
   });
 });
 
@@ -82,7 +83,7 @@ describe("PROJ-003 LifecycleAPI（§4.2）", () => {
       `post workspaces/${WS}/projects/${PID}/duplicate/`,
       `get workspaces/${WS}/project-templates/`,
     ]);
-    expect(parseBody(calls[0])).toEqual({ to_status: "closed", force: true });
+    expect(parseBody(calls[0]!) as Record<string, unknown>).toEqual({ to_status: "closed", force: true });
   });
 });
 
@@ -117,7 +118,7 @@ describe("INTG-001 GithubIntegrationAPI（§4.2）", () => {
       `delete workspaces/${WS}/projects/${PID}/integrations/github/bindings/b1/`,
       `get workspaces/${WS}/projects/${PID}/integrations/github/sync-logs/`,
     ]);
-    expect(calls[1].params).toMatchObject({ installation_id: 9001 });
+    expect(calls[1]!.params).toMatchObject({ installation_id: 9001 });
   });
 });
 
@@ -144,6 +145,6 @@ describe("INTG-002 WebhookAPI（§4.2 九端点）", () => {
       `get ${W}w1/deliveries/`,
       `post ${W}w1/deliveries/d1/`,
     ]);
-    expect(calls[7].params).toMatchObject({ status: "dead" });
+    expect(calls[7]!.params).toMatchObject({ status: "dead" });
   });
 });

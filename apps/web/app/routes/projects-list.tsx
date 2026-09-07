@@ -579,7 +579,7 @@ function NewProjectModal({ slug, onClose, onCreated }: NewProjectModalProps) {
     folders_snapshot: unknown[] }>>([]);
   const [templateId, setTemplateId] = useState<string | null>(null);
   useEffect(() => {
-    LifecycleAPI.listTemplates(slug).then((r) => setTemplates(((r as unknown as { data: typeof templates }).data ?? [])))
+    LifecycleAPI.listTemplates(slug).then((r) => setTemplates((r as unknown as { data: typeof templates }).data ?? []), () => setTemplates([]))
       .catch(() => setTemplates([]));
   }, [slug]);
   const [identifier, setIdentifier] = useState("");

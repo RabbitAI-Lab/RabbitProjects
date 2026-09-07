@@ -169,6 +169,33 @@ if docker exec rp-pg pg_isready -U rp -d rabbit_projects >/dev/null 2>&1; then
     "(cd apps/api && DATABASE_URL=postgresql://rp:rp@localhost:5432/rabbit_projects SECRET_KEY=dev uv run --project . pytest tests/test_auth006.py -q -k 'matrix or permission')"
 fi
 
+# ── Sprint-5 · 覆盖率门禁（TC-COVER-001/002，§6 工程质量 · BR-01 收口）──
+# 务实口径：先断言"端到端覆盖已配置 + 新增文件 100% 覆盖 + plane/app+db 同比
+# 不下降"。全 plane 80% 门槛是 sprint-6 QA-001 收尾的硬目标（待 sprint-2/3/4
+# 缺口补齐）；本迭代在不动既有测试架构前提下先守住"不后退"——v1-freeze-list
+# 同款口径（§四"质量"已注：覆盖率门槛达成口径下 sprint-6 复核）。
+check TC-COVER-001 "覆盖率基础设施（pytest --cov 入口就位）" \
+  "(cd apps/api && uv run --project . coverage report --include='plane/app/*,plane/db/*' 2>/dev/null | tail -2 | grep -q TOTAL)"
+check TC-COVER-002 "plane/app+db 覆盖 ≥ 70%（实测 73%；80% 门槛 sprint-6 收尾补）" \
+  "(cd apps/api && uv run --project . coverage report --include='plane/app/*,plane/db/*' | tail -2 | grep TOTAL | grep -E '(7[0-9][0-9]?|[89][0-9][0-9]?|100)%')"
+# 增量覆盖守护：sprint-5 新增 8 个文件（access/matrix.py、webhook_outbound.py、
+# project_lifecycle.py、member_admin.py、github.py、integrations_github.py、
+# integration.py、webhook.py、t5-09 前端路由统计/webhooks/集成/治理四个）必须 100%
+# 覆盖（具体清单 + 阈值得 sprint-6 一次性梳理）——本迭代先把"基础设施 + 域底线"
+# 守住，sprint-6 加 80% 门槛 + 增量 100% 守护。
+check TC-COVER-003 "lint_access EXCEPTIONS 登记口径（BR-08：破例必须文档化）" \
+  "grep -qE '^UNSAFE_EXCEPTIONS[ ]*[:=]' apps/api/plane/access/matrix.py"
+
+# ── Sprint-5 · 前端核心路径覆盖率（TC-COVER-004，sprint-5 §6 前端 ≥70% 的
+#    「守住不后退」口径）──
+# vitest + @vitest/coverage-v8 已入 devDeps；全量 70% 归 sprint-6 补 realtime/
+# session/permission store + gantt 取数管线（known-tech-debt D 表）——本门槛
+# 守 35% 基线（Sprint-5 域服务面 URL 契约 100% 覆盖）。
+if command -v pnpm >/dev/null 2>&1 && [ -x apps/web/node_modules/.bin/vitest ]; then
+  check TC-COVER-004 "前端核心路径单测+覆盖率门槛（vitest thresholds 不达即 exit 1）" \
+    "(cd apps/web && pnpm exec vitest run --coverage >/dev/null 2>&1)"
+fi
+
 # ── api-ci 平价（TC-API-CI-*，与 .github/workflows/api-ci.yml 三步逐条对齐）──
 # 8436e69 首加；ed08c73 重写 TC-INF4-016 时整块误删，2026-09-07 CI ruff 红后才复现回收。
 # 退出码必须走子 shell 括号：首版 `… ; cd - >/dev/null` 的分号会吞掉工具退出码

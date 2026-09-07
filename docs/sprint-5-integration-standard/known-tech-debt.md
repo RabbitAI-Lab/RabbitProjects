@@ -22,7 +22,7 @@
 | 编号 | 项 | 后续动作 |
 | --- | --- | --- |
 | 1 | dev 缺 soffice/ffmpeg（Sprint-4 已知） | compose worker `INSTALL_TRANSCODE_TOOLS` 分层已就位；INFRA-005 上线前需真构建验证（可能 CI 镜像变更） |
-| 2 | UT19 甘特时区用例在 UTC 04:00~11:00 必红（Pago_Pago/NY 日期错位） | sprint-6/7 收敛（要么 mock tznow、要么把用例标记为 skip@特定 UTC 窗口） |
+| 2 | ~~UT19 甘特时区用例在 UTC 04:00~11:00 必红~~ | **已修**（7b98a1d：Pago↔Kiritimati 恒差 25h 配对，断言与 UTC 时刻无关）|
 | 3 | celery 多代 worker 并存会分食投递 | 持续跑 `celery inspect registered` 核新任务；新交付后重启 worker（坑 20） |
 | 4 | 并行会话半成品（test_comment_thread / test_file_versions / test_gantt 等） | sprint-6 收尾前由 main 合并吸收；本分支不掺入 |
 
@@ -41,12 +41,24 @@
 
 | 编号 | 项 | 后续 |
 | --- | --- | --- |
-| 1 | 前端 E2E 录屏（13 幕 sprint-5 验收脚本） | sprint-5 收口时按 sprint-3 模式（README §Sprint-5 Acceptance） |
+| 1 | 前端 E2E 录屏（13 幕 sprint-5 验收脚本） | 契约已入库（3a7e0ea）；parity 六幕已绿（d24e8eb）；**录制归 sprint-6 INFRA-005**（需 mock 双服务 8090/8091） |
 | 2 | 越权矩阵端点枚举（WebhookEndpoint CRUD）当前仅 matrix+permission 子集跑通，sprint-6 补全 CRUD 端点逐端点 |  |
-| 3 | bench 数据集（10 万任务）sprint-5 性能门禁由既有 jmeter sprint-1/2/3/4 间接覆盖 |  |
+| 3 | ~~bench 数据集缺口~~ | **已建**（20654d8 sprint-5-bench：10 万任务五门禁全绿；P1 附带真优化 375→174ms）|
 
 ## E. 不留债（已闭环）
 
 - Sprint-4 收口的三件遗留（迁移 0013/文件域动态流/外部驱动活动）已随 T5-02 落地
 - ADR-0026 tier-2/3 偏差全部列出且文档同步
 - CI 平价三件套（ruff/mypy/pytest）由并行会话新增 + 本迭代挂入
+
+
+## F. 2026-09-07 二轮补遗收口（用户指出伪完成后全量补齐）
+
+| # | 项 | 结果 |
+| --- | --- | --- |
+| 1 | UT19 时区抖动 | 修（7b98a1d） |
+| 2 | sprint-5-flow jMeter | 建 540 行七段（acae60d 39/47；victim 子查询归 sprint-6） |
+| 3 | sprint-5-bench 压测基线 | 建五门禁全绿 + P1 真优化（20654d8） |
+| 4 | 前端覆盖率基建 | vitest 38 测 + TC-COVER-004（a6e977f，36.4% 守 35% 门槛） |
+| 5 | 5 规格 e2e parity | 六幕 6/6（d24e8eb） |
+| 6 | 006bc7a 误导说明订正 | 空提交登记（c080c6f） |

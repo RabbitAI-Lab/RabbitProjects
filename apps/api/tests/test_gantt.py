@@ -467,14 +467,17 @@ def test_ut19_request_tz_today_and_overdue(env):
     kiri_today = datetime.now(ZoneInfo("Pacific/Kiritimati")).date()
     pago_today = datetime.now(ZoneInfo("Pacific/Pago_Pago")).date()
     assert kiri_today > pago_today  # 前置自检：恒差成立
-    a = _issue(env, "A", start=None, target=pago_today, state="started")
+    # 用 Pago_Pago 当地"今天"作 target（Pago 当地 today == UTC-11 今天），
+    # 测试用与 target 同源 tz=Pago 测 no_overdue（恒真）；用远端 tz=Kiritimati 测 overdue（恒真）。
+    # 不用 NY——NY 与 Pago 时差 6~7h，多数 UTC 时刻 NY today 已跨日（与 Pago 不同日），
+    # 与 Pago 当地 today 不恒等，断言不稳定（sprint-4 预存）。
+    a = _issue(env, "A", start=None, target=pago_today.isoformat(), state="started")
     client = _client(env["owner"])
-    # tz=America/New_York：meta.today 折算为 NY 本地日
-    data, meta = _rows(client, env, tz="America/New_York")
-    assert meta["today"] == ny_today.isoformat()
-    rows = _by_id(data)
-    # target = Pago_Pago 的今天 → Pago 判定不过期；Kiritimati 判定已过期
-    assert rows[a.id]["is_overdue"] is False
+    # tz=Pacific/Pago_Pago：meta.today = Pago 当地今天 == target → 不逾期
+    data, meta = _rows(client, env, tz="Pacific/Pago_Pago")
+    assert meta["today"] == pago_today.isoformat()
+    assert _by_id(data)[a.id]["is_overdue"] is False
+    # tz=Pacific/Kiritimati：Kiritimati 当地 today = Pago + 1 > target → 已逾期
     data2, meta2 = _rows(client, env, tz="Pacific/Kiritimati")
     assert meta2["today"] == kiri_today.isoformat()
     assert _by_id(data2)[a.id]["is_overdue"] is True

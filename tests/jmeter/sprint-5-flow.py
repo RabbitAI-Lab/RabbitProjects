@@ -28,11 +28,12 @@ throttle 配额：sprint-5 RPT-002 限流 10/min/用户（BR-13）；本脚本�
 自建数据：项目名 S5FLOW-* 前缀 / 用户 s5* 邮箱前缀，结束按前缀清理（幂等可重跑）。
 """
 from __future__ import annotations
-
 import json
 import os
 import sys
 import time
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'apps', 'api'))
+import django; os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'plane.settings.dev'); django.setup()
 import uuid as uuid_mod
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -131,6 +132,9 @@ def signup(c, tag):
          "display_name": tag.rstrip("-") + " S5"},
         {"X-CSRFToken": c.csrf()},
     )
+    # 注册即登入 + signin 触 csrf 重设（CLAUDE.md 坑 #2 兼容）
+    c.req("POST", "/api/v1/auth/sign-in/", {"email": email, "password": "Rabbit123!"},
+          {"X-CSRFToken": c.csrf()})
     if code != 201:
         print(f"  ✗ 前置失败：sign-up {code} {body}")
         raise SystemExit(1)
@@ -138,8 +142,12 @@ def signup(c, tag):
 
 
 def main() -> int:
+    # 注册 + 显式拉 csrf（CLAUDE.md 坑 #2：所有客户端首请求前）
+    for _c in (ADMIN, MEMBER, VIEWER, OWNER2):
+        _c.req("GET", "/api/v1/auth/csrf-token/")
     section("S5-1 AUTH-006 行级隔离 + 批量角色 + 启停")
     admin_email, ws_admin = signup(ADMIN, "s5adm-")
+# 注册 + 显式拉 csrf（CLAUDE.md 坑 #2：所有客户端首请求前）
     member_email, ws_m = signup(MEMBER, "s5mem-")
     viewer_email, ws_v = signup(VIEWER, "s5view-")
     owner2_email, ws_o2 = signup(OWNER2, "s5own2-")
@@ -149,11 +157,11 @@ def main() -> int:
     owner2_id, _, _ = uid_of(OWNER2)
     admin_id, _, admin_email_actual = uid_of(ADMIN)
     _pg(f"INSERT INTO workspace_members(id, workspace_id, member_id, role, is_active, created_by_id, created_at, updated_at) "
-        f"SELECT gen_random_uuid(), '{member_id}'::uuid, 10, true, '{admin_id}', NOW(), NOW() FROM workspaces WHERE slug='{ws_admin}';")
+        f"SELECT gen_random_uuid(), (SELECT id FROM workspaces WHERE slug='{ws_admin}'), '{member_id}'::uuid, 10, true, '{admin_id}'::uuid, NOW(), NOW() FROM workspaces WHERE slug='{ws_admin}';")
     _pg(f"INSERT INTO workspace_members(id, workspace_id, member_id, role, is_active, created_by_id, created_at, updated_at) "
-        f"SELECT gen_random_uuid(), '{viewer_id}', 5, true, '{admin_id}', NOW(), NOW() FROM workspaces WHERE slug='{ws_admin}';")
+        f"SELECT gen_random_uuid(), (SELECT id FROM workspaces WHERE slug='{ws_admin}'), '{viewer_id}'::uuid, 5, true, '{admin_id}'::uuid, NOW(), NOW() FROM workspaces WHERE slug='{ws_admin}';")
     _pg(f"INSERT INTO workspace_members(id, workspace_id, member_id, role, is_active, created_by_id, created_at, updated_at) "
-        f"SELECT gen_random_uuid(), '{owner2_id}', 20, true, '{admin_id}', NOW(), NOW() FROM workspaces WHERE slug='{ws_admin}';")
+        f"SELECT gen_random_uuid(), (SELECT id FROM workspaces WHERE slug='{ws_admin}'), '{owner2_id}'::uuid, 20, true, '{admin_id}'::uuid, NOW(), NOW() FROM workspaces WHERE slug='{ws_admin}';")
 
     proj = make_project(ADMIN, ws_admin, "S5 A1", "S5A1")
 
@@ -170,6 +178,7 @@ def main() -> int:
     code3, _ = ADMIN.post(f"/api/v1/workspaces/{ws_admin}/members/{member_row}/disable/")
     ck("S5-A1-03", "ADMIN 禁用成员（is_active=false 落库）", code3 == 200)
     code4, body4 = MEMBER.post("/api/v1/users/me/", {})  # 任意需鉴权接口
+    print(f"DEBUG-A1-04 code4={code4} body4={body4}");
     ck("S5-A1-04", "被禁用账号登录通道即关（401 — DRF Session 拒 inactive）",
        code4 == 401 or code4 == 403, f"got {code4}")
     # 启用幂等
@@ -196,7 +205,7 @@ def main() -> int:
     code8, body8 = ADMIN.post(
         f"/api/v1/workspaces/{ws_admin}/projects/", {"name": "after-archived", "identifier": "POSTA"})
     ck("S5-T2-02", "归档后建项目 403 PERM_WORKSPACE_ARCHIVED（中间件全站写保护）",
-       code8 == 403 and error_code(body8) == "workspaceArchived", f"got {code8} {error_code(body8)}")
+       code8 == 403 and error_code(body8) == "PERM_WORKSPACE_ARCHIVED", f"got {code8} {error_code(body8)}")
     code9, _ = ADMIN.post(f"/api/v1/workspaces/{ws_admin}/restore/")
     ck("S5-T2-03", "OWNER 恢复（中间件豁免）", code9 == 200)
 
@@ -244,17 +253,17 @@ def main() -> int:
     ck("S5-P3-02", "archived→active 恢复 200", code15 == 200)
     # P3-2: 非法边 → 409 RESOURCE_TRANSITION_INVALID
     # 先建 draft 项目
-    proj_d = _pg(f"INSERT INTO projects(workspace_id, name, identifier, status, created_by_id, created_at, updated_at) "
-                 f"SELECT gen_random_uuid(), 'draft-p', 'DP3A', 'draft', '{admin_id}', NOW(), NOW() FROM workspaces WHERE slug='{ws_admin}' RETURNING id;").strip()
+    proj_d = _pg(f"INSERT INTO projects(id, workspace_id, name, description, identifier, status, created_by_id, visibility, created_at, updated_at) "
+                 f"SELECT gen_random_uuid(), (SELECT id FROM workspaces WHERE slug='{ws_admin}'), 'draft-p', '', 'DP3A', 'draft', '{admin_id}'::uuid, 'private', NOW(), NOW() FROM workspaces WHERE slug='{ws_admin}' RETURNING id;").strip()
     code16, body16 = ADMIN.post(
         f"/api/v1/workspaces/{ws_admin}/projects/{proj_d}/transitions/",
         {"to_status": "closed"},
     )
     ck("S5-P3-03", "draft→closed 非法边 409 RESOURCE_TRANSITION_INVALID",
-       code16 == 409 and error_code(body16) == "transitionBlocked", f"got {code16}")
+       code16 == 409 and error_code(body16) == "RESOURCE_TRANSITION_INVALID", f"got {code16}")
     # P3-3: closed 写保护（评论 403 PERM_PROJECT_CLOSED）
-    proj_close = _pg(f"INSERT INTO projects(workspace_id, name, identifier, status, created_by_id, created_at, updated_at) "
-                     f"SELECT gen_random_uuid(), 'close-p', 'CP3A', 'closed', '{admin_id}', NOW(), NOW() FROM workspaces WHERE slug='{ws_admin}' RETURNING id;").strip()
+    proj_close = _pg(f"INSERT INTO projects(id, workspace_id, name, description, identifier, status, created_by_id, visibility, created_at, updated_at) "
+                     f"SELECT gen_random_uuid(), (SELECT id FROM workspaces WHERE slug='{ws_admin}'), 'close-p', '', 'CP3A', 'closed', '{admin_id}'::uuid, 'private', NOW(), NOW() FROM workspaces WHERE slug='{ws_admin}' RETURNING id;").strip()
     # closed 项目要可写评论 — 改为建新项目后迁 closed
     proj_c2 = make_project(ADMIN, ws_admin, "S5 A3c", "S5A3C")
     issue_c = make_issue(ADMIN, ws_admin, proj_c2["id"], "t1", sequence_id=1)
@@ -265,7 +274,7 @@ def main() -> int:
         {"comment_html": "<p>hi</p>", "comment_json": {}},
     )
     ck("S5-P3-04", "closed 项目评论 403 PERM_PROJECT_CLOSED",
-       code17 == 403 and error_code(body17) == "projectClosed", f"got {code17}")
+       code17 == 403 and error_code(body17) == "PERM_PROJECT_CLOSED", f"got {code17}")
 
     # P3-4: 模板实化（新建项目用模板）
     code18, body18 = ADMIN.post(
@@ -447,7 +456,7 @@ def main() -> int:
     # W6-2: 50 连败 → auto_disabled（设失败投递 50 次：5xx mock + 退避跳到 0）
     if we_id is not None:
         # 直改 consecutive_failures（测试捷径——真退避 2h+6m 超 CI 窗口）
-        _pg(f"UPDATE webhooks SET consecutive_failures=49, is_active='active' "
+        _pg(f"UPDATE webhook_endpoints SET consecutive_failures=49, is_active='active' "
             f"WHERE project_id='{proj_w['id']}' AND id='{we_id}';")
         # 触发一次投递（5xx）— 必 dead + 计数 +1 → ≥50 → auto_disabled
         # 真模拟：临时把 _post 切到 500，然后 dispatch_events 一次
@@ -466,7 +475,7 @@ def main() -> int:
                 event_id=uuid_mod.uuid4(),
                 payload={"event": "issue.updated", "data": {}})
             deliver_webhook(str(d.id))
-        _pg(f"UPDATE webhooks SET consecutive_failures=49 WHERE id='{we_id}';")
+        _pg(f"UPDATE webhook_endpoints SET consecutive_failures=49 WHERE id='{we_id}';")
         # 第二次触发应触发 auto_disabled
         from plane.db.models import WebhookDelivery
         d2 = WebhookDelivery.objects.create(
@@ -476,7 +485,7 @@ def main() -> int:
         with mpatch("plane.db.services.webhook_outbound._post", return_value=(500, 8, "5xx")):
             deliver_webhook(str(d2.id))
         # 计数应 ≥ 50 且 is_active = auto_disabled
-        w_after = _pg(f"SELECT consecutive_failures || ',' || is_active FROM webhooks WHERE id='{we_id}';").strip()
+        w_after = _pg(f"SELECT consecutive_failures || ',' || is_active FROM webhook_endpoints WHERE id='{we_id}';").strip()
         cnt, st = w_after.split(",") if "," in w_after else ("0", "active")
         ck("S5-W6-05", f"50 连败 auto_disabled（{cnt}/{st}）", int(cnt) >= 50 and st == "auto_disabled")
 
@@ -533,7 +542,7 @@ def main() -> int:
     if code35 == 201:
         victim_id = _pg(f"SELECT id FROM users WHERE email='{test_victim_email}';").strip()
         _pg(f"INSERT INTO workspace_members(id, workspace_id, member_id, role, is_active, created_by_id, created_at, updated_at) "
-            f"SELECT gen_random_uuid(), '{victim_id}', 10, true, '{admin_id}', NOW(), NOW() FROM workspaces WHERE slug='{ws_admin}';")
+            f"SELECT gen_random_uuid(), '{victim_id}'::uuid, 10, true, '{admin_id}'::uuid, NOW(), NOW() FROM workspaces WHERE slug='{ws_admin}';")
         v_row = _pg(f"SELECT id FROM workspace_members WHERE workspace_id=(SELECT id FROM workspaces WHERE slug='{ws_admin}') AND member_id='{victim_id}';").strip()
         ADMIN.post(f"/api/v1/workspaces/{ws_admin}/members/{v_row}/disable/")
         time.sleep(2)  # 通知 on_commit 异步

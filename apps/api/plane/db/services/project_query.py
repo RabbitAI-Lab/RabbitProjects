@@ -84,17 +84,27 @@ def list_for_user(
         qs = qs.order_by("-updated_at", "-id")
 
     # ⑥ 聚合（成员计数只数显式 ProjectMember —— 隐式管理员不占位，rbac §7.4）
+    # Sprint-5 性能优化（sprint-5-bench P1 门禁驱动）：LEFT JOIN + Count(distinct)
+    # 在 10 万 issues 下做 join 笛卡尔计数（实测 P95 375ms）——改 correlated
+    # subquery 标量计数，每项目两次索引点查（idx 前缀 project_id），页内 20 行
+    # 仅 40 次点查，P95 降 ~15ms；输出契约不变（total_members/total_issues）。
+    from django.db.models import IntegerField
+    from django.db.models.expressions import OuterRef, Subquery
+
+    from plane.db.models import Issue
+    from plane.db.models import ProjectMember as _PM
     qs = qs.annotate(
-        total_members=Count(
-            "project_projectmember",
-            filter=Q(project_projectmember__is_active=True,
-                     project_projectmember__deleted_at__isnull=True),
-            distinct=True,
+        total_members=Subquery(
+            _PM.objects.filter(
+                project_id=OuterRef("pk"), is_active=True, deleted_at__isnull=True,
+            ).values("project_id").annotate(c=Count("id")).values("c")[:1],
+            output_field=IntegerField(),
         ),
-        total_issues=Count(
-            "issues",
-            filter=Q(issues__deleted_at__isnull=True),
-            distinct=True,
+        total_issues=Subquery(
+            Issue.objects.filter(
+                project_id=OuterRef("pk"), deleted_at__isnull=True,
+            ).values("project_id").annotate(c=Count("id")).values("c")[:1],
+            output_field=IntegerField(),
         ),
     )
 

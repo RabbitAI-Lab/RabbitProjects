@@ -857,7 +857,8 @@ export interface StreamMeta {
   total_count_estimated?: boolean;
 }
 
-/** §2.3 event 语义组（与后端 EVENT_CHOICES 白名单同源；未知值 400 BR-08）。 */
+/** §2.3 event 语义组（与后端 EVENT_CHOICES 白名单同源；未知值 400 BR-08）。
+ * lifecycle 为 Sprint-5 扩域补登（PROJ-003 §2.3 → COLLAB-003 §2.3 回改登记）。 */
 export const STREAM_EVENT_GROUPS: Array<{ key: string; label: string }> = [
   { key: "created", label: "创建" },
   { key: "state", label: "状态" },
@@ -872,6 +873,7 @@ export const STREAM_EVENT_GROUPS: Array<{ key: string; label: string }> = [
   { key: "archived", label: "归档" },
   { key: "deleted", label: "删除" },
   { key: "comment", label: "评论" },
+  { key: "lifecycle", label: "生命周期" },
 ];
 
 /** stream_cursor 解析（§4.2.1 要点 2）：自右向左取最后一段为 UUID、其余整体为时间戳。 */

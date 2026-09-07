@@ -21,6 +21,7 @@
 """
 from __future__ import annotations
 
+from django.db import transaction
 from django.http import HttpResponseRedirect
 from rest_framework import status
 from rest_framework.exceptions import NotFound
@@ -249,6 +250,16 @@ class UploadSessionCompleteView(APIView):
         from plane.db.services import file_library as flib
 
         version = asset.current_version
+        # FILE-002 BR-12 动态流半边（Sprint-5 T5-02）：分片首传（v1）投「上传」
+        # 留痕；v2+/回滚的版本语义由 _publish_version_created 承载（防双行）。
+        if version is not None and version.version_number == 1:
+            from plane.db.services.file_stream import emit_file_activity
+
+            name = (asset.attributes or {}).get("name", "")
+            transaction.on_commit(lambda: emit_file_activity(
+                project_id=project.id, asset_id=asset.id,
+                actor_id=request.user.id, action="uploaded",
+                comment=f"上传了文件「{name}」"))
         return success_response(
             {"file": flib.file_row(asset),
              "version": svc.version_row(version, is_current=True) if version else {}},

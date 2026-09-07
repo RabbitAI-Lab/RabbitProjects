@@ -30,6 +30,7 @@ app = Celery(
         "plane.bgtasks.issue_hierarchy",
         "plane.bgtasks.issue_link",
         "plane.bgtasks.notifications",
+        "plane.bgtasks.project_activity",  # Sprint-5：project 域 Activity 幂等轨道（activity 队列）
         "plane.bgtasks.share_sweep",       # FILE-004：过期分享清扫（beat 每小时）
         "plane.bgtasks.worklog",
         "plane.bgtasks.workspace_invite",
@@ -59,7 +60,12 @@ app.conf.beat_schedule = {
 from kombu import Exchange, Queue  # noqa: E402
 
 app.conf.task_acks_on_failure_or_timeout = False
-app.conf.task_routes = {"plane.bgtasks.issue_activity.issue_activity": {"queue": "activity"}}
+app.conf.task_routes = {
+    "plane.bgtasks.issue_activity.issue_activity": {"queue": "activity"},
+    # Sprint-5：project 域轨道与薄壳同入 activity 队列（共用 DLX activity.dlq）
+    "plane.bgtasks.project_activity.project_activity": {"queue": "activity"},
+    "plane.bgtasks.project_activity.record_project_activity": {"queue": "activity"},
+}
 app.conf.task_queues = (
     Queue("activity", Exchange("activity", type="direct"), routing_key="activity",
           queue_arguments={

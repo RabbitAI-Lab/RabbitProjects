@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 
+from django.db import transaction
 from rest_framework import status
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
@@ -357,7 +358,26 @@ class FileDetailView(APIView):
         payload = dict(data)
         if "allowed_members" in payload:
             payload["allowed_members"] = [str(m) for m in payload["allowed_members"]]
+        old_name = (asset.attributes or {}).get("name", "")
+        old_folder_name = asset.folder.name if asset.folder else None
         asset = svc.update_file(asset=asset, payload=payload)
+        # FILE-002 BR-12 动态流半边（Sprint-5 T5-02）：重命名/移动留痕（on_commit）
+        from plane.db.services.file_stream import emit_file_activity
+
+        if "name" in payload and payload["name"] is not None:
+            transaction.on_commit(lambda: emit_file_activity(
+                project_id=project.id, asset_id=asset.id,
+                actor_id=request.user.id, action="renamed",
+                old_value=old_name, new_value=payload["name"],
+                comment=f"将文件「{old_name}」重命名为「{payload['name']}」"))
+        if "folder_id" in payload:
+            new_folder_name = asset.folder.name if asset.folder else None
+            transaction.on_commit(lambda: emit_file_activity(
+                project_id=project.id, asset_id=asset.id,
+                actor_id=request.user.id, action="moved",
+                old_value=old_folder_name or "根目录", new_value=new_folder_name or "根目录",
+                comment=(f"移动文件「{old_name}」到「{new_folder_name}」"
+                         if new_folder_name else f"移动文件「{old_name}」到根目录")))
         return success_response(svc.file_row(asset, expand_uploaded_by=False))
 
 
@@ -378,6 +398,14 @@ class FileDetailView(APIView):
             )
         _require_not_archived(project)
         svc.soft_delete_file(asset=asset, actor=request.user)
+        # FILE-002 BR-12 动态流半边（Sprint-5 T5-02）：删除留痕（on_commit）
+        from plane.db.services.file_stream import emit_file_activity
+
+        name = (asset.attributes or {}).get("name", "")
+        transaction.on_commit(lambda: emit_file_activity(
+            project_id=project.id, asset_id=asset.id,
+            actor_id=request.user.id, action="deleted",
+            comment=f"删除了文件「{name}」（已入回收站）"))
         # 204 禁带 body（C1 例外，auth.py 同款）——success_response(None, 204) 会给
         # 无体状态码渲染 32 字节 JSON，keep-alive 下游把残留字节解析成下一响应的
         # 状态行 → 代理层 500/连接错位（e2e 双 context 连续 DELETE 稳定复现）
@@ -410,6 +438,14 @@ class FileRestoreView(APIView):
             )
         _require_not_archived(project)
         asset = svc.restore_file(asset=asset, actor=request.user)
+        # FILE-002 BR-12 动态流半边（Sprint-5 T5-02）：恢复留痕（on_commit）
+        from plane.db.services.file_stream import emit_file_activity
+
+        name = (asset.attributes or {}).get("name", "")
+        transaction.on_commit(lambda: emit_file_activity(
+            project_id=project.id, asset_id=asset.id,
+            actor_id=request.user.id, action="restored",
+            comment=f"从回收站恢复了文件「{name}」"))
         return success_response(svc.file_row(asset))
 
 
@@ -476,7 +512,18 @@ class FileCompleteView(APIView):
         if asset.uploaded_by_id != request.user.id:
             raise NotFound("RESOURCE_NOT_FOUND")
         _require_not_archived(project)
+        was_pending = asset.status != FileAsset.Status.UPLOADED  # 幂等重放不重复留痕
         data = svc.complete_file(asset=asset, actor=request.user)
+        # FILE-002 BR-12 动态流半边（Sprint-5 T5-02）：仅**新名翻转首传**投「上传」
+        # 留痕（返回行 id == 暂存行 id）；同名并入版本链 / 幂等重放不投——
+        # 版本语义（v2+/回滚）由 upload_session._publish_version_created 承载。
+        if was_pending and data.get("id") == str(asset.id):
+            from plane.db.services.file_stream import emit_file_activity
+
+            transaction.on_commit(lambda: emit_file_activity(
+                project_id=project.id, asset_id=asset.id,
+                actor_id=request.user.id, action="uploaded",
+                comment=f"上传了文件「{data.get('name', '')}」"))
         return success_response(data)
 
 

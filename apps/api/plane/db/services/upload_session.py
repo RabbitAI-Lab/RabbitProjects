@@ -390,6 +390,27 @@ def _publish_version_created(version: FileVersion, *, actor_id, source_number: i
         actor_id=str(actor_id) if actor_id else None,
         source_version_number=source_number,
     )
+    # 动态流半边（FILE-003 BR-13，Sprint-5 T5-02 管道扩域）：与 WS 同点同规。
+    # 首传（v1 且非回滚）不投版本行——「上传」留痕由两个 complete 视图承载
+    # （FILE-002 BR-12），避免一次上传双行。
+    from plane.db.services.file_stream import emit_file_activity
+
+    name = version.attributes.get("name", "")
+    if source_number is not None:  # 回滚 = 复用目标对象的新版本行（BR-09）
+        emit_file_activity(
+            project_id=version.asset.project_id, asset_id=version.asset_id,
+            actor_id=actor_id, action="version_rolled_back",
+            old_value=f"v{source_number}", new_value=f"v{version.version_number}",
+            comment=f"回滚「{name}」到版本 v{source_number}",
+        )
+    elif version.version_number > 1:
+        emit_file_activity(
+            project_id=version.asset.project_id, asset_id=version.asset_id,
+            actor_id=actor_id, action="version_created",
+            old_value=f"v{version.version_number - 1}",
+            new_value=f"v{version.version_number}",
+            comment=f"上传了新版本 v{version.version_number}「{name}」",
+        )
 
 
 def _new_version(asset: FileAsset, upload, *, key: str,

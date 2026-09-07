@@ -14,6 +14,11 @@ from plane.app.views.activity_dlq_admin import (
 )
 from plane.app.views.auth import MeView, SignInView, SignOutView, SignUpView, csrf_token
 from plane.app.views.issues import IssueDetailView, IssueListCreateView
+from plane.app.views.ops_admin import (
+    BackupRunListView,
+    BackupRunTriggerView,
+    RateLimitSummaryView,
+)
 from plane.app.views.project_templates import (
     ProjectTemplateDetailView,
     ProjectTemplateListCreateView,
@@ -100,6 +105,12 @@ urlpatterns = [
          ReleaseGateSignView.as_view(), name="release-gates-sign"),
     path("instances/release-gates/<uuid:gate_id>/verdict/",
          ReleaseGateVerdictView.as_view(), name="release-gates-verdict"),
+    # admin 运维面（INFRA-005 §4.2——备份/限流，T6-05）
+    path("instances/backups/", BackupRunListView.as_view(), name="ops-backups-list"),
+    path("instances/backups/trigger/", BackupRunTriggerView.as_view(),
+         name="ops-backups-trigger"),
+    path("instances/rate-limit/summary/", RateLimitSummaryView.as_view(),
+         name="ops-ratelimit-summary"),
     path("auth/sign-up/", SignUpView.as_view(), name="auth-signup"),
     path("auth/sign-in/", SignInView.as_view(), name="auth-signin"),
     path("auth/sign-out/", SignOutView.as_view(), name="auth-signout"),

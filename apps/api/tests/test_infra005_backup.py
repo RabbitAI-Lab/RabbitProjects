@@ -200,3 +200,50 @@ def test_ut12_record_drill_writes_report():
     assert bk.record_drill(str(failed.id), rto_seconds=1,
                            smoke_passed=0, smoke_total=18, notes="") is False
     cache.clear()
+
+
+# ── T6-05 运维端点：列表/触发限频/概览快照（SystemAdmin 鉴权）──────────
+
+def test_ops_endpoints_permission_and_shape(db):
+    from rest_framework.test import APIClient
+
+    plain = User.objects.create_user(email="ops-plain@rabbit.dev",
+                                     password="Rabbit123!")
+    admin = User.objects.create_user(email="ops-admin@rabbit.dev",
+                                     password="Rabbit123!")
+    SystemAdmin.objects.create(user=admin)
+    c = APIClient()
+    c.force_authenticate(plain)
+    assert c.get("/api/v1/instances/backups/").status_code == 403   # 非 SystemAdmin
+    c.force_authenticate(admin)
+    r = c.get("/api/v1/instances/backups/")
+    assert r.status_code == 200 and r.json()["data"] == []
+    # 概览快照：冻结配额单源镜像
+    r = c.get("/api/v1/instances/rate-limit/summary/")
+    assert r.status_code == 200
+    snap = r.json()["data"]["config_snapshot"]
+    assert snap["user_per_min"] == "60/min" and snap["bulk_per_min"] == "10/min"
+    assert snap["share_unlock"] == "5/10m" and snap["edge"]["auth_per_min"] == 10
+    assert r.json()["data"]["degraded"] is False
+
+
+def test_ops_backup_trigger_throttled_within_10min(db, monkeypatch):
+    from django.utils import timezone as tz
+    from rest_framework.test import APIClient
+
+    admin = User.objects.create_user(email="ops-trg@rabbit.dev",
+                                     password="Rabbit123!")
+    SystemAdmin.objects.create(user=admin)
+    BackupRun.objects.create(kind="manual", status="success",
+                             started_at=tz.now() - tz.timedelta(minutes=3))
+    c = APIClient()
+    c.force_authenticate(admin)
+    r = c.post("/api/v1/instances/backups/trigger/", {}, format="json")
+    assert r.status_code == 429
+    assert r.json()["error"]["code"] == "RATE_LIMIT_EXCEEDED"
+    assert r.json()["error"]["details"][0]["field"] == "retry_after"
+    # 10 分钟外的成功备份不拦截（429→202 快回包：任务入队 mock）
+    BackupRun.objects.update(started_at=tz.now() - tz.timedelta(minutes=11))
+    with mock.patch("plane.bgtasks.backup.daily_backup") as task:
+        r = c.post("/api/v1/instances/backups/trigger/", {}, format="json")
+    assert r.status_code == 202 and task.delay.called

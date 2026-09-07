@@ -40,7 +40,7 @@ class SoftDeleteQuerySet(models.QuerySet):
         return self.all()
 
 
-class SoftDeleteManager(models.Manager.from_queryset(SoftDeleteQuerySet)):
+class SoftDeleteManager(models.Manager.from_queryset(SoftDeleteQuerySet)):  # type: ignore[misc]  # 动态基类，mypy 无法静态推导
     """from_queryset 派生：QuerySet 方法（accessible_by/unsafe_all 等）经管理器转发。"""
 
     def get_queryset(self) -> SoftDeleteQuerySet:

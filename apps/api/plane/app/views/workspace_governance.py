@@ -17,6 +17,7 @@ from plane.app.permissions import IsAuthenticated
 from plane.app.views._access import get_workspace_or_404
 from plane.base.exception import AppException
 from plane.base.response import created_response, success_response
+from plane.base.throttling import BASE_THROTTLES, ReportRateThrottle
 from plane.db.models import WorkspaceLabel, WorkspaceRole
 from plane.db.services.workspace_governance import WorkspaceGovernanceService
 
@@ -94,6 +95,9 @@ class WorkspaceActivityStatsView(APIView):
     """BR-09 红线：响应键路径无 user_id（UT Schema 断言）。"""
 
     permission_classes = [IsAuthenticated]
+    # 报表聚合端点 10/min·user（INTG-002 交接表：sprint-5 规格列有、实现未限流
+    # ——INFRA-005 全局框架接入，§7.2「报表聚合端点」行）
+    throttle_classes = [*BASE_THROTTLES, ReportRateThrottle]
 
     def get(self, request, slug):
         ws, member = get_workspace_or_404(slug, request.user)

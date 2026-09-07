@@ -29,7 +29,7 @@ from plane.app.permissions import IsAuthenticated, require_permission
 from plane.app.views._access import get_project_or_404, get_workspace_or_404
 from plane.base.exception import AppException
 from plane.base.response import created_response, success_response
-from plane.db.models import IntegrationInstallation, ProjectRole, SyncConflictLog
+from plane.db.models import IntegrationInstallation, ProjectMember, ProjectRole, SyncConflictLog, WorkspaceMember
 from plane.db.models.integration import (
     decrypt_secret,
     encrypt_secret,
@@ -356,3 +356,45 @@ class GitHubSyncLogsView(APIView):
             "occurred_at": r.occurred_at.isoformat(),
         } for r in rows]
         return success_response(data, meta={"count": len(data), "total_count": len(data)})
+
+
+class GitHubQuotaStatusView(APIView):
+    """GET /api/v1/integrations/{installation_id}/quota-status/ —— 速率预算只读
+    状态（INTG-002 交接清单项 3：degraded 旗标对外暴露，INFRA-005/前端消费）。
+
+    路径不带 project（交接清单原样路径）：权限经 installation → 绑定项目解析，
+    要求用户在任一绑定项目持 integration.config（PROJ_ADMIN+，rbac §8.1 同码）；
+    不可见/无权统一 404 RESOURCE_NOT_FOUND（越权同构收口，api-conventions §6）。
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, installation_id: int):
+        from plane.db.models.roles import WorkspaceRole
+        from plane.integrations.github import IntegrationQuotaService
+
+        insts = IntegrationInstallation.objects.filter(
+            installation_id=installation_id, deleted_at__isnull=True,
+        ).select_related("project", "project__workspace")
+        has_config = False
+        for inst in insts:
+            # 角色解析与 get_project_or_404 同约定（INFRA-003 §4.5）：
+            # WS_OWNER/ADMIN 无 ProjectMember 行时隐式项目 ADMIN
+            pm = ProjectMember.objects.filter(
+                project=inst.project, member=request.user, is_active=True).first()
+            if pm is not None:
+                role = pm.role
+            else:
+                wm = WorkspaceMember.objects.filter(
+                    workspace=inst.project.workspace_id, member=request.user,
+                    is_active=True).first()
+                if wm is None or wm.role < WorkspaceRole.ADMIN:
+                    continue
+                role = ProjectRole.ADMIN
+            if role >= ProjectRole.ADMIN:
+                has_config = True
+                break
+        if not has_config:
+            raise AppException("RESOURCE_NOT_FOUND",
+                               message="集成安装不存在或无权查看")
+        return success_response(IntegrationQuotaService.status(int(installation_id)))

@@ -6,6 +6,7 @@ import os
 from django.core.exceptions import ImproperlyConfigured
 
 from .base import *  # noqa: F401,F403
+from .base import REDIS_URL
 
 DEBUG = False
 
@@ -40,3 +41,17 @@ SESSION_COOKIE_SAMESITE = "Lax"
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
 X_FRAME_OPTIONS = "DENY"
+
+# ── INFRA-005 §4.3.2：L2 全局限流生效（api ×2 副本共享 Redis 计数）──
+RATE_LIMIT_ENABLED = True
+
+# ── INFRA-005：限流计数缓存走 Redis（base 缺省 LocMem 仅单进程可见）──
+# 兑现 INTG-002 交接风险 #2「生产必走 Redis」；DB 1 与 AUTH-004 会话索引
+# （account/sessions.py 期望 Valkey DB 1）分库避让。
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": REDIS_URL.replace("/0", "/2"),
+        "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+    }
+}

@@ -17,11 +17,9 @@
 from __future__ import annotations
 
 import hmac
-import logging
 import re
 import time
 from datetime import timedelta
-from typing import Any
 from urllib.parse import quote
 
 from django.db import transaction
@@ -32,8 +30,6 @@ from django.utils.crypto import salted_hmac
 from plane.base.exception import AppException
 from plane.db.models import FileAsset, FileShareAccess, FileShareLink
 from plane.storage import minio as storage
-
-logger = logging.getLogger("plane.db.services.file_share")
 
 # ── 常量（§2.3 / §2.5）───────────────────────────────────────────────
 #: token_urlsafe 产物的格式拦截（对齐 AUTH-004 先例）：22 位 base64url
@@ -395,87 +391,13 @@ def share_download_url(link: FileShareLink) -> str:
     return _rewrite_to_uploads_prefix(url)
 
 
-# ── (IP, slug) 防爆破计数（BR-07，Valkey 固定窗口）────────────────────
-_redis_client: Any = None
-_redis_unavailable = False
-
-
-def _redis():
-    """Redis 连接（进程级缓存 + 不可达降级短路，范式同 file_stats）。
-
-    降级语义：Redis 故障时限流**放行**（可用性优先，告警不阻断）——与
-    event_publisher / file_stats 同一降级纪律；INFRA-005 收编时统一复核。
-    """
-    global _redis_client, _redis_unavailable
-    if _redis_unavailable:
-        return None
-    if _redis_client is None:
-        try:
-            import redis
-            from django.conf import settings
-
-            _redis_client = redis.Redis.from_url(
-                settings.REDIS_URL, decode_responses=True,
-                socket_timeout=1, socket_connect_timeout=1,
-            )
-            _redis_client.ping()
-        except Exception as exc:  # noqa: BLE001 —— 降级路径：不阻断匿名面
-            _redis_unavailable = True
-            logger.warning("file_share.redis_unavailable degrade=throttle_open exc=%s", exc)
-            return None
-    return _redis_client
-
-
-def reset_redis_state() -> None:
-    """测试辅助：重置进程级 Redis 状态（每用例独立判定可用性）。"""
-    global _redis_client, _redis_unavailable
-    _redis_client = None
-    _redis_unavailable = False
-
-
-def attempt_key(slug: str, ip: str | None) -> str:
-    """BR-07 二维键：(IP, slug)——不按纯 IP（NAT 误伤）不按纯 slug（恶意锁死）。"""
-    return f"share-unlock:{ip or 'unknown'}:{slug}"
-
-
-def throttle_allow(slug: str, ip: str | None) -> tuple[bool, dict[str, int]]:
-    """固定窗口计数：``INCR`` + 首次 ``EXPIRE``；超限返回 (False, 限流信息)。
-
-    返回的 info 供 429 响应头（``Retry-After`` / ``X-RateLimit-*``，§7.3 模板）。
-    """
-    client = _redis()
-    if client is None:
-        return True, {"limit": PASSWORD_ATTEMPTS, "remaining": PASSWORD_ATTEMPTS,
-                      "reset": int(time.time()) + ATTEMPT_WINDOW}
-    key = attempt_key(slug, ip)
-    count = client.incr(key)
-    if count == 1:
-        client.expire(key, ATTEMPT_WINDOW)
-    ttl = client.ttl(key)
-    wait = ttl if isinstance(ttl, int) and ttl > 0 else ATTEMPT_WINDOW
-    info = {
-        "limit": PASSWORD_ATTEMPTS,
-        "remaining": max(0, PASSWORD_ATTEMPTS - count),
-        "reset": int(time.time()) + wait,
-        "wait": wait,
-    }
-    return count <= PASSWORD_ATTEMPTS, info
-
-
-def remaining_attempts(slug: str, ip: str | None) -> int:
-    """密码错误响应的「剩余 N 次尝试」（§4.2.3 details）。"""
-    client = _redis()
-    if client is None:
-        return PASSWORD_ATTEMPTS
-    count = int(client.get(attempt_key(slug, ip)) or 0)
-    return max(0, PASSWORD_ATTEMPTS - count)
-
-
-def clear_attempts(slug: str, ip: str | None) -> None:
-    """解锁成功清零计数（失败才累计；成功访客不应被余量卡住）。"""
-    client = _redis()
-    if client is not None:
-        client.delete(attempt_key(slug, ip))
+# ── (IP, slug) 防爆破计数（BR-07）——INFRA-005 收编 ────────────────────
+#: 原自带实现（``_redis`` 家族 + ``throttle_allow``/``remaining_attempts``/
+#: ``clear_attempts``）已收编入 ``plane.base.throttling.ShareUnlockRateThrottle``
+#:（5 次失败/10min/(IP,slug)、成功清零、fail-open 语义不变；计数载体自裸
+#: redis-py 改 django cache——dev LocMem 单进程、prod CACHES 指向 Redis）。
+#: ``PASSWORD_ATTEMPTS``/``ATTEMPT_WINDOW`` 保留为文档口径常量（与框架类
+#: ``5/10m`` 同值，UT 断言一致性）。
 
 
 def check_password(link: FileShareLink, password: str) -> bool:

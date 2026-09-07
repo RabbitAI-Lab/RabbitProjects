@@ -38,6 +38,9 @@ class FileAsset(BaseModel):
         "db.Workspace",
         on_delete=models.CASCADE,
         related_name="assets",
+        null=True,  # 头像域无工作空间归属（AUTH-004 §4.2.2；0020 收口——此前服务层
+        # 写 None 而列 NOT NULL，avatar presign 必 IntegrityError，冒烟 S17 暴露）
+        blank=True,
         verbose_name="所属工作空间",
     )
     project = models.ForeignKey(

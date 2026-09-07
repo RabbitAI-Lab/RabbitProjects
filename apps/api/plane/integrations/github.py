@@ -76,6 +76,29 @@ class IntegrationQuotaService:
             return int(reset_at - time.time())
         return None
 
+    @classmethod
+    def status(cls, installation_id: int) -> dict:
+        """只读配额状态（INTG-002 交接项 3——quota-status 端点数据源；不计数）。
+
+        degraded = 稳态/小时任一窗口占比 ≥ QUOTA_DEGRADE_RATIO（70%——与 hit()
+        同口径；「INFRA-005 根据此旗位切换速率预算」的消费面由此读取）。
+        """
+        now = int(time.time())
+        out: dict = {"installation_id": installation_id}
+        for kind, window, cap in (
+            ("minute", 60, STEADY_PER_MIN), ("hour", 3600, QUOTA_PER_HOUR),
+        ):
+            hits = [t for t in (cache.get(cls._key(kind[:3], installation_id)) or [])
+                    if now - t < window]
+            ratio = len(hits) / cap
+            out[kind] = {"count": len(hits), "cap": cap,
+                         "remaining": max(0, cap - len(hits)),
+                         "ratio": round(ratio, 3),
+                         "degraded": ratio >= QUOTA_DEGRADE_RATIO}
+        out["paused_for"] = cls.paused(installation_id)
+        out["degraded"] = out["minute"]["degraded"] or out["hour"]["degraded"]
+        return out
+
 
 class GitHubClient:
     """installation token 客户端（传输层可注入）。"""

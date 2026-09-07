@@ -82,9 +82,12 @@ def env(db):
     mk("t5", group="cancelled")
     mk("t6", group="completed", completed_days_ago=40)  # 30d 窗口外
     mk("t7", group="unstarted", archived=True)     # 归档不计
-    WorkLog.objects.create(issue=Issue.objects.get(name="t1"), actor=zhang,
+    # 作用域限定到本项目：dev 库可能有同名任务残留（jMeter flow 的 S5A3C 副本
+    # 曾带 t1 打爆全局 get——坑 18 同族教训，2026-09-07 收口）
+    t1 = Issue.objects.get(name="t1", project=proj)
+    WorkLog.objects.create(issue=t1, actor=zhang,
                            minutes=90, worked_on=today, created_by=owner)
-    WorkLog.objects.create(issue=Issue.objects.get(name="t1"), actor=zhang,
+    WorkLog.objects.create(issue=t1, actor=zhang,
                            minutes=60, worked_on=today - timedelta(days=40),
                            created_by=owner)  # 30d 窗口外
     return {"owner": owner, "zhang": zhang, "viewer": viewer, "outsider": outsider,

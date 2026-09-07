@@ -1,0 +1,191 @@
+# docker-compose.prod.yml —— 生产加固覆盖层（INFRA-005 §4.4.2 / BR-11/12/13）
+#
+# 用法（在 deploy/compose/ 下）：
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# 基础文件（dev 形态）保持不动；本文件仅覆盖生产差异项（INFRA-002 §1.6
+# 「重复项以本文档为增量」口径）。prod 必填环境变量由 plane/settings/prod.py
+# 启动即校验（BR-13），本层不重复断言。
+#
+# 覆盖总表（对照 BR-11/12/13）：
+#   BR-11 端口收敛：除 proxy 80 外全部 !reset 撤销（含 mq 15672 管理面——
+#        运维走 rp-internal + SSH 隧道）；beat 恰一副本（replicas: 1）；
+#        api/worker ×2；全部镜像精确 tag（基础文件已锁定，本层不引入 latest）。
+#   BR-12 日志：json-file 50m×3 基础文件已全量就位（createbuckets 本层补齐）；
+#        只读根文件系统 + tmpfs——已验证零本地写路径的服务（proxy/web/admin/
+#        space/beat/migrator/createbuckets/backup-sync）先行，api/worker/live
+#        待恢复演练实测后收口（known-tech-debt 登记，防未验证资产）。
+#   BR-13 网络三分段：rp-edge（仅 proxy）/ rp-internal（internal: true 零出站）/
+#        rp-egress（仅 worker，出站面——域名级白名单归 P4 INFRA-006，本层
+#        提供挂点）。`!reset` 重置基础网络的 rp-net 归属。
+name: rabbit-projects
+
+x-hardening: &hardening
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+# YAML 单 << 约束：app 锚点链式包含 hardening（YAML 1.1 不允许同映射双 <<）
+x-app: &app
+  <<: *hardening
+  environment:
+    DJANGO_SETTINGS_MODULE: plane.settings.prod
+    # INTG-002 交接项 5：生产必须注入独立密钥（缺省空 → SECRET_KEY 派生仅 dev）；
+    # 值经根 .env（env_file 已声明）注入，此处显式接线便于 checklist 核对
+    INTEGRATION_SECRET_KEY: ${INTEGRATION_SECRET_KEY:-}
+
+services:
+  db:
+    <<: *hardening
+    networks: !override {rp-internal: {}}
+    ports: !reset []
+    volumes:
+      - wal_archive:/wal_archive
+
+  redis:
+    <<: *hardening
+    networks: !override {rp-internal: {}}
+    ports: !reset []
+
+  mq:
+    <<: *hardening
+    networks: !override {rp-internal: {}}
+    ports: !reset []          # BR-11：5672/15672 均不外发——管理面走 SSH 隧道
+
+  minio:
+    <<: *hardening
+    networks: !override {rp-internal: {}}
+    ports: !reset []
+
+  migrator:
+    <<: *app
+    networks: !override {rp-internal: {}}
+    read_only: true
+    tmpfs: [/tmp]
+
+  createbuckets:
+    <<: *hardening
+    networks: !override {rp-internal: {}}
+    read_only: true
+    # INFRA-005 §4.4.3：追加 rp-backups 桶（版本化 + 30 天生命周期前缀规则）
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set rp http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
+      mc mb --ignore-existing rp/$$AWS_S3_BUCKET_NAME &&
+      mc anonymous set download rp/$$AWS_S3_BUCKET_NAME/public &&
+      mc mb --ignore-existing rp/rp-backups &&
+      mc version enable rp/rp-backups &&
+      mc ilm add --expiry-days 30 rp/rp-backups/backups/ &&
+      echo 'buckets ready (uploads + backups)'
+      "
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "3" }
+
+  api:
+    <<: *app
+    networks: !override {rp-internal: {}}
+    ports: !reset []           # 唯一对外入口是 proxy（BR-11）
+    deploy:
+      replicas: 2              # §1.5：api ×2（限流计数走 Redis 共享，settings/prod CACHES）
+    tmpfs: [/tmp]
+
+  worker:
+    <<: *app
+    build:
+      args:
+        # INFRA-005 §4.4.1：worker 内置 pg_dump/pg_restore（daily_backup 三校验）
+        INSTALL_BACKUP_TOOLS: "1"
+    # BR-13：rp-internal（DB/Redis/MQ/MinIO）+ rp-egress（Webhook 443 / SMTP
+    # 587/465 出站专用面；域名级白名单 P4）
+    networks: !override {rp-internal: {}, rp-egress: {}}
+    deploy:
+      replicas: 2
+    tmpfs: [/tmp]
+
+  beat:
+    <<: *app
+    networks: !override {rp-internal: {}}
+    deploy:
+      replicas: 1              # BR-11：恰好一副本（DatabaseScheduler 并发跑由锁语义兜底）
+    read_only: true
+    tmpfs: [/tmp]              # pidfile /tmp/celerybeat.pid；调度状态在 DB（DatabaseScheduler）
+
+  live:
+    <<: *hardening
+    networks: !override {rp-internal: {}}
+    ports: !reset []
+    tmpfs: [/tmp]
+
+  web:
+    <<: *hardening
+    networks: !override {rp-internal: {}}
+    ports: !reset []
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run, /tmp]
+
+  admin:
+    <<: *hardening
+    networks: !override {rp-internal: {}}
+    ports: !reset []
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run, /tmp]
+
+  space:
+    <<: *hardening
+    networks: !override {rp-internal: {}}
+    ports: !reset []
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run, /tmp]
+
+  proxy:
+    <<: *hardening
+    networks: !override {rp-edge: {}, rp-internal: {}}   # BR-13 双网：入口 + 内网可达
+    # 80 端口发布沿用基础文件（${NGINX_PORT:-80}:80）；443/TLS 终结与证书
+    # 装配归发布 checklist（运维手册），不在编排层硬编码证书路径
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run, /tmp]
+
+  # ── INFRA-005 §4.4.2：备份同步（uploads 每日镜像 + WAL 归档可选同步）──
+  backup-sync:
+    <<: *hardening
+    image: minio/mc:RELEASE.2025-01-20T15-22-18Z   # 与 createbuckets 同口径精确 tag（BR-11 禁 latest）
+    restart: unless-stopped
+    depends_on:
+      minio: { condition: service_healthy }
+    environment:
+      # MC_HOST_<alias> 注入凭据（走 .env，不写进编排文件——BR-10）
+      MC_HOST_rp: http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000
+      WAL_ARCHIVE_ENABLED: ${WAL_ARCHIVE_ENABLED:-0}
+    volumes:
+      - wal_archive:/wal_archive   # 与 db 同源挂载：mc cp /wal_archive 才能读到归档
+    entrypoint: [/bin/sh, -c]
+    command:
+      - |
+        # 循环①：rp-uploads → rp-backups/backups/uploads/ 每日增量镜像（24h 周期；
+        # 容器拉起时刻对齐 03:30 由 beat daily_backup 的 03:07 错峰约定互补）
+        ( while true; do mc mirror --overwrite rp/rp-uploads/ rp/rp-backups/backups/uploads/; sleep 86400; done ) &
+        # 循环②：WAL 归档同步（开关开启时每 5 分钟；RPO ≤5min 的可选增强）
+        while true; do
+          [ "$$WAL_ARCHIVE_ENABLED" = "1" ] && mc cp --recursive /wal_archive/ rp/rp-backups/backups/wal/
+          sleep 300
+        done
+    networks: !override {rp-internal: {}}   # 无出站需求——不挂 rp-egress
+    read_only: true
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "3" }
+
+volumes:
+  wal_archive:
+    name: rp-wal-archive
+
+networks:
+  rp-edge:
+    name: rp-edge
+    driver: bridge
+  rp-internal:
+    name: rp-internal
+    driver: bridge
+    internal: true             # BR-13：零出站——DB/Redis/MQ/MinIO/应用面全在此
+  rp-egress:
+    name: rp-egress
+    driver: bridge             # 仅 worker 挂载（出站专用面；不发布任何端口）

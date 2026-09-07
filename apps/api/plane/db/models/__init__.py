@@ -1,5 +1,6 @@
 from .account import PasswordResetToken
 from .asset import FileAsset
+from .backup import BackupRun
 from .base import BaseModel, SoftDeleteManager, SoftDeleteQuerySet
 from .comment import CommentReaction, IssueComment
 from .custom_field import CustomFieldDefinition
@@ -11,6 +12,7 @@ from .issue_type import IssueType
 from .label import Label
 from .notification import Notification
 from .project import Project, ProjectFavorite, ProjectMember, ProjectStatusLog, ProjectTemplate, SystemAdmin
+from .release import ReleaseGate, ReleaseGateEvent
 from .roles import ProjectRole, WorkspaceRole
 from .state import State
 from .user import User
@@ -23,6 +25,9 @@ __all__ = [
     "BaseModel",
     "SoftDeleteManager",
     "SoftDeleteQuerySet",
+    "BackupRun",
+    "ReleaseGate",
+    "ReleaseGateEvent",
     "User",
     "WebhookDelivery",
     "WebhookEndpoint",

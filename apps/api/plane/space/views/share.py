@@ -20,39 +20,19 @@ from __future__ import annotations
 from django.conf import settings as dj_settings
 from django.http import HttpResponseRedirect
 from rest_framework.permissions import AllowAny
-from rest_framework.throttling import BaseThrottle
 from rest_framework.views import APIView
 
 from plane.base.exception import AppException
 from plane.base.response import success_response
+from plane.base.throttling import BASE_THROTTLES, ShareUnlockRateThrottle
 from plane.db.models import FileShareLink
 from plane.db.services import file_share as svc
 from plane.db.services.upload_session import preview_dispatch
 from plane.storage import minio as storage
 
-
-class ShareUnlockThrottle(BaseThrottle):
-    """BR-07：5 次 / 10 分钟 / (IP, slug)——Valkey 固定窗口端点级配额。
-
-    键维度二维（不按纯 IP：NAT 误伤；不按纯 slug：可被恶意锁死他人链接）。
-    Redis 不可达降级放行（file_stats 同款纪律）。INFRA-005（Sprint 6）收编
-    配置不改语义。超限抛 ``Throttled`` → 429 ``RATE_LIMIT_EXCEEDED`` +
-    ``Retry-After``（handlers 第 8 步），本类在异常上附 ``rate_limit_info``
-    供其补 ``X-RateLimit-*`` 三件套（§7.3 模板）。
-    """
-
-    def allow_request(self, request, view) -> bool:  # noqa: FBT001 —— DRF 签名
-        from rest_framework.exceptions import Throttled
-
-        slug = view.kwargs.get("slug") or ""
-        allowed, info = svc.throttle_allow(slug, svc.client_ip(request))
-        if allowed:
-            return True
-        exc: Throttled = Throttled(wait=int(info.get("wait", 1) or 1))
-        exc.rate_limit_info = {  # type: ignore[attr-defined]
-            "limit": info["limit"], "remaining": 0, "reset": info["reset"],
-        }
-        raise exc
+#: BR-07：5 次失败 / 10 分钟 / (IP, slug)——原 ``ShareUnlockThrottle`` 自带
+#: 实现已收编入 ``plane.base.throttling.ShareUnlockRateThrottle``（配置单源
+#: 化，语义不变：仅失败计数、成功清零、fail-open、XFF 首段取 IP）。
 
 
 class PublicShareBaseView(APIView):
@@ -83,7 +63,7 @@ class ShareUnlockView(PublicShareBaseView):
 
     # 公开分组唯一匿名 POST（§4.2 豁免注——显式声明方法集）
     http_method_names = ["get", "post", "head", "options"]
-    throttle_classes = [ShareUnlockThrottle]
+    throttle_classes = [*BASE_THROTTLES, ShareUnlockRateThrottle]
 
     def post(self, request, slug: str):
         link = svc.resolve_active_share(slug)
@@ -92,19 +72,21 @@ class ShareUnlockView(PublicShareBaseView):
             password = request.data.get("password") or ""
         if not link.password_hash:
             return success_response({"unlocked": True})  # UT-03：无密码直通
+        unlock_throttle = ShareUnlockRateThrottle()
         if not svc.check_password(link, str(password)):
             svc.record_access(link, request, action="unlock_failed", success=False)
+            unlock_throttle.hit(request, self)  # 失败才累计（FILE-004 §4.6 原语义）
             raise AppException(
                 "AUTH_INVALID_CREDENTIALS",
                 message="密码错误",
                 details=[{
                     "field": "password", "code": "INVALID",
-                    "message": f"剩余 {svc.remaining_attempts(slug, svc.client_ip(request))} 次尝试",
+                    "message": f"剩余 {unlock_throttle.remaining(request, self)} 次尝试",
                 }],
             )
         token = svc.sign_share_token(slug)
         svc.record_access(link, request, action="unlock")
-        svc.clear_attempts(slug, svc.client_ip(request))  # 成功清零（失败才累计）
+        unlock_throttle.clear(request, self)  # 成功清零（失败才累计）
         resp = success_response({"unlocked": True, "expires_in": svc.SHARE_TOKEN_TTL})
         resp.set_cookie(
             svc.SHARE_COOKIE_NAME,

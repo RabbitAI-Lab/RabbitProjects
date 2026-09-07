@@ -1,0 +1,14 @@
+# security/exemptions.yml —— High 漏洞豁免评审单（QA-001 BR-06）
+#
+# 规则：
+#   - 仅 HIGH 可豁免；CRITICAL 零容忍不适用本表
+#   - id = CVE / GHSA / 漏泄件标识（与扫描报告的 id 字段对应）
+#   - expires_at 过期即 CI 失败（防永久豁免腐化）——续期须重新评审留痕
+#   - 每条必须五字段齐：id / reason / owner / fix_version / expires_at
+#
+# 空表为正常态（无豁免）。示例（勿解除注释当真豁免）：
+# - id: GHSA-xxxx-yyyy-zzzz
+#   reason: 构建链传递依赖，运行时不可达（评审 #123）
+#   owner: backend@rabbit.dev
+#   fix_version: 1.0.1
+#   expires_at: 2026-10-01

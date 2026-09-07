@@ -10,5 +10,12 @@ export default defineConfig({
     port: 3002,
     // 端口被占用时直接报错退出（E2E-06 可诊断性要求）
     strictPort: true,
+    // 运维台 API 同源代理（web 域同款）：会话 cookie 落 3002 域，免跨域
+    proxy: {
+      "/api": {
+        target: process.env.API_PROXY_TARGET ?? "http://localhost:8000",
+        changeOrigin: false, // web 域同款：Host 透传保 CSRF Origin 校验一致
+      },
+    },
   },
 });

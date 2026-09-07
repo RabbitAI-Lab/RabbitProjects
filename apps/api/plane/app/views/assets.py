@@ -28,6 +28,7 @@ from plane.app.services.asset import AssetService
 from plane.app.views._access import get_project_or_404
 from plane.base.exception import AppException
 from plane.base.response import success_response
+from plane.base.throttling import BASE_THROTTLES, PresignRateThrottle
 from plane.db.models import FileAsset, Issue
 from plane.db.models.roles import ProjectRole
 
@@ -76,6 +77,8 @@ class AttachmentPresignView(APIView):
     """POST .../issues/{id}/attachments/presign/ —— §4.3.1"""
 
     permission_classes = [FilePermission]
+    # §7.2 文件预签名申请 30/min·user（INFRA-005）
+    throttle_classes = [*BASE_THROTTLES, PresignRateThrottle]
 
     def post(self, request, *args, **kwargs):
         project, issue = _ScopedHelper.resolve(

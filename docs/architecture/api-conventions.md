@@ -589,7 +589,7 @@ GET .../issues/?ordering=-priority,target_date,-created_at
 
 | 层级 | 位置 | 粒度 | 目的 |
 | --- | --- | --- | --- |
-| L1 边缘限流 | `apps/proxy`（Nginx `limit_req_zone`） | 按 IP，300 req/min（burst 60） | 抵御扫描与粗暴刷接口，保护应用层不被打满 |
+| L1 边缘限流 | `apps/proxy`（Nginx `limit_req_zone`） | 按 IP，300 req/min（burst 60）；另设 auth（10r/min）/public（30r/min）两个 `^~` 互斥预拦区——与 §7.2 同值双层，L1 挡扫描爆破、L2 兜业务公平（INFRA-005 §4.3.1 落地补注，2026-09-08） | 抵御扫描与粗暴刷接口，保护应用层不被打满 |
 | L2 应用限流 | DRF Throttle（Redis 计数） | 按用户 / API Key / 匿名 IP | 业务级公平性与配额 |
 | L3 端点限流 | ViewSet 级 `throttle_classes` 覆盖 | 按端点 | 保护高成本端点 |
 

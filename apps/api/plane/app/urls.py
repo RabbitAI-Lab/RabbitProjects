@@ -14,6 +14,11 @@ from plane.app.views.activity_dlq_admin import (
 )
 from plane.app.views.auth import MeView, SignInView, SignOutView, SignUpView, csrf_token
 from plane.app.views.issues import IssueDetailView, IssueListCreateView
+from plane.app.views.ops_admin import (
+    BackupRunListView,
+    BackupRunTriggerView,
+    RateLimitSummaryView,
+)
 from plane.app.views.project_templates import (
     ProjectTemplateDetailView,
     ProjectTemplateListCreateView,
@@ -25,6 +30,14 @@ from plane.app.views.projects import (
     ProjectStateListView,
     ProjectStatusLogView,
     ProjectTransitionView,
+)
+from plane.app.views.release_gates import (
+    ReleaseGateCreateView,
+    ReleaseGateDetailView,
+    ReleaseGateEventView,
+    ReleaseGateListView,
+    ReleaseGateSignView,
+    ReleaseGateVerdictView,
 )
 from plane.app.views.workspaces import WorkspaceDetailView, WorkspaceListCreateView
 from plane.base.exception import AppException
@@ -43,6 +56,10 @@ class HealthView(APIView):
     """
 
     permission_classes = [AllowAny]
+    # BR-05（INFRA-005 §2.3）：健康检查不消耗配额也不被限——L2 全局四类经
+    # DEFAULT_THROTTLE_CLASSES 生效后，显式空声明维持 INFRA-002 §4.10 口径
+    #（DRF 的 throttle_classes 是整体替换，空列表即豁免）
+    throttle_classes: list = []
 
     def get(self, request):
         try:
@@ -75,6 +92,25 @@ urlpatterns = [
         ActivityDeadLetterDiscardView.as_view(),
         name="activity-dead-letter-discard",
     ),
+    # 发布门禁（QA-001 §4.4——系统管理员面 instances/ 前缀，Sprint-6 T6-06）
+    path("instances/release-gates/", ReleaseGateListView.as_view(),
+         name="release-gates-list"),
+    path("instances/release-gates/create/", ReleaseGateCreateView.as_view(),
+         name="release-gates-create"),
+    path("instances/release-gates/<uuid:gate_id>/", ReleaseGateDetailView.as_view(),
+         name="release-gates-detail"),
+    path("instances/release-gates/<uuid:gate_id>/gate-events/",
+         ReleaseGateEventView.as_view(), name="release-gates-event"),
+    path("instances/release-gates/<uuid:gate_id>/checklist/<str:key>/sign/",
+         ReleaseGateSignView.as_view(), name="release-gates-sign"),
+    path("instances/release-gates/<uuid:gate_id>/verdict/",
+         ReleaseGateVerdictView.as_view(), name="release-gates-verdict"),
+    # admin 运维面（INFRA-005 §4.2——备份/限流，T6-05）
+    path("instances/backups/", BackupRunListView.as_view(), name="ops-backups-list"),
+    path("instances/backups/trigger/", BackupRunTriggerView.as_view(),
+         name="ops-backups-trigger"),
+    path("instances/rate-limit/summary/", RateLimitSummaryView.as_view(),
+         name="ops-ratelimit-summary"),
     path("auth/sign-up/", SignUpView.as_view(), name="auth-signup"),
     path("auth/sign-in/", SignInView.as_view(), name="auth-signin"),
     path("auth/sign-out/", SignOutView.as_view(), name="auth-signout"),

@@ -21,11 +21,9 @@ from __future__ import annotations
 
 import base64
 import logging
-import time
 import uuid
 from collections import defaultdict
 from datetime import date, datetime
-from typing import Any
 from zoneinfo import ZoneInfo
 
 from django.db.models import (
@@ -39,7 +37,6 @@ from django.db.models import (
 )
 from django.db.models.functions import Coalesce
 from rest_framework.exceptions import ErrorDetail, NotFound, ValidationError
-from rest_framework.throttling import BaseThrottle
 from rest_framework.views import APIView
 
 from plane.app.filters.compiler import (
@@ -54,6 +51,7 @@ from plane.app.permissions import IsAuthenticated
 from plane.app.views._access import get_project_or_404
 from plane.base.exception import AppException
 from plane.base.response import success_response
+from plane.base.throttling import BASE_THROTTLES, ReportRateThrottle
 from plane.db.models import Issue, IssueAssignee, IssueLink, IssueView, Project
 from plane.db.services.issue_hierarchy import issue_count_annotations
 from plane.db.services.stats import DEFAULT_TZ, _is_valid_tz
@@ -623,105 +621,12 @@ class GanttUnscheduledView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 端点级限流（GANTT-002 §4.2.1 契约要点 4：10 请求/分钟·user，Valkey 固定窗口）
+# 端点级限流（GANTT-002 §4.2.1 契约要点 4）——INFRA-005 收编
 # ─────────────────────────────────────────────────────────────────────
-#: 高 CPU 聚合端点专用配额（api-conventions §7.2「报表聚合端点」行 / §7.1 L3）
-GANTT_AGG_RATE_LIMIT = 10
-GANTT_AGG_WINDOW = 60
-
-_agg_redis_client: Any = None
-_agg_redis_unavailable = False
-
-
-def _agg_redis() -> Any:
-    """Valkey 连接（进程级缓存 + 不可达降级短路，范式同 file_share/file_stats）。
-
-    降级语义：Redis 故障时限流**放行**（可用性优先，告警不阻断）——与
-    event_publisher / file_stats / file_share 同一降级纪律；INFRA-005 收编
-    配置时统一复核。"""
-    global _agg_redis_client, _agg_redis_unavailable
-    if _agg_redis_unavailable:
-        return None
-    if _agg_redis_client is None:
-        try:
-            import redis
-            from django.conf import settings
-
-            _agg_redis_client = redis.Redis.from_url(
-                settings.REDIS_URL, decode_responses=True,
-                socket_timeout=1, socket_connect_timeout=1,
-            )
-            _agg_redis_client.ping()
-        except Exception as exc:  # noqa: BLE001 —— 降级路径：限流让位于可用性
-            _agg_redis_unavailable = True
-            logger.warning("gantt.agg_throttle.redis_unavailable degrade=open exc=%s", exc)
-            return None
-    return _agg_redis_client
-
-
-def reset_gantt_redis_state() -> None:
-    """测试辅助：重置进程级 Redis 状态（每用例独立判定可用性）。"""
-    global _agg_redis_client, _agg_redis_unavailable
-    _agg_redis_client = None
-    _agg_redis_unavailable = False
-
-
-def gantt_agg_attempt_key(user_ident: str) -> str:
-    """计数键（§4.2.1 契约要点 4 原文口径）：``gantt-agg:{user_id}``。"""
-    return f"gantt-agg:{user_ident}"
-
-
-def gantt_agg_throttle_allow(user_ident: str) -> tuple[bool, dict[str, int]]:
-    """固定窗口计数：``INCR`` + 首次 ``EXPIRE``；超限返回 (False, 限流信息)。
-
-    返回的 info 供 429 响应头（``Retry-After`` / ``X-RateLimit-*``，§7.3 模板）；
-    与 file_share.throttle_allow 同范式。"""
-    client = _agg_redis()
-    if client is None:
-        return True, {"limit": GANTT_AGG_RATE_LIMIT, "remaining": GANTT_AGG_RATE_LIMIT,
-                      "reset": int(time.time()) + GANTT_AGG_WINDOW}
-    key = gantt_agg_attempt_key(user_ident)
-    count = client.incr(key)
-    if count == 1:
-        client.expire(key, GANTT_AGG_WINDOW)
-    ttl = client.ttl(key)
-    wait = ttl if isinstance(ttl, int) and ttl > 0 else GANTT_AGG_WINDOW
-    info: dict[str, int] = {
-        "limit": GANTT_AGG_RATE_LIMIT,
-        "remaining": max(0, GANTT_AGG_RATE_LIMIT - count),
-        "reset": int(time.time()) + wait,
-        "wait": wait,
-    }
-    return count <= GANTT_AGG_RATE_LIMIT, info
-
-
-class GanttAggregationThrottle(BaseThrottle):
-    """GANTT-002 §4.2.1 契约要点 4：聚合端点专用限流——10 请求/分钟，按
-    ``user_id`` 计数（键 ``gantt-agg:{user_id}``，固定窗口 60s）。
-
-    FILE-004 ``ShareUnlockThrottle`` 同范式（BR-07 先例）：Valkey 计数、Redis
-    不可达降级放行；超限抛 ``Throttled`` → 429 ``RATE_LIMIT_EXCEEDED`` +
-    ``Retry-After``（handlers 第 8 步），异常上附 ``rate_limit_info`` 供其补
-    ``X-RateLimit-*`` 三件套（§7.3 模板）。``INFRA-005`` 落地后收编配置、
-    不改语义。ident 取 authenticated user id（本端点 ``IsAuthenticated`` 先于
-    throttle 检查；匿名兜底取 IP——BulkRateThrottle 同款防御性写法）。"""
-
-    def allow_request(self, request, view) -> bool:  # noqa: FBT001 —— DRF 签名
-        from rest_framework.exceptions import Throttled
-
-        ident = (
-            str(request.user.id)
-            if request.user and getattr(request.user, "is_authenticated", False)
-            else self.get_ident(request)
-        )
-        allowed, info = gantt_agg_throttle_allow(ident)
-        if allowed:
-            return True
-        exc: Throttled = Throttled(wait=int(info.get("wait", 1) or 1))
-        exc.rate_limit_info = {  # type: ignore[attr-defined]
-            "limit": info["limit"], "remaining": 0, "reset": info["reset"],
-        }
-        raise exc
+#: 原 Valkey 自带实现（``_agg_redis`` 家族 + ``GanttAggregationThrottle``）
+#: 已收编入 ``plane.base.throttling.ReportRateThrottle``（10/min·user、user_id
+#: 计数键维度、Redis 不可达 fail-open 语义均不变；计数载体自裸 redis-py 改
+#: django cache——dev LocMem 单进程、prod CACHES 指向 Redis 多副本共享）。
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -740,7 +645,7 @@ class GanttOverdueSummaryView(APIView):
     不接受 ``granularity/viewport_*``；无分页（聚合结果单包返回）。"""
 
     permission_classes = [IsAuthenticated]
-    throttle_classes = [GanttAggregationThrottle]
+    throttle_classes = [*BASE_THROTTLES, ReportRateThrottle]
 
     def get(self, request, *args, **kwargs):
         project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)

@@ -52,6 +52,7 @@ class WorkspaceMemberSerializer(serializers.ModelSerializer):
             "display_name": m.display_name,
             "email": m.email,
             "avatar_url": m.avatar_url or None,
+            "is_active": m.is_active,   # 账号启停灰标（AUTH-006 §3.3 / C.127）
         }
 
     def get_joined_at(self, obj):

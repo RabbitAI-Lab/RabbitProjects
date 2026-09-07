@@ -634,6 +634,12 @@ export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
           title={`预览 ${f.name}`} onClick={() => openPreview(f)}>{f.name}</button>
         {f.visibility === "admins" && <span title="仅管理员可见" aria-label="仅管理员可见">🔒</span>}
         {f.visibility === "members" && <span title="指定成员可见" aria-label="指定成员可见">👥</span>}
+        {/* E-4 分享数角标（原型 O4 / ADR-0022 勘误——T5-09 补齐） */}
+        {!!(f as { share_count?: number }).share_count && (
+          <span title={`${(f as { share_count?: number }).share_count} 个分享链接`}
+            aria-label={`${(f as { share_count?: number }).share_count} 个分享链接`}
+            className="text-brand-600 text-[12px]">🔗{(f as { share_count?: number }).share_count}</span>
+        )}
       </span>
     );
   };
@@ -711,7 +717,9 @@ export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
           className="border border-neutral-200 rounded-xl p-2.5 flex flex-col gap-1.5 cursor-pointer bg-white hover:border-brand-400 hover:shadow-sm">
           <GridThumb f={f} slug={slug} projectId={projectId} />
           <div className="text-[12.5px] text-neutral-900 line-clamp-2 break-all" title={f.name}>{f.name}</div>
-          <div className="text-[11px] text-neutral-400">{humanSize(f.size_bytes)} · {f.uploaded_by_detail?.display_name ?? memberName(f.uploaded_by)}</div>
+          <div className="text-[11px] text-neutral-400">{humanSize(f.size_bytes)} · {f.uploaded_by_detail?.display_name ?? memberName(f.uploaded_by)}
+            {!!(f as { share_count?: number }).share_count && <span className="text-brand-500"> · 🔗{(f as { share_count?: number }).share_count}</span>}
+          </div>
         </div>
       ))}
     </div>

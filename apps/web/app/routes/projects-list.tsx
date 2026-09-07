@@ -12,7 +12,7 @@ import { Link, useParams } from "react-router";
 import { Topbar } from "../components/Topbar";
 import { Sidebar } from "../components/Sidebar";
 import { PermissionGate, usePermission } from "../components/PermissionGate";
-import { ProjectAPI, ProjectMemberAPI, WorkspaceAPI } from "../services/api";
+import { ProjectAPI, ProjectMemberAPI, WorkspaceAPI, LifecycleAPI } from "../services/api";
 import type { ApiError } from "../services/axios";
 import { toast } from "../components/Toast";
 import { useStores } from "../stores";
@@ -573,6 +573,15 @@ interface NewProjectModalProps {
 
 function NewProjectModal({ slug, onClose, onCreated }: NewProjectModalProps) {
   const [name, setName] = useState("");
+  // Sprint-5（PROJ-003 §3.3 / C.130）：模板选择
+  const [templates, setTemplates] = useState<Array<{ id: string; name: string; description: string;
+    is_builtin: boolean; states_snapshot: unknown[]; labels_snapshot: unknown[];
+    folders_snapshot: unknown[] }>>([]);
+  const [templateId, setTemplateId] = useState<string | null>(null);
+  useEffect(() => {
+    LifecycleAPI.listTemplates(slug).then((r) => setTemplates(((r as unknown as { data: typeof templates }).data ?? [])))
+      .catch(() => setTemplates([]));
+  }, [slug]);
   const [identifier, setIdentifier] = useState("");
   const [identifierDirty, setIdentifierDirty] = useState(false);
   const [description, setDescription] = useState("");
@@ -612,7 +621,10 @@ function NewProjectModal({ slug, onClose, onCreated }: NewProjectModalProps) {
           if (!name.trim() || !/^[A-Z]{2,5}$/.test(identifier)) { setErr("请填写项目名称和 2-5 个大写字母的标识符"); return; }
           setBusy(true);
           try {
-            const r = await ProjectAPI.create(slug, { name, identifier, description });
+            const r = await ProjectAPI.create(slug, {
+              name, identifier, description,
+              ...(templateId ? { template_id: templateId } : {}),
+            });
             const id = (r as { data: ProjectSummary }).data.id;
             toast("项目创建成功");
             onCreated(id);
@@ -630,6 +642,29 @@ function NewProjectModal({ slug, onClose, onCreated }: NewProjectModalProps) {
             setBusy(false);
           }
         }}>
+          {templates.length > 0 && (
+            <div className="mb-4" data-sb-scope="template-picker">
+              <label className="block text-[13px] font-medium text-neutral-700 mb-1.5">从模板开始</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setTemplateId(null)}
+                  className={`text-left p-2.5 rounded-md border text-[13px] ${templateId === null ? "border-brand-500 bg-brand-50" : "border-neutral-200 hover:bg-neutral-50"}`}
+                  data-sb-scope="template-blank">
+                  <div className="font-medium">空白项目</div>
+                  <div className="text-[11.5px] text-neutral-400">默认四态种子</div>
+                </button>
+                {templates.map((t) => (
+                  <button type="button" key={t.id} onClick={() => setTemplateId(t.id)}
+                    data-sb-scope="template-card" data-template-id={t.id}
+                    className={`text-left p-2.5 rounded-md border text-[13px] ${templateId === t.id ? "border-brand-500 bg-brand-50" : "border-neutral-200 hover:bg-neutral-50"}`}>
+                    <div className="font-medium">{t.name}{t.is_builtin ? " ★" : ""}</div>
+                    <div className="text-[11.5px] text-neutral-400 truncate">
+                      {t.states_snapshot.length} 状态 · {t.labels_snapshot.length} 标签 · {t.folders_snapshot.length} 目录
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="mb-4"><label htmlFor="pj-name" className="block text-[13px] font-medium text-neutral-700 mb-1.5">项目名称 *</label><input id="pj-name" className="w-full h-9 border border-neutral-300 rounded-md px-2.5 disabled:opacity-50" disabled={busy} value={name} onChange={(e) => {
             setName(e.target.value);
             if (!identifierDirty) {

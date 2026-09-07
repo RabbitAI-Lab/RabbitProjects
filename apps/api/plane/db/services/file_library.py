@@ -504,7 +504,17 @@ def list_files(*, folder, user, params: dict) -> tuple[list[dict], dict]:
         "per_page": per_page,
         "total_size_bytes": total_size,  # §4.2.1 扩展字段：目录容量展示
     }
-    return [file_row(a, expand_uploaded_by=expand) for a in page_rows], meta
+    # E-4 角标：单条 GROUP BY 批量注水有效分享数（免逐行 N+1）
+    from django.db.models import Count
+
+    from plane.db.models import FileShareLink
+
+    share_map = dict(FileShareLink.objects.filter(
+        asset_id__in=[a.id for a in page_rows], status="active",
+        deleted_at__isnull=True,
+    ).values_list("asset_id").annotate(c=Count("id")))
+    return [file_row(a, expand_uploaded_by=expand,
+                     share_count=share_map.get(a.id, 0)) for a in page_rows], meta
 
 
 # ── 上传三步（§4.2 #6/#14；协议复用 FILE-001 §4.3.1/§4.3.2）──────────
@@ -934,8 +944,20 @@ def assert_quota(*, workspace_id, incoming: int) -> None:
 
 
 # ── 行序列化（§4.2.1）───────────────────────────────────────────────
-def file_row(asset: FileAsset, *, expand_uploaded_by: bool = False) -> dict:
+def file_row(asset: FileAsset, *, expand_uploaded_by: bool = False,
+             share_count: int | None = None) -> dict:
+    """行序列化（§4.2.1 形态）。
+
+    share_count：有效分享链接数（E-4 角标，原型 O4 / ADR-0022 勘误补齐）——
+    列表路径经 ``_attach_share_counts`` 单条 GROUP BY 批量注水（免 N+1）；
+    缺省 None 时回查一次（单行详情/完成后直出场景）。
+    """
     attrs = asset.attributes or {}
+    if share_count is None:
+        from plane.db.models import FileShareLink
+
+        share_count = FileShareLink.objects.filter(
+            asset_id=asset.id, status="active").count()
     row: dict = {
         "id": str(asset.id),
         "name": attrs.get("name", ""),
@@ -947,6 +969,7 @@ def file_row(asset: FileAsset, *, expand_uploaded_by: bool = False) -> dict:
         "issue_id": str(asset.issue_id) if asset.issue_id else None,
         "uploaded_by": str(asset.uploaded_by_id) if asset.uploaded_by_id else None,
         "download_count": asset.download_count,
+        "share_count": share_count,
         "status": asset.status,
         "created_at": _iso(asset.created_at),
         "updated_at": _iso(asset.updated_at),

@@ -158,6 +158,33 @@ test.describe("S5E2E · 治理与生命周期 parity", () => {
     await expect(errors).toEqual([]);
   });
 
+  /* ═══ 验收缺陷回归（2026-09-07）：项目设置 → 集成 后「项目设置」仍高亮 ═══
+   * ProjectSidebar 的「项目设置」NavLink 未加 end，react-router 前缀匹配使
+   * /settings/integrations|webhooks|fields 子页连带激活 /settings——集成页上
+   * 「项目设置」「集成」同时 aria-current="page"。修复 = NavLink 加 end。 */
+  test("C.132 回归：集成/Webhook 子页只高亮自身，「项目设置」不再残留选中", async ({ page }) => {
+    const errors: string[] = [];
+    attachConsoleGuard(page, errors);
+    await loginDemo(page);
+    const pid = await seedProject(page, "S5E2E-侧栏", "S5SB");
+    await page.goto(`/${WS}/projects/${pid}/settings`);
+    const navSettings = page.getByRole("link", { name: "项目设置" });
+    const navInteg = page.getByRole("link", { name: "集成", exact: true });
+    // 设置页：仅「项目设置」高亮
+    await expect(navSettings).toHaveAttribute("aria-current", "page");
+    await expect(navInteg).not.toHaveAttribute("aria-current", "page");
+    // 用户入口：点侧栏「集成」→ 仅「集成」高亮（修复前「项目设置」仍 page）
+    await navInteg.click();
+    await expect(page.getByRole("heading", { name: "集成" })).toBeVisible();
+    await expect(navInteg).toHaveAttribute("aria-current", "page");
+    await expect(navSettings, "子页不得连带高亮「项目设置」").not.toHaveAttribute("aria-current", "page");
+    // Webhook 子页同理（同为 /settings 前缀子页）
+    await page.getByRole("link", { name: "Webhook" }).click();
+    await expect(page.getByRole("heading", { name: "Webhook" })).toBeVisible();
+    await expect(navSettings).not.toHaveAttribute("aria-current", "page");
+    await expect(errors).toEqual([]);
+  });
+
   test("C.133 Webhook 页：新建端点 + secret 一次性 + 投递日志（INTG-002 §3.1~§3.3）", async ({ page }) => {
     const errors: string[] = [];
     attachConsoleGuard(page, errors);

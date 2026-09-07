@@ -231,8 +231,12 @@ export function WorkLogDialog({ slug, projectId, issueId, issueName, edit, onClo
   edit: { id: string; minutes: number; worked_on: string; note: string } | null;
   onClose: () => void; onSaved: (spentMinutes: number | null) => void;
 }) {
+  // customMode 必须显式持有：输入框可见性若派生自「minutes ∉ 预设值」，则选中
+  // 「自定义…」时 minutes 仍是预设值，输入框永远不出现（死锁，2026-09-07 验收缺陷）
+  const initialCustom = edit != null && !WL_DURATIONS.includes(edit.minutes);
   const [minutes, setMinutes] = useState(edit?.minutes ?? 120);
-  const [customMin, setCustomMin] = useState("");
+  const [customMode, setCustomMode] = useState(initialCustom);
+  const [customMin, setCustomMin] = useState(initialCustom ? String(edit?.minutes ?? "") : "");
   const [date, setDate] = useState(edit?.worked_on ?? new Date().toISOString().slice(0, 10));
   const [note, setNote] = useState(edit?.note ?? "");
   const [saving, setSaving] = useState(false);
@@ -243,6 +247,7 @@ export function WorkLogDialog({ slug, projectId, issueId, issueName, edit, onClo
     if (saving) return;
     // 客户端预校验（后端 400 INVALID_DATE 兜底同文案口径）
     if (date > todayStr || date < min30) { toast("日期超出可补填窗口（30 天）", "error"); return; }
+    if (customMode && !(Number(customMin) > 0)) { toast("请输入自定义时长（正整数分钟）", "error"); return; }
     if (!Number.isFinite(minutes) || minutes <= 0) { toast("时长必须为正整数分钟", "error"); return; }
     setSaving(true);
     try {
@@ -252,7 +257,7 @@ export function WorkLogDialog({ slug, projectId, issueId, issueName, edit, onClo
       const row = unwrap<{ issue_spent_minutes?: number }>(r);
       toast(`已记录 ${fmtMinutes(minutes)}（${date}）`, "ok", { ttl: 4200 });
       onSaved(row?.issue_spent_minutes ?? null);
-      if (reopen) { setMinutes(120); setNote(""); setCustomMin(""); return; } // 保存并再开：清空时长保留日期
+      if (reopen) { setMinutes(120); setNote(""); setCustomMin(""); setCustomMode(false); return; } // 保存并再开：清空时长保留日期
       onClose();
     } catch (e: unknown) {
       const err = e as ApiError;
@@ -269,16 +274,16 @@ export function WorkLogDialog({ slug, projectId, issueId, issueName, edit, onClo
           className="h-9 border border-neutral-300 rounded-md px-2 text-[13px] font-mono bg-white"
           aria-label="时长"
           data-sb-scope="wl-duration"
-          value={WL_DURATIONS.includes(minutes) ? String(minutes) : "custom"}
+          value={customMode ? "custom" : String(minutes)}
           onChange={(e) => {
-            if (e.target.value !== "custom") setMinutes(Number(e.target.value));
-            else setCustomMin(String(minutes));
+            if (e.target.value !== "custom") { setCustomMode(false); setMinutes(Number(e.target.value)); }
+            else { setCustomMode(true); setCustomMin(String(minutes)); }
           }}
         >
           {WL_DURATIONS.map((m) => <option key={m} value={m}>{fmtMinutes(m)}</option>)}
           <option value="custom">自定义…</option>
         </select>
-        {!WL_DURATIONS.includes(minutes) && (
+        {customMode && (
           <input
             type="number" inputMode="numeric" min={1}
             className="w-[110px] h-9 border border-neutral-300 rounded-md px-2 text-[13px] font-mono"
@@ -294,7 +299,7 @@ export function WorkLogDialog({ slug, projectId, issueId, issueName, edit, onClo
           <button
             key={m}
             data-sb-scope="wl-chip"
-            onClick={() => setMinutes(m)}
+            onClick={() => { setMinutes(m); setCustomMode(false); }}
             className={`h-[26px] px-2.5 rounded-full border text-[12px] ${minutes === m ? "bg-brand-500 border-brand-500 text-white" : "border-neutral-300 text-neutral-600 hover:border-brand-400 hover:text-brand-600"}`}
           >{fmtMinutes(m)}</button>
         ))}

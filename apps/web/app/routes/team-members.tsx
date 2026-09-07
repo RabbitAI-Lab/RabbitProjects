@@ -4,12 +4,15 @@
  *  - 待接受邀请面板：Collapsible 折叠区
  *  - 成员表：五列（成员 / 邮箱 / 角色 / 加入时间 / 操作）
  *  - 角色徽章：所有者 #8B5CF6 / 管理员 #3B82F6 / 成员 #6B7280（圆点 + 文字）
- *  - 角色行内下拉 + 操作菜单（按权限显示）
+ *  - 角色行内下拉 + 操作菜单（按权限显示）；菜单 portal 到 body 定位——
+ *    表格容器的 overflow-hidden 圆角裁切会吃掉行内 absolute 菜单
  *  - 危险区域：转让所有权（仅 OWNER）
  *  - 加载 / 空 / 失败态
  *  - ADR-0011 #18：侧栏「团队设置」已点亮（Sidebar.tsx）
  *  - 守卫：PermissionRouteGuard workspace.member.read，无权降级只读 */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useParams, useSearchParams } from "react-router";
 import { Topbar } from "../components/Topbar";
 import { Sidebar } from "../components/Sidebar";
@@ -550,6 +553,61 @@ function RoleFilter({ value, onChange }: { value: "all" | "admins" | "members"; 
   );
 }
 
+/** 行内菜单浮层：portal 到 body + fixed 随锚定位。成员表容器为圆角用了
+ *  overflow-hidden，行内 absolute 菜单会被它裁切（底部行的角色下拉曾 87px 被
+ *  裁 78px）；portal 后脱离裁切链。滚动/缩放重定位，下方放不下翻上方。 */
+function AnchoredMenu({ anchorRef, open, align, width, role, attrs, children }: {
+  anchorRef: { current: HTMLElement | null };
+  open: boolean;
+  align: "left" | "right";
+  width: number;
+  role?: string;
+  attrs?: Record<string, string>;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  // 命令式定位（ref 直改 style，不经 state）：测得真实高度后翻转判定，无级联渲染
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const el = ref.current;
+      const a = anchorRef.current;
+      if (!el || !a) return;
+      const r = a.getBoundingClientRect();
+      const h = el.offsetHeight; // visibility:hidden 下布局已生成，可量得真实高度
+      const left = align === "right" ? r.right - width : r.left;
+      let top = r.bottom + 4;
+      if (top + h > window.innerHeight - 8 && r.top - h - 4 >= 8) top = r.top - h - 4;
+      el.style.left = `${left}px`;
+      el.style.top = `${top}px`;
+      el.style.visibility = "visible";
+    };
+    place();
+    // capture：菜单锚在 main 滚动容器内，window 捕获阶段才能收到其滚动
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open, align, width, anchorRef]);
+
+  if (!open) return null;
+  return createPortal(
+    <div
+      ref={ref}
+      role={role}
+      {...attrs}
+      className="fixed z-30 bg-white border border-neutral-200 rounded-md shadow-lg py-1"
+      style={{ top: -9999, left: -9999, width, visibility: "hidden" }}
+    >
+      {children}
+    </div>,
+    document.body,
+  );
+}
+
 function RoleDropdown({
   member, open, onToggle, onClose, onPick,
 }: {
@@ -584,20 +642,20 @@ function RoleDropdown({
         <RoleBadge value={member.role} />
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-neutral-400"><path d="m6 9 6 6 6-6"/></svg>
       </button>
-      {open && (
-        <div className="absolute top-[calc(100%+4px)] left-0 min-w-[140px] bg-white border border-neutral-200 rounded-md shadow-lg py-1 z-10">
-          <div className="px-2.5 py-1 text-[11px] text-neutral-400">调整角色（层级保护过滤）</div>
-          {opts.map((r) => (
-            <button
-              key={r}
-              onClick={() => { onPick(r); onClose(); }}
-              className="w-full px-2.5 py-1.5 flex items-center gap-2 text-left text-[13px] hover:bg-neutral-50"
-            >
-              <RoleBadge value={r} />
-            </button>
-          ))}
-        </div>
-      )}
+      <AnchoredMenu anchorRef={ref} open={open} align="left" width={168} role="listbox" attrs={{ "data-mem-role": member.id }}>
+        <div className="px-2.5 py-1 text-[11px] text-neutral-400">调整角色（层级保护过滤）</div>
+        {opts.map((r) => (
+          <button
+            key={r}
+            role="option"
+            aria-selected={r === member.role}
+            onClick={() => { onPick(r); onClose(); }}
+            className="w-full px-2.5 py-1.5 flex items-center gap-2 text-left text-[13px] hover:bg-neutral-50"
+          >
+            <RoleBadge value={r} />
+          </button>
+        ))}
+      </AnchoredMenu>
     </div>
   );
 }
@@ -634,28 +692,22 @@ function ActionMenu({
         aria-haspopup="menu"
         className="w-7 h-7 inline-flex items-center justify-center text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded"
       >⋯</button>
-      {open && (
-        <div
-          data-sb-scope="row-actions"
-          role="menu"
-          className="absolute top-[calc(100%+2px)] right-0 w-[140px] bg-white border border-neutral-200 rounded-md shadow-lg py-1 z-10"
-        >
-          {canEdit && (
-            <button
-              role="menuitem"
-              onClick={() => { onClose(); onAdjust(); }}
-              className="w-full px-2.5 py-1.5 text-left text-[13px] hover:bg-neutral-50 inline-flex items-center gap-2"
-            >调整角色</button>
-          )}
-          {canRemove && (
-            <button
-              role="menuitem"
-              onClick={() => { onClose(); onRemove(); }}
-              className="w-full px-2.5 py-1.5 text-left text-[13px] text-red-600 hover:bg-red-50 inline-flex items-center gap-2"
-            >移除</button>
-          )}
-        </div>
-      )}
+      <AnchoredMenu anchorRef={ref} open={open} align="right" width={140} role="menu" attrs={{ "data-sb-scope": "row-actions" }}>
+        {canEdit && (
+          <button
+            role="menuitem"
+            onClick={() => { onClose(); onAdjust(); }}
+            className="w-full px-2.5 py-1.5 text-left text-[13px] hover:bg-neutral-50 inline-flex items-center gap-2"
+          >调整角色</button>
+        )}
+        {canRemove && (
+          <button
+            role="menuitem"
+            onClick={() => { onClose(); onRemove(); }}
+            className="w-full px-2.5 py-1.5 text-left text-[13px] text-red-600 hover:bg-red-50 inline-flex items-center gap-2"
+          >移除</button>
+        )}
+      </AnchoredMenu>
     </div>
   );
 }

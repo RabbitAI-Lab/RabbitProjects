@@ -58,13 +58,17 @@
 
 | 类别 | 数据 | 备注 |
 | --- | --- | --- |
-| 后端 pytest | 573 / 573 通过 | 唯一失败为已登记时区抖动（test_gantt::UT19 · 预存项） |
+| 后端 pytest | 574 / 574 通过 | UT19 已修（Pago↔Kiritimati 恒差 25h 配对，7b98a1d）|
 | 静态检查 | ruff + mypy 全绿 | TC-AUTH6-001 接入门禁 |
+| jMeter flow | sprint-5-flow 39/47（39 绿 8 误判环境项） | 七段实跑；victim workspace_id 子查询 0 行登记 sprint-6 |
+| 压测基线 | sprint-5-bench 五门禁全绿（R1 38.8 / R1.99 12.5 / R2 12.0 / P1 174.1 / P2 29.5 / W1 4.4ms） | P1 真优化 375→174ms（列表注水改标量子查询，20654d8） |
+| 前端单测 | vitest 38 测全绿；核心路径 36.4%（门槛 35% 守住不后退） | TC-COVER-004；70% 全量归 sprint-6 补 realtime/session/permission store |
+| e2e parity | parity-sprint5 六幕 6/6 + 既有回归 4/4 | C.126~C.133；_cleanup_s5 全 14 张 FK 子表幂等清理 |
 | 行级守护 | AC-01~05 + AC-06 绿 | selftest 红屏冒烟过 |
 | 越权矩阵 | 四主体 × 四资源层笛卡尔积 | dev PG 在跑时启用；缺失则跳过 |
 | 前端构建 | `pnpm build` + tsc 全绿 | 4 新页 + 7 扩展项 |
 | ADR 偏差 | 7 条 tier-2/3（已列 E 表为回改参考） | ADR-0026 收口 |
-| 前端 E2E | 待 T5-11 收口补录屏 | sprint-3 同模式 |
+| 前端 E2E | parity-sprint5 六幕 6/6 全绿 | d24e8eb；录屏契约已入库（3a7e0ea），录制归 sprint-6 INFRA-005 |
 
 ## 三、规格状态
 

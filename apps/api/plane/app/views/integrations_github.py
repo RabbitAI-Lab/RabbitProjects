@@ -14,6 +14,8 @@
 """
 from __future__ import annotations
 
+import logging
+
 import hashlib
 import hmac
 import json
@@ -278,7 +280,12 @@ class GitHubBindingListCreateView(APIView):
                 binding.token_cache = client.last_token_cache
                 webhook_registered = bool(result.get("registered"))
                 binding.save(update_fields=["token_cache", "updated_at"])
-        except Exception:  # noqa: BLE001 —— 注册失败不阻断绑定（管理页可重试）
+        except Exception as exc:  # noqa: BLE001 —— 注册失败不阻断绑定（管理页可重试）
+            # G1 排查教训（2026-09-08）：静默吞错让「权限未重批」类故障无迹可查
+            #——至少留 warning（403 Resource not accessible by integration 等）
+            logging.getLogger("plane.integrations.github").warning(
+                "repo_webhook_register_failed repo=%s installation=%s err=%s",
+                repo, installation_id, str(exc)[:200])
             webhook_registered = False
         return created_response({
             **_binding_row(binding),

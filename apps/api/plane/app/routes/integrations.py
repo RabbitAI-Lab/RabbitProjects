@@ -6,12 +6,20 @@ from plane.app.views.integrations_github import (
     GitHubBindingDetailView,
     GitHubBindingListCreateView,
     GitHubCallbackView,
+    GitHubQuotaStatusView,
     GitHubRepositoriesView,
     GitHubSyncLogsView,
     GitHubWebhookView,
 )
 
 urlpatterns = [
+    # 速率预算只读状态（INTG-002 交接项 3：degraded 旗标暴露；顶层路径，
+    # 权限经 installation → 绑定项目解析 PROJ_ADMIN+）
+    path(
+        "integrations/<int:installation_id>/quota-status/",
+        GitHubQuotaStatusView.as_view(),
+        name="github-quota-status",
+    ),
     # 入站 Webhook（GitHub 调用，无登录态，HMAC 验签）
     path(
         "integrations/github/webhook/",

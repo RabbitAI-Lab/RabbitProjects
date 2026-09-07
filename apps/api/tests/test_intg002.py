@@ -16,6 +16,7 @@ from django.core.cache import cache
 from rest_framework.test import APIClient
 
 from plane.db.models import (
+    IntegrationInstallation,
     Project,
     ProjectMember,
     ProjectRole,
@@ -253,3 +254,61 @@ def test_ping_endpoint_202(env, monkeypatch):
     assert r.status_code == 202
     # on_commit 在测试事务内不触发——直接断言视图装配（真实投递归 e2e/flow）
     del queued
+
+
+# ── INTG-002 交接项 3（Sprint-6 T6）：quota-status 端点 + degraded 旗标 ──
+
+def _mk_installation(env, installation_id=4859835):
+    return IntegrationInstallation.objects.create(
+        project=env["proj"], installation_id=installation_id,
+        repository_full_name="rabbit/test", created_by=env["owner"],
+    )
+
+
+def test_quota_status_endpoint_and_permission(env):
+    """交接清单路径原样：PROJ_ADMIN+ 200（minute/hour/degraded/paused_for）；
+    非配置角色与局外人统一 404（越权同构）。"""
+    inst = _mk_installation(env)
+    r = _client(env["owner"]).get(
+        f"/api/v1/integrations/{inst.installation_id}/quota-status/")
+    assert r.status_code == 200, r.json()
+    data = r.json()["data"]
+    assert data["installation_id"] == inst.installation_id
+    for key in ("minute", "hour"):
+        assert data[key]["cap"] in (30, 5000)
+        assert data[key]["count"] == 0 and data[key]["degraded"] is False
+    assert data["degraded"] is False and data["paused_for"] is None
+    # CONTRIBUTOR（integration.config = PROJ_ADMIN+）→ 404 同构
+    assert _client(env["member"]).get(
+        f"/api/v1/integrations/{inst.installation_id}/quota-status/").status_code == 404
+    # 局外人 → 404
+    outsider = User.objects.create_user(email="w2-out@rabbit.dev", password="Rabbit123!")
+    assert _client(outsider).get(
+        f"/api/v1/integrations/{inst.installation_id}/quota-status/").status_code == 404
+    # 不存在的 installation → 404
+    assert _client(env["owner"]).get(
+        "/api/v1/integrations/9999999/quota-status/").status_code == 404
+
+
+def test_quota_status_degraded_flag_and_pause(env):
+    """degraded 口径与 hit() 同源（≥70% 触发）；pause_until 暴露剩余暂停秒。"""
+    from django.core.cache import cache
+
+    from plane.integrations.github import IntegrationQuotaService
+
+    inst = _mk_installation(env)
+    cache.clear()
+    # 稳态窗口 21/30 = 70% → degraded
+    for _ in range(21):
+        IntegrationQuotaService.hit(inst.installation_id, steady=True)
+    data = _client(env["owner"]).get(
+        f"/api/v1/integrations/{inst.installation_id}/quota-status/").json()["data"]
+    assert data["minute"]["ratio"] >= 0.70 and data["minute"]["degraded"] is True
+    assert data["degraded"] is True
+    # 暂停标记暴露
+    IntegrationQuotaService.pause_until(
+        inst.installation_id, int(time.time()) + 120)
+    data = _client(env["owner"]).get(
+        f"/api/v1/integrations/{inst.installation_id}/quota-status/").json()["data"]
+    assert data["paused_for"] is not None and 0 < data["paused_for"] <= 120
+    cache.clear()

@@ -38,6 +38,10 @@ def _parse_db_url(url: str) -> dict:
 
 
 SECRET_KEY = env("SECRET_KEY", "dev-insecure-key")  # prod 强制覆盖（§ prod.py BR-13）
+#: 集成层独立对称密钥（INTG-002 交接项 5：Fernet 加密 webhook secret）。
+#: 缺省空 → 由 SECRET_KEY SHA-256 派生（dev/CI 零配置）；**生产必须注入独立
+#: 值**（compose prod env + 发布 checklist 项——禁止 dev 派生口径进生产）。
+INTEGRATION_SECRET_KEY = env("INTEGRATION_SECRET_KEY", "")
 DEBUG = env_bool("DEBUG", False)
 ALLOWED_HOSTS = [h.strip() for h in env("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if h.strip()]
 

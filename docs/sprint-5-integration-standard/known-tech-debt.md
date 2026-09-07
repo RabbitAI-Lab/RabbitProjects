@@ -62,3 +62,13 @@
 | 4 | 前端覆盖率基建 | vitest 38 测 + TC-COVER-004（a6e977f，36.4% 守 35% 门槛） |
 | 5 | 5 规格 e2e parity | 六幕 6/6（d24e8eb） |
 | 6 | 006bc7a 误导说明订正 | 空提交登记（c080c6f） |
+
+## G. 2026-09-07 真 GitHub 联调（第 14 幕）发现与处置
+
+| # | 项 | 处置 |
+| --- | --- | --- |
+| 1 | GitHub App 未含「Repository webhooks」写权限 → 绑仓时 repo webhook 注册 403（`webhook_registered:false`） | 联调走 App 级 webhook 变体（`PATCH /app/hook/config` 指公网穿透域名，secret 与绑定行同源）；App 补权限后回归产品标准路径（绑仓自动注册 per-repo webhook），入站视图两模式通用无需改码 |
+| 2 | **BR-06 评论双向同步整条缺失**（worker 路由表无 comment.created、`create_issue_comment` 零调用） | 已补齐：入站 `_on_comment_created`（系统账号代发镜像）+ 出站 `sync_comment_outbound`（事务后投递、echo 防环）+ 评论视图挂点；真仓实测双向通（issue #2 双向评论可见） |
+| 3 | GitHubClient 真联调注入点缺失（settings 无 GITHUB_* 定义） | dev settings 补 env 三元组（APP_ID/PRIVATE_KEY/WEBHOOK_BASE），缺省空值维持 dev token 直通（mock/单测口径不变） |
+| 4 | OAuth App 凭证不适用安装闭环（历史澄清项） | 用户已改供 GitHub App（App ID 4859835）；曾贴对话的 OAuth Client Secret 两枚均建议轮换（未入库，仅 /tmp 与进程 env） |
+| 5 | RabbitTest 仓库测试痕迹（issue #1~#9、分支 s5-intg-test、PR #4 squash 合并） | 保留为联调证据（公开仓库、b 视口取证面）；如需清场可整仓重建（RabbitTest 原为空仓） |

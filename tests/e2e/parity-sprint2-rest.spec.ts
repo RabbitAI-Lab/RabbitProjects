@@ -457,6 +457,49 @@ test.describe("Sprint-2 前端批量（TASK-005~010 / C.42~C.62）", () => {
     expect(bad.body?.error?.details?.[0]?.code).toBe("INVALID_DATE");
   });
 
+  // C.47 回归（2026-09-07 验收缺陷）：时长下拉选「自定义…」后输入框不出现——
+  // 旧实现输入框渲染条件 !WL_DURATIONS.includes(minutes) 派生自 minutes，而选
+  // 自定义只改 customMin 不改 minutes，死锁导致该分支永远不可达。修复 = 显式
+  // customMode 状态。行为三件套：选自定义 → 输入框可见 → 填 45 → POST
+  // {minutes:45} → 已耗回读 45m；负向：选自定义留空保存被客户端预校验拦截。
+  test("T006-2b C.47 自定义时长：选「自定义…」出输入框 → POST 45 → 已耗回读 45m；留空保存被拦", async ({ page }) => {
+    test.setTimeout(90_000);
+    await loginDemo(page);
+    const proj = await createProject(page);
+    await mkIssue(page, proj.id, "自定义工时任务");
+    await gotoList(page);
+    const drawer = await openDrawer(page, "自定义工时任务");
+    const sec = drawer.locator('[data-sb-scope="drawer-worklog-section"]');
+    await sec.waitFor({ state: "visible", timeout: 10_000 });
+    await sec.locator('[data-sb-scope="drawer-worklog-add"]').click();
+    await expect(page.locator('[data-sb-scope="modal-title"]')).toContainText("记工时 · 自定义工时任务");
+
+    // 修复核心断言：选「自定义…」必须立刻出现分钟输入框（修复前永远不可达）
+    await page.locator('[data-sb-scope="wl-duration"]').selectOption("custom");
+    await expect(page.locator('[data-sb-scope="wl-custom-min"]')).toBeVisible({ timeout: 5_000 });
+
+    // 负向：自定义留空保存 → toast 拦截，且无 POST 发出（口径同客户端预校验）
+    await page.locator('[data-sb-scope="wl-custom-min"]').fill("");
+    let posted = false;
+    page.on("request", (r) => { if (r.url().includes("/worklogs/") && r.method() === "POST") posted = true; });
+    await page.locator('[data-sb-scope="wl-save"]').click();
+    await expect(page.getByText("请输入自定义时长（正整数分钟）")).toBeVisible({ timeout: 5_000 });
+    await page.waitForTimeout(300);
+    expect(posted, "留空保存不得发出 POST").toBe(false);
+
+    // 行为三件套：填 45 → POST minutes=45 → 已耗回读 45m（fmtMinutes <60 → 「45m」）
+    await page.locator('[data-sb-scope="wl-custom-min"]').fill("45");
+    const wlP = page.waitForResponse(
+      (r) => r.url().includes("/worklogs/") && r.request().method() === "POST",
+      { timeout: 15_000 },
+    );
+    await page.locator('[data-sb-scope="wl-save"]').click();
+    const wl = await wlP;
+    expect(wl.status(), "POST worklogs 201").toBe(HTTP.CREATED);
+    expect(wl.request().postDataJSON()).toMatchObject({ minutes: 45 });
+    await expect(sec.locator('[data-sb-scope="drawer-worklog-spent"]')).toHaveText("45m", { timeout: 10_000 });
+  });
+
   test("T006-3 C.48 列表工时列：⏱ 2.5h/8h；超耗红；无记录灰显 —；列选择器开关", async ({ page }) => {
     test.setTimeout(90_000);
     await loginDemo(page);
@@ -1049,11 +1092,16 @@ test.describe("Sprint-2 前端批量（TASK-005~010 / C.42~C.62）", () => {
 
 test("T010-3 C.62 死信页 403 分支：非 SystemAdmin 访问显示权限提示（非空态）", async ({ page }) => {
   test.setTimeout(60_000);
+  const getErrs = attachConsoleGuard(page);
   await loginDemo(page);
-  await page.goto(`${WS}/admin/dead-letters`);
+  // 2026-09-07 勘误：死信页是系统级顶层路由（routes.ts「不嵌 workspace」），
+  // 原 `${WS}/admin/dead-letters` 落到通配 404 页、dlq-forbidden 永不渲染——
+  // 该用例自 0324e45 出生即红（且引用了不存在的 expectNoConsoleErrors）；
+  // 顶层路径才是被测 403 分支，console guard 改用本文件 attachConsoleGuard 惯例。
+  await page.goto("/admin/dead-letters");
   const tip = page.locator('[data-sb-scope="dlq-forbidden"]');
   await expect(tip, "权限空态可见（含权限码提示，非误导性「没有死信」）").toBeVisible({ timeout: 10_000 });
   await expect(tip).toContainText("system.audit.read");
   await expect(page.locator("table")).toHaveCount(0); // 不渲染表格
-  await expectNoConsoleErrors(page);
+  expect(getErrs(), "console errors").toEqual([]);
 });

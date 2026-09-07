@@ -21,7 +21,7 @@ from django.utils import timezone
 logger = logging.getLogger("plane.bgtasks.github_sync")
 
 SYSTEM_ACCOUNT_EMAIL = "rp-integration@system.local"
-_KEY_RE = re.compile(r"(?<![A-Za-z])([A-Z]{2,12}-\d+)")
+_KEY_RE = re.compile(r"(?<![A-Za-z0-9])([A-Z][A-Z0-9]{1,11}-\d+)")
 
 
 def system_account():

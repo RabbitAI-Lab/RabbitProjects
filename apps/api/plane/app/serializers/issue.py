@@ -65,6 +65,8 @@ class IssueSerializer(serializers.ModelSerializer):
     spent_minutes = serializers.SerializerMethodField()
     # TASK-008：自定义字段值（JSONB 整列透出；停用字段的值保留在响应中由 UI 过滤）
     custom_fields = serializers.JSONField(read_only=True)
+    # Sprint-5（INTG-001 §3.3 任务详情 GitHub 区块——commits/PRs 内联聚合）
+    github_context = serializers.JSONField(read_only=True)
 
     def get_spent_minutes(self, obj) -> int:
         # 列表/详情 queryset 已 annotate（缺省 0）；无 annotate 场景兜底实时查
@@ -103,6 +105,7 @@ class IssueSerializer(serializers.ModelSerializer):
             "estimate_minutes",
             "spent_minutes",
             "custom_fields",
+            "github_context",
             "created_by",
             "created_at",
             "updated_at",

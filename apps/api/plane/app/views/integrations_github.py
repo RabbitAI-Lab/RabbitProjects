@@ -86,8 +86,10 @@ class GitHubWebhookView(APIView):
         # ④ 入队（规范化事件）
         from plane.bgtasks.github_sync import dispatch_github_event
 
-        dispatch_github_event.delay(_normalize(event_name, payload, delivery, installation_id))
-        return success_response(None, status_code=202, meta={"delivery": delivery})
+        event_out = _normalize(event_name, payload, delivery, installation_id)
+        dispatch_github_event.delay(event_out)
+        return success_response(None, status_code=202,
+                                meta={"delivery": delivery, "queued": event_out["kind"]})
 
 
 def _payload_latest_ts(payload: dict) -> float | None:

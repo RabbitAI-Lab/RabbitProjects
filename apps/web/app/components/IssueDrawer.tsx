@@ -1348,6 +1348,36 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
                     )}
                   </div>
                 </div>
+                {/* Sprint-5（INTG-001 §3.3）：任务详情 GitHub 区块——commits/PRs 内联聚合（无内容整块不渲染） */}
+                {(issue.github_context?.commits?.length || issue.github_context?.prs?.length) ? (
+                  <div className="mb-2 -mt-1 rounded-lg border border-neutral-200 bg-neutral-50/60 px-3 py-2" data-sb-scope="drawer-github-section">
+                    <div className="text-[12px] font-medium text-neutral-600 flex items-center gap-1.5 mb-1">
+                      <span aria-hidden="true" className="inline-block w-4 h-4 rounded bg-neutral-900 text-white text-[10px] text-center leading-4">G</span>
+                      GitHub
+                      {issue.github_context?.number != null && (
+                        <a className="ml-auto text-neutral-400 hover:text-brand-600 font-mono" href={`https://github.com/issues/${issue.github_context.number}`}
+                          target="_blank" rel="noreferrer">#{issue.github_context.number}</a>
+                      )}
+                    </div>
+                    <ul className="space-y-0.5">
+                      {(issue.github_context?.prs ?? []).map((pr) => (
+                        <li key={`pr-${pr.number}`} className="text-[12.5px] text-neutral-600 flex items-center gap-1.5" data-sb-scope="drawer-github-pr">
+                          <span aria-hidden="true">⇄</span>
+                          <span className="truncate">#{pr.number} {pr.title}</span>
+                          {pr.merged_at && <span className="text-purple-600 text-[11px] shrink-0">已合并</span>}
+                        </li>
+                      ))}
+                      {(issue.github_context?.commits ?? []).map((c) => (
+                        <li key={c.sha} className="text-[12.5px] text-neutral-600 flex items-center gap-1.5" data-sb-scope="drawer-github-commit" data-sha={c.sha}>
+                          <span aria-hidden="true">▣</span>
+                          <span className="font-mono text-[11.5px] text-neutral-400 shrink-0">{c.sha}</span>
+                          <span className="truncate">{c.message}</span>
+                          {c.author && <span className="text-neutral-400 text-[11px] shrink-0">{c.author}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
                 {/* C.46 空态：无估算无记录 → 分区一行「工时 — [⏱ 记工时]」；估算 placeholder「设估算」 */}
                 {spentTotal === 0 && issue.estimate_minutes == null && worklogs.length === 0 ? (
                   /* C.46 空态：无估算无记录 → 分区一行「工时 — [设估算] [⏱ 记工时]」 */

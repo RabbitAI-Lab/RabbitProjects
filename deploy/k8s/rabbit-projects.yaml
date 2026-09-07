@@ -1,0 +1,181 @@
+# K8s 清单骨架（INFRA-005 §4.5.2——Sprint-6 T6-04）
+# 边界（规格风险 #3）：骨架 + 单节点可拉起（kind 冒烟）；Operator/Helm/调优 P4。
+# 镜像 tag 经 kustomize images 钉死（BR-11 禁 latest）；envFrom Secret/ConfigMap
+# 与 compose prod 同源（.env → secret 注入，不在清单落值——BR-10）。
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rabbit-projects
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rp-app-config
+  namespace: rabbit-projects
+data:
+  DJANGO_SETTINGS_MODULE: "plane.settings.prod"
+  DATABASE_URL: "postgresql://rp@db.rp-infra:5432/rabbit_projects"
+  REDIS_URL: "redis://redis.rp-infra:6379/0"
+  CELERY_BROKER_URL: "amqp://rp@mq.rp-infra:5672//"
+  AWS_S3_ENDPOINT_URL: "http://minio.rp-infra:9000"
+  AWS_S3_BUCKET_NAME: "rp-uploads"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rp-api
+  namespace: rabbit-projects
+  labels: { app: rp-api }
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }   # 零中断滚动
+  selector:
+    matchLabels: { app: rp-api }
+  template:
+    metadata:
+      labels: { app: rp-api }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001 }
+      containers:
+        - name: api
+          image: rabbitprojects/api:1.0.0   # kustomize images 钉精确 tag（BR-11）
+          ports: [{ containerPort: 8000 }]
+          envFrom:
+            - configMapRef: { name: rp-app-config }
+            - secretRef: { name: rp-app-secret }   # SECRET_KEY/口令/INTEGRATION_SECRET_KEY
+          readinessProbe:
+            httpGet: { path: /api/v1/health/, port: 8000 }
+            initialDelaySeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/v1/health/, port: 8000 }
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { cpu: "2", memory: 2Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: { medium: Memory, sizeLimit: 512Mi } }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rp-api
+  namespace: rabbit-projects
+spec:
+  selector: { app: rp-api }
+  ports: [{ port: 8000, targetPort: 8000 }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rp-api
+  namespace: rabbit-projects
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: rp-api }
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+  # metrics-server 缺失不扩缩但不视为失败（规格风险 #3 ②；部署核查列发布 checklist）
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rp-api
+  namespace: rabbit-projects
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: rp-api }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rp-beat
+  namespace: rabbit-projects
+  labels: { app: rp-beat }
+spec:
+  replicas: 1                      # BR-11：恰好一副本
+  strategy: { type: Recreate }     # 双活调度窗口归零（DatabaseScheduler 锁兜底）
+  selector:
+    matchLabels: { app: rp-beat }
+  template:
+    metadata:
+      labels: { app: rp-beat }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001 }
+      containers:
+        - name: beat
+          image: rabbitprojects/api:1.0.0
+          command: ["/app/bin/docker-entrypoint-beat.sh"]
+          envFrom:
+            - configMapRef: { name: rp-app-config }
+            - secretRef: { name: rp-app-secret }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: { medium: Memory, sizeLimit: 64Mi } }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rp-worker
+  namespace: rabbit-projects
+  labels: { app: rp-worker }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: rp-worker }
+  template:
+    metadata:
+      labels: { app: rp-worker }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001 }
+      containers:
+        - name: worker
+          image: rabbitprojects/api:1.0.0
+          command: ["/app/bin/docker-entrypoint-worker.sh"]
+          envFrom:
+            - configMapRef: { name: rp-app-config }
+            - secretRef: { name: rp-app-secret }
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: { sizeLimit: 2Gi } }]  # 转码/dump 工作区
+---
+# BR-13 K8s 对应：仅 worker 出站（Webhook 443 + SMTP 587/465）+ 集群内/DNS 放行
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rp-worker-egress
+  namespace: rabbit-projects
+spec:
+  podSelector:
+    matchLabels: { app: rp-worker }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ podSelector: {} }]           # 集群内（服务间/DNS 经 kube-dns NS 放行）
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    - ports:
+        - { port: 443, protocol: TCP }    # Webhook 投递（INTG-002）
+        - { port: 587, protocol: TCP }    # SMTP（AUTH-004/TEAM-002）
+        - { port: 465, protocol: TCP }

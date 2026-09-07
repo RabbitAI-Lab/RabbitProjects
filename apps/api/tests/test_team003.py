@@ -10,7 +10,6 @@ affected_issues + name_snapshot）；项目标签列表的全局并集与覆盖�
 from __future__ import annotations
 
 import pytest
-from django.utils import timezone
 from rest_framework.test import APIClient
 
 from plane.db.models import (

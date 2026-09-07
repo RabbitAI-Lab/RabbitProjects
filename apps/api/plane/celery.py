@@ -23,6 +23,7 @@ app = Celery(
         "plane.bgtasks.derive_preview",     # FILE-003：预览派生 + 会话/衍生物/版本治理
         "plane.bgtasks.event_publisher",   # COLLAB-004 T3-11：实时事件扇出（rp:events）
         "plane.bgtasks.field_cleanup",     # TASK-008：删除字段值清理 / 视图剔除
+        "plane.bgtasks.github_sync",       # INTG-001：GitHub 入站事件路由（Sprint-5）
         "plane.bgtasks.field_index",       # TASK-008：表达式偏索引 CONCURRENTLY 建/删
         "plane.bgtasks.file_stats",        # FILE-002：下载计数 Redis→beat 批量落库
         "plane.bgtasks.issue_assignee",

@@ -133,6 +133,7 @@ FEATURE_MODULES = (
     "issue_bulk",       # BOARD-004 任务批量操作（bulk/ + bulk/archive/ + bulk/preview/）
     "realtime",         # COLLAB-004 live 实时票据（换票 / 续签 / verify-rooms 内部复核）
     "gantt",            # GANTT-001 甘特取数地基（视窗行 / 连线批量 / 未排期）
+    "integrations",     # INTG-001 GitHub 集成（安装 / 绑定 / 入站 Webhook / 日志）
 )
 
 for _name in FEATURE_MODULES:

@@ -14,6 +14,14 @@ class Issue(BaseModel):
         HIGH = "high", "高"
         URGENT = "urgent", "紧急"
 
+    # Sprint-5（INTG-001 §4.1.1 幂等锚点亮 + §4.1.2 PR/Commit 内联聚合）
+    external_source = models.CharField(
+        max_length=16, null=True, blank=True, db_index=True, verbose_name="外部来源")
+    external_id = models.CharField(
+        max_length=64, null=True, blank=True, verbose_name="外部对象 node_id")
+    github_context = models.JSONField(
+        default=dict, blank=True, verbose_name="GitHub 聚合",
+        help_text='{"prs": [], "commits": []}（事件驱动增量，展示层直读）')
     project = models.ForeignKey("db.Project", on_delete=models.CASCADE, related_name="issues", verbose_name="所属项目")
     name = models.CharField(max_length=512, verbose_name="标题")
 
@@ -86,6 +94,13 @@ class Issue(BaseModel):
                 fields=["project", "sequence_id"],
                 condition=models.Q(deleted_at__isnull=True),
                 name="uniq_issue_sequence_per_project",
+            ),
+            # INTG-001 BR-04 幂等锚（软删兼容条件唯一）
+            models.UniqueConstraint(
+                fields=["project", "external_source", "external_id"],
+                condition=models.Q(external_source__isnull=False,
+                                   deleted_at__isnull=True),
+                name="uniq_external_anchor_per_project",
             ),
             models.CheckConstraint(
                 check=models.Q(start_date__isnull=True)  # type: ignore[call-arg]  # Django 5.1 起 check→condition，暂用旧名（运行时兼容）

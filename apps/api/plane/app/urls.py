@@ -26,6 +26,14 @@ from plane.app.views.projects import (
     ProjectStatusLogView,
     ProjectTransitionView,
 )
+from plane.app.views.release_gates import (
+    ReleaseGateCreateView,
+    ReleaseGateDetailView,
+    ReleaseGateEventView,
+    ReleaseGateListView,
+    ReleaseGateSignView,
+    ReleaseGateVerdictView,
+)
 from plane.app.views.workspaces import WorkspaceDetailView, WorkspaceListCreateView
 from plane.base.exception import AppException
 from plane.base.response import success_response
@@ -79,6 +87,19 @@ urlpatterns = [
         ActivityDeadLetterDiscardView.as_view(),
         name="activity-dead-letter-discard",
     ),
+    # 发布门禁（QA-001 §4.4——系统管理员面 instances/ 前缀，Sprint-6 T6-06）
+    path("instances/release-gates/", ReleaseGateListView.as_view(),
+         name="release-gates-list"),
+    path("instances/release-gates/create/", ReleaseGateCreateView.as_view(),
+         name="release-gates-create"),
+    path("instances/release-gates/<uuid:gate_id>/", ReleaseGateDetailView.as_view(),
+         name="release-gates-detail"),
+    path("instances/release-gates/<uuid:gate_id>/gate-events/",
+         ReleaseGateEventView.as_view(), name="release-gates-event"),
+    path("instances/release-gates/<uuid:gate_id>/checklist/<str:key>/sign/",
+         ReleaseGateSignView.as_view(), name="release-gates-sign"),
+    path("instances/release-gates/<uuid:gate_id>/verdict/",
+         ReleaseGateVerdictView.as_view(), name="release-gates-verdict"),
     path("auth/sign-up/", SignUpView.as_view(), name="auth-signup"),
     path("auth/sign-in/", SignInView.as_view(), name="auth-signin"),
     path("auth/sign-out/", SignOutView.as_view(), name="auth-signout"),

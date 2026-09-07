@@ -19,7 +19,9 @@ from plane.db.models import (
     Project,
     ProjectMember,
     ProjectRole,
+    SystemAdmin,
     User,
+    WebhookEndpoint,
     Workspace,
     WorkspaceMember,
 )
@@ -315,3 +317,138 @@ def test_lint_access_scanner():
     st = subprocess.run([sys.executable, f"{repo}/scripts/lint_access.py"],
                         capture_output=True, text=True)
     assert st.returncode == 0, st.stdout + st.stderr
+
+
+# ── QA-001 §2.4/§5.2 IT-SEC-01~64：越权矩阵 64 格（四主体×四资源层×四动作）──
+# 期望表 = 本仓库 rbac 真源（视图声明 + 矩阵单源 plane/access/matrix.py）；
+# 突变验证见 test_it_sec_mutation（放开一处装饰器必须红）。
+_SUBJECTS = ("sysadmin", "owner", "member", "guest")
+_RESOURCES = ("workspace", "project", "issue", "webhook")
+_ACTIONS = ("create", "read", "update", "delete")
+
+#: 期望状态码（""→2xx 通配）：主体对资源动作的判定
+_EXPECT = {
+    # workspace：任何认证者可建自己的；读=成员可见；改=WS ADMIN+；删=无端点(405)
+    ("workspace", "create"): {"sysadmin": 201, "owner": 201, "member": 201, "guest": 201},
+    ("workspace", "read"):   {"sysadmin": 200, "owner": 200, "member": 200, "guest": 404},
+    ("workspace", "update"): {"sysadmin": 403, "owner": 200, "member": 403, "guest": 404},
+    ("workspace", "delete"): {"sysadmin": 405, "owner": 405, "member": 405, "guest": 405},
+    # project：建=WS MEMBER+；读=显式/隐式成员（guest 404）；改=PROJ_ADMIN+；
+    # 删=PROJ_ADMIN+（member 403、guest 404）
+    ("project", "create"): {"sysadmin": 201, "owner": 201, "member": 201, "guest": 404},
+    ("project", "read"):   {"sysadmin": 404, "owner": 200, "member": 200, "guest": 404},
+    ("project", "update"): {"sysadmin": 404, "owner": 200, "member": 403, "guest": 404},
+    ("project", "delete"): {"sysadmin": 404, "owner": 204, "member": 403, "guest": 404},
+    # issue：建/改=CONTRIBUTOR+（viewer 级 403——member 是 CONTRIBUTOR 故过）；
+    # 读=项目可见；删=PROJ_ADMIN+（member 403）
+    ("issue", "create"): {"sysadmin": 404, "owner": 201, "member": 201, "guest": 404},
+    ("issue", "read"):   {"sysadmin": 404, "owner": 200, "member": 200, "guest": 404},
+    ("issue", "update"): {"sysadmin": 404, "owner": 200, "member": 200, "guest": 404},
+    ("issue", "delete"): {"sysadmin": 404, "owner": 200, "member": 403, "guest": 404},
+    # webhook（integration.config=PROJ_ADMIN+；D2 收口——CRUD 逐端点）：
+    # sysadmin（WS MEMBER 无项目角色）与 member（CONTRIBUTOR）一律 403/404，
+    # guest 无 ws 成员 → 404 同构
+    ("webhook", "create"): {"sysadmin": 404, "owner": 201, "member": 403, "guest": 403},
+    ("webhook", "read"):   {"sysadmin": 404, "owner": 200, "member": 403, "guest": 403},
+    ("webhook", "update"): {"sysadmin": 404, "owner": 200, "member": 403, "guest": 403},
+    ("webhook", "delete"): {"sysadmin": 404, "owner": 204, "member": 403, "guest": 403},
+}
+
+
+@pytest.fixture()
+def matrix_env(env, db):
+    """env（test_auth006 主体）+ sysadmin/guest 别名 + webhook 端点 + 目标 issue。"""
+    from django.core.cache import cache
+
+    cache.clear()  # report/bulk throttle 计数清零（矩阵 61 次内不受限）
+    sysadmin = User.objects.create_user(email="a6-sys@rabbit.dev",
+                                        password="Rabbit123!", display_name="系统管")
+    SystemAdmin.objects.create(user=sysadmin)
+    WorkspaceMember.objects.create(workspace=env["ws"], member=sysadmin,
+                                   role=WorkspaceRole.MEMBER, created_by=env["owner"])
+    from plane.db.models.integration import encrypt_secret
+    hook = WebhookEndpoint.objects.create(
+        project=env["proj"], workspace=env["ws"], url="https://hooks.example.com/mx",
+        events=["issue.updated"],
+        secret_encrypted=encrypt_secret("x" * 32),
+        created_by=env["owner"])
+    issue = Issue.objects.filter(project=env["proj"]).first()
+    from plane.db.models import IssueType
+    issue_type = IssueType.objects.filter(workspace=env["ws"]).first()
+    if issue_type is None:  # a6 env 不走 signup 种子——按需补一条任务类型
+        issue_type = IssueType.objects.create(
+            workspace=env["ws"], name="任务",
+            created_by=env["owner"])
+    return {**env, "sysadmin": sysadmin, "guest": env["outsider"],
+            "hook": hook, "issue": issue, "issue_type": issue_type}
+
+
+def _hit(client, resource, action, e):
+    """单格 HTTP 请求（幂等可重入——create 格用独立 slug/name 防撞）。"""
+    import uuid as u
+    ws = e["ws"].slug
+    pid, iid, hid = e["proj"].id, e["issue"].id, e["hook"].id
+    if resource == "workspace":
+        if action == "create":
+            return client.post("/api/v1/workspaces/",
+                               {"name": f"W{u.uuid4().hex[:6]}",
+                                "identifier": f"W{u.uuid4().hex[:4].upper()}"}, format="json")
+        if action == "read":
+            return client.get(f"/api/v1/workspaces/{ws}/")
+        if action == "update":
+            return client.patch(f"/api/v1/workspaces/{ws}/",
+                                {"name": e["ws"].name}, format="json")
+        return client.delete(f"/api/v1/workspaces/{ws}/")
+    if resource == "project":
+        base = f"/api/v1/workspaces/{ws}/projects/"
+        if action == "create":
+            return client.post(base, {"name": f"P{u.uuid4().hex[:6]}",
+                                      "identifier": f"X{u.uuid4().hex[:4].upper()}"},
+                               format="json")
+        if action == "read":
+            return client.get(f"{base}{pid}/")
+        if action == "update":
+            return client.patch(f"{base}{pid}/", {"name": e["proj"].name}, format="json")
+        return client.delete(f"{base}{pid}/")
+    if resource == "issue":
+        base = f"/api/v1/workspaces/{ws}/projects/{pid}/issues/"
+        if action == "create":
+            return client.post(base, {"name": f"I{u.uuid4().hex[:6]}",
+                                      "priority": "none",
+                                      "type_id": str(e["issue_type"].id)}, format="json")
+        if action == "read":
+            return client.get(f"{base}{iid}/")
+        if action == "update":
+            return client.patch(f"{base}{iid}/", {"name": e["issue"].name,
+                                                  "type_id": str(e["issue_type"].id)},
+                                format="json")
+        return client.delete(f"{base}{iid}/")
+    # webhook CRUD（integration.config；D2 收口逐端点）
+    base = f"/api/v1/workspaces/{ws}/projects/{pid}/webhooks/"
+    if action == "create":
+        return client.post(base, {"url": f"https://h.example.com/{u.uuid4().hex[:6]}",
+                                  "events": ["issue.updated"]}, format="json")
+    if action == "read":
+        return client.get(base)
+    if action == "update":
+        return client.patch(f"{base}{hid}/", {"is_active": "active"}, format="json")
+    return client.delete(f"{base}{hid}/")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("subject", _SUBJECTS)
+@pytest.mark.parametrize("resource", _RESOURCES)
+@pytest.mark.parametrize("action", _ACTIONS)
+def test_it_sec_matrix_64(subject, resource, action, matrix_env):
+    """IT-SEC-{subject×resource×action 序号 01~64}：越权矩阵逐格断言。"""
+    from django.core.cache import cache
+
+    user = matrix_env[subject]
+    c = APIClient()
+    c.force_authenticate(user)
+    cache.clear()
+    r = _hit(c, resource, action, matrix_env)
+    want = _EXPECT[(resource, action)][subject]
+    ok = (200 <= r.status_code < 300) if want == "" else r.status_code == want
+    assert ok, (f"IT-SEC[{subject}/{resource}/{action}] want={want} "
+                f"got={r.status_code} body={getattr(r, 'data', '')!s:.500}")

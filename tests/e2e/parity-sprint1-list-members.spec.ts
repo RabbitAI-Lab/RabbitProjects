@@ -151,6 +151,65 @@ test.describe("Sprint-1 list/members UI parity（C.18/C.19/C.21）", () => {
   });
 
   /* ════════════════════════════════════════════════════════════════════════════
+   *  验收缺陷回归：C.15 角色列下拉被表格容器裁切（2026-09-07）
+   *  成员表容器为圆角用 overflow-hidden，行内 absolute 菜单在容器底缘被整层
+   *  裁掉（最后一行实测 87px 菜单被裁 78px）。修复 = 菜单 portal 到 body +
+   *  fixed 随锚定位。断言：菜单完整在视口内 + 行为三件套（点选项 → PATCH
+   *  2xx → 行内徽标回读），再改回原角色还原演示数据。
+   * ════════════════════════════════════════════════════════════════════════════ */
+  test("C.15 角色下拉：底部行不被表格裁切且改角色 PATCH 2xx + 徽标回读", async ({ page }) => {
+    test.setTimeout(30_000);
+    await page.context().clearCookies(); // 规范③：显式清 cookies，不依赖 Worker 复用清理
+    const ws = await loginDemo(page);
+    await page.goto(`/${ws}/settings/members`);
+    await page.getByRole("columnheader", { name: "角色" }).waitFor({ state: "visible", timeout: 10_000 });
+
+    // 演示工作区需 ≥1 行可编辑角色（OWNER 视角下的低角色成员行）
+    const triggers = page.locator('button[aria-label^="调整"]');
+    await expect(triggers.first()).toBeVisible({ timeout: 5_000 });
+    const n = await triggers.count();
+    expect.soft(n, "演示数据应有可编辑角色行").toBeGreaterThan(0);
+
+    // 打开最后一行（最贴表格底缘——裁切最严重处）
+    const last = triggers.nth(n - 1);
+    await last.scrollIntoViewIfNeeded();
+    await last.click();
+
+    // 菜单完整在视口内（修复前 absolute 被 overflow-hidden 裁掉约九成）
+    const menu = page.locator("[data-mem-role].fixed");
+    await expect(menu).toBeVisible();
+    const box = await menu.boundingBox();
+    const vh = await page.evaluate(() => window.innerHeight);
+    expect.soft(box, "菜单应有边界盒").not.toBeNull();
+    if (box) {
+      expect.soft(
+        box.y >= 0 && box.y + box.height <= vh + 0.5,
+        `菜单应完整在视口内（y=${box.y}, bottom=${box.y + box.height}, vh=${vh}）`,
+      ).toBe(true);
+    }
+
+    // 行为三件套：①点选项 ②PATCH 2xx ③行内徽标回读
+    //（修复前此点击因菜单被裁、hit-test 落到表格容器上而超时）
+    const orig = (await last.innerText()).trim();
+    const opt = menu.getByRole("option").first();
+    const newRole = (await opt.innerText()).trim();
+    const patch = page.waitForResponse((r) => r.request().method() === "PATCH" && r.url().includes("/members/"));
+    await opt.click();
+    expect.soft((await patch).status(), "改角色 PATCH 应 2xx").toBe(200);
+    await expect(last).toContainText(newRole, { timeout: 5_000 });
+
+    // 还原演示数据：重新打开点回原角色（下拉只列非当前角色，故选项即原角色）
+    await last.click();
+    const back = page.locator("[data-mem-role].fixed").getByRole("option").filter({ hasText: orig });
+    if (await back.count()) {
+      const patch2 = page.waitForResponse((r) => r.request().method() === "PATCH" && r.url().includes("/members/"));
+      await back.first().click();
+      expect.soft((await patch2).status(), "还原 PATCH 应 2xx").toBe(200);
+      await expect(last).toContainText(orig, { timeout: 5_000 });
+    }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════════
    *  C.21 添加成员弹窗（520px）
    *  ─── 来源：docs/sprint-0-poc/test-cases.md 附录 C.21，PROJ-002 §3.3
    * ════════════════════════════════════════════════════════════════════════════ */

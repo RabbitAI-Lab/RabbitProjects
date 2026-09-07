@@ -444,6 +444,12 @@ class Project(BaseModel):
     status = models.CharField(
         max_length=16, choices=Status.choices, default=Status.ACTIVE, db_index=True, verbose_name="项目状态"
     )
+    visibility = models.CharField(  # Sprint-5 已落地（AUTH-006 §4.1 注 B 登记）：
+        # private 默认 / public——公开项目对 WS_ONLY 只读可见通道待本节与
+        # rbac §6.2 _scoped_for 公开分支一并回改后解锁；落地前 public 行为=private
+        max_length=8, choices=[("private", "私有"), ("public", "公开")],
+        default="private", db_index=True, verbose_name="可见性",
+    )
 
     class Meta(BaseModel.Meta):
         db_table = "projects"

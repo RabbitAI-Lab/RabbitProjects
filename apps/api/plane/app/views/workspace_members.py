@@ -378,3 +378,82 @@ class InvitationAcceptView(_InvitationTokenAPIView):
             "role": member.role,
             "current_user_role": member.role,
         })
+
+
+# ── Sprint-5（AUTH-006 §4.4）：批量角色 + 账号启停 ──────────────────────
+class WorkspaceMemberBulkRoleView(APIView):
+    """POST .../workspaces/{slug}/members/bulk-role/ —— 批量改角色（§2.3 部分成功语义）。
+
+    结构性校验整请求 400（缺字段 / >100 人 / 目标角色非法）；
+    业务级分态 updated / skipped（附 reason）/ failed（附 reason+message）。
+    """
+
+    permission_classes = [IsAuthenticatedAndActive]
+
+    @require_permission("workspace.member.manage", scope="workspace")
+    def post(self, request, slug):
+        from plane.db.models.roles import WorkspaceRole
+        from plane.db.services import member_admin as svc
+
+        ws, _ = get_workspace_or_404(slug, request.user)
+        user_ids = request.data.get("user_ids")
+        role = request.data.get("role")
+        if not isinstance(user_ids, list) or not user_ids:
+            raise AppException("VALIDATION_ERROR", message="user_ids 必须为非空数组",
+                               details=[{"field": "user_ids", "code": "INVALID",
+                                         "message": "user_ids 必须为非空数组"}])
+        if len(user_ids) > svc.BULK_ROLE_MAX:  # BR-14
+            raise AppException("VALIDATION_BULK_LIMIT_EXCEEDED",
+                               message=f"单次批量上限 {svc.BULK_ROLE_MAX} 人")
+        if role not in (WorkspaceRole.ADMIN, WorkspaceRole.MEMBER, WorkspaceRole.GUEST):
+            raise AppException("VALIDATION_ERROR", message="角色非法",
+                               details=[{"field": "role", "code": "NOT_A_CHOICE",
+                                         "message": "目标角色必须为 ADMIN/MEMBER/GUEST"}])
+        result = svc.bulk_role_workspace(
+            workspace=ws, actor=request.user,
+            user_ids=[str(u) for u in user_ids], role=int(role))
+        return success_response(result)
+
+
+class WorkspaceMemberDisableView(APIView):
+    """POST .../workspaces/{slug}/members/{member_id}/disable/ —— 账号禁用（§4.4.2）。"""
+
+    permission_classes = [IsAuthenticatedAndActive]
+
+    @require_permission("workspace.member.manage", scope="workspace")
+    def post(self, request, slug, member_id):
+        from plane.db.services.member_admin import AccountService
+
+        ws, _ = get_workspace_or_404(slug, request.user)
+        member = self._resolve(ws, member_id)
+        data = AccountService().disable(
+            target=member.member, actor=request.user, workspace=ws)
+        return success_response(data)
+
+    @staticmethod
+    def _resolve(ws, member_id):
+        try:
+            return WorkspaceMember.objects.select_related("member").get(
+                id=member_id, workspace=ws, deleted_at__isnull=True)
+        except WorkspaceMember.DoesNotExist:
+            raise NotFound("RESOURCE_NOT_FOUND") from None
+
+
+class WorkspaceMemberEnableView(APIView):
+    """POST .../workspaces/{slug}/members/{member_id}/enable/ —— 账号启用（幂等）。"""
+
+    permission_classes = [IsAuthenticatedAndActive]
+
+    @require_permission("workspace.member.manage", scope="workspace")
+    def post(self, request, slug, member_id):
+        from plane.db.services.member_admin import AccountService
+
+        ws, _ = get_workspace_or_404(slug, request.user)
+        try:
+            member = WorkspaceMember.objects.select_related("member").get(
+                id=member_id, workspace=ws, deleted_at__isnull=True)
+        except WorkspaceMember.DoesNotExist:
+            raise NotFound("RESOURCE_NOT_FOUND") from None
+        data = AccountService().enable(
+            target=member.member, actor=request.user, workspace=ws)
+        return success_response(data)

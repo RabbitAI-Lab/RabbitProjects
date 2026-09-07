@@ -25,7 +25,7 @@ from rest_framework.generics import ListCreateAPIView
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from plane.app.permissions import IsAuthenticated
+from plane.app.permissions import IsAuthenticated, IsAuthenticatedAndActive, require_permission
 from plane.app.serializers.project_member import (
     ProjectMemberBulkAddSerializer,
     ProjectMemberRoleChangeSerializer,
@@ -228,3 +228,41 @@ class ProjectArchiveView(APIView):
         )
         return success_response({"status": project.status,
                                   "archived_at": None})
+
+
+# ── Sprint-5（AUTH-006 §4.4.3）：项目层批量角色 ────────────────────────
+class ProjectMemberBulkRoleView(APIView):
+    """POST .../projects/{project_id}/members/bulk-role/ —— 项目批量改角色。
+
+    同 §2.3 部分成功语义；角色枚举为项目四角色；权限 PROJ_ADMIN+
+    （project.member.manage）。
+    """
+
+    permission_classes = [IsAuthenticatedAndActive]
+
+    @require_permission("project.member.manage", scope="project")
+    def post(self, request, *args, **kwargs):
+        from plane.db.models.roles import ProjectRole
+        from plane.db.services import member_admin as svc
+
+        project, _, _ = get_project_or_404(
+            kwargs["slug"], kwargs["project_id"], request.user)
+        member_ids = request.data.get("member_ids")
+        role = request.data.get("role")
+        if not isinstance(member_ids, list) or not member_ids:
+            raise AppException("VALIDATION_ERROR", message="member_ids 必须为非空数组",
+                               details=[{"field": "member_ids", "code": "INVALID",
+                                         "message": "member_ids 必须为非空数组"}])
+        if len(member_ids) > svc.BULK_ROLE_MAX:  # BR-14
+            raise AppException("VALIDATION_BULK_LIMIT_EXCEEDED",
+                               message=f"单次批量上限 {svc.BULK_ROLE_MAX} 人")
+        if role not in (ProjectRole.ADMIN, ProjectRole.CONTRIBUTOR,
+                        ProjectRole.COMMENTER, ProjectRole.VIEWER):
+            raise AppException("VALIDATION_ERROR", message="角色非法",
+                               details=[{"field": "role", "code": "NOT_A_CHOICE",
+                                         "message": "目标角色必须为项目四角色之一"}])
+        result = svc.bulk_role_project(
+            project=project, actor=request.user,
+            member_ids=[str(m) for m in member_ids], role=int(role),
+            op_role=getattr(project, "current_user_role", None))
+        return success_response(result)

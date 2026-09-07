@@ -15,6 +15,7 @@ from .roles import ProjectRole, WorkspaceRole
 from .state import State
 from .user import User
 from .view import IssueView
+from .webhook import WebhookDelivery, WebhookEndpoint
 from .worklog import WorkLog
 from .workspace import Workspace, WorkspaceLabel, WorkspaceLoginDailyAggregate, WorkspaceMember, WorkspaceMemberInvite
 
@@ -23,6 +24,8 @@ __all__ = [
     "SoftDeleteManager",
     "SoftDeleteQuerySet",
     "User",
+    "WebhookDelivery",
+    "WebhookEndpoint",
     "Workspace",
     "WorkspaceMember",
     "WorkspaceLoginDailyAggregate",

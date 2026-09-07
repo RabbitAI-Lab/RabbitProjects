@@ -35,6 +35,7 @@ app = Celery(
         "plane.bgtasks.share_sweep",       # FILE-004：过期分享清扫（beat 每小时）
         "plane.bgtasks.worklog",
         "plane.bgtasks.workspace_invite",
+        "plane.db.services.webhook_outbound",   # INTG-002：出站投递/清理/到期扫描
     ],
 )
 app.config_from_object("django.conf:settings", namespace="CELERY")
@@ -50,6 +51,14 @@ app.conf.beat_schedule = {
     "sweep-expired-shares": {
         "task": "plane.bgtasks.share_sweep.sweep_expired_shares",
         "schedule": crontab(minute=0),
+    },
+    "purge-webhook-deliveries": {
+        "task": "plane.db.services.webhook_outbound.purge_webhook_deliveries",
+        "schedule": crontab(hour=3, minute=30),       # 每日 03:30 滚动清理（§4.1）
+    },
+    "retry-due-webhook-deliveries": {
+        "task": "plane.db.services.webhook_outbound.retry_due_deliveries",
+        "schedule": crontab(minute="*/5"),             # 自调度丢失兜底（§4.3）
     },
 }
 

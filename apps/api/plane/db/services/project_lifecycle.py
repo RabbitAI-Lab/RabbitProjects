@@ -250,9 +250,20 @@ def actor_id_of(project: Project) -> uuid.UUID | None:
 
 
 def _dispatch_webhook_events(project: Project, from_status: str, to_status: str) -> None:
-    """project.* Webhook 扇出挂点——INTG-002（T5-05）落地后接线；先 no-op 预留。"""
+    """project.* Webhook 扇出（INTG-002 §2.3 五事件；锚=ProjectStatusLog.id）。"""
     try:
-        from plane.bgtasks.event_publisher import dispatch_event  # noqa: F401
-        # INTG-002 落地后：dispatch_event(f"project.{…}", payload, rooms)
-    except Exception:  # noqa: BLE001
-        pass
+        from plane.db.models import ProjectStatusLog
+        from plane.db.services.webhook_outbound import dispatch_events
+
+        log = (ProjectStatusLog.objects.filter(project=project)
+               .order_by("-created_at").values_list("id", flat=True).first())
+        event = {"active": "project.activated", "archived": "project.archived",
+                 "closed": "project.closed"}.get(to_status) or "project.restored"
+        dispatch_events(event, {
+            "event_id": str(log) if log else None,
+            "data": {"id": str(project.id), "identifier": project.identifier,
+                     "name": project.name, "status": to_status,
+                     "transitioned_at": timezone.now().isoformat()},
+        }, project_id=project.id)
+    except Exception:  # noqa: BLE001 —— 出站扇出尽力而为
+        logger.warning("lifecycle.webhook_dispatch_failed project=%s", project.id)

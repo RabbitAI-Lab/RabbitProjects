@@ -165,6 +165,18 @@ class ProjectListCreateView(ListCreateAPIView):
                 transaction.on_commit(lambda: enqueue_project_activity(
                     project_id=project.id, actor_id=request.user.id, verb="created",
                     field=None, new_value="active", comment="milestone"))
+                # INTG-002：project.created（draft 静默 BR-03——draft 初态不扇出）
+                def _wh_created(p=project):
+                    from plane.db.services.webhook_outbound import dispatch_events
+
+                    dispatch_events("project.created", {
+                        "event_id": None,
+                        "data": {"id": str(p.id), "identifier": p.identifier,
+                                 "name": p.name, "status": "active",
+                                 "transitioned_at": None},
+                    }, project_id=p.id)
+
+                transaction.on_commit(_wh_created)
         return created_response(
             _serialize_project(project, request.user),
             location=request.build_absolute_uri(f"/api/v1/workspaces/{ws.slug}/projects/{project.id}/"),

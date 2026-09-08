@@ -75,7 +75,28 @@ class FieldSchemaView(APIView):
                     [field_error("issue_type", "INVALID_UUID", f"UUID 格式非法：{raw_type}")]
                 ) from err
 
+        # TASK-012 §4.4：按请求者角色注入 access + hidden 字段四键骨架（仅 id/key/type/access，
+        # 隐藏字段的存在性可识别但配置与值不下发；BR-10 实现偏差已登记）
+        from plane.db.services.field_permissions import FieldPermissionService
+
         payload = build_field_schema(project, issue_type_id)
+        # TASK-012 §4.4：按请求者角色为 custom[] 每项注入 access 四态标注
+        # （ETag 仍只锁定定义集；access 在视图层二次 resolve，零 Schema API 缓存污染）
+        from plane.db.models import CustomFieldDefinition, Q
+
+        if payload.get("custom"):
+            cf_defs = list(CustomFieldDefinition.objects
+                            .filter(workspace_id=project.workspace_id)
+                            .filter(Q(applicable_types__contains=[str(issue_type_id)])
+                                    if issue_type_id else Q())
+                            .filter(Q(project=project) | Q(project__isnull=True))
+                            .order_by("sort_order", "created_at"))
+            _access = FieldPermissionService().cached_resolve(
+                request, request.user, project, cf_defs)
+            for item in payload["custom"]:
+                _k = item.get("key")
+                if _k and _k in _access:
+                    item["access"] = _access[_k]
         etag = schema_etag(payload)
         if _etag_matches(request.headers.get("If-None-Match"), etag):
             # 未变：304 空体（Envelope 中间件对 304 显式放行，C1 例外 BR-02）
@@ -228,9 +249,11 @@ def _create_definition(request, workspace_id, slug: str, *, project=None) -> Res
         errors.append(field_error("field_key", "INVALID", "字段键名必须为 cf_ 前缀的 snake_case（cf_[a-z][a-z0-9_]）"))
 
     field_type = payload.get("field_type")
-    if field_type not in CustomFieldDefinition.P2_ALLOWED_TYPES:
+    _allowed = CustomFieldDefinition.P2_ALLOWED_TYPES | CustomFieldDefinition.P3_ENTERPRISE_TYPES
+    if field_type not in _allowed:
         errors.append(field_error(
-            "field_type", "NOT_A_CHOICE", f"字段类型非法（P2 开放 12 种基础类型）：{field_type}"))
+            "field_type", "NOT_A_CHOICE",
+            f"字段类型非法（12 基础 + 4 高级）：{field_type}"))
 
     description = payload.get("description") or ""
     if not isinstance(description, str) or len(description) > DESCRIPTION_MAX:
@@ -242,8 +265,34 @@ def _create_definition(request, workspace_id, slug: str, *, project=None) -> Res
         is_required = False  # 自增编号系统必填语义，不开放人工必填开关
 
     options = _validate_options(payload.get("options"), errors)
+    cascade_config = payload.get("cascade_config") or {}
+    permission_config = payload.get("permission_config") or {}
     if field_type in CustomFieldDefinition.OPTION_REQUIRED_TYPES and not options:
-        errors.append(field_error("options", "REQUIRED", "下拉类型必须配置至少一个选项（BR-03）"))
+        if field_type == CustomFieldDefinition.FieldType.CASCADE:
+            # cascade 选项全入 cascade_config（TASK-012 §4.3：options 仅校验占位，
+            # 保存前 backfill 回填；TASK-008 §2.6「≤100/字段」对拍平占位豁免）
+            from plane.db.services.custom_fields import validate_cascade_config
+
+            errors.extend(validate_cascade_config(cascade_config))
+        else:
+            errors.append(field_error("options", "REQUIRED", "下拉类型必须配置至少一个选项（BR-03）"))
+    if field_type == CustomFieldDefinition.FieldType.CASCADE:
+        from plane.db.services.custom_fields import backfill_cascade_options
+
+        _cascade_def = CustomFieldDefinition(field_type=field_type, cascade_config=cascade_config)
+        backfill_cascade_options(_cascade_def)
+        options = _cascade_def.options
+    # TASK-012 BR-08/BR-17：permission_config 三集合成员校验 + readonly×is_required 拦截
+    from plane.db.services.custom_fields import validate_permission_config
+
+    _pc_issues = validate_permission_config(permission_config)
+    if is_required:
+        write = set(permission_config.get("write", []) or []) if permission_config else set()
+        read = set(permission_config.get("read", []) or []) if permission_config else set()
+        if read and write and (read - write):  # 有可读不可写角色 → readonly 组合（BR-17）
+            _pc_issues.append({"field": "permission_config", "code": "INVALID",
+                               "message": "is_required 字段不得使任一可读角色落入 readonly（BR-17）"})
+    errors.extend(_pc_issues)
 
     applicable_types = _validate_applicable_types(
         payload.get("applicable_types", []), workspace_id, errors)
@@ -264,6 +313,8 @@ def _create_definition(request, workspace_id, slug: str, *, project=None) -> Res
         is_indexed=is_indexed,
         options=options or [],
         applicable_types=applicable_types or [],
+        cascade_config=cascade_config if field_type == CustomFieldDefinition.FieldType.CASCADE else {},
+        permission_config=permission_config,
         created_by=request.user,
         updated_by=request.user,
     )

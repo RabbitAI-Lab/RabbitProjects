@@ -47,6 +47,9 @@ class CustomFieldDefinition(BaseModel):
     OPTION_REQUIRED_TYPES = frozenset({FieldType.SELECT, FieldType.MULTI_SELECT, FieldType.CASCADE})
     #: P2 管理入口白名单（TASK-008 §1.2：12 种基础类型；P3/P4 枚举仅占位）
     P2_ALLOWED_TYPES = frozenset(list(FieldType.values)[:12])
+    #: TASK-012（Sprint-7 R2）：四高级类型管理入口白名单——企业版许可开放
+    P3_ENTERPRISE_TYPES = frozenset(
+        {FieldType.CASCADE, FieldType.RELATION, FieldType.DATE_RANGE, FieldType.ATTACHMENT})
 
     workspace = models.ForeignKey(
         "db.Workspace",

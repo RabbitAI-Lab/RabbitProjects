@@ -128,9 +128,13 @@ class CompileContext:
     #: key → schema（内置 = BUILTIN_FIELD_PATHS 条目；cf = get_cached_schema 的
     #: serialize_definition 条目，含 type/options）——占位符解析与合并判定共用
     field_schema: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: TASK-012 BR-11：字段级权限四态映射（cf 键 → hidden 拒绝编译；缺省 None
+    #: = 项目未启用字段权限，零行为变化）
+    access_map: dict[str, str] | None = None
 
     @classmethod
-    def build(cls, *, project: Project, user: User) -> CompileContext:
+    def build(cls, *, project: Project, user: User,
+              access_map: dict[str, str] | None = None) -> CompileContext:
         from plane.db.services.field_schema import get_cached_schema
 
         schema: dict[str, dict[str, Any]] = {
@@ -138,7 +142,7 @@ class CompileContext:
         }
         for item in get_cached_schema(project):
             schema[item["key"]] = item
-        return cls(project=project, user=user, field_schema=schema)
+        return cls(project=project, user=user, field_schema=schema, access_map=access_map)
 
 
 def _is_uuid_str(v: Any) -> bool:
@@ -634,6 +638,17 @@ def _compile_custom(cf_key: str, operator: str, value: Any, schema: dict[str, An
             return ~Q(custom_fields__has_key=cf_key)
         case "is_not_empty":
             return Q(custom_fields__has_key=cf_key)
+        # ---- TASK-012 §4.5 四类型操作符 ----
+        case "starts_with" if ftype == "cascade":  # 路径前缀 @>
+            return Q(**{f"custom_fields__{cf_key}__startswith": value})
+        case "overlaps" if ftype == "date_range":  # JSONB 路径双界包含
+            start_p, end_p = f"{cf_key}__start", f"{cf_key}__end"
+            return (Q(**{f"custom_fields__{start_p}__lte": value["end"]})
+                    & Q(**{f"custom_fields__{end_p}__gte": value["start"]}))
+        case "contains_date" if ftype == "date_range":
+            target = value
+            return (Q(**{f"custom_fields__{cf_key}__start__lte": target})
+                    & Q(**{f"custom_fields__{cf_key}__end__gte": target}))
         case _:
             raise _invalid_param("NOT_A_CHOICE", f"字段类型 {ftype} 不支持操作符 {operator}")
 
@@ -732,6 +747,16 @@ def _compile_condition(cond: dict[str, Any], ctx: CompileContext) -> Q:
             "VALIDATION_INVALID_PARAM",
             message="筛选条件包含未知或不可筛选的字段",
             details=[{"field": "filters", "code": "NOT_A_CHOICE", "message": f"字段 {field_key} 不可用"}],
+        )
+    # TASK-012 BR-11：hidden 字段条件整体拒绝（不容错跳过——静默忽略会让用户
+    # 误以为已过滤）；权限类错误 details 为空数组（rbac §5.5 信封范式）
+    if (field_key.startswith("cf_")
+            and ctx.access_map is not None
+            and ctx.access_map.get(field_key) == "hidden"):
+        raise AppException(
+            "PERM_FIELD_HIDDEN",
+            message=f"筛选条件包含对当前角色隐藏的字段：{field_key}",
+            details=[],
         )
     operator = cond.get("operator")
     if not isinstance(operator, str):

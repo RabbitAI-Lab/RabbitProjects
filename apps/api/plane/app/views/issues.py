@@ -167,13 +167,23 @@ class IssueListCreateView(ListCreateAPIView):
         project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         include_archived = str(request.query_params.get("archived", "")).lower() in ("true", "1")
 
+        # TASK-012 §4.4：列表请求级一次性 resolve access_map + 序列化剔除 hidden
+        from plane.db.models import CustomFieldDefinition as _CFD3
+        from plane.db.services.field_permissions import FieldPermissionService
+
+        _cf_defs = list(_CFD3.objects
+                         .filter(workspace_id=project.workspace_id)
+                         .filter(Q(project=project) | Q(project__isnull=True)))
+        self._list_access = FieldPermissionService().cached_resolve(
+            request, request.user, project, _cf_defs)
+
         # ── group_by 维度解析（BOARD-003 §4.2-6：白名单 + 别名归一，非法 → 400）──
         dimension = None
         if request.query_params.get("group_by"):
             dimension = resolve_dimension(project, request.query_params.get("group_by"))
 
         # ── 编译上下文（TASK-011 §4.3：占位符解析与 cf 分派共用）──
-        ctx = CompileContext.build(project=project, user=request.user)
+        ctx = CompileContext.build(project=project, user=request.user, access_map=self._list_access)
 
         # ── view_id 展开（② 项目级视图层：filters 树 → Q + 原始值 applied 回显）──
         view_q = Q()
@@ -301,7 +311,7 @@ class IssueListCreateView(ListCreateAPIView):
             meta["warning"] = merged_warning
         if filterset.ignored_params:
             meta["ignored_params"] = filterset.ignored_params
-        return success_response(IssueSerializer(rows, many=True).data, meta=meta)
+        return success_response(_strip_hidden(IssueSerializer(rows, many=True).data, self._list_access), meta=meta)
 
     def _grouped_response(
         self, request, project, base_qs, base_unfiltered, filterset, warning,
@@ -347,7 +357,7 @@ class IssueListCreateView(ListCreateAPIView):
                 self._encode_cursor(offset + per_group, group_id=key) if offset + per_group < total else None
             )
             grouped[key] = {
-                "results": IssueSerializer(rows, many=True).data,
+                "results": _strip_hidden(IssueSerializer(rows, many=True).data, self._list_access),
                 "total_results": total,
                 "unfiltered_total_results": unfiltered_counts.get(key, 0),
             }
@@ -496,6 +506,15 @@ class IssueListCreateView(ListCreateAPIView):
         )
 
 
+def _strip_hidden(rows, access: dict[str, str]) -> list:
+    """TASK-012 BR-10/12：列表项 custom_fields 的 hidden 键序列化剔除（多端共享）。"""
+    from plane.db.services.field_permissions import FieldPermissionService
+
+    for r in rows:
+        FieldPermissionService.apply_to_payload(r, access)
+    return rows
+
+
 # ─────────────────────────────────────────────────────────────────────
 # 详情 / 更新 / 删除
 # ─────────────────────────────────────────────────────────────────────
@@ -603,6 +622,28 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
                     before={"field_locks.force": None}, after={"field_locks.force": _hit},
                     comment=f"管理员强制修改锁定字段：{', '.join(_hit)}",
                 )
+
+        # ---- TASK-012 §4.4 BR-16：custom_fields PATCH 静默丢弃 readonly/hidden ----
+        # 写入路径的 non-writable 静默（rbac §11.2；meta.warning 透出钩子）——
+        # 前端旧缓存兼容（v6 决策）
+        if "custom_fields" in data and data["custom_fields"] is not None:
+            from plane.db.models import CustomFieldDefinition, Q
+            from plane.db.services.field_permissions import FieldPermissionService
+
+            _cf_defs = list(CustomFieldDefinition.objects
+                             .filter(workspace_id=issue.project.workspace_id)
+                             .filter(Q(applicable_types__contains=[str(issue.issue_type_id)])
+                                     if issue.issue_type_id else Q())
+                             .filter(Q(project=issue.project) | Q(project__isnull=True)))
+            _access = FieldPermissionService().cached_resolve(
+                request, request.user, issue.project, _cf_defs)
+            _dropped = FieldPermissionService.drop_non_writable(
+                dict(data["custom_fields"] or {}), _access)
+            if _dropped:
+                data["custom_fields"] = {k: v for k, v in data["custom_fields"].items()
+                                          if k not in _dropped}
+                request._dropped_fields = _dropped  # meta.warning 透出钩子
+
         epoch = _current_epoch()
         activities: list[dict] = []
 
@@ -997,7 +1038,7 @@ class IssueSubIssueListCreateView(APIView):
             .prefetch_related("issue_assignees")
             .order_by("sort_order", "-created_at")
         )
-        data = IssueSerializer(subs, many=True).data
+        data = _strip_hidden(IssueSerializer(subs, many=True).data, self._list_access)
         return success_response(
             data,
             meta={

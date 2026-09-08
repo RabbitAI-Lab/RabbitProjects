@@ -18,7 +18,7 @@ const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
 type Tab = "pending" | "acted" | "mine";
 
 export default function ApprovalCenter() {
-  const { ws } = useParams();
+  const { workspaceSlug: ws } = useParams();
   const nav = useNavigate();
   const [tab, setTab] = useState<Tab>("pending");
   const [rows, setRows] = useState<ApprovalRow[]>([]);
@@ -135,7 +135,7 @@ function ApprovalDetailDrawer({ instanceId, projectId, onClose, onChanged, onOpe
   onChanged: () => void;
   onOpenIssue: (projectId: string, issueId: string) => void;
 }) {
-  const { ws } = useParams();
+  const { workspaceSlug: ws } = useParams();
   const [detail, setDetail] = useState<Awaited<ReturnType<typeof ApprovalAPI.instance>>["data"] | null>(null);
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);

@@ -674,8 +674,16 @@ ck("T8-08", "同 key 重复创建 → 409 alreadyExists(UNIQUE)",
    and any(x.get("field") == "field_key" and x.get("code") == "UNIQUE"
            for x in ((body or {}).get("error") or {}).get("details") or []),
    f"got {code} {body}")
+# Sprint-7 R2-B（TASK-012）放开 P3 四类型后 T8-09 语义对齐：cascade 已是合法类型，
+# 无 cascade_config → 400 字段校验错；白名单负例另用真非法类型保住（T8-09b）
 code, body = _mkfield(admin, {"name": "P3", "field_key": "cf_casc", "field_type": "cascade"})
-ck("T8-09", "P3 类型（cascade）→ 400 NOT_A_CHOICE（P2_ALLOWED_TYPES 白名单）",
+ck("T8-09", "cascade 无 cascade_config → 400 INVALID（TASK-012 后类型合法、config 必填）",
+   code == HTTP["BAD_REQUEST"] and error_code(body) == CODES["validation"]
+   and any(str(x.get("field", "")).startswith("cascade_config")
+           for x in ((body or {}).get("error") or {}).get("details") or []),
+   f"got {code} {body}")
+code, body = _mkfield(admin, {"name": "非法类型", "field_key": "cf_hack", "field_type": "hacker"})
+ck("T8-09b", "白名单外类型（hacker）→ 400 NOT_A_CHOICE（field_type 白名单仍拒）",
    code == HTTP["BAD_REQUEST"] and error_code(body) == CODES["validation"]
    and any(x.get("code") == "NOT_A_CHOICE" for x in ((body or {}).get("error") or {}).get("details") or []),
    f"got {code} {body}")

@@ -23,6 +23,7 @@ class WorkLog(BaseModel):
     minutes = models.PositiveIntegerField(
         verbose_name="时长（分钟）", help_text="1~1440，整数分钟")
     note = models.CharField(max_length=2000, blank=True, verbose_name="备注")
+    locked = models.BooleanField(default=False, db_index=True, verbose_name="TASK-013 审批通过锁定（BR-06）")
 
     class Meta(BaseModel.Meta):
         db_table = "work_logs"

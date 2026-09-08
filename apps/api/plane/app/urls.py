@@ -172,6 +172,8 @@ FEATURE_MODULES = (
     "integrations",     # INTG-001 GitHub 集成（安装 / 绑定 / 入站 Webhook / 日志）
     "webhooks",         # INTG-002 出站 Webhook（端点 / 投递 / 重放）
     "workflow",         # M11-WF 工作流引擎与审批（WF-001/WF-002，Sprint-7）
+    "automation",       # M11-WF 自动化规则（WF-003，Sprint-7 R3）
+    "worklog_approval", # M4-TASK 工时审批（TASK-013，Sprint-7 R3）
 )
 
 for _name in FEATURE_MODULES:

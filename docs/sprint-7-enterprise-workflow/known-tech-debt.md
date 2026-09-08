@@ -14,6 +14,7 @@
 | 5 | 前端审批中心 count_only 徽标轮询 + WS 增量 | 端点已就绪（approvals/pending/?count_only=1）；前端轮询接入随 R4 后续打磨 |
 | 6 | e2e spec（approval-center/canvas/worklog） | 附录 C.140~C.143 清单已入库 + 组件 data-sb-scope 全埋；spec 随验收视频轮（用户参与）补 |
 | 7 | 覆盖率新面（plane/workflow 域） | pytest 118 项覆盖主路径；80% 门槛推进随 TC-COVER 复测（承 Sprint-6 #4/#5 软目标） |
+| 8 | sprint-5-flow 32/8 历史在案（R0 补登记） | Sprint-5 收口 39/47 同源：W6 段 mock 只 patch 同步 `_post`、重试经 apply_async 投 worker 无 mock + 真退避 → 终态不可达；A1-01/P3-03/P3-04/I5-06/I5-09 待查。r1-inflight R0 段曾承诺「R5 收口时入本表」但实际漏登，Sprint-8 R0 补上；修复随首个 flow 复跑轮 triage |
 
 ## B. 本迭代收口清单（已闭环，留档）
 

@@ -4,14 +4,13 @@ import { Topbar } from "../components/Topbar";
 import { ProjectSidebar } from "../components/ProjectSidebar";
 import { IssueDrawer as SharedDrawer } from "../components/IssueDrawer";
 import { NewTaskModal } from "../components/NewTaskModal";
-import { StateBadge } from "../components/StateBadge";
-import { AvatarStack } from "../components/issue-dialogs";
 import { ProjectAPI } from "../services/api";
 import type { Issue } from "@rp/types";
 import { ViewSwitchBar } from "../components/views/ViewSwitchBar";
 import { FilterOpenButton, ViewChipsRow } from "../components/views/ViewFilterBar";
 import { useViewPage } from "../components/views/useViewPage";
-import { PRIORITY_COLUMNS, TABLE_COL_NAMES } from "../components/views/view-dsl";
+import { TABLE_COL_NAMES } from "../components/views/view-dsl";
+import { renderTableCell } from "../components/views/TableCell";
 import { BulkOperations, TruncationStrip, useBulkSelection, useMarquee } from "../components/views/BulkOperations";
 import { useStores } from "../stores";
 
@@ -86,44 +85,8 @@ export default function Table() {
   const nameOf = (uid: string) => vp.members.find((m) => m.id === uid)?.name ?? "…";
   const today = new Date().toISOString().slice(0, 10);
 
-  function cell(it: Issue, col: string) {
-    switch (col) {
-      case "key":
-        return <span className="font-mono text-xs text-neutral-500 whitespace-nowrap">{it.issue_key}</span>;
-      case "title":
-        return <span className="text-[13px] text-neutral-900 truncate">{it.name}</span>;
-      case "state":
-        return <StateBadge group={it.state_group ?? "unstarted"} name={it.state_name ?? "—"} />;
-      case "assignees":
-        return it.assignee_ids?.length
-          ? <AvatarStack names={it.assignee_ids.map(nameOf)} size={20} />
-          : <span className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-[12px] text-neutral-500">未指派</span>;
-      case "due": {
-        if (!it.target_date) return <span className="text-neutral-400">—</span>;
-        const od = it.target_date < today && it.state_group !== "completed" && it.state_group !== "cancelled";
-        return <span className={`font-mono text-xs tabular-nums ${od ? "text-red-500 font-semibold" : "text-neutral-500"}`}>{it.target_date.slice(5)}</span>;
-      }
-      case "priority": {
-        const p = PRIORITY_COLUMNS.find((x) => x.key === it.priority);
-        return p ? (
-          <span className="inline-flex items-center gap-1.5 text-[13px] text-neutral-600 whitespace-nowrap">
-            <span className="w-2 h-2 rounded-full" style={{ background: p.color }} />{p.name}
-          </span>
-        ) : <span className="text-neutral-400">—</span>;
-      }
-      case "labels":
-        return it.label_ids?.length ? (
-          <span className="inline-flex gap-1">
-            {it.label_ids.map((id) => {
-              const l = vp.labels.find((x) => x.id === id);
-              return l ? <span key={id} className="text-[11px] px-1.5 rounded text-white h-[18px] inline-flex items-center" style={{ background: l.color }}>{l.name}</span> : null;
-            })}
-          </span>
-        ) : <span className="text-neutral-400">—</span>;
-      default:
-        return <span className="text-neutral-400">—</span>;
-    }
-  }
+  /** 共用渲染：表格/列表同构（ADR-0030：列表补齐 display_props.columns 消费）。 */
+  const renderCell = (it: Issue, col: string) => renderTableCell(it, col, { nameOf, today, labels: vp.labels });
 
   return (
     <div className="flex flex-col h-screen">
@@ -187,7 +150,7 @@ export default function Table() {
                         </td>
                         {visibleCols.map((c) => (
                           <td key={c} className={`px-2.5 py-1.5 border-b border-neutral-100 text-[13px] ${c === "title" ? "min-w-[260px]" : "whitespace-nowrap"}`}>
-                            {cell(it, c)}
+                            {renderCell(it, c)}
                           </td>
                         ))}
                       </tr>

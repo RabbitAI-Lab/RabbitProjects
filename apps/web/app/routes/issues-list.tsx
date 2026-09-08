@@ -4,7 +4,6 @@ import { Topbar } from "../components/Topbar";
 import { ProjectSidebar } from "../components/ProjectSidebar";
 import { IssueDrawer } from "../components/IssueDrawer";
 import { NewTaskModal } from "../components/NewTaskModal";
-import { StateBadge } from "../components/StateBadge";
 import { AvatarStack, fmtMinutes } from "../components/issue-dialogs";
 import {
   AssigneeAPI,
@@ -24,6 +23,8 @@ import { LabelsAdminModal } from "./labels-admin";
 import { ViewSwitchBar } from "../components/views/ViewSwitchBar";
 import { FilterOpenButton, ViewChipsRow } from "../components/views/ViewFilterBar";
 import { useViewPage } from "../components/views/useViewPage";
+import { TABLE_COL_NAMES } from "../components/views/view-dsl";
+import { renderTableCell } from "../components/views/TableCell";
 import { BulkOperations, TruncationStrip, useBulkSelection, useMarquee } from "../components/views/BulkOperations";
 import type { Issue, SubtreeData } from "@rp/types";
 
@@ -333,7 +334,17 @@ export default function IssuesList() {
         setRelInfo(next);
       });
   }
-  const nameOf = (uid: string) => members.find((m) => m.user.id === uid)?.user.display_name ?? "…";
+  /** ADR-0030：nameOf 走 vp.members（与表格同源）；QuickAssignPop 仍用本地 members 因需 role 过滤。 */
+  const nameOf = (uid: string) => vp.members.find((m) => m.id === uid)?.name ?? "…";
+
+  /** ADR-0030：display_props.columns 的可见列（按序，「-」前缀隐藏）——与表格布局同源。 */
+  const visibleCols = useMemo(
+    () => (vp.effDisplay.columns ?? Object.keys(TABLE_COL_NAMES)).filter((c) => !c.startsWith("-")),
+    [vp.effDisplay.columns],
+  );
+  /** 共用列渲染：与表格 renderCell 同构；labels/assignees 列依赖注入。 */
+  const renderCoreCell = (it: Issue, col: string) =>
+    renderTableCell(it, col, { nameOf, today: today(), labels: vp.labels });
   /** C.51 认领（空集合才可；点击即 POST 无需确认） */
   async function claimRow(id: string) {
     try {
@@ -775,7 +786,6 @@ export default function IssuesList() {
     const loading = tree && expandState[it.id] === "loading";
     const errored = tree && expandState[it.id] === "error";
     const isTemp = it.id.startsWith("temp-");
-    const overdue = it.target_date && it.target_date < today() && it.state_group !== "completed";
     const y = it.sub_issues_count ?? 0;
     const x = it.completed_sub_issues_count ?? 0;
     const full = y > 0 && x === y;
@@ -810,172 +820,168 @@ export default function IssuesList() {
                 className={`w-[15px] h-[15px] accent-brand-500 cursor-pointer transition-opacity ${rowSelected || bulkSel.anySelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`} />
             )}
           </td>
-          <td className="px-3 py-2.5 border-b border-neutral-100 whitespace-nowrap">
-            <span className="inline-block align-middle" style={{ width: tree ? (depth - 1) * 20 : 0 }} aria-hidden="true" />
-            {tree && (kids ? (
-              <button
-                data-sb-scope="tree-toggle"
-                aria-label={exp ? "折叠子任务" : "展开子任务"}
-                aria-expanded={exp}
-                onClick={(e) => { e.stopPropagation(); void toggleRow(it); }}
-                className="inline-flex w-4 h-4 items-center justify-center text-neutral-400 mr-1 align-middle hover:text-neutral-700"
-              >
-                {loading ? (
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg>
-                ) : (
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="transition-transform duration-150 ease-out" style={{ transform: exp ? "rotate(90deg)" : undefined }}><path d="m9 18 6-6-6-6"/></svg>
-                )}
-              </button>
-            ) : (
-              <span className="inline-block w-4 mr-1" aria-hidden="true" />
-            ))}
-            <button className="font-mono text-xs text-neutral-500 hover:text-brand-600"
-              onClick={(e) => {
-                e.stopPropagation();
-                navigator.clipboard?.writeText(it.issue_key)
-                  .then(() => toast(`已复制 ${it.issue_key}`))
-                  .catch(() => toast(`复制失败：${it.issue_key}`, "error"));
-              }}
-              title="点击复制编号">{it.issue_key}</button>
-          </td>
-          <td className={`px-3 py-2.5 border-b border-neutral-100 text-[13px] relative ${tree && depth > 1 ? "border-l border-neutral-200" : ""}`}>
-            <span className="flex items-center gap-1 min-w-0">
-              {/* C.45 列表行依赖图标：标题左侧 12px link/alert 图标（存在任意关联时；被阻塞 amber） */}
-              {(relInfo[it.id]?.count ?? 0) > 0 && (
-                <span
-                  className={relInfo[it.id]?.blocked ? "text-amber-500" : "text-neutral-400"}
-                  title={relInfo[it.id]?.blocked ? "被未完成前置阻塞" : "存在关联"}
-                  aria-label={relInfo[it.id]?.blocked ? "被未完成前置阻塞" : "存在关联"}
-                  data-sb-scope="list-rel-icon"
-                >
-                  {!isTemp && (relInfo[it.id]?.blocked
-                    ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>
-                    : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>)}
-                </span>
-              )}
-              {/* C.59 归档行：archive 图标（带文本 tooltip） */}
-              {it.archived_at && (
-                <span className="text-neutral-400" title="已归档" aria-label="已归档" data-sb-scope="list-arch-icon">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/></svg>
-                </span>
-              )}
-              <span className={`truncate ${tree && depth === 1 ? "font-medium" : ""}`}>{it.name}</span>
-              {isTemp && <span className="ml-1 font-mono text-[11px] text-neutral-400">…</span>}
-              {/* 行悬浮「＋」（C.37/C.38）：第 5 层不渲染（前端预判，E2E-04） */}
-              {tree && depth < MAX_ISSUE_DEPTH && !isTemp && (
-                <button
-                  data-sb-scope="tree-quick-add"
-                  aria-label="在下方添加子任务"
-                  title="添加子任务"
-                  onClick={(e) => { e.stopPropagation(); setQuickSubOf(it.id); setQuickSubDraft(""); }}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity ml-1 w-[22px] h-[22px] inline-flex items-center justify-center rounded text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
-                >＋</button>
-              )}
-              {/* 拖拽把手（C.39：≥768px；<768px 拖拽禁用改行菜单「移动到…」） */}
-              {tree && !isMobile && !isTemp && (
-                <span
-                  data-sb-scope="tree-grip"
-                  draggable
-                  title="拖拽移动子树"
-                  aria-label="拖拽移动子树"
-                  onDragStart={(e) => {
-                    dragIdRef.current = it.id;
-                    setDraggingId(it.id);
-                    e.dataTransfer.setData("text/plain", `row:${it.id}`);
-                    e.dataTransfer.effectAllowed = "move";
-                  }}
-                  onDragEnd={() => { dragIdRef.current = null; setDraggingId(null); clearDropClasses(); }}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity ml-1 w-[20px] h-[22px] inline-flex items-center justify-center cursor-grab active:cursor-grabbing select-none text-neutral-300"
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 8h14M5 16h14"/></svg>
-                </span>
-              )}
-              {/* <768px 行菜单（C.63 触发条件） */}
-              {tree && isMobile && !isTemp && (
-                <span className="relative ml-auto" data-sb-scope="tree-row-menu-wrap">
-                  <button
-                    data-sb-scope="tree-row-menu"
-                    aria-label="行操作"
-                    onClick={(e) => { e.stopPropagation(); setRowMenuFor(rowMenuFor === it.id ? null : it.id); }}
-                    className="w-7 h-7 inline-flex items-center justify-center text-neutral-500"
-                  >⋯</button>
-                  {rowMenuFor === it.id && (
-                    <div role="menu" className="absolute right-0 top-7 z-20 w-[150px] bg-white border border-neutral-200 rounded-lg shadow-lg py-1">
-                      <button role="menuitem" data-sb-scope="tree-row-move"
-                        onClick={(e) => { e.stopPropagation(); setRowMenuFor(null); setMoveSearch(""); setMoveModalFor(it.id); }}
-                        className="w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50">移动到…</button>
-                    </div>
-                  )}
-                </span>
-              )}
-            </span>
-            {/* 展开加载失败：该层行内「加载失败 · 重试」（§3.6） */}
-            {tree && errored && (
-              <div className="mt-1 text-[12px] text-red-500" data-sb-scope="tree-expand-error">
-                加载失败 · <button className="underline" onClick={(e) => { e.stopPropagation(); void loadChildren(it.id, true); }}>重试</button>
-              </div>
-            )}
-          </td>
-          <td className="px-3 py-2.5 border-b border-neutral-100"><StateBadge group={it.state_group ?? "unstarted"} name={it.state_name ?? "—"} /></td>
-          {/* C.51 列表负责人列：20px 头像堆叠；空显示「未指派」neutral 徽标（可点开快速指派）；悬浮「🖐」认领 */}
-          <td className="px-3 py-2.5 border-b border-neutral-100">
-            {it.assignee_ids && it.assignee_ids.length > 0 ? (
-              <span className="inline-flex items-center gap-1 group/av flex-nowrap whitespace-nowrap">
-                <AvatarStack names={it.assignee_ids.map(nameOf)} size={20} />
-                {canWrite && !it.archived_at && (
-                  <span className="relative">
-                    <button
-                      data-sb-scope="list-quick-assign"
-                      aria-label={`快速指派 ${it.name}`}
-                      className="opacity-0 group-hover/av:opacity-100 transition-opacity w-5 h-5 rounded inline-flex items-center justify-center text-neutral-400 hover:bg-brand-50 hover:text-brand-600 text-[12px] shrink-0"
-                      onClick={(e) => { e.stopPropagation(); setQuickAssignFor(quickAssignFor === it.id ? null : it.id); }}
-                    >＋</button>
-                    {quickAssignFor === it.id && (
-                      <QuickAssignPop members={members} onPick={(uid) => void quickAssign(it.id, uid)} />
+          {/* ADR-0030：核心 7 列由 display_props.columns 驱动（与表格同源）。标题列
+              特化（保留树形专属元素：缩进/折叠/依赖图标/归档/快速加子/拖拽把手/行菜单）。 */}
+          {visibleCols.map((c) => {
+            if (c === "title") {
+              return (
+                <td key={c} data-col="title"
+                  className={`px-3 py-2.5 border-b border-neutral-100 text-[13px] relative min-w-[260px] ${tree && depth > 1 ? "border-l border-neutral-200" : ""}`}>
+                  <span className="flex items-center gap-1 min-w-0">
+                    <span className="inline-block align-middle" style={{ width: tree ? (depth - 1) * 20 : 0 }} aria-hidden="true" />
+                    {tree && (kids ? (
+                      <button
+                        data-sb-scope="tree-toggle"
+                        aria-label={exp ? "折叠子任务" : "展开子任务"}
+                        aria-expanded={exp}
+                        onClick={(e) => { e.stopPropagation(); void toggleRow(it); }}
+                        className="inline-flex w-4 h-4 items-center justify-center text-neutral-400 mr-1 align-middle hover:text-neutral-700"
+                      >
+                        {loading ? (
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg>
+                        ) : (
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="transition-transform duration-150 ease-out" style={{ transform: exp ? "rotate(90deg)" : undefined }}><path d="m9 18 6-6-6-6"/></svg>
+                        )}
+                      </button>
+                    ) : (
+                      <span className="inline-block w-4 mr-1" aria-hidden="true" />
+                    ))}
+                    {(relInfo[it.id]?.count ?? 0) > 0 && (
+                      <span
+                        className={relInfo[it.id]?.blocked ? "text-amber-500" : "text-neutral-400"}
+                        title={relInfo[it.id]?.blocked ? "被未完成前置阻塞" : "存在关联"}
+                        aria-label={relInfo[it.id]?.blocked ? "被未完成前置阻塞" : "存在关联"}
+                        data-sb-scope="list-rel-icon"
+                      >
+                        {!isTemp && (relInfo[it.id]?.blocked
+                          ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>
+                          : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>)}
+                      </span>
+                    )}
+                    {it.archived_at && (
+                      <span className="text-neutral-400" title="已归档" aria-label="已归档" data-sb-scope="list-arch-icon">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/></svg>
+                      </span>
+                    )}
+                    <span className={`truncate ${tree && depth === 1 ? "font-medium" : ""}`}>{it.name}</span>
+                    {isTemp && <span className="ml-1 font-mono text-[11px] text-neutral-400">…</span>}
+                    {tree && depth < MAX_ISSUE_DEPTH && !isTemp && (
+                      <button
+                        data-sb-scope="tree-quick-add"
+                        aria-label="在下方添加子任务"
+                        title="添加子任务"
+                        onClick={(e) => { e.stopPropagation(); setQuickSubOf(it.id); setQuickSubDraft(""); }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity ml-1 w-[22px] h-[22px] inline-flex items-center justify-center rounded text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+                      >＋</button>
+                    )}
+                    {tree && !isMobile && !isTemp && (
+                      <span
+                        data-sb-scope="tree-grip"
+                        draggable
+                        title="拖拽移动子树"
+                        aria-label="拖拽移动子树"
+                        onDragStart={(e) => {
+                          dragIdRef.current = it.id;
+                          setDraggingId(it.id);
+                          e.dataTransfer.setData("text/plain", `row:${it.id}`);
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
+                        onDragEnd={() => { dragIdRef.current = null; setDraggingId(null); clearDropClasses(); }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity ml-1 w-[20px] h-[22px] inline-flex items-center justify-center cursor-grab active:cursor-grabbing select-none text-neutral-300"
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 8h14M5 16h14"/></svg>
+                      </span>
+                    )}
+                    {tree && isMobile && !isTemp && (
+                      <span className="relative ml-auto" data-sb-scope="tree-row-menu-wrap">
+                        <button
+                          data-sb-scope="tree-row-menu"
+                          aria-label="行操作"
+                          onClick={(e) => { e.stopPropagation(); setRowMenuFor(rowMenuFor === it.id ? null : it.id); }}
+                          className="w-7 h-7 inline-flex items-center justify-center text-neutral-500"
+                        >⋯</button>
+                        {rowMenuFor === it.id && (
+                          <div role="menu" className="absolute right-0 top-7 z-20 w-[150px] bg-white border border-neutral-200 rounded-lg shadow-lg py-1">
+                            <button role="menuitem" data-sb-scope="tree-row-move"
+                              onClick={(e) => { e.stopPropagation(); setRowMenuFor(null); setMoveSearch(""); setMoveModalFor(it.id); }}
+                              className="w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50">移动到…</button>
+                          </div>
+                        )}
+                      </span>
                     )}
                   </span>
-                )}
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 group/av flex-nowrap whitespace-nowrap">
-                <button
-                  className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-0.5 text-[12px] text-neutral-500 hover:bg-neutral-200 shrink-0"
-                  aria-label="未指派"
-                  data-sb-scope="list-unassigned"
-                  onClick={(e) => { e.stopPropagation(); if (canWrite && !it.archived_at) setQuickAssignFor(quickAssignFor === it.id ? null : it.id); }}
-                >未指派</button>
-                {canWrite && !it.archived_at && !isTemp && (
-                  <>
-                    <button
-                      data-sb-scope="list-claim"
-                      aria-label="认领该任务"
-                      title="认领该任务"
-                      className="opacity-0 group-hover/av:opacity-100 transition-opacity w-6 h-6 rounded inline-flex items-center justify-center text-neutral-400 hover:bg-brand-50 hover:text-brand-600 shrink-0"
-                      onClick={(e) => { e.stopPropagation(); void claimRow(it.id); }}
-                    >🖐</button>
-                    <span className="relative">
-                      <button
-                        data-sb-scope="list-quick-assign"
-                        aria-label={`快速指派 ${it.name}`}
-                        className="opacity-0 group-hover/av:opacity-100 transition-opacity w-5 h-5 rounded inline-flex items-center justify-center text-neutral-400 hover:bg-brand-50 hover:text-brand-600 text-[12px] shrink-0"
-                        onClick={(e) => { e.stopPropagation(); setQuickAssignFor(quickAssignFor === it.id ? null : it.id); }}
-                      >＋</button>
-                      {quickAssignFor === it.id && (
-                        <QuickAssignPop members={members} onPick={(uid) => void quickAssign(it.id, uid)} />
+                  {tree && errored && (
+                    <div className="mt-1 text-[12px] text-red-500" data-sb-scope="tree-expand-error">
+                      加载失败 · <button className="underline" onClick={(e) => { e.stopPropagation(); void loadChildren(it.id, true); }}>重试</button>
+                    </div>
+                  )}
+                </td>
+              );
+            }
+            // assignees 列特化：保留列表布局独有的快速指派 + 认领 + 未指派徽标 + 头像堆叠。
+            if (c === "assignees") {
+              return (
+                <td key={c} data-col="assignees" className="px-3 py-2.5 border-b border-neutral-100 whitespace-nowrap">
+                  {it.assignee_ids && it.assignee_ids.length > 0 ? (
+                    <span className="inline-flex items-center gap-1 group/av flex-nowrap whitespace-nowrap">
+                      <AvatarStack names={it.assignee_ids.map(nameOf)} size={20} />
+                      {canWrite && !it.archived_at && (
+                        <span className="relative">
+                          <button
+                            data-sb-scope="list-quick-assign"
+                            aria-label={`快速指派 ${it.name}`}
+                            className="opacity-0 group-hover/av:opacity-100 transition-opacity w-5 h-5 rounded inline-flex items-center justify-center text-neutral-400 hover:bg-brand-50 hover:text-brand-600 text-[12px] shrink-0"
+                            onClick={(e) => { e.stopPropagation(); setQuickAssignFor(quickAssignFor === it.id ? null : it.id); }}
+                          >＋</button>
+                          {quickAssignFor === it.id && (
+                            <QuickAssignPop members={members} onPick={(uid) => void quickAssign(it.id, uid)} />
+                          )}
+                        </span>
                       )}
                     </span>
-                  </>
-                )}
-              </span>
-            )}
-          </td>
-          <td className="px-3 py-2.5 border-b border-neutral-100 text-[13px]">
-            {it.target_date ? (
-              overdue
-                ? <span className="text-red-500 inline-flex items-center gap-1"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>{it.target_date}</span>
-                : <span className="font-mono text-xs text-neutral-500">{it.target_date}</span>
-            ) : <span className="text-neutral-400">—</span>}
-          </td>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 group/av flex-nowrap whitespace-nowrap">
+                      <button
+                        className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-0.5 text-[12px] text-neutral-500 hover:bg-neutral-200 shrink-0"
+                        aria-label="未指派"
+                        data-sb-scope="list-unassigned"
+                        onClick={(e) => { e.stopPropagation(); if (canWrite && !it.archived_at) setQuickAssignFor(quickAssignFor === it.id ? null : it.id); }}
+                      >未指派</button>
+                      {canWrite && !it.archived_at && !isTemp && (
+                        <>
+                          <button
+                            data-sb-scope="list-claim"
+                            aria-label="认领该任务"
+                            title="认领该任务"
+                            className="opacity-0 group-hover/av:opacity-100 transition-opacity w-6 h-6 rounded inline-flex items-center justify-center text-neutral-400 hover:bg-brand-50 hover:text-brand-600 text-[12px] shrink-0"
+                            onClick={(e) => { e.stopPropagation(); void claimRow(it.id); }}
+                          >🖐</button>
+                          <span className="relative">
+                            <button
+                              data-sb-scope="list-quick-assign"
+                              aria-label={`快速指派 ${it.name}`}
+                              className="opacity-0 group-hover/av:opacity-100 transition-opacity w-5 h-5 rounded inline-flex items-center justify-center text-neutral-400 hover:bg-brand-50 hover:text-brand-600 text-[12px] shrink-0"
+                              onClick={(e) => { e.stopPropagation(); setQuickAssignFor(quickAssignFor === it.id ? null : it.id); }}
+                            >＋</button>
+                            {quickAssignFor === it.id && (
+                              <QuickAssignPop members={members} onPick={(uid) => void quickAssign(it.id, uid)} />
+                            )}
+                          </span>
+                        </>
+                      )}
+                    </span>
+                  )}
+                </td>
+              );
+            }
+            // 其他 5 列（key/state/due/priority/labels）走共用渲染器
+            return (
+              <td key={c} data-col={c}
+                className={`px-3 py-2.5 border-b border-neutral-100 ${c === "key" ? "whitespace-nowrap" : "whitespace-nowrap"}`}>
+                {renderCoreCell(it, c)}
+              </td>
+            );
+          })}
           {/* C.48 工时列：⏱ 5.5/8h；超耗红；无估算仅 ⏱ 5.5h；无记录灰显 — */}
           {wlColumn && (
             <td className="px-3 py-2.5 border-b border-neutral-100 w-[96px]" data-sb-scope="list-wl-cell">
@@ -1021,7 +1027,8 @@ export default function IssuesList() {
         {/* 行内快速加子任务输入行（C.38：目标行下方插入，缩进对齐目标行子级） */}
         {tree && quickSubOf === it.id && (
           <tr data-sb-scope="tree-quick-sub-row">
-            <td colSpan={7 + (wlColumn ? 1 : 0) + cfCols.length} className="border-b border-neutral-100 py-1">
+            {/* ADR-0030：列数 = 行首复选列(1) + visibleCols + 扩展列(wlColumn/cf_*) + 子任务列(1)。 */}
+            <td colSpan={1 + visibleCols.length + (wlColumn ? 1 : 0) + cfCols.length + 1} className="border-b border-neutral-100 py-1">
               <div className="flex items-center gap-2 h-[34px] px-2.5 my-1 border border-dashed border-neutral-300 rounded-md text-neutral-500 focus-within:border-brand-500 focus-within:bg-white transition-colors"
                 style={{ marginLeft: depth * 20 }}>
                 <span className="text-[13px]">＋</span>
@@ -1211,7 +1218,38 @@ export default function IssuesList() {
               <span className="text-xs">Enter 创建</span>
             </div>
             {filtered.length === 0 ? (
-              /* C.59 归档视图空态：「没有已归档的任务」（归档的任务会出现在这里） */
+              /* ADR-0030：空态仍渲染表头（display_props.columns 在空态也需可视化——支持用户在无任务时调列配置） */
+              <table className="w-full border-collapse" role="tree" aria-label="任务树">
+                <thead><tr>
+                    {/* C.78 列头全选（BOARD-004 §3.1：全选当前视图结果集，截断 100） */}
+                    <th className="w-[34px] pr-0">
+                      <input type="checkbox" aria-label="全选当前视图任务" data-sb-scope="list-header-cb" className="w-[15px] h-[15px]" disabled />
+                    </th>
+                    {/* ADR-0030: core 7 cols driven by display_props.columns (same source as table); wl/cf/sub are list-only extensions. */}
+                    {visibleCols.map((c) => (
+                      <th key={c} data-col={c}
+                        className={`text-left px-3 py-2 border-b border-neutral-200 text-[11px] font-semibold text-neutral-400 uppercase tracking-wider ${c === "title" ? "min-w-[260px]" : c === "key" ? "w-24" : "whitespace-nowrap"}`}>
+                        {TABLE_COL_NAMES[c] ?? c}
+                      </th>
+                    ))}
+                    {wlColumn && (
+                      <th data-sb-scope="list-wl-th"
+                        className="text-left px-3 py-2 border-b border-neutral-200 text-[11px] font-semibold text-neutral-400 uppercase tracking-wider whitespace-nowrap w-[96px]">工时</th>
+                    )}
+                    {cfCols.map((key) => {
+                      const f = cfDefs.find((d) => d.key === key);
+                      return (
+                        <th key={key} data-col={key}
+                          className="text-left px-3 py-2 border-b border-neutral-200 text-[11px] font-semibold text-neutral-400 uppercase tracking-wider whitespace-nowrap w-[110px]">{f?.name ?? key}</th>
+                      );
+                    })}
+                    <th data-col="sub_issues"
+                      className="text-left px-3 py-2 border-b border-neutral-200 text-[11px] font-semibold text-neutral-400 uppercase tracking-wider whitespace-nowrap w-[88px]">子任务</th>
+                  </tr></thead>
+              </table>
+            ) : null}
+            {/* C.59 归档视图空态：「没有已归档的任务」/ 列表空态 */}
+            {filtered.length === 0 && (
               <div className="flex flex-col items-center gap-2 py-12 text-neutral-500">
                 <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#d4d4d4" strokeWidth="2"><rect width="8" height="4" x="8" y="2" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4M12 16h4M8 11h.01M8 16h.01"/></svg>
                 <div className="text-[15px] font-semibold text-neutral-700" data-sb-scope="list-empty-title">
@@ -1226,7 +1264,8 @@ export default function IssuesList() {
                   </button>
                 )}
               </div>
-            ) : (
+            )}
+            {filtered.length > 0 && (
               <table className="w-full border-collapse" role="tree" aria-label="任务树">
                 <thead><tr>
                     {/* C.78 列头全选（BOARD-004 §3.1：全选当前视图结果集，截断 100） */}
@@ -1239,18 +1278,26 @@ export default function IssuesList() {
                           else bulkSel.sel.selectViewResults(ids);
                         }} />
                     </th>
-                    {[
-                      ["编号", "w-24"], ["标题", ""], ["状态", "w-[120px]"], ["负责人", "w-[110px]"], ["截止时间", "w-[130px]"],
-                      ...(wlColumn ? [["工时", "w-[96px]"]] : []),
-                      ...cfCols.map((key) => {
-                        const f = cfDefs.find((d) => d.key === key);
-                        return [f?.name ?? key, "w-[110px]"] as [string, string];
-                      }),
-                      ["子任务", "w-[88px]"],
-                    ].map(([h, w]) => (
-                      <th key={h} data-sb-scope={h === "工时" ? "list-wl-th" : undefined}
-                        className={`text-left px-3 py-2 border-b border-neutral-200 text-[11px] font-semibold text-neutral-400 uppercase tracking-wider ${w}`}>{h}</th>
+                    {/* ADR-0030: core 7 cols driven by display_props.columns (same source as table); wl/cf/sub are list-only extensions. */}
+                    {visibleCols.map((c) => (
+                      <th key={c} data-col={c}
+                        className={`text-left px-3 py-2 border-b border-neutral-200 text-[11px] font-semibold text-neutral-400 uppercase tracking-wider ${c === "title" ? "min-w-[260px]" : c === "key" ? "w-24" : "whitespace-nowrap"}`}>
+                        {TABLE_COL_NAMES[c] ?? c}
+                      </th>
                     ))}
+                    {wlColumn && (
+                      <th data-sb-scope="list-wl-th"
+                        className="text-left px-3 py-2 border-b border-neutral-200 text-[11px] font-semibold text-neutral-400 uppercase tracking-wider whitespace-nowrap w-[96px]">工时</th>
+                    )}
+                    {cfCols.map((key) => {
+                      const f = cfDefs.find((d) => d.key === key);
+                      return (
+                        <th key={key} data-col={key}
+                          className="text-left px-3 py-2 border-b border-neutral-200 text-[11px] font-semibold text-neutral-400 uppercase tracking-wider whitespace-nowrap w-[110px]">{f?.name ?? key}</th>
+                      );
+                    })}
+                    <th data-col="sub_issues"
+                      className="text-left px-3 py-2 border-b border-neutral-200 text-[11px] font-semibold text-neutral-400 uppercase tracking-wider whitespace-nowrap w-[88px]">子任务</th>
                   </tr></thead>
                 <tbody>
                   {filterActive

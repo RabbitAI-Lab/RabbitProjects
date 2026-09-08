@@ -32,7 +32,7 @@ import fs from "node:fs";
 import path from "node:path";
 // 注：不使用 import.meta.url——Playwright 1.62 CJS transform 对 import.meta 的
 // require 垫片有缺陷（实测 ReferenceError: require is not defined），以 cwd 推导。
-import { attachConsoleGuard, HTTP } from "./no-console-errors";
+import { attachGuards, HTTP } from "./no-console-errors";
 
 const E2E_ORIGIN = process.env.E2E_BASE_URL ?? "http://localhost:3001";
 const LIVE_HEALTH = process.env.E2E_LIVE_HEALTH ?? "http://localhost:3000/health";
@@ -242,13 +242,13 @@ async function mkIssueIn(page: Page, pid: string, name: string): Promise<{ id: s
 }
 
 test.describe("Sprint-3 Phase 3-C 实时协作（COLLAB-004 · C.93~C.97）", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
     await page.context().clearCookies();
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
   });
   test.afterEach(async () => {
-    expect.soft(getErrs(), "console errors").toEqual([]);
+    expect.soft(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
 
   /* ═══════════ C.93 presence + C.94 连接指示 + C.96 IT-01 双端同步 <1s ═══════════ */
@@ -256,8 +256,8 @@ test.describe("Sprint-3 Phase 3-C 实时协作（COLLAB-004 · C.93~C.97）", ()
   test("S3R-1 C.93/C.94/C.96 IT-01 双账号看板：presence 2 人 / B 拖卡 A <1s 可见 / A 不回显 / 旧 version 忽略", async ({ browser }) => {
     test.setTimeout(150_000);
     const d = await setupDual(browser);
-    const aErrs = attachConsoleGuard(d.aPage);
-    const bErrs = attachConsoleGuard(d.bPage);
+    const aErrs = attachGuards(d.aPage);
+    const bErrs = attachGuards(d.bPage);
     try {
       await bothOnBoard(d);
       // C.93 presence：B 加入项目房间 → A 头像列 2 人（自己影子位 + B；aria-label）
@@ -344,7 +344,7 @@ test.describe("Sprint-3 Phase 3-C 实时协作（COLLAB-004 · C.93~C.97）", ()
   test("S3R-2 C.97 A 指派 B → B 铃铛徽标秒级 +1（notification.created）", async ({ browser }) => {
     test.setTimeout(120_000);
     const d = await setupDual(browser);
-    const bErrs = attachConsoleGuard(d.bPage);
+    const bErrs = attachGuards(d.bPage);
     try {
       await bothOnBoard(d);
       const issue = await mkIssueIn(d.aPage, d.proj.id, "S3R2 指派目标");
@@ -371,7 +371,7 @@ test.describe("Sprint-3 Phase 3-C 实时协作（COLLAB-004 · C.93~C.97）", ()
   test("S3R-3 C.92/C.97 B 在动态流页：A 产生动态/评论 → 新行划入 + 「N 条新回复 ↓」浮条", async ({ browser }) => {
     test.setTimeout(150_000);
     const d = await setupDual(browser);
-    const bErrs = attachConsoleGuard(d.bPage);
+    const bErrs = attachGuards(d.bPage);
     try {
       // B 停留动态流页（在顶可见 → ≤5 条划入路径）
       await d.bPage.goto(`/${d.proj.slug}/projects/${d.proj.id}/activity`);
@@ -419,7 +419,7 @@ test.describe("Sprint-3 Phase 3-C 实时协作（COLLAB-004 · C.93~C.97）", ()
     // 仅当运行者自有 live 进程（LIVE_OWNED_BY_SPEC=1）才允许停/起；否则跳过留说明
     test.skip(!LIVE_OWNED,
       "live 由外部启动——不停用户服务；降级横幅由运行者以 LIVE_OWNED_BY_SPEC=1 复演（mock 变体见附录 C.95 备注）");
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
     await loginDemo(page);
     const btn = page.getByRole("button", { name: /创建项目/ }).first();
     await btn.waitFor({ state: "visible", timeout: 20_000 });

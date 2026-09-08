@@ -17,7 +17,7 @@
  */
 import { test, expect, type Page } from "@playwright/test";
 import { execSync } from "node:child_process";
-import { attachConsoleGuard, HTTP } from "./no-console-errors";
+import { attachGuards, HTTP } from "./no-console-errors";
 
 // 造数自动清理（afterAll 幂等；S4_E2E_NO_CLEANUP=1 可跳过以保留现场调试）
 test.afterAll(() => {
@@ -124,13 +124,13 @@ async function waitRow(page: Page, name: string) {
 }
 
 test.describe("Sprint-4 文件库（FILE-002 · C.112~C.118）", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
     await page.context().clearCookies();
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
   });
   test.afterEach(async () => {
-    expect.soft(getErrs(), "console errors").toEqual([]);
+    expect.soft(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
 
   /* ═══════════ C.112/C.113/C.115 parity：页框架/左树/面包屑/工具条/双视图/配额 ═══════════ */
@@ -289,7 +289,9 @@ test.describe("Sprint-4 文件库（FILE-002 · C.112~C.118）", () => {
     // console guard：route.abort 注入的 net::ERR_FAILED 是本测试刻意制造的传输失败
     // （注入噪声非应用缺陷），从 guard 结果中剔除；其余 console 错误仍硬失败。
     const rawErrs = getErrs;
-    getErrs = () => rawErrs().filter((e) => !e.includes("net::ERR_FAILED"));
+    getErrs = Object.assign(() => rawErrs?.().filter((e) => !e.includes("net::ERR_FAILED")) ?? [], {
+      report: () => rawErrs?.report().filter((e) => !e.includes("net::ERR_FAILED")) ?? [],
+    });
     let aborted = false;
     await page.route(/\/uploads\//, (route) => {
       if (!aborted && route.request().method() === "PUT") { aborted = true; void route.abort(); return; }
@@ -526,10 +528,13 @@ test.describe("Sprint-4 文件库（FILE-002 · C.112~C.118）", () => {
   test("S4F-6 C.116 VIEWER：正向浏览 + 🔒 文件不可见（后端剪枝）+ 上传禁用零请求 + 直连 presign 403", async ({ browser }) => {
     test.setTimeout(150_000);
     const errGetters: Array<() => string[]> = [];
-    getErrs = () => errGetters.flatMap((g) => g());
+    getErrs = Object.assign(() => errGetters.flatMap((g) => g()), {
+      report: () => errGetters.flatMap((g) => g.report()),
+      allow: () => {}, // 多页聚合无单一 allow 通道；需要时在页级 guard 上声明
+    });
     const ctxA = await browser.newContext();
     const aPage = await ctxA.newPage();
-    errGetters.push(attachConsoleGuard(aPage));
+    errGetters.push(attachGuards(aPage));
     await loginDemo(aPage);
     const proj = await createProject(aPage, "S4Fviewer");
     const des = await createFolder(aPage, proj.id, "设计稿");
@@ -546,7 +551,10 @@ test.describe("Sprint-4 文件库（FILE-002 · C.112~C.118）", () => {
     expect(link, "SMTP 降级 invite_links").toBeTruthy();
     const ctxB = await browser.newContext();
     const bPage = await ctxB.newPage();
-    errGetters.push(attachConsoleGuard(bPage));
+    const bGuards = attachGuards(bPage);
+    // 被测行为本身：VIEWER 对 admins 可见性文件的缩略图 404（后端剪枝，C.116）
+    bGuards.allow({ method: "GET", url: "/derivatives/thumbnail/", status: HTTP.NOT_FOUND });
+    errGetters.push(bGuards);
     await bPage.goto("/register");
     await bPage.getByLabel(/邮箱/).fill(bEmail);
     await bPage.getByLabel("密码", { exact: false }).first().fill("Rabbit123!");
@@ -614,10 +622,13 @@ test.describe("Sprint-4 文件库（FILE-002 · C.112~C.118）", () => {
   test("S4F-7 C.113/C.117 CONTRIBUTOR：admins 文件列表不可见 + 直连 download-url 404 + 回收站仅本人口径", async ({ browser }) => {
     test.setTimeout(150_000);
     const errGetters: Array<() => string[]> = [];
-    getErrs = () => errGetters.flatMap((g) => g());
+    getErrs = Object.assign(() => errGetters.flatMap((g) => g()), {
+      report: () => errGetters.flatMap((g) => g.report()),
+      allow: () => {}, // 多页聚合无单一 allow 通道；需要时在页级 guard 上声明
+    });
     const ctxA = await browser.newContext();
     const aPage = await ctxA.newPage();
-    errGetters.push(attachConsoleGuard(aPage));
+    errGetters.push(attachGuards(aPage));
     await loginDemo(aPage);
     const proj = await createProject(aPage, "S4Fcontrib");
     const des = await createFolder(aPage, proj.id, "设计稿");
@@ -634,7 +645,7 @@ test.describe("Sprint-4 文件库（FILE-002 · C.112~C.118）", () => {
     expect(link, "SMTP 降级 invite_links").toBeTruthy();
     const ctxC = await browser.newContext();
     const cPage = await ctxC.newPage();
-    errGetters.push(attachConsoleGuard(cPage));
+    errGetters.push(attachGuards(cPage));
     await cPage.goto("/register");
     await cPage.getByLabel(/邮箱/).fill(cEmail);
     await cPage.getByLabel("密码", { exact: false }).first().fill("Rabbit123!");

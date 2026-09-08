@@ -2,7 +2,7 @@
  *  真实 PG：`postgres:17-alpine` 容器跑 schema + extensions。
  *  执行：pnpm exec playwright test tests/e2e/auth.spec.ts */
 import { test, expect, type Page } from "@playwright/test";
-import { attachConsoleGuard, HTTP } from "./no-console-errors";
+import { attachGuards, HTTP } from "./no-console-errors";
 // 断言与后端契约（tests/jmeter/sprint-0-flow.py）同源——sprint-0-flow.py 状态码与字段名必须与本表保持一致
 
 const ts = Date.now();
@@ -28,12 +28,12 @@ async function expectProjectsPage(page: Page) {
 }
 
 test.describe("Sprint 0 E2E", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
   });
   test.afterEach(async () => {
-    expect(getErrs(), "console errors").toEqual([]);
+    expect(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
   test("完整动线：注册 → 工作台 → 建项目 → 建任务 → 拖拽 → 刷新一致", async ({ page }) => {
     // 1) 打开登录页
@@ -97,6 +97,9 @@ test.describe("Sprint 0 E2E", () => {
   });
 
   test("未登录访问受保护路由 → 跳登录页", async ({ page, context }) => {
+    // 被测行为本身：未登录 me 401/403 → Guard 跳登录，网络层预期失败与接口契约一致
+    getErrs?.allow({ method: "GET", url: "/users/me/", status: HTTP.UNAUTHORIZED });
+    getErrs?.allow({ method: "GET", url: "/users/me/", status: HTTP.FORBIDDEN });
     // 清空 cookie 模拟未登录
     await context.clearCookies();
     // 断言：受保护页触发 /users/me/ → HTTP.OK 不在（401/403 因为未认证）

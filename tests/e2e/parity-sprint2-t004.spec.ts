@@ -14,7 +14,7 @@
  *  状态码/错误码一律 import no-console-errors 的 API_TRUTH（CODES/HTTP），禁止硬编码。
  */
 import { test, expect, type Page, type Response } from "@playwright/test";
-import { attachConsoleGuard, CODES, HTTP } from "./no-console-errors";
+import { attachGuards, CODES, HTTP } from "./no-console-errors";
 
 const WS = "workspace";
 /** API 走 web 同源（Vite 代理到 8000），与浏览器 context 共享 cookie */
@@ -103,13 +103,13 @@ async function expandRow(page: Page, name: string, expectFetch = true): Promise<
 }
 
 test.describe("Sprint-2 TASK-004 多层级子任务（C.37~C.41 / C.63）", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
     await page.context().clearCookies();
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
   });
   test.afterEach(async () => {
-    expect.soft(getErrs(), "console errors").toEqual([]);
+    expect.soft(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
 
   /* ── C.37 任务列表·树形展示 ─────────────────────────────── */
@@ -387,6 +387,8 @@ test.describe("Sprint-2 TASK-004 多层级子任务（C.37~C.41 / C.63）", () =
   /* ── C.39 成环反馈（E2E-03 负向）───────────────────────── */
   test("T004-7 C.39 环移动：父任务拖到自己子级下 → 409 CYCLE → Toast 含环路径 + 环上节点红高亮 2s", async ({ page }) => {
     test.setTimeout(90_000);
+    // 被测行为本身：环依赖移动 → 409 RESOURCE_CIRCULAR_DEPENDENCY（Toast 环路径）
+    getErrs?.allow({ method: "PATCH", url: "/issues/", status: HTTP.CONFLICT });
     await loginDemo(page);
     const proj = await createProject(page);
     const root = await mkIssue(page, proj.id, "环根");
@@ -534,6 +536,8 @@ test.describe("Sprint-2 TASK-004 多层级子任务（C.37~C.41 / C.63）", () =
   /* ── 级联删除（§2.4 / E2E-05）：DELETE 200 + deleted_count ─ */
   test("T004-10 级联删除：确认弹层明示后代数；DELETE 200 回传 deleted_count；整树从列表消失", async ({ page }) => {
     test.setTimeout(90_000);
+    // 级联删除后的瞬时残留拉取：已删任务的 relations 404（防枚举信封——UI 随刷新收敛）
+    getErrs?.allow({ method: "GET", url: "/relations/", status: HTTP.NOT_FOUND });
     await loginDemo(page);
     const proj = await createProject(page);
     const root = await mkIssue(page, proj.id, "删根");

@@ -19,7 +19,7 @@
  *  运行：E2E_NO_SERVER=1 pnpm exec playwright test tests/e2e/parity-sprint1-list-members.spec.ts --reporter=line
  */
 import { test, expect, type Page } from "@playwright/test";
-import { attachConsoleGuard } from "./no-console-errors";
+import { attachGuards } from "./no-console-errors";
 
 async function loginDemo(page: Page): Promise<string> {
   await page.goto("/login");
@@ -31,9 +31,9 @@ async function loginDemo(page: Page): Promise<string> {
 }
 
 test.describe("Sprint-1 list/members UI parity（C.18/C.19/C.21）", () => {
-  let getErrs: () => string[] = () => [];
-  test.beforeEach(async ({ page }) => { getErrs = attachConsoleGuard(page); });
-  test.afterEach(async () => { expect(getErrs(), "console errors").toEqual([]); });
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
+  test.beforeEach(async ({ page }) => { getErrs = attachGuards(page); });
+  test.afterEach(async () => { expect(getErrs?.report() ?? [], "console/net errors").toEqual([]); });
 
   /* ════════════════════════════════════════════════════════════════════════════
    *  C.19 项目列表页改造 `/:workspaceSlug/projects`
@@ -248,6 +248,9 @@ test("AUTH-NEG 陌生账号直达他人工作空间团队设置：前端 403 + �
   const victimWs = page.url().match(/\/([^/]+)\/projects$/)![1];
 
   // ② 换一个全新账号（攻击方：与受害空间毫无关系）
+  // 先离开带轮询的工作台页再清 cookie：清后在途请求 401 会按设计跳
+  // /login?next=<旧路径>，与 goto(/register) 竞速抢导航（曾致注册页被劫持）
+  await page.goto("/login");
   await page.context().clearCookies();
   const email = `neg-${Date.now()}-${Math.floor(Math.random() * 1e4)}@rabbit.dev`;
   await page.goto("/register");

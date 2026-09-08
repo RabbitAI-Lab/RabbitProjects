@@ -14,7 +14,7 @@
  */
 import { test, expect, type Page } from "@playwright/test";
 import { execSync } from "node:child_process";
-import { attachConsoleGuard } from "./no-console-errors";
+import { attachGuards } from "./no-console-errors";
 
 const API_ORIGIN = process.env.E2E_BASE_URL ?? "http://localhost:3001";
 const WS = "workspace";
@@ -58,8 +58,7 @@ async function seedProject(page: Page, name: string, identifier: string) {
 
 test.describe("S5E2E · 治理与生命周期 parity", () => {
   test("C.131 统计页：进度卡 + days 切换 + 成员表（RPT-002 §3.1/§3.2）", async ({ page }) => {
-    const errors: string[] = [];
-    attachConsoleGuard(page, errors);
+        const guards = attachGuards(page);
     await loginDemo(page);
     const pid = await seedProject(page, "S5E2E-统计", "S5ST");
     // 造 3 条任务（统计面非零）
@@ -86,12 +85,11 @@ test.describe("S5E2E · 治理与生命周期 parity", () => {
     await expect(page.locator('[data-sb-scope="stats-members"]')).toBeVisible();
     await expect(page.getByText("成员任务量")).toBeVisible();
     await expect(page.getByRole("cell", { name: "合计" })).toBeVisible();
-    await expect(errors).toEqual([]);
+    await expect(guards(), "console/net errors").toEqual([]);
   });
 
   test("C.129 生命周期区块：状态徽章 + 允许目标按钮（PROJ-003 §3.2）", async ({ page }) => {
-    const errors: string[] = [];
-    attachConsoleGuard(page, errors);
+        const guards = attachGuards(page);
     await loginDemo(page);
     const pid = await seedProject(page, "S5E2E-生命周期", "S5LC");
     await page.goto(`/${WS}/projects/${pid}/settings`);
@@ -101,12 +99,11 @@ test.describe("S5E2E · 治理与生命周期 parity", () => {
     await expect(page.locator('[data-sb-scope="lifecycle-to-archived"]')).toBeVisible();
     await expect(page.locator('[data-sb-scope="lifecycle-to-closed"]')).toBeVisible();
     await expect(page.locator('[data-sb-scope="lifecycle-to-active"]')).toHaveCount(0); // active 无「启用」按钮
-    await expect(errors).toEqual([]);
+    await expect(guards(), "console/net errors").toEqual([]);
   });
 
   test("C.130 新建项目模板选择（PROJ-003 §3.3）", async ({ page }) => {
-    const errors: string[] = [];
-    attachConsoleGuard(page, errors);
+        const guards = attachGuards(page);
     await loginDemo(page);
     await page.getByRole("button", { name: "+ 创建项目" }).click();
     // 模板选择区：空白项目 + 内置模板卡（C.130）
@@ -135,12 +132,11 @@ test.describe("S5E2E · 治理与生命周期 parity", () => {
     // 校验四件套（C.130 实例化回执——模板 5 态）
     const states = await apiCall(page, "GET", `/api/v1/workspaces/${WS}/projects/${newId}/states/?include_cancelled=1`);
     expect(states.body!.data.length).toBeGreaterThanOrEqual(5);
-    await expect(errors).toEqual([]);
+    await expect(guards(), "console/net errors").toEqual([]);
   });
 
   test("C.132 集成页：GitHub 卡 + 绑定管理 + 冲突日志空态（INTG-001 §3.1/§3.2）", async ({ page }) => {
-    const errors: string[] = [];
-    attachConsoleGuard(page, errors);
+        const guards = attachGuards(page);
     await loginDemo(page);
     const pid = await seedProject(page, "S5E2E-集成", "S5IG");
     // 用户入口：项目 → 设置 → 集成
@@ -155,7 +151,7 @@ test.describe("S5E2E · 治理与生命周期 parity", () => {
     // 冲突日志 Tab 空态
     await page.getByRole("tab", { name: /同步冲突/ }).click();
     await expect(page.getByText(/没有同步冲突/)).toBeVisible();
-    await expect(errors).toEqual([]);
+    await expect(guards(), "console/net errors").toEqual([]);
   });
 
   /* ═══ 验收缺陷回归（2026-09-07）：项目设置 → 集成 后「项目设置」仍高亮 ═══
@@ -163,8 +159,7 @@ test.describe("S5E2E · 治理与生命周期 parity", () => {
    * /settings/integrations|webhooks|fields 子页连带激活 /settings——集成页上
    * 「项目设置」「集成」同时 aria-current="page"。修复 = NavLink 加 end。 */
   test("C.132 回归：集成/Webhook 子页只高亮自身，「项目设置」不再残留选中", async ({ page }) => {
-    const errors: string[] = [];
-    attachConsoleGuard(page, errors);
+        const guards = attachGuards(page);
     await loginDemo(page);
     const pid = await seedProject(page, "S5E2E-侧栏", "S5SB");
     await page.goto(`/${WS}/projects/${pid}/settings`);
@@ -182,12 +177,11 @@ test.describe("S5E2E · 治理与生命周期 parity", () => {
     await page.getByRole("link", { name: "Webhook" }).click();
     await expect(page.getByRole("heading", { name: "Webhook" })).toBeVisible();
     await expect(navSettings).not.toHaveAttribute("aria-current", "page");
-    await expect(errors).toEqual([]);
+    await expect(guards(), "console/net errors").toEqual([]);
   });
 
   test("C.133 Webhook 页：新建端点 + secret 一次性 + 投递日志（INTG-002 §3.1~§3.3）", async ({ page }) => {
-    const errors: string[] = [];
-    attachConsoleGuard(page, errors);
+        const guards = attachGuards(page);
     await loginDemo(page);
     const pid = await seedProject(page, "S5E2E-Webhook", "S5WH");
     await page.goto(`/${WS}/projects/${pid}/issues`);
@@ -214,12 +208,11 @@ test.describe("S5E2E · 治理与生命周期 parity", () => {
     await page.getByRole("button", { name: "发送测试" }).click();
     await pinged;
     await expect(page.getByText(/已入队/)).toBeVisible();
-    await expect(errors).toEqual([]);
+    await expect(guards(), "console/net errors").toEqual([]);
   });
 
   test("C.126/C.127 团队页：批量角色浮条 + 禁用灰标（AUTH-006 §3.1/§3.2）", async ({ page }) => {
-    const errors: string[] = [];
-    attachConsoleGuard(page, errors);
+        const guards = attachGuards(page);
     await loginDemo(page);
     // 用户入口：顶栏工作空间 → 设置 → 成员
     await page.goto(`/${WS}/settings/members`);
@@ -238,6 +231,6 @@ test.describe("S5E2E · 治理与生命周期 parity", () => {
     await expect(page.getByText("访客（GUEST）")).toBeVisible();
     await page.getByRole("button", { name: "取消" }).click();
     await page.getByRole("button", { name: "清除" }).click();
-    await expect(errors).toEqual([]);
+    await expect(guards(), "console/net errors").toEqual([]);
   });
 });

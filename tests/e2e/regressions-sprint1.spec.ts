@@ -17,7 +17,7 @@
  *  前置：web dev server(:3001) + API(:8000) + PG + MinIO(:9000) 均已启动（上传用例依赖 MinIO）。
  */
 import { test, expect, type Page } from "@playwright/test";
-import { attachConsoleGuard } from "./no-console-errors";
+import { attachGuards } from "./no-console-errors";
 
 /** identifier/团队名每次运行唯一，否则 409 连锁失败（沿用 interactions.spec.ts 约定） */
 const rid = (n = 5) =>
@@ -61,13 +61,13 @@ async function openDrawer(page: Page, title: string) {
 }
 
 test.describe("Sprint-1 验收缺陷回归（评论头像 / 标签 / 子任务 / 附件 / 看板拖拽）", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
     await page.context().clearCookies();
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
   });
   test.afterEach(async () => {
-    expect(getErrs(), "console errors").toEqual([]);
+    expect(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
 
   /* ── 缺陷 1：评论头像显示为「?」 ─────────────────────────────── */

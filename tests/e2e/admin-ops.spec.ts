@@ -6,7 +6,7 @@
  * ——见 apps/admin/vite.config.ts 的同源约定；缺 proxy 时以 API_BASE 直连）。
  */
 import { test, expect } from "@playwright/test";
-import { attachConsoleGuard } from "./no-console-errors";
+import { attachGuards, HTTP } from "./no-console-errors";
 
 const ADMIN = "http://localhost:3002/god-mode";
 
@@ -33,8 +33,9 @@ test.describe("admin 运维台（C.134~C.136）", () => {
       + `WHERE u2.email='${OPS_EMAIL}');"`);
   });
 
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
-    attachConsoleGuard(page);
+    getErrs = attachGuards(page);
     const csrf = await page.request.get("http://localhost:8000/api/v1/auth/csrf-token/");
     const token = (await csrf.json()).data.csrf_token as string;
     const r = await page.request.post("http://localhost:8000/api/v1/auth/sign-in/", {
@@ -42,6 +43,11 @@ test.describe("admin 运维台（C.134~C.136）", () => {
       data: { email: OPS_EMAIL, password: "Rabbit123!" },
     });
     test.skip(r.status() !== 200, "运维台账号登录失败（dev 栈未起）");
+  });
+
+  test.afterEach(async () => {
+    // 原实现裸调用弃引用（守卫空转）——Sprint-7 教训补口后与其他 spec 同口径
+    expect(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
 
   test("C.135 备份管理页：列表/立即备份/文案", async ({ page }) => {
@@ -62,6 +68,9 @@ test.describe("admin 运维台（C.134~C.136）", () => {
   });
 
   test("C.136 发布门禁页：四门禁/checklist 8 项/裁决守卫", async ({ page }) => {
+    // 被测行为本身：裁决守卫负向提交 → 400（门禁未全过/参数非法——旧行为曾 500，
+    // 修复后契约 400；原空调守卫使其隐形，Sprint-7 补口后显式登记）
+    getErrs?.allow({ method: "POST", url: "/release-gates/", status: HTTP.BAD_REQUEST });
     await page.goto(`${ADMIN}/ops/release`);
     await expect(page.getByRole("heading", { name: "发布门禁" })).toBeVisible();
     // 无既有发布尝试 → 创建卡（C.136 首行）

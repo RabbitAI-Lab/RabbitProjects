@@ -106,3 +106,54 @@ export function attachConsoleGuard(page: _Page): () => string[] {
   page.on("pageerror", onPageError);
   return () => { page.off("console", onConsole); page.off("pageerror", onPageError); return errs; };
 }
+
+/** ── 网络层守卫（Sprint-7 验收教训补口）──────────────────────────────
+ *  console 守卫只硬拦 5xx 回声，4xx 网络回声整体放行——后台请求的非预期
+ *  4xx/5xx（如曾混进验收视频的 field-schema 500 toast）无人断言即漏网。
+ *  attachGuards 在 console 守卫之上收集页面全部 ≥400 响应；测试用
+ *  allow() 声明「与接口契约一致的预期失败」（状态码引用本文件 HTTP 表，
+ *  与 jmeter/_contract.py 双源同源），期末调用（或 report()）断言为空。
+ *  返回值可调用（等价 report()），存量 attachConsoleGuard 接法换名即升级。
+ *  realtime-token / /live/ 为已文档化降级路径（COLLAB-004 BR-10），默认豁免。 */
+export interface NetAllow { method?: string; url: string; status: number }
+export type PageGuards = (() => string[]) & { allow(e: NetAllow): void; report(): string[] };
+
+const NET_DEGRADED = (url: string) => url.includes("realtime-token") || url.includes("/live/");
+
+export function attachGuards(page: _Page): PageGuards {
+  const errs: string[] = [];
+  const netFails: Array<{ method: string; url: string; status: number }> = [];
+  const allowed: NetAllow[] = [];
+  const onConsole = (m: any) => {
+    if (m.type?.() !== "error") return;
+    const text = (m.text?.() ?? String(m)).trim();
+    if (ALLOWLIST.some((re) => re.test(text))) return;
+    // 网络层回声（4xx/5xx）以响应级记录为准，console 侧去重防双计
+    if (/^Failed to load resource/i.test(text)) return;
+    const url = m.location?.()?.url ?? "";
+    if (url.includes("/live/") || url.includes("realtime-token")) return;
+    errs.push(text);
+  };
+  const onPageError = (e: any) => errs.push(String(e).trim());
+  const onResponse = (r: any) => {
+    const status = r.status?.() ?? 0;
+    if (status < 400) return;
+    const url: string = r.url() ?? "";
+    if (NET_DEGRADED(url)) return;
+    netFails.push({ method: r.request()?.method?.() ?? "?", url, status });
+  };
+  page.on("console", onConsole);
+  page.on("pageerror", onPageError);
+  page.on("response", onResponse);
+  const report = () => {
+    const unexpected = netFails.filter((f) => !allowed.some(
+      (a) => a.status === f.status
+        && (a.method === undefined || a.method === f.method)
+        && f.url.includes(a.url)));
+    return [...errs, ...unexpected.map((f) => `net ${f.status} ${f.method} ${f.url}`)];
+  };
+  return Object.assign(() => report(), {
+    allow: (e: NetAllow) => allowed.push(e),
+    report,
+  }) as PageGuards;
+}

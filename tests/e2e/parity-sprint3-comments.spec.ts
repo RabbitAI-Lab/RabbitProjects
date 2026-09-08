@@ -13,7 +13,7 @@
  *  （VIEWER 点表情不可见 + reactions 端点 403；归档项目评论 403）；console guard；API_TRUTH import。
  */
 import { test, expect, type Page, type Response } from "@playwright/test";
-import { attachConsoleGuard, HTTP } from "./no-console-errors";
+import { attachGuards, HTTP } from "./no-console-errors";
 
 const WS = "workspace";
 const API_ORIGIN = process.env.E2E_BASE_URL ?? "http://localhost:3001";
@@ -76,13 +76,13 @@ const PNG_BYTES = Buffer.from(
 const GIF_BYTES = Buffer.from("474946383961010001008000000000000021f9040100002c00000000010001000002024401003b", "hex");
 
 test.describe("Sprint-3 Phase 3-B 评论协作（COLLAB-002 · C.84~C.88）", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
     await page.context().clearCookies();
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
   });
   test.afterEach(async () => {
-    expect.soft(getErrs(), "console errors").toEqual([]);
+    expect.soft(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
 
   /* ═══════════ C.84 + C.88 两层线程 + 回复态 Composer（行为三件套） ═══════════ */
@@ -294,6 +294,8 @@ test.describe("Sprint-3 Phase 3-B 评论协作（COLLAB-002 · C.84~C.88）", ()
 
   test("S3C-6 C.88 归档项目评论 403：发表被拦 + 草稿保留（前后端双层断言）", async ({ page }) => {
     test.setTimeout(90_000);
+    // 被测行为本身：归档只读 → 评论发表 403（PERM_*，前端拦截 + 后端双层）
+    getErrs?.allow({ method: "POST", url: "/comments/", status: HTTP.FORBIDDEN });
     await loginDemo(page);
     const proj = await createProject(page);
     const issue = (await apiCall(page, "POST", `/api/v1/workspaces/${WS}/projects/${proj.id}/issues/`, { name: "S3C6 归档只读宿主" })).body?.data;

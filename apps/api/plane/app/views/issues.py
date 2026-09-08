@@ -421,8 +421,18 @@ class IssueListCreateView(ListCreateAPIView):
         label_ids = s.validated_data.get("label_ids", []) or []
         state_id = s.validated_data.get("state_id")
         if state_id is None:
-            default_state = State.objects.filter(project=project, is_default=True, deleted_at__isnull=True).first()
-            state_id = default_state.id if default_state else None
+            # WF-001 BR-16 创建接线：经兜底链解析初始状态（类型专属图 is_initial →
+            # 项目默认图 is_initial → State.is_default 两级回落）；无 published
+            # 工作流时最终回落与 V1.0 行为一致（项目级 is_default，约束保证唯一）。
+            from plane.db.models import IssueType
+            from plane.workflow.services import WorkflowService
+
+            effective_type_id_early = s.validated_data.get("type_id")
+            issue_type_obj = (
+                IssueType.objects.filter(pk=effective_type_id_early).first()
+                if effective_type_id_early else None
+            )
+            state_id = WorkflowService().resolve_initial_state(project, issue_type_obj).id
 
         max_order = Issue.objects.filter(project=project, deleted_at__isnull=True).aggregate(m=Max("sort_order"))["m"]
         epoch = _current_epoch()
@@ -995,11 +1005,17 @@ class IssueSubIssueListCreateView(APIView):
         s.is_valid(raise_exception=True)
         assignee_ids = s.validated_data.get("assignee_ids", []) or []
         label_ids = s.validated_data.get("label_ids", []) or []
-        # 缺省 state 取项目默认
+        # 缺省 state 取项目默认（WF-001 BR-16：经兜底链解析初始状态）
         state_id = s.validated_data.get("state_id")
         if state_id is None:
-            default_state = State.objects.filter(project=project, is_default=True, deleted_at__isnull=True).first()
-            state_id = default_state.id if default_state else None
+            from plane.db.models import IssueType
+            from plane.workflow.services import WorkflowService
+
+            sub_type_id = s.validated_data.get("type_id")
+            issue_type_obj = (
+                IssueType.objects.filter(pk=sub_type_id).first() if sub_type_id else None
+            )
+            state_id = WorkflowService().resolve_initial_state(project, issue_type_obj).id
         max_order = Issue.objects.filter(project=project, deleted_at__isnull=True).aggregate(m=Max("sort_order"))["m"]
         epoch = _current_epoch()
 

@@ -1,4 +1,5 @@
 from .account import PasswordResetToken
+from .approval import ApprovalFlow, ApprovalInstance, ApprovalNode, ApprovalRecord
 from .asset import FileAsset
 from .backup import BackupRun
 from .base import BaseModel, SoftDeleteManager, SoftDeleteQuerySet
@@ -18,6 +19,7 @@ from .state import State
 from .user import User
 from .view import IssueView
 from .webhook import WebhookDelivery, WebhookEndpoint
+from .workflow import Workflow, WorkflowState, WorkflowTemplate, WorkflowTransition
 from .worklog import WorkLog
 from .workspace import Workspace, WorkspaceLabel, WorkspaceLoginDailyAggregate, WorkspaceMember, WorkspaceMemberInvite
 
@@ -67,4 +69,12 @@ __all__ = [
     "ProjectRole",
     "CustomFieldDefinition",
     "IssueView",
+    "Workflow",
+    "WorkflowState",
+    "WorkflowTransition",
+    "WorkflowTemplate",
+    "ApprovalFlow",
+    "ApprovalNode",
+    "ApprovalInstance",
+    "ApprovalRecord",
 ]

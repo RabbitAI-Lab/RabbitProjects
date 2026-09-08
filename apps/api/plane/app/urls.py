@@ -171,6 +171,7 @@ FEATURE_MODULES = (
     "gantt",            # GANTT-001 甘特取数地基（视窗行 / 连线批量 / 未排期）
     "integrations",     # INTG-001 GitHub 集成（安装 / 绑定 / 入站 Webhook / 日志）
     "webhooks",         # INTG-002 出站 Webhook（端点 / 投递 / 重放）
+    "workflow",         # M11-WF 工作流引擎与审批（WF-001/WF-002，Sprint-7）
 )
 
 for _name in FEATURE_MODULES:

@@ -69,6 +69,11 @@ app.conf.beat_schedule = {
         "task": "plane.bgtasks.backup.cleanup_old_backups",
         "schedule": crontab(hour=4, minute=7),         # BR-08：30 天保留双保险（ilm 第一道）
     },
+    # ── WF-002 §4.7（Sprint-7）：审批超时扫描（15min；超时仅提醒不代决）──
+    "approval-timeout-scan": {
+        "task": "plane.workflow.tasks.approval_timeout_scan",
+        "schedule": crontab(minute="*/15"),
+    },
 }
 
 
@@ -84,6 +89,8 @@ app.conf.task_routes = {
     # Sprint-5：project 域轨道与薄壳同入 activity 队列（共用 DLX activity.dlq）
     "plane.bgtasks.project_activity.project_activity": {"queue": "activity"},
     "plane.bgtasks.project_activity.record_project_activity": {"queue": "activity"},
+    # Sprint-7（WF-002 §4.7）：审批超时扫描入 workflow 新队列（tech-stack §9 待补登）
+    "plane.workflow.tasks.approval_timeout_scan": {"queue": "workflow"},
 }
 app.conf.task_queues = (
     Queue("activity", Exchange("activity", type="direct"), routing_key="activity",
@@ -91,4 +98,5 @@ app.conf.task_queues = (
               "x-dead-letter-exchange": "activity.dlx",
               "x-dead-letter-routing-key": "activity.dlq"}),
     Queue("activity.dlq", Exchange("activity.dlx", type="direct"), routing_key="activity.dlq"),
+    Queue("workflow", Exchange("workflow", type="direct"), routing_key="workflow"),
 )

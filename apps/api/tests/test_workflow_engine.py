@@ -169,11 +169,14 @@ class TestResolveAndV10Fallback:
         r = svc.transition(issue_id=issue.id, to_state_id=env["states"]["进行中"].id,
                            actor=env["owner"])
         assert r.issue.state_id == env["states"]["进行中"].id
-        # 迁入完成被 BLOCKER 拦截（409 BLOCKED）
-        from plane.db.services.issue_link import TransitionBlockedError
-        with pytest.raises(TransitionBlockedError):
+        # 迁入完成被 BLOCKER 拦截（409 BLOCKED；守卫化后为结构化 TransitionError，
+        # code/details 同 TASK-005 口径——WF-004 §2.1 判定域一致）
+        with pytest.raises(TransitionError) as ei:
             svc.transition(issue_id=issue.id, to_state_id=env["states"]["已完成"].id,
                            actor=env["owner"])
+        assert ei.value.code == "RESOURCE_TRANSITION_BLOCKED"
+        assert ei.value.status == 409
+        assert ei.value.details[0]["code"] == "BLOCKED_BY"
         issue.refresh_from_db()
         assert issue.state_id == env["states"]["进行中"].id  # 状态未变（单事务回滚）
 
@@ -246,11 +249,11 @@ class TestControlledTransition:
         issue = _mk_issue(env, name="被阻")
         IssueLink.objects.create(issue=issue, related_issue=blocker,
                                  relation_type="is_blocked_by", created_by=env["owner"])
-        from plane.db.services.issue_link import TransitionBlockedError
-        with pytest.raises(TransitionBlockedError):
+        with pytest.raises(TransitionError) as ei:
             WorkflowService().transition(issue_id=issue.id,
                                          to_state_id=env["states"]["已完成"].id,
                                          actor=env["owner"])
+        assert ei.value.code == "RESOURCE_TRANSITION_BLOCKED"
         issue.refresh_from_db()
         assert issue.state_id == env["states"]["待办"].id
 

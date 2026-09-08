@@ -519,7 +519,14 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
         return issue
 
     def retrieve(self, request, *args, **kwargs):
-        return success_response(IssueSerializer(self.get_object()).data)
+        issue = self.get_object()
+        data = IssueSerializer(issue).data
+        # WF-004 BR-12：任务当前状态生效锁集（读时派生，仅追加字段——TASK-002
+        # 详情冻结契约兼容；无工作流项目恒空，零行为变化）
+        from plane.workflow.services import current_field_locks
+
+        data["locked_fields"] = [lk["field"] for lk in current_field_locks(issue)]
+        return success_response(data)
 
     def destroy(self, request, *args, **kwargs):
         project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
@@ -552,6 +559,50 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
         # 等），这些并非用户意图修改。只处理 request.data 中实际出现的字段，否则改优先级会
         # 顺带清空描述和负责人 —— 正是抽屉里优先级/负责人/日期"改不了"的根因。
         data = {k: v for k, v in s.validated_data.items() if k in request.data}
+
+        # ---- WF-004 §2.2/§4.4：受控项目的 PATCH state_id 旁路收口（ADR-0028 #5 裁决）----
+        # 有生效工作流时状态变更唯一入口 = POST transitions/（守卫/审批/留痕全链路）；
+        # 无工作流项目保持 V1.0 直改（零行为变化）。
+        from plane.workflow.services import WorkflowService
+
+        _wf = WorkflowService().resolve_workflow(issue)
+        if "state_id" in data and _wf is not None:
+            raise AppException(
+                "RESOURCE_STATE_INVALID",
+                message="该项目已启用工作流，状态变更请走流转端点",
+                details=[{"field": "state_id", "code": "INVALID",
+                          "message": "受控流转：POST …/transitions/"}],
+            )
+
+        # ---- WF-004 §2.3/§4.4：字段锁定拦截（读时派生；PROJ_ADMIN 豁免留痕）----
+        from plane.workflow.services import current_field_locks
+
+        _locks = current_field_locks(issue) if _wf is not None else []
+        if _locks:
+            _lock_fields = {lk["field"] for lk in _locks}
+            _hit = [k for k in data if k in _lock_fields]
+            if "custom_fields" in data:
+                _hit += [ck for ck in (data.get("custom_fields") or {}) if ck in _lock_fields]
+            if _hit:
+                from plane.workflow.guards import effective_project_role
+
+                if effective_project_role(request.user, issue.project_id) < ProjectRole.ADMIN:
+                    raise AppException(
+                        "VALIDATION_ERROR",
+                        message=f"字段在状态「{issue.state.name}」中锁定，流转出该状态自动解锁",
+                        details=[{"field": f, "code": "FIELD_LOCKED",
+                                  "message": f"锁定来源：{issue.state.name}"} for f in _hit],
+                    )
+                # 管理员强制路径留痕（field="field_locks.force" 单字段特例，WF-004 §2.3）
+                _epoch_lock = _current_epoch()
+                from plane.bgtasks.issue_activity import enqueue_activity
+
+                enqueue_activity(
+                    issue_id=issue.id, actor_id=request.user.id, verb="updated",
+                    epoch=_epoch_lock,
+                    before={"field_locks.force": None}, after={"field_locks.force": _hit},
+                    comment=f"管理员强制修改锁定字段：{', '.join(_hit)}",
+                )
         epoch = _current_epoch()
         activities: list[dict] = []
 

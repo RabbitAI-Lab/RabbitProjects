@@ -22,8 +22,8 @@ from django.db.models import Count, F, Q
 from django.utils import timezone
 
 from plane.bgtasks.issue_activity import enqueue_activity
-from plane.db.models import Issue, State, Workflow, WorkflowTransition
-from plane.db.services.issue_transition_guard import assert_completable
+from plane.db.models import Issue, State, Workflow, WorkflowState, WorkflowTransition
+from plane.db.models.roles import ProjectRole
 
 logger = logging.getLogger(__name__)
 
@@ -76,42 +76,22 @@ class TransitionResult:
 
 
 class GuardRegistry:
-    """守卫执行器注册表（WF-001 §4.7：服务端注册表驱动，新增类型零表结构变更）。
+    """守卫执行器注册表（R2 起委托 plane.workflow.guards 的四类执行器；BR-10 只读）。
 
-    R1 仅注册 blocker_completed（引擎隐式守卫，显式配置仅用于关闭）；其余三类
-    执行器由 WF-004 注册——未注册即执行时明确报错（不静默跳过，防伪实现）。
+    run_all 全量求值 + guard_error 主码分流（§2.5：403 > 400 必填 > 409）；
+    隐式 blocker_completed 仅注入迁入 completed 组的边（判定域与 TASK-005 一致）。
     """
-
-    def __init__(self) -> None:
-        self._executors: dict[str, Any] = {}
-
-    def register(self, type_: str, executor: Any) -> None:
-        self._executors[type_] = executor
 
     def run_all(self, guards: list[dict], *, issue, actor, to_state: State,
                 payload: dict | None) -> None:
-        enabled_blocker = True
-        for g in guards or []:
-            type_ = g.get("type")
-            if type_ not in GUARD_TYPES:
-                raise TransitionError("VALIDATION_ERROR", 400, details=[
-                    {"field": "guards", "code": "NOT_A_CHOICE",
-                     "message": f"未知守卫类型 {type_!r}，合法枚举 {list(GUARD_TYPES)}"}])
-            if type_ == "blocker_completed":
-                enabled_blocker = bool((g.get("config") or {}).get("enabled", True))
-                continue
-            executor = self._executors.get(type_)
-            if executor is None:
-                raise TransitionError("VALIDATION_ERROR", 400, details=[
-                    {"field": "guards", "code": "NOT_A_CHOICE",
-                     "message": f"守卫类型 {type_} 暂未启用（随 WF-004 交付）"}])
-            executor(g.get("config") or {}, issue=issue, actor=actor, payload=payload or {})
-        if enabled_blocker:
-            # 隐式守卫（TASK-005）：迁入 completed 前置检查，V1.0 兜底路径同款。
-            # 现行签名为 (*, issue, to_state, force, is_admin)（issue_transition_guard.py），
-            # 兜底路径禁用豁免（force=False）；WF-001 §4.4 引用的「actor= 冻结签名」
-            # 与实现偏差登记 ADR-0028。
-            assert_completable(issue=issue, to_state=to_state, force=False, is_admin=False)
+        from plane.db.services.field_schema import resolve_fields
+        from plane.workflow.guards import guard_error, run_guards
+
+        definitions = {d.field_key: d for d in resolve_fields(issue.project, issue.issue_type_id)}
+        failures = run_guards(guards, issue=issue, actor=actor, to_state=to_state,
+                              payload=payload, definitions=definitions)
+        if failures:
+            raise guard_error(failures)
 
 
 class SideEffectRegistry:
@@ -191,7 +171,8 @@ class WorkflowService:
     @transaction.atomic
     def transition(self, *, issue_id, to_state_id, actor, transition_id=None,
                    guard_payload: dict | None = None,
-                   approval_instance_id=None) -> TransitionResult:
+                   approval_instance_id=None,
+                   force: bool = False, force_comment: str = "") -> TransitionResult:
         epoch = time.time() * 1000  # TASK-010 BR-04：动作入口毫秒时间戳
         issue = (
             Issue.objects.select_for_update(of=("self",))  # nullable FK 的 LEFT JOIN 不可锁，仅锁 issues 行
@@ -201,9 +182,10 @@ class WorkflowService:
         to_state = State.objects.get(pk=to_state_id, project=issue.project)
 
         wf = self.resolve_workflow(issue)
+        edge_guards: list[dict] = []
         if wf is None:
-            # 2a. V1.0 兜底：自由流转 + TASK-005 完成守卫（force=False 禁豁免）
-            assert_completable(issue=issue, to_state=to_state, force=False, is_admin=False)
+            # 2a. V1.0 兜底：自由流转 + 隐式完成守卫（run_guards 空 guards 注入，
+            # 判定域与 TASK-005 完全一致——仅迁入 completed 拦截）
             matched_edge = None
         else:
             # 2b. 受控流转：匹配边（无 → 409；多边未指定 → 400）
@@ -214,10 +196,30 @@ class WorkflowService:
                     {"field": "to_state_id", "code": "INVALID",
                      "message": "与当前状态间不存在流转边，请刷新可用流转列表"},
                 ])
-            # 3. 守卫（WF-004）：失败抛 409 BLOCKED / 400 必填 / 403 角色不符
-            self.guard_registry.run_all(matched_edge.guards, issue=issue, actor=actor,
+            edge_guards = matched_edge.guards or []
+
+        # 3. 守卫（WF-004 §4.3）：全量求值 → 失败按主码分流抛出；force 通道 BR-06
+        #    （PROJ_ADMIN 有效角色 + comment 必填；兜底/受控两路径统一）。
+        try:
+            self.guard_registry.run_all(edge_guards, issue=issue, actor=actor,
                                         to_state=to_state, payload=guard_payload)
+        except TransitionError:
+            if not force:
+                raise
+            from plane.workflow.guards import effective_project_role
+
+            _eff_role = effective_project_role(actor, issue.project_id)
+            if _eff_role is None or _eff_role < ProjectRole.ADMIN:
+                raise TransitionError("PERM_ROLE_INSUFFICIENT", 403,
+                                      message="仅项目管理员可强制流转") from None
+            if not (force_comment or "").strip():
+                raise TransitionError("VALIDATION_ERROR", 400, details=[
+                    {"field": "comment", "code": "REQUIRED",
+                     "message": "强制流转必须填写说明（BR-06）"}], ) from None
+
+        if wf is not None:
             # 4. 审批挂接（WF-002）：发起（202 挂起）/ 终审回填（跳过二次挂起直执行）
+            assert matched_edge is not None
             if matched_edge.approval_flow_id and approval_instance_id is None:
                 from plane.workflow.approval import ApprovalService  # 防循环导入
 
@@ -241,16 +243,33 @@ class WorkflowService:
             # 5. 副作用（WF-003）：同事务执行，失败回滚（半完成态防御）
             self.effect_registry.apply_all(matched_edge.side_effects, issue=issue, actor=actor)
 
+        # 5b. guard_payload 单请求补齐落库（WF-004 §4.3/BR-16 白名单 + 值层校验）：
+        #     与状态迁移同一事务，任一步失败全回滚。
+        payload_fields: list[str] = []
+        if guard_payload:
+            payload_fields = self._apply_guard_payload(issue, guard_payload, edge_guards)
+
         # 6. 状态更新 + Activity（TASK-010 管道，BR-13/14：不引入状态历史表）
         old_state = issue.state
         issue.state = to_state
-        issue.save(update_fields=["state", "updated_at"])
+        update_fields = list({f for f in ["state", "updated_at", *payload_fields]
+                              if f != "assignees"})  # M2M 已即时写
+        issue.save(update_fields=update_fields)
         edge_name = matched_edge.name if matched_edge else None
         enqueue_activity(
             issue_id=issue.id, actor_id=actor.id, verb="updated", epoch=epoch,
             before={"state": str(old_state.id), "transition": None},
             after={"state": str(to_state.id), "transition": edge_name},
         )
+        if force and old_state.id != to_state.id:
+            # BR-06：强制跳过守卫的事实留痕（field="state.force" 单字段特例，
+            # TASK-010 verb 冻结不扩展——WF-004 §2.2 范式）
+            enqueue_activity(
+                issue_id=issue.id, actor_id=actor.id, verb="updated",
+                epoch=epoch + 1,
+                before={"state.force": None}, after={"state.force": True},
+                comment=f"管理员强制流转，跳过守卫：{force_comment}",
+            )
         if old_state.id != to_state.id:
             # WF-002 §2.3 终止触发 state_changed：状态已变 → 该任务其余 pending
             # 审批实例作废（终审回填路径排除自身实例——is_terminal_passed 瞬态位
@@ -282,6 +301,85 @@ class WorkflowService:
                 {"field": "transition_id", "code": "REQUIRED",
                  "message": "存在多条同名流转路径，须指定 transition_id"}])
         return edges[0] if edges else None
+
+    @staticmethod
+    def _apply_guard_payload(issue: Issue, payload: dict,
+                             edge_guards: list[dict]) -> list[str]:
+        """WF-004 BR-16 写入域白名单 + §4.2 注值层校验（迁移事务内联，非 PATCH 路径）。
+
+        白名单 = required_fields.fields ∪ {estimate_minutes}；域外键 400 NOT_A_CHOICE。
+        值层校验：assignees 成员资格 / target_date 日期格式 / cf_* 走
+        validate_field_value 原函数；assignees/target_date 为内置字段直写。
+        """
+        allowed: set[str] = set()
+        for g in edge_guards:
+            if g.get("type") == "required_fields":
+                allowed.update((g.get("config") or {}).get("fields") or [])
+            if g.get("type") == "estimate_required":
+                allowed.add("estimate_minutes")
+        extra = set(payload) - allowed
+        if extra:
+            raise TransitionError("VALIDATION_ERROR", 400, details=[
+                {"field": k, "code": "NOT_A_CHOICE",
+                 "message": f"guard_payload 键 {k} 不在当前边守卫声明字段集内（BR-16）"}
+                for k in sorted(extra)])
+
+        touched: list[str] = []
+        for key, value in payload.items():
+            if key == "assignees":
+                from plane.db.models import ProjectMember
+
+                ids = list(dict.fromkeys(value or []))
+                bad = [u for u in ids if not ProjectMember.objects.filter(
+                    project_id=issue.project_id, member_id=u, is_active=True).exists()]
+                if bad:
+                    raise TransitionError("VALIDATION_ERROR", 400, details=[
+                        {"field": "assignees", "code": "DOES_NOT_EXIST",
+                         "message": f"非项目成员：{', '.join(map(str, bad))}"}])
+                issue.assignees.set(ids)
+                touched.append("assignees")  # M2M 已即时写；登记供审计
+            elif key == "estimate_minutes":
+                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                    raise TransitionError("VALIDATION_ERROR", 400, details=[
+                        {"field": "estimate_minutes", "code": "INVALID",
+                         "message": "预估工时须为非负整数（分钟）"}])
+                issue.estimate_minutes = value or None
+                touched.append("estimate_minutes")
+            elif key == "target_date":
+                from datetime import date as _date
+
+                try:
+                    _date.fromisoformat(str(value))
+                except (TypeError, ValueError):
+                    raise TransitionError("VALIDATION_ERROR", 400, details=[
+                        {"field": "target_date", "code": "INVALID_DATE",
+                         "message": "日期格式须为 YYYY-MM-DD"}]) from None
+                issue.target_date = value
+                touched.append("target_date")
+            elif key.startswith("cf_"):
+                from plane.db.services.custom_fields import CustomFieldValidationError, validate_field_value
+                from plane.db.services.field_schema import resolve_fields
+
+                defs = {d.field_key: d for d in resolve_fields(issue.project, issue.issue_type_id)}
+                d = defs.get(key)
+                if d is None:
+                    raise TransitionError("VALIDATION_ERROR", 400, details=[
+                        {"field": key, "code": "DOES_NOT_EXIST",
+                         "message": f"字段 {key} 不存在于项目字段集"}])
+                try:
+                    cleaned = validate_field_value(d, value, project=issue.project)
+                except CustomFieldValidationError as exc:
+                    raise TransitionError("VALIDATION_CUSTOM_FIELD_INVALID", 400,
+                                          details=exc.details,
+                                          message="补齐值校验失败") from None
+                cf = dict(issue.custom_fields or {})
+                if cleaned is None:
+                    cf.pop(key, None)
+                else:
+                    cf[key] = cleaned
+                issue.custom_fields = cf
+                touched.append("custom_fields")
+        return touched
 
     # ── 发布校验与版本轮转（WF-001 §4.6）────────────────────────────
 
@@ -424,3 +522,16 @@ def invalidate_workflow_cache(instance: Workflow) -> None:
     """
     cache.delete(f"wf:resolved:{instance.project_id}:{instance.issue_type_id}")
     cache.delete(f"wf:graph:{instance.id}")
+
+
+def current_field_locks(issue: Issue) -> list[dict]:
+    """字段锁定读时派生（WF-004 §4.4/BR-07）：先按兜底链选定当前生效工作流，
+    再取该图内当前状态节点的 field_locks——禁止跨工作流混合取值；
+    无工作流项目 → 空锁（V1.0 零行为变化）。"""
+    wf = WorkflowService().resolve_workflow(issue)  # 缓存复用，不新增解析查询
+    if wf is None:
+        return []
+    node = (WorkflowState.objects.filter(workflow=wf, state=issue.state)
+            .only("field_locks").order_by("pk").first())
+    # (workflow, state) 唯一约束下至多一行；order_by("pk") 保证取值确定性
+    return node.field_locks if node else []

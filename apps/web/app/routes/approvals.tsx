@@ -158,8 +158,10 @@ function ApprovalDetailDrawer({ instanceId, projectId, onClose, onChanged, onOpe
       await ApprovalAPI.act(ws, projectId, instanceId, { action, comment });
       onChanged();
       onClose();
-    } catch {
-      setActionError("操作失败，请重试");
+    } catch (e) {
+      // 透出服务端真实原因（如「仅当前节点审批人可操作」403）——通用文案曾掩盖越权根因
+      const err = e as { message?: string };
+      setActionError(err?.message ?? "操作失败，请重试");
     } finally {
       setBusy(false);
     }

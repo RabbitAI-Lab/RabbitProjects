@@ -53,3 +53,57 @@
 - release_gate_events.user FK 列 = actor_id（不是 created_by_id）；workspace_login_daily = member_id
 - commitlint：中文 subject 开头、header≤100、无 merge type（用 chore）
 - 迁移后要重启 worker（坑 20 多代 worker）；新表入 s3/s4-flow 清理序（本批新表：workflows/workflow_states/workflow_transitions/approval_flows/approval_nodes/approval_instances/approval_records）
+
+
+## R2 守卫与字段轮完成（main 2399b23，b40e2e9 + b02f183）
+
+### R2-A 守卫矩阵（WF-004，b40e2e9）
+- plane/workflow/guards.py：四执行器 + 主码分流（403/400/409）+ guard_config_issues
+- services.py：GuardRegistry.run_all 委托 run_guards；force 通道（PROJ_ADMIN + comment）；
+  guard_payload 单请求补齐（白名单 + 值层校验 + update_fields 合并）；
+  current_field_locks 读时派生
+- views.workflows.py：available 预览 blocked_by/deny_reason；graph 保存守卫业务校验
+- views.issues.py：update PATCH state_id 旁路收口（受控 409/无工作流 V1.0）；
+  field_locks PATCH 拦截 + ADMIN 豁免留痕；详情 locked_fields（仅追加）
+- 20 项测试 + 49/49 全绿；ruff/mypy 全绿
+
+### R2-B 高级字段与字段权限（TASK-012，b02f183）
+- 四类型显式分支：cascade 父链/relation 禁自引用/date_range start≤end/attachment uploaded 过滤
+- 配置校验：cascade_config + permission_config + is_required×readonly BR-17 + P3 类型白名单
+- field_permissions.py：四态判定（ADMIN 豁免 hidden）+ 两级缓存（user: 授权时补 user 维度防串数据）
+  + apply_to_payload/drop_non_writable BR-16 静默丢弃
+- views.custom_fields.py：Schema API 注入 access 标注（ETag 不变）
+- views.issues.py：list 主路径 + grouped_response + sub_issues 三处 _strip_hidden 共享
+  （_list_access 跨方法承载）；PATCH 路径 BR-16 静默丢弃
+- compiler.py：access_map 透传 → hidden 字段条件整体拒绝（BR-11 不容错跳过）
+  + 四类型操作符（cascade starts_with/date_range overlaps+contains_date）
+- validate_field_value 接受 issue= 参数实现 BR-05 关联自引用
+- 16 项测试全绿；ruff/mypy 全绿
+- 服务层补 ImportError：模块顶层 import _Issue/_FileAsset（旧版仅在 TYPE_CHECKING 与内嵌 import）
+
+### R2 两处债（已 R0 登记的债项）
+- it07 共享库物理状态敏感（stash 复验已确认非 R2 代码）
+- 演示数据需 R5 重灌（无 R2 影响）
+- sprint-5-flow 32/8 历史在案
+
+
+## R3 规则与工时轮完成（main 30a8765，d0091a0）
+
+- 六模型迁移 0023（sqlmigrate 手工灌 + fake）：automation_rules/runs/settings +
+  worklog_approvals/summaries/project_worklog_configs + work_logs.locked 增列
+- WF-003：四触发器×五动作注册表（transition 走引擎完整路径）；防循环三闸
+  （origin/chain_depth≥5/SETNX 去重——due 豁免闸 3）；Dry Run 零写；BR-13
+  连续 10 次失败熔断；90 天日志清理 beat；automation:rules/{pid} 缓存
+- TASK-013：四态机表驱动 + approve 锁定/冻结 + revoke 解锁解冻（REJECTED
+  穿透 is_frozen 守卫）+ 软上限 warnings + 周界服务器时区（BR-01 降级）
+- 12 端点 + 22 测试全绿 + 突变自检（周期窗口破坏→红→恢复→绿）
+- 门禁：ruff 0 错 / mypy 229 文件 0 错 / 全量 762 过 1 环境债（it07）
+
+### R4 入口（前端轮）
+- 审批中心三 Tab（approvals/pending|acted|mine 端点已就绪）
+- 审批详情抽屉 + 任务徽标（approval-instances/{aid}/ + transitions/available
+  的 blocked_by/deny_reason/has_approval 已就绪）
+- 画布编辑器：装 @xyflow/react 12.x + dagre（路由懒加载），PUT graph/ 端点
+  已就绪（ETag/If-Match/守卫保存校验）
+- 守卫拦截补齐对话框（error.details 的 guard 键分区渲染 + meta 控件注册表）
+- 工时周视图 + 审批队列 + 台账矩阵（worklog 端点已就绪）

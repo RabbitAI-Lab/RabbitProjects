@@ -18,7 +18,7 @@
 | 9 | SearchRateThrottle 挂载 | V1.0 无全局搜索端点（类+配额已就位）——Sprint-7 搜索端点 |
 | 10 | admin 运维面 drill 触发/产物下载预签名两端口 | restore-drill.sh 与 mc 已承载操作面——Sprint-7 admin 控制台深化 |
 | 11 | ~~GitHub App per-repo webhook 回归（G-1）~~ **已收口（2026-09-08）** | 用户补权限+组织重批后回归全过：绑仓端点 `webhook_registered:true`、仓上 hook active（675944498，四事件族）、探针清理防双投递、ping 全链 202（隧道+验签闭环）；探针=`scripts/g1-webhook-regress.sh`（幂等）。附注：App 权限变更不自动作用于已存在 installation——需组织 owner 重批（本次排查结论） |
-| 12 | C 表三件：api-conventions §13.3 限流章节 / INTG-002 §9 风险表补登 / §4.1 口径对齐 | 文档回改批次——Sprint-7 首批文档轮（§7.1 L1 补注已本轮完成） |
+| 12 | ~~C 表三件：api-conventions §13.3 限流章节 / INTG-002 §9 风险表补登 / §4.1 口径对齐~~ **已收口（2026-09-08，Sprint-7 R0 文档批次）** | §13.3 重试/自动禁用两行按 INTG-002 BR-06/08 精确化（死信单表 + 无时间窗终态计数器）；sprint-5 概览 §1 补事件挂点边、§9 风险 #2/#3 五处冲突对齐、§3 权限码改 `integration.config`；70% 配额降级核实已实现（`QUOTA_DEGRADE_RATIO=0.70`）无需回改；INTG-002 §1.2 登记段与 sprint-5 known-tech-debt C 表 #3/#5/#6 同步标 ✓。另：dg 错位（WF-002~006/AUTH-009,010/WF-006 缺行/倒挂边）经 R0 核验确认已由 2026-09-06 架构文档专项回改批次完成，sprint-7 overview §3 注一/注二已同步消解 |
 | 13 | E2E 浏览器兼容矩阵（Chrome/Edge/Firefox/Safari） | 需多浏览器 runner 基建——Sprint-7 QA 面；Chromium 全绿 |
 
 ## B. 本迭代收口清单（已闭环，留档）
@@ -44,4 +44,4 @@
 ## D. Sprint-7 入口
 
 - 本表 A 组逐项排期；QA-001 §7.2 发布验收报告三方签署归档 `release/v1.0.0/`（模板已就位）
-- 交接上游：`sprint-5-integration-standard/known-tech-debt.md` F/G 表消费进度——F2✓ D2✓ G1 待用户；A 表 1/2/3/9 见本表 A 组
+- 交接上游：`sprint-5-integration-standard/known-tech-debt.md` F/G 表消费进度——F2✓ D2✓ G1✓（2026-09-08 收口，#11）；A 表 1/2/3/9 见本表 A 组

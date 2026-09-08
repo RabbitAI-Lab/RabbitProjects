@@ -32,10 +32,10 @@
 | --- | --- | --- |
 | 1 | `unified-issue-model.md` §2.4 加 `Project.visibility` 行（已随 T5-03 ADR-0026 同步） | ✓ |
 | 2 | `rbac-permission-model.md` §8.1 增 `team.stats.read` + WS archive 收窄 + §6.2 `_scoped_for` 公开分支标注 | ✓（T5-08/03） |
-| 3 | `api-conventions.md` §13.3 限流章节（与 INTG-002 退避表一致） | 待 sprint-6 |
+| 3 | `api-conventions.md` §13.3 限流章节（与 INTG-002 退避表一致） | ✓（2026-09-08 Sprint-7 R0：§13.3 重试/自动禁用两行按 INTG-002 BR-06/BR-08 精确化——死信单表 + 无时间窗终态计数器语义） |
 | 4 | `COLLAB-001` §2.3 增 `webhook.auto_disabled` 通知类型 | ✓（T5-05） |
-| 5 | `INTG-002` 概览 §9 风险表"project.* 五事件"补登 | 待 sprint-6 |
-| 6 | `INTG-002` §4.1 概览"70% 阈值降级"与实现无时间窗计数器口径一致 | 待 sprint-6 |
+| 5 | `INTG-002` 概览 §9 风险表"project.* 五事件"补登 | ✓（2026-09-08 Sprint-7 R0：概览 §1 依赖图补 COLLAB-002/PROJ-003 独立挂点虚线边 + 事件挂点注；§9 风险 #2/#3 五处冲突全部对齐实现口径） |
+| 6 | `INTG-002` §4.1 概览"70% 阈值降级"与实现无时间窗计数器口径一致 | ✓（2026-09-08 Sprint-7 R0：概览风险 #2「滑窗 1 小时」已改无时间窗 `consecutive_failures` 终态计数器；风险 #1 的 70% 配额降级经核实实现已落地 `QUOTA_DEGRADE_RATIO=0.70`（integrations/github.py），无需回改；INTG-002 §1.2 登记段同步收口） |
 
 ## D. 测试/门禁缺口
 

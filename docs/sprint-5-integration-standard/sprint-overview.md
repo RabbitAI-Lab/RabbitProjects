@@ -50,7 +50,11 @@ flowchart LR
     P3 --> S6
     A6 --> S6
     T3 --> S6
+    C002["COLLAB-002<br/>评论管道"] -. "comment.created 独立挂点" .-> W2
+    P3 -. "project.* 五事件独立挂点" .-> W2
 ```
+
+> 事件挂点注（INTG-002 §2.2/§2.3 落地口径，2026-09-08 回改补注）：`issue.*` 族经 `TASK-010` Activity worker 管线扇出；`comment.created` 与 `project.*`（created/activated/archived/restored/closed 五事件）分别由 `COLLAB-002` 评论管道与 `PROJ-003` 生命周期端点 `on_commit` **独立挂点直调** `dispatch_events`、不经 Activity——上图中以虚线标注（非模块结构依赖，是事件生产端挂点）。
 
 ## 2. 范围与边界（对齐需求文档 §8.2 P2 列）
 
@@ -77,8 +81,8 @@ flowchart LR
 横切依赖（Sprint 0-4 已稳定，本迭代消费）：
 
 - `INFRA-004` 统一返回与全局错误码：契约源在 Sprint 1 冻结，`INTG-001` 与 `INTG-002` 的接口响应与错误码（`400 VALIDATION_INVALID_PARAM`、`409 RESOURCE_LIMIT_EXCEEDED` 等）一律沿用，不另立字段。
-- `AUTH-005` 按钮级权限 + 接口二次鉴权：`INTG-001`（`integration.manage`/`integration.link`）、`INTG-002`（`integration.manage`）、`AUTH-006`（权限矩阵收敛）共用权限码定义，禁止各自硬编码。
-- `TEAM-002` 团队成员角色分配：`INTG-002` 的 Webhook 凭证托管在 `Workspace.setting.manage` 权限码之下，`TEAM-003` 的团队归档与全局模板下发同样依赖完整成员关系。
+- `AUTH-005` 按钮级权限 + 接口二次鉴权：`INTG-001`（`integration.manage`/`integration.link`）、`INTG-002`（`integration.config`——rbac §8.2 注册表唯一码，2026-09-08 回改对齐）、`AUTH-006`（权限矩阵收敛）共用权限码定义，禁止各自硬编码。
+- `TEAM-002` 团队成员角色分配：`INTG-002` 的 Webhook 端点管理与通知触达依赖完整成员关系（端点权限码为 `integration.config`，无独立 WS 级凭证托管码），`TEAM-003` 的团队归档与全局模板下发同样依赖完整成员关系。
 - `TASK-009` 全字段组合筛选器：`RPT-002` 的「成员任务量」统计复用其筛选 DSL，禁开第二份筛选实现。
 - `TASK-002` 任务扩展属性：`TEAM-003` 的全局标签/状态模板消费 `custom_fields` 元数据，模板实例化路径与 `TASK-002` 一致。
 
@@ -160,8 +164,8 @@ flowchart LR
 | # | 风险 | 影响 | 概率 | 应对措施 | 责任文档 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | **GitHub API 限流**：installation token 持有 5000/h/installation 配额，安装多仓后多家仓库 webhook 同时回灌易触发 429 | 高：双向同步抖动 + 合并流转延迟，前端看板与 Activity 流不刷新 | 高 | ① 全走 installation token，权限范围 `Contents: read / Issues: write / Pull requests: write / Metadata: read`（最小化）；② 限流预算统一上报至 `RPT-001` 风格的 `IntegrationQuotaService`，超过 70% 触发降级开关（暂停 PR 挂载任务细节，仅保留 Issue 同步）；③ 429 响应严格按 `X-RateLimit-Reset` + `Retry-After` 退避，禁止固定 sleep；④ 监控 `X-RateLimit-Remaining` 余量指标，剩余 < 10% 推送告警 | `INTG-001` §6 |
-| 2 | **Outbound 投递失败**：Webhook 出站链路对 5xx 与超时未做精细分类、6 次退避节奏不稳定、50 连败阈值误触发 | 高：接收方数据不一致、回放成本高、自动停用后人工恢复链路 | 中 | ① 严格照 `api-conventions.md` §13.3：HMAC-SHA256 签名头、时间窗 ±5 分钟、6 次指数退避（30s / 2m / 10m / 30m / 2h / 6h）、死信入 `webhook_dead_letters` 表并保留请求/响应快照；② 失败计数滑窗 1 小时粒度，连续 50 次入库触发 webhook 停用 + 通知 Owner；③ 出站 Celery 任务全部 `on_commit` 后投递，幂等键 = `event_id` + `endpoint_id` 防止双发；④ Day 3 注入故障（人为 5xx）做演练验收，断言 6 次后退死信 | `INTG-002` §4 / §6 / §10 |
-| 3 | **事件幂等键冲突**：GitHub 入站 webhook、Issue 双向同步、PR 合并状态流转三路共用同一资源集合，幂等键设计不当导致重复处理或漏处理 | 中：任务状态机异常摆动、Activity 重复 | 中 | ① 入站幂等键 = `X-GitHub-Delivery` 头（GitHub 全局唯一），先于业务逻辑落幂等表 `webhook_inbound_idempotency`，命中即 200 跳过；② 出站幂等键 = `event_id`（UUID v4，前缀 `evt_`），接收方按 key 去重；③ 三路共用 Activity 流事件源（`TASK-010` 操作日志），通过 `actor` + `source` 字段区分来源，合并重叠判定走先到先写 + 单事务；④ CI 测试矩阵覆盖同事件 5 次重投场景，断言 Activity 记录条数 = 1 | `INTG-001` §5、`INTG-002` §5 |
+| 2 | **Outbound 投递失败**：Webhook 出站链路对 5xx 与超时未做精细分类、6 次退避节奏不稳定、50 连败阈值误触发 | 高：接收方数据不一致、回放成本高、自动停用后人工恢复链路 | 中 | ① 严格照 `api-conventions.md` §13.3：HMAC-SHA256 签名头、时间窗 ±5 分钟、6 次指数退避（1s / 10s / 1m / 10m / 1h / 6h）、死信为 `WebhookDelivery.status=dead` 单表设计（请求/响应快照以 Attempt JSON 追加于同一行，保留 30 天可重放——无独立死信表）；② 失败计数为**无时间窗**的 `consecutive_failures` 终态计数器（死信终态 +1 / 成功终态 −1 钳位 ≥0，跨事件累计，`webhook.ping` 不计），达 50 触发 `auto_disabled` + 通知创建者（COLLAB-001 通道 `webhook.auto_disabled`）；③ 出站 Celery 任务全部 `on_commit` 后投递，幂等键 = `event_id` + `endpoint_id` 防止双发；④ Day 3 注入故障（人为 5xx）做演练验收，断言 6 次后退死信 | `INTG-002` §4 / §6 / §10 |
+| 3 | **事件幂等键冲突**：GitHub 入站 webhook、Issue 双向同步、PR 合并状态流转三路共用同一资源集合，幂等键设计不当导致重复处理或漏处理 | 中：任务状态机异常摆动、Activity 重复 | 中 | ① 入站幂等键 = `X-GitHub-Delivery` 头（GitHub 全局唯一），先于业务逻辑落幂等表 `webhook_inbound_idempotency`，命中即 200 跳过；② 出站幂等键 = `event_id`（**裸 UUID v4、无前缀**——事件真相表主键直取：`issue.*` = `IssueActivity.id` / `comment.created` = `IssueComment.id` / `project.*` = `ProjectStatusLog.id`，`webhook.ping` 用 `uuid.uuid4()` 实时生成），接收方按 key 去重；③ 三路共用 Activity 流事件源（`TASK-010` 操作日志），通过 `actor` + `source` 字段区分来源，合并重叠判定走先到先写 + 单事务；④ CI 测试矩阵覆盖同事件 5 次重投场景，断言 Activity 记录条数 = 1 | `INTG-001` §5、`INTG-002` §5 |
 | 4 | **越权数据泄露**：集成读路径绕开 `accessible_by`、越权矩阵不闭环、CI AST 守护疏漏 | 极高：P0 事故级别，整站安全失守 | 中 | ① `INTG-001/002` 全部 ViewSet / Serializer 复用 `accessible_by` 起步，禁止另写 `filter_workspace` / 自定义查询集；② 跨主体越权矩阵参数化测试（见 §6 系统级守卫）覆盖四主体 × 四资源层笛卡尔积；③ CI AST 守护强制开启，故意破坏 PR 红屏；④ 收口前由未参与实现的 subagent 反向扫全部 ViewSet 文件，验证 `super().get_queryset()` 与 `accessible_by` 双调用；⑤ 行级隔离审计日志纳入 `Sprint 6` 的 `QA-001` 复测范围 | `AUTH-006` §3 / §5 |
 | 5 | **Sprint 5 与其他迭代并发冲突**：本迭代与 `Sprint 6（INFRA-005 生产部署）` 边界重叠——`INTG-002` 需要生产级出网 IP 白名单与限流策略，可能与 `INFRA-005` 的限流框架撞车 | 中：接口限流口径不一致，需事后返工 | 低 | ① 本迭代所有限流（按 endpoint + IP 维度）走 `INFRA-004` 已落地的全局错误格式 + `429 RATE_LIMIT_EXCEEDED` 错误码，不引入新限流框架；② Sprint 6 启动前向 `INFRA-005` 文档提交「Sprint 5 出站 IP 与限流口径」交接清单；③ 接口限流维度仅 webhook 端点 + IP，不上 TokenBucket（留待 Sprint 6）；④ 双方约定错误码注册表（`packages/shared-state/errorCodes.ts`）单一来源，互锁 commit 前 grep 检查 | `INTG-002` §6、`INFRA-005` 接入衔接 |
 | 6 | **标准版收口回退难度**：Sprint 5 是 V1.0 功能冻结点，下游（`INTG-003/004`、`RPT-003/004`、`PROJ-004`、`AUTH-010` 等）一旦开始依赖，收口期返工成本指数级上升 | 高：一旦返工直接影响 6 个迭代的排期 | 低 | ① 收口前完整跑过 §10 三门禁 + §6 系统级守卫，任一项不达标不宣告冻结；② 涉及权限 Key、错误码、EventPayload 字段的偏离必须 ADR 登记或架构文档内联标注，实现未走 ADR 流程视为未冻结；③ Sprint 5 末产出「冻结清单」与「已知技术债」两份文档，下游迭代消费前者、规避后者；④ Day 5 联调日对冻结清单逐项签字 | 本文档 §10、`QA-001` 衔接 |

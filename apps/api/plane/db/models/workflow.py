@@ -191,3 +191,72 @@ class WorkflowTemplate(BaseModel):
 
     def __str__(self) -> str:
         return f"{self.workspace_id}:{self.name}v{self.version}"
+
+
+class TemplateDistribution(BaseModel):
+    """下发记录：模板 × 项目（锁定引用的唯一事实源，WF-005 BR-04/06）——两步下发：
+    受理 pending_confirm → 确认实例化 active；升级推送 upgrade_available。"""
+
+    template = models.ForeignKey(
+        WorkflowTemplate, on_delete=models.CASCADE, related_name="distributions", verbose_name="模板")
+    project = models.ForeignKey(
+        "db.Project", on_delete=models.CASCADE, related_name="template_distributions", verbose_name="项目")
+    template_version = models.PositiveIntegerField(verbose_name="下发时模板版本")
+    locked = models.BooleanField(default=False, verbose_name="锁定")
+    applied_workflow = models.ForeignKey(
+        Workflow, null=True, on_delete=models.SET_NULL, related_name="+", verbose_name="实例化产物")
+    status = models.CharField(
+        max_length=16, default="pending_confirm", db_index=True, verbose_name="状态",
+        help_text="pending_confirm|active|upgrade_available|withdrawn|unlocked")
+    state_mapping = models.JSONField(default=dict, verbose_name="状态映射单留痕（BR-05）")
+
+    class Meta(BaseModel.Meta):
+        db_table = "template_distributions"
+        verbose_name = "模板下发记录"
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(fields=["template", "project"], name="uniq_distribution"),
+        ]
+
+    def __str__(self) -> str:
+        return f"dist({self.template_id}:{self.project_id}:{self.status})"
+
+
+class TemplateUnlockRequest(BaseModel):
+    """项目侧解锁/升级申请（WF-005 §4.4）：每项目至多一条待审（部分唯一约束）。"""
+
+    class Kind(models.TextChoices):
+        UNLOCK = "unlock", "解锁（转独立副本）"
+        UPGRADE = "upgrade", "升级（替换式升级到新版本）"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "待审"
+        APPROVED = "approved", "已批准"
+        REJECTED = "rejected", "已驳回"
+
+    distribution = models.ForeignKey(
+        TemplateDistribution, on_delete=models.CASCADE, related_name="unlock_requests", verbose_name="下发记录")
+    project = models.ForeignKey(
+        "db.Project", on_delete=models.CASCADE, related_name="template_unlock_requests", verbose_name="项目")
+    kind = models.CharField(max_length=8, choices=Kind.choices, verbose_name="申请类型")
+    reason = models.CharField(max_length=255, verbose_name="申请理由（必填）")
+    status = models.CharField(max_length=8, choices=Status.choices, default=Status.PENDING, verbose_name="状态")
+    handled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="+", verbose_name="处理人（WS_ADMIN）")
+    handled_at = models.DateTimeField(null=True, blank=True, verbose_name="处理时间")
+
+    class Meta(BaseModel.Meta):
+        db_table = "template_unlock_requests"
+        verbose_name = "模板解锁/升级申请"
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project"],
+                condition=models.Q(status="pending", deleted_at__isnull=True),
+                name="uniq_unlock_request_pending_per_project"),
+        ]
+        indexes = [models.Index(fields=["project", "status"], name="idx_unlock_req_proj")]
+
+    def __str__(self) -> str:
+        return f"unlock-req({self.project_id}:{self.kind}:{self.status})"

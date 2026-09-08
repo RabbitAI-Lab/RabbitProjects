@@ -1,5 +1,6 @@
 from .account import PasswordResetToken
 from .approval import ApprovalFlow, ApprovalInstance, ApprovalNode, ApprovalRecord
+from .approval_audit import ApprovalAuditEvent
 from .asset import FileAsset
 from .automation import AutomationRule, AutomationRun, AutomationSetting
 from .backup import BackupRun
@@ -20,7 +21,14 @@ from .state import State
 from .user import User
 from .view import IssueView
 from .webhook import WebhookDelivery, WebhookEndpoint
-from .workflow import Workflow, WorkflowState, WorkflowTemplate, WorkflowTransition
+from .workflow import (
+    TemplateDistribution,
+    TemplateUnlockRequest,
+    Workflow,
+    WorkflowState,
+    WorkflowTemplate,
+    WorkflowTransition,
+)
 from .worklog import WorkLog
 from .worklog_approval import ProjectWorklogConfig, WorkLogApproval, WorkLogSummary
 from .workspace import Workspace, WorkspaceLabel, WorkspaceLoginDailyAggregate, WorkspaceMember, WorkspaceMemberInvite
@@ -81,6 +89,9 @@ __all__ = [
     "WorkflowState",
     "WorkflowTransition",
     "WorkflowTemplate",
+    "TemplateDistribution",
+    "TemplateUnlockRequest",
+    "ApprovalAuditEvent",
     "ApprovalFlow",
     "ApprovalNode",
     "ApprovalInstance",

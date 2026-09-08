@@ -43,7 +43,7 @@ class WorkLogSubmitView(APIView):
             week_start = _week_start(date.fromisoformat(str(week_start_raw)))
         except (ValueError, TypeError):
             raise AppException("VALIDATION_ERROR",
-                               details=[{"field": "week_start", "code": "INVALID_DATE"}])
+                               details=[{"field": "week_start", "code": "INVALID_DATE"}]) from None
         try:
             batch = submit(actor=request.user, project=project, week_start=week_start)
         except WorkLogApprovalError as exc:

@@ -107,3 +107,11 @@
   已就绪（ETag/If-Match/守卫保存校验）
 - 守卫拦截补齐对话框（error.details 的 guard 键分区渲染 + meta 控件注册表）
 - 工时周视图 + 审批队列 + 台账矩阵（worklog 端点已就绪）
+
+
+## R5 模板留痕收口轮完成（sprint-7 分支）
+
+- WF-005/WF-006 后端 + sprint-7-flow 35/35 + 附录 C 四行 + known-debt 交接
+- 调试修四真缺陷：If-Match `*`、resolve 陈旧缓存穿透、BR-10 显式 409、
+  execute 补捕 ApprovalError
+- 门禁终态：pytest 771 / ruff+mypy 零错 / flow 35/35

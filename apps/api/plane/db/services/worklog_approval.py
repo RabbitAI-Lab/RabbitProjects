@@ -65,14 +65,14 @@ def _check_daily_hard_limit(actor_id, project_id, worked_on, minutes_to_add):
         if s + minutes_to_add > 1440:
             raise WorkLogApprovalError(
                 "VALIDATION_ERROR", 400, sub="TOO_LARGE",
-                message=f"单日累计 {s + minutes_to_add} 分钟超过硬上限 1440")
+                message=f"单日累计 {s + minutes_to_add} 分钟超过硬上限 1440") from None
 
 
 def _check_granularity(minutes: int, config: ProjectWorklogConfig) -> None:
     if minutes % config.granularity_minutes != 0:
         raise WorkLogApprovalError(
             "VALIDATION_ERROR", 400, sub="NOT_A_CHOICE",
-            message=f"单笔粒度须为 {config.granularity_minutes} 分钟倍数")
+            message=f"单笔粒度须为 {config.granularity_minutes} 分钟倍数")  # noqa: B904 -- 顶层校验非 except 链
 
 
 def soft_limit_warning(actor_id, project_id, week_start, daily_soft_limit):

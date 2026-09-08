@@ -388,7 +388,8 @@ function PermissionMatrixModal({ slug, projectId, field, onClose, onSaved }: {
   }
 
   const cell = (key: keyof PermSets, token: string) => (
-    <td key={token} className="px-3 py-2 border-b border-neutral-100 text-center">
+    // 静态位（每行固定三格）不带 key——三列同 token 会撞兄弟 key（React 警告）
+    <td className="px-3 py-2 border-b border-neutral-100 text-center">
       <input type="checkbox" checked={sets[key].has(token)}
         data-sb-scope="perm-cell" data-set={key} data-token={token}
         onChange={() => toggle(key, token)} />

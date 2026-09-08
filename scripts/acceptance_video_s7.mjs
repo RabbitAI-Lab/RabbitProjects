@@ -227,17 +227,25 @@ async function scene03([zs, ls]) {
 async function scene04(page) {
   await login(page);
   const { proj, issues } = await s7ctx(page);
-  const rule = (await api(page, "GET", `/workspaces/${WS}/projects/${proj.id}/automation-rules/`)).body?.data?.[0];
-  const perf = issues.find((i) => i.name.includes("首页性能"));
-  // Dry Run（BR-11 零写）
-  const dry = await api(page, "POST",
-    `/workspaces/${WS}/projects/${proj.id}/automation-rules/${rule.id}/dry-run/`,
-    { issue_id: perf.id });
-  await jsonScene(page, "自动化规则 · Dry Run", `POST automation-rules/${rule.id}/dry-run/`, dry.body);
-  // 真事件执行（run_event 直调 worker 等价——走事件入口 task 不便，取 run 日志展示）
-  const fired = await api(page, "GET",
-    `/workspaces/${WS}/projects/${proj.id}/automation-rules/${rule.id}/`);
-  await jsonScene(page, "规则定义与执行口径", `GET automation-rules/${rule.id}/`, fired.body);
+  // 规则页（C.146）：列表 + Dry Run 弹层（补口轮起走真实 UI 路径）
+  await page.goto(`/${WS}/projects/${proj.id}/automation`);
+  await sleep(1400);
+  const row = page.locator('[data-sb-scope="rule-row"]').first();
+  await row.waitFor({ timeout: 10_000 });
+  await sleep(800);
+  await row.locator('[data-sb-scope="rule-dryrun-btn"]').click();
+  await sleep(700);
+  const dry = page.locator('[data-sb-scope="dryrun-dialog"]');
+  await dry.locator("input").fill("首页性能优化");
+  await sleep(1000);
+  await dry.getByRole("button", { name: /首页性能优化/ }).click();
+  await dry.locator('[data-sb-scope="dryrun-result"]').waitFor({ timeout: 10_000 });
+  await sleep(1600);
+  await dry.getByRole("button", { name: "关闭" }).click();
+  await sleep(800);
+  // 运行日志 Tab（C.146）
+  await page.locator('[data-sb-scope="automation-tabs"] [data-tab="runs"]').click();
+  await sleep(1600);
 }
 
 /* ═══════════ 幕05 工时提交→驳回→通过→台账 ═══════════ */
@@ -285,25 +293,28 @@ async function scene05([ls, zs]) {
 async function scene06(page) {
   await login(page);
   const { proj } = await s7ctx(page);
-  // 预设四套
-  const tpls = await api(page, "GET", `/workspaces/${WS}/workflow-templates/`);
-  const names = (tpls.body?.data ?? []).filter((t) => t.is_builtin).map((t) => t.name);
-  await jsonScene(page, "工作流模板库 · 预设四套（幂等种子）",
-    "GET workflow-templates/", { is_builtin: names });
-  // 两步下发确认（WF-005 §4.3）
-  const tpl = (tpls.body?.data ?? []).find((t) => t.is_builtin);
-  const dist = await api(page, "POST",
-    `/workspaces/${WS}/projects/${proj.id}/workflow-templates/`,
-    { template_id: tpl.id, confirm: true });
-  await jsonScene(page, "两步下发 · 确认实例化", "POST projects/…/workflow-templates/ {confirm:true}", dist.body);
-  // 审计链校验 + 导出头部（WF-006 §2.2/§2.3）
-  const verify = await api(page, "GET",
-    `/workspaces/${WS}/projects/${proj.id}/approval-audit/verify/`);
-  const auditRows = await api(page, "GET",
-    `/workspaces/${WS}/projects/${proj.id}/approval-audit/`);
-  const preview = (auditRows.body?.data ?? []).slice(0, 2);
-  await jsonScene(page, "审批留痕 · 哈希链校验", "GET approval-audit/verify/", {
-    ...verify.body?.data, recent_events: preview });
+  // 模板库（C.145）：预设四套卡片 + 两步下发向导（预演后取消，保演示项目干净）
+  await page.goto(`/${WS}/workflow-templates`);
+  await sleep(1400);
+  const cards = page.locator('[data-sb-scope="tpl-row"]');
+  await cards.first().waitFor({ timeout: 10_000 });
+  await sleep(1000);
+  await cards.first().locator('[data-sb-scope="tpl-distribute-btn"]').click();
+  await sleep(700);
+  const dialog = page.locator('[data-sb-scope="dist-dialog"]');
+  const sel = dialog.locator('[data-sb-scope="dist-project-select"]');
+  await sel.waitFor({ timeout: 8_000 });
+  await sel.selectOption(proj.id);
+  await sleep(500);
+  await dialog.locator('[data-sb-scope="dist-preview-btn"]').click();
+  await dialog.locator('[data-sb-scope="dist-preview"]').waitFor({ timeout: 10_000 });
+  await sleep(1800);
+  await dialog.getByRole("button", { name: "取消" }).click();
+  await sleep(900);
+  // 审计页（C.148）：链完整性徽标 + 事件列表 + 导出
+  await page.goto(`/${WS}/projects/${proj.id}/audit`);
+  await page.locator('[data-sb-scope="audit-verify-badge"]').waitFor({ timeout: 10_000 });
+  await sleep(1800);
 }
 
 /* ═══════════ main ═══════════ */

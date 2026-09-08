@@ -1531,7 +1531,7 @@ export const AuditAPI = {
     api.get<Array<Record<string, unknown>>>(
       `workspaces/${slug}/projects/${projectId}/approval-audit/`, { params }),
   verify: (slug: string, projectId: string) =>
-    api.get<{ valid: boolean; event_count: number; head_hash?: string; checked_at?: string }>(
+    api.get<{ chain_intact: boolean; broken_event_ids: number[] }>(
       `workspaces/${slug}/projects/${projectId}/approval-audit/verify/`),
   /** CSV 流式导出（WF-006 §2.3）——blob 下载。 */
   exportCsv: (slug: string, projectId: string) =>

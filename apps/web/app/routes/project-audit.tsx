@@ -15,7 +15,7 @@ type Ev = Record<string, unknown>;
 export default function ProjectAuditPage() {
   const { workspaceSlug: ws, projectId } = useParams();
   const [events, setEvents] = useState<Ev[]>([]);
-  const [verify, setVerify] = useState<{ valid: boolean; event_count: number; head_hash?: string } | null>(null);
+  const [verify, setVerify] = useState<{ chain_intact: boolean; broken_event_ids: number[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [projName, setProjName] = useState("…");
   const [projIdentifier, setProjIdentifier] = useState("");
@@ -29,7 +29,7 @@ export default function ProjectAuditPage() {
         AuditAPI.verify(ws, projectId).catch(() => null),
       ]);
       setEvents(unwrap<Ev[]>(e) ?? []);
-      setVerify((v as unknown as { data: { valid: boolean; event_count: number; head_hash?: string } } | null)?.data ?? null);
+      setVerify((v as unknown as { data: { chain_intact: boolean; broken_event_ids: number[] } } | null)?.data ?? null);
     } catch {
       toast("加载审计事件失败", "error");
     } finally {
@@ -83,8 +83,8 @@ export default function ProjectAuditPage() {
             {/* 完整性徽标（§3：绿=链完整；红=断裂须告警） */}
             {verify && (
               <span data-sb-scope="audit-verify-badge"
-                className={`px-2 py-0.5 rounded text-xs inline-flex items-center gap-1 ${verify.valid ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
-                {verify.valid ? "🔒 链完整" : "⚠ 链断裂"} · {verify.event_count} 事件
+                className={`px-2 py-0.5 rounded text-xs inline-flex items-center gap-1 ${verify.chain_intact ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                {verify.chain_intact ? "🔒 链完整" : `⚠ 链断裂（${verify.broken_event_ids.length} 处）`} · {events.length} 事件
               </span>
             )}
             <div className="flex-1" />

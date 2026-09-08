@@ -15,6 +15,7 @@
 | 6 | e2e spec（approval-center/canvas/worklog） | 附录 C.140~C.143 清单已入库 + 组件 data-sb-scope 全埋；spec 随验收视频轮（用户参与）补 |
 | 7 | 覆盖率新面（plane/workflow 域） | pytest 118 项覆盖主路径；80% 门槛推进随 TC-COVER 复测（承 Sprint-6 #4/#5 软目标） |
 | 8 | sprint-5-flow 32/8 历史在案（R0 补登记） | Sprint-5 收口 39/47 同源：W6 段 mock 只 patch 同步 `_post`、重试经 apply_async 投 worker 无 mock + 真退避 → 终态不可达；A1-01/P3-03/P3-04/I5-06/I5-09 待查。r1-inflight R0 段曾承诺「R5 收口时入本表」但实际漏登，Sprint-8 R0 补上；修复随首个 flow 复跑轮 triage |
+| 9 | UI 补口余项（2026-09-09 补口轮：C.144~C.149 已交付——工作流列表/模板库/自动化规则/审计页/画布边配置/字段权限矩阵 + 侧栏入口；以下尾项顺延） | ① WF-006 WS 级审计检索页（跨项目聚合，随首个合规场景）；② WF-005 模板升级提示流 + 解锁申请 UI（admin 深化面）；③ WF-004 守卫 hover 预览徽标；④ TASK-013 预估进度环 |
 
 ## B. 本迭代收口清单（已闭环，留档）
 

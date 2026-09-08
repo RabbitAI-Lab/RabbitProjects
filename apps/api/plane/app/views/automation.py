@@ -1,4 +1,4 @@
-"""自动化规则端点（WF-003 §4.5）——CRUD + Dry Run + 设置 PATCH。
+"""自动化规则端点（WF-003 §4.5）——CRUD + Dry Run + 设置 PATCH + 运行日志。
 
 CRUD：列表/详情/创建/PATCH/删除 + 启停 + Dry Run + settings 读写。
 Dry Run 入口 0 写（BR-11）；启停通过 PATCH is_active。
@@ -13,7 +13,7 @@ from plane.app.permissions import IsAuthenticated, ProjectAdminPermission
 from plane.app.views._access import get_project_or_404
 from plane.base.exception import AppException
 from plane.base.response import created_response, success_response
-from plane.db.models import AutomationRule, AutomationSetting, Issue
+from plane.db.models import AutomationRule, AutomationRun, AutomationSetting, Issue
 from plane.workflow.automation_service import (
     dry_run,
     get_settings,
@@ -167,3 +167,39 @@ class AutomationSettingView(APIView):
         s.save()
         invalidate_settings_cache(project.id)
         return success_response({"allow_rule_chain": s.allow_rule_chain})
+
+
+class AutomationRunListView(APIView):
+    """GET …/automation-runs/ 运行日志（WF-003 §4.5——成员读，rbac §8.2 行级）。
+
+    过滤：?rule=&status=&from=&to=（ISO 日期/时间）；默认排序 -created_at, -id。
+    分页：单页 50 条 + meta.count（cursor 机制随首个大容量日志场景接入）。
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, slug, project_id):
+        project, _, _ = get_project_or_404(slug, project_id, request.user)
+        qs = (AutomationRun.objects
+              .filter(rule__project=project, rule__deleted_at__isnull=True)
+              .select_related("rule", "issue")
+              .order_by("-created_at", "-id"))
+        if rule_id := request.query_params.get("rule"):
+            qs = qs.filter(rule_id=rule_id)
+        if st := request.query_params.get("status"):
+            qs = qs.filter(status=st)
+        if from_ := request.query_params.get("from"):
+            qs = qs.filter(created_at__gte=from_)
+        if to_ := request.query_params.get("to"):
+            qs = qs.filter(created_at__lte=to_)
+        rows = [{
+            "id": r.id,
+            "rule_id": str(r.rule_id), "rule_name": r.rule.name,
+            "issue_id": str(r.issue_id) if r.issue_id else None,
+            "issue_key": r.issue.issue_key if r.issue else None,
+            "issue_name": r.issue.name if r.issue else None,
+            "event": r.event, "status": r.status, "skip_reason": r.skip_reason,
+            "action_results": r.action_results, "duration_ms": r.duration_ms,
+            "created_at": r.created_at.isoformat(),
+        } for r in qs[:50]]
+        return success_response(rows, meta={"count": len(rows)})

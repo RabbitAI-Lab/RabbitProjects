@@ -7,6 +7,8 @@ const items = [
   { to: "projects", label: "项目", enabled: true },
   // WF-002 §3.1（Sprint-7）：审批中心一级入口（C.140）
   { to: "approvals", label: "审批", enabled: true },
+  // WF-005 §3（Sprint-7 / C.145）：工作流模板库一级入口（预设四套 + 两步下发）——2026-09-09 入口补口
+  { to: "workflow-templates", label: "模板库", enabled: true },
   { to: "my-tasks", label: "我的任务", enabled: false, hint: "RPT-001 交付" },
   // ADR-0011 #18：工作区侧栏「团队设置」由置灰点亮为成员管理入口（TEAM-002 §3.1 / C.15）
   { to: "settings/members", label: "团队设置", enabled: true },
@@ -23,7 +25,9 @@ export function Sidebar({ workspaceSlug }: { workspaceSlug: string }) {
             ? `/${workspaceSlug}/settings/members`
             : it.to === "approvals"
               ? `/${workspaceSlug}/approvals`
-              : `/${workspaceSlug}`;
+              : it.to === "workflow-templates"
+                ? `/${workspaceSlug}/workflow-templates`
+                : `/${workspaceSlug}`;
         if (!it.enabled) {
           return (
             <span key={it.to} title={`${it.hint} · 即将上线`} className="h-[34px] px-2.5 rounded-md flex items-center gap-2 text-sm text-neutral-400 cursor-not-allowed">

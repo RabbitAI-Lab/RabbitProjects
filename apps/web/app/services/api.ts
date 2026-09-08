@@ -1478,3 +1478,57 @@ export const WorklogAPI = {
       total_minutes: number; task_count: number; over_8h_days: number; is_frozen: boolean }>>(
       `workspaces/${slug}/projects/${projectId}/worklog-ledger/`),
 };
+
+/** ── Sprint-7 补口（2026-09-09 UI parity 收口轮）──────────────────────
+ *  审批流定义（画布侧栏挂接）/ 模板库（WF-005）/ 自动化规则（WF-003）/
+ *  审计留痕（WF-006）四组端点此前仅种子脚本/jmeter 消费，无前端接线。 */
+
+export const ApprovalFlowAPI = {
+  list: (slug: string, projectId: string) =>
+    api.get<Array<{ id: string; name: string; is_active: boolean; node_count?: number }>>(
+      `workspaces/${slug}/projects/${projectId}/approval-flows/`),
+};
+
+export const TemplateAPI = {
+  list: (slug: string) =>
+    api.get<Array<{ id: string; name: string; description: string; is_builtin: boolean;
+      status: string; version: number; state_count: number; updated_at: string }>>(
+      `workspaces/${slug}/workflow-templates/`),
+  /** 两步下发第一步：预演（BR-05 状态映射回显）；confirm=true 实例化。 */
+  distribute: (slug: string, projectId: string, templateId: string, confirm = false) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/workflow-templates/`,
+      { template_id: templateId, confirm }, { params: undefined }),
+};
+
+export const AutomationAPI = {
+  list: (slug: string, projectId: string) =>
+    api.get<Array<{ id: string; name: string; is_active: boolean; trigger: { type: string; config?: Record<string, unknown> };
+      conditions: Array<Record<string, unknown>>; actions: Array<{ type: string; config?: Record<string, unknown> }>;
+      last_run_at: string | null }>>(`workspaces/${slug}/projects/${projectId}/automation-rules/`),
+  create: (slug: string, projectId: string, payload: Record<string, unknown>) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/automation-rules/`, payload),
+  patch: (slug: string, projectId: string, ruleId: string, payload: Record<string, unknown>) =>
+    api.patch(`workspaces/${slug}/projects/${projectId}/automation-rules/${ruleId}/`, payload),
+  remove: (slug: string, projectId: string, ruleId: string) =>
+    api.delete(`workspaces/${slug}/projects/${projectId}/automation-rules/${ruleId}/`),
+  /** Dry Run（WF-003 §2.4）：按规则 0 写预演，回显将命中/将执行的动作。 */
+  dryRun: (slug: string, projectId: string, ruleId: string, issueId: string) =>
+    api.post<Record<string, unknown>>(
+      `workspaces/${slug}/projects/${projectId}/automation-rules/${ruleId}/dry-run/`, { issue_id: issueId }),
+  /** 运行日志（§4.5：?rule=&status=&from=&to=；-created_at,-id）。 */
+  runs: (slug: string, projectId: string, params: { rule?: string; status?: string; from?: string; to?: string } = {}) =>
+    api.get<Array<Record<string, unknown>>>(
+      `workspaces/${slug}/projects/${projectId}/automation-runs/`, { params }),
+};
+
+export const AuditAPI = {
+  events: (slug: string, projectId: string, params: { page?: number } = {}) =>
+    api.get<Array<Record<string, unknown>>>(
+      `workspaces/${slug}/projects/${projectId}/approval-audit/`, { params }),
+  verify: (slug: string, projectId: string) =>
+    api.get<{ valid: boolean; event_count: number; head_hash?: string; checked_at?: string }>(
+      `workspaces/${slug}/projects/${projectId}/approval-audit/verify/`),
+  /** CSV 流式导出（WF-006 §2.3）——blob 下载。 */
+  exportCsv: (slug: string, projectId: string) =>
+    api.get(`workspaces/${slug}/projects/${projectId}/approval-audit/export/`, { responseType: "blob" }),
+};

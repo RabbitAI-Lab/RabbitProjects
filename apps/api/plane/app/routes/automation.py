@@ -1,10 +1,11 @@
-"""自动化域路由（WF-003 §4.5）——5 端点（CRUD + dry-run + settings）。"""
+"""自动化域路由（WF-003 §4.5）——6 端点（CRUD + dry-run + settings + runs 日志）。"""
 from django.urls import path
 
 from plane.app.views.automation import (
     AutomationRuleDetailView,
     AutomationRuleDryRunView,
     AutomationRuleListCreateView,
+    AutomationRunListView,
     AutomationSettingView,
 )
 
@@ -15,6 +16,8 @@ urlpatterns = [
          AutomationRuleDetailView.as_view(), name="automation-rules-detail"),
     path("workspaces/<slug:slug>/projects/<uuid:project_id>/automation-rules/<uuid:rule_id>/dry-run/",
          AutomationRuleDryRunView.as_view(), name="automation-rules-dry-run"),
+    path("workspaces/<slug:slug>/projects/<uuid:project_id>/automation-runs/",
+         AutomationRunListView.as_view(), name="automation-runs-list"),
     path("workspaces/<slug:slug>/projects/<uuid:project_id>/automation-settings/",
          AutomationSettingView.as_view(), name="automation-settings"),
 ]

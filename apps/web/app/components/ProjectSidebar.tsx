@@ -55,7 +55,27 @@ export function ProjectSidebar({ projectName, identifier }: { projectName: strin
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3v16a2 2 0 0 0 2 2h16M7 15l3-4 3 3 5-7"/></svg>
         统计
       </NavLink>
+      {/* Sprint-7（TASK-013 §3.1 / C.143）：工时周视图/队列/台账——2026-09-09 入口补口 */}
+      <NavLink to={`${base}/worklog`} className={({ isActive }) => item(isActive)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        工时
+      </NavLink>
+      {/* Sprint-7（WF-003 §4.5 / C.146）：自动化规则——2026-09-09 入口补口 */}
+      <NavLink to={`${base}/automation`} className={({ isActive }) => item(isActive)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+        自动化
+      </NavLink>
       <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider px-2.5 py-2 mt-1">管理</div>
+      {/* Sprint-7（WF-001/WF-005 / C.144）：工作流列表（画布入口 + 模板下发的产物管理） */}
+      <NavLink to={`${base}/workflows`} end className={({ isActive }) => item(isActive)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="5" x="3" y="3" rx="1"/><rect width="8" height="5" x="3" y="16" rx="1"/><path d="M7 8v4M12 5.5v3.5a3 3 0 0 0 3 3h3"/><path d="M18 11v2"/></svg>
+        工作流
+      </NavLink>
+      {/* Sprint-7（WF-006 §3 / C.148）：审批留痕审计 */}
+      <NavLink to={`${base}/audit`} end className={({ isActive }) => item(isActive)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-3.5 8-10V5l-8-3-8 3v7c0 6.5 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+        审计
+      </NavLink>
       {/* end：settings/integrations|webhooks|fields 等子页不得连带高亮本项（同「任务列表」） */}
       <NavLink to={`${base}/settings`} end className={({ isActive }) => item(isActive)}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/></svg>

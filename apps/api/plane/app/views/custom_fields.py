@@ -82,7 +82,10 @@ class FieldSchemaView(APIView):
         payload = build_field_schema(project, issue_type_id)
         # TASK-012 §4.4：按请求者角色为 custom[] 每项注入 access 四态标注
         # （ETag 仍只锁定定义集；access 在视图层二次 resolve，零 Schema API 缓存污染）
-        from plane.db.models import CustomFieldDefinition, Q
+        # Q 在 django.db.models（plane.db.models 不导出——函数内 import 漏网曾致全端点 500）
+        from django.db.models import Q
+
+        from plane.db.models import CustomFieldDefinition
 
         if payload.get("custom"):
             cf_defs = list(CustomFieldDefinition.objects

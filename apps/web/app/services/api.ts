@@ -1358,3 +1358,123 @@ export const WebhookAPI = {
     api.post<WebhookDeliveryRow>(
       `workspaces/${slug}/projects/${projectId}/webhooks/${id}/deliveries/${deliveryId}/`),
 };
+
+/* ════════════════ Sprint-7 M11-WF（WF-001/002/003 + TASK-013）════════════════ */
+
+/** WF-001 §4.8① available 项：requires_payload 配置态 / blocked_by 执行态计数。 */
+export interface TransitionAvailableItem {
+  transition_id: string;
+  name: string;
+  to_state: { id: string; name: string; group: string; color: string };
+  requires_payload: string[];
+  has_approval: boolean;
+  allowed: boolean;
+  deny_reason?: string;
+  blocked_by: Array<{ type: string; count: number }>;
+}
+
+/** WF-002 §4.6 审批中心行。 */
+export interface ApprovalRow {
+  instance_id: string;
+  status: "pending" | "approved" | "rejected" | "withdrawn" | "terminated";
+  current_level: number;
+  flow_name: string;
+  issue: { id: string; issue_key: string; name: string; project_id: string };
+  initiator_id: string;
+  created_at: string;
+  completed_at?: string | null;
+  my_action?: string;
+}
+
+export const WorkflowAPI = {
+  list: (slug: string, projectId: string) =>
+    api.get<Array<{ id: string; name: string; issue_type_id: string | null; status: string;
+      version: number; state_count: number; transition_count: number; updated_at: string }>>(
+      `workspaces/${slug}/projects/${projectId}/workflows/`),
+  detail: (slug: string, projectId: string, wfId: string) =>
+    api.get<WorkflowDetail>(`workspaces/${slug}/projects/${projectId}/workflows/${wfId}/`),
+  create: (slug: string, projectId: string, payload: { name: string; issue_type_id?: string | null; description?: string }) =>
+    api.post<WorkflowDetail>(`workspaces/${slug}/projects/${projectId}/workflows/`, payload),
+  patch: (slug: string, projectId: string, wfId: string, payload: Partial<{ name: string; description: string; issue_type_id: string | null }>) =>
+    api.patch(`workspaces/${slug}/projects/${projectId}/workflows/${wfId}/`, payload),
+  saveGraph: (slug: string, projectId: string, wfId: string, payload: { states: Array<Record<string, unknown>>; transitions: Array<Record<string, unknown>> }, etag: string) =>
+    api.put<WorkflowDetail>(`workspaces/${slug}/projects/${projectId}/workflows/${wfId}/graph/`, payload,
+      { headers: { "If-Match": etag } }),
+  publish: (slug: string, projectId: string, wfId: string) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/workflows/${wfId}/publish/`),
+  archive: (slug: string, projectId: string, wfId: string) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/workflows/${wfId}/archive/`),
+  /** 任务侧：当前可用流转（fallback=true 时退化为 V1.0 状态下拉）。 */
+  available: (slug: string, projectId: string, issueId: string) =>
+    api.get<{ workflow: { id: string; name: string; version: number } | null;
+      current_state: { id: string; name: string; group: string; color: string } | null;
+      available: TransitionAvailableItem[] | null; fallback: boolean }>(
+      `workspaces/${slug}/projects/${projectId}/issues/${issueId}/transitions/available/`),
+  /** 执行流转（200 成功 / 202 审批挂起 / 4xx 守卫拦截结构化）。 */
+  execute: (slug: string, projectId: string, issueId: string, payload: {
+    to_state_id: string; transition_id?: string; guard_payload?: Record<string, unknown> }) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/issues/${issueId}/transitions/`, payload),
+};
+
+/** WF-001 §4.8⑤ 图详情（画布载荷）。 */
+export interface WorkflowDetail {
+  id: string;
+  name: string;
+  issue_type_id: string | null;
+  status: string;
+  version: number;
+  based_on_version: number | null;
+  states: Array<{ id: string; state_id: string; name?: string; group?: string; color?: string;
+    is_initial: boolean; layout_x: number; layout_y: number; field_locks: Array<{ field: string }> }>;
+  transitions: Array<{ id: string; name: string; from_state_id: string; to_state_id: string;
+    guards: Array<{ type: string; config?: Record<string, unknown> }>;
+    side_effects: Array<{ type: string; config?: Record<string, unknown> }>;
+    approval_flow_id: string | null; sort_order: number }>;
+}
+
+export const ApprovalAPI = {
+  pending: (slug: string, params: { cursor?: string } = {}) =>
+    api.get<ApprovalRow[]>(`workspaces/${slug}/approvals/pending/`, { params }),
+  pendingCount: (slug: string) =>
+    api.get<{ count: number }>(`workspaces/${slug}/approvals/pending/`, { params: { count_only: 1 } }),
+  acted: (slug: string, params: { cursor?: string } = {}) =>
+    api.get<ApprovalRow[]>(`workspaces/${slug}/approvals/acted/`, { params }),
+  mine: (slug: string, params: { cursor?: string } = {}) =>
+    api.get<ApprovalRow[]>(`workspaces/${slug}/approvals/mine/`, { params }),
+  instance: (slug: string, projectId: string, aid: string) =>
+    api.get<ApprovalInstanceDetail>(
+      `workspaces/${slug}/projects/${projectId}/approval-instances/${aid}/`),
+  act: (slug: string, projectId: string, aid: string, payload: { action: string; comment?: string }) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/approval-instances/${aid}/actions/`, payload),
+  issueApprovals: (slug: string, projectId: string, issueId: string) =>
+    api.get<ApprovalRow[]>(
+      `workspaces/${slug}/projects/${projectId}/issues/${issueId}/approvals/`),
+};
+
+/** WF-002 §4.6 实例详情（时间线）。 */
+export interface ApprovalInstanceDetail extends ApprovalRow {
+  from_state: { id: string };
+  nodes: Array<{ level: number; pass_mode: string; approver_type: string;
+    approver_config: Record<string, unknown> }>;
+  records: Array<{ level: number; approver_id: string; approver_name: string;
+    action: string; comment: string; acted_at: string | null }>;
+}
+
+export const WorklogAPI = {
+  submit: (slug: string, projectId: string, weekStart: string) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/worklog-approvals/submit/`, { week_start: weekStart }),
+  approve: (slug: string, projectId: string, aid: string) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/worklog-approvals/${aid}/approve/`),
+  reject: (slug: string, projectId: string, aid: string, note: string) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/worklog-approvals/${aid}/reject/`, { note }),
+  revoke: (slug: string, projectId: string, aid: string, note: string) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/worklog-approvals/${aid}/revoke/`, { note }),
+  queue: (slug: string, projectId: string) =>
+    api.get<Array<{ id: string; actor_id: string; actor_name: string; week_start: string;
+      status: string; review_note: string; submitted_at: string | null }>>(
+      `workspaces/${slug}/projects/${projectId}/worklog-approvals/`, { params: { scope: "queue" } }),
+  ledger: (slug: string, projectId: string) =>
+    api.get<Array<{ actor_id: string; actor_name: string; week_start: string;
+      total_minutes: number; task_count: number; over_8h_days: number; is_frozen: boolean }>>(
+      `workspaces/${slug}/projects/${projectId}/worklog-ledger/`),
+};

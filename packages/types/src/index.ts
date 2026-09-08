@@ -160,6 +160,9 @@ export interface Issue {
   estimate_minutes?: number | null;
   /** TASK-006：已耗（分钟；列表/详情 queryset annotate，缺省 0）。 */
   spent_minutes?: number;
+  /** Sprint-7（WF-002 §3.5，补口轮）：任务有进行中的审批实例（列表 annotate；
+   *  看板/列表「审」徽标数据源，详情上下文缺省 undefined）。 */
+  has_pending_approval?: boolean;
   /** TASK-008 §4.2.4：自定义字段值（JSONB 整列透出；停用字段的值保留在响应中由 UI 过滤）。 */
   custom_fields?: Record<string, unknown>;
   created_by: { id: UUID; name: string };
@@ -341,4 +344,3 @@ export interface PresencePayload {
     display_name: string;
   };
 }
-

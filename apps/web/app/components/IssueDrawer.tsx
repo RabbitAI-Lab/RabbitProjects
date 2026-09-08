@@ -167,10 +167,27 @@ function CfRow({ field, value, editable, onSave, members }: {
       control = value != null ? <span className="font-mono text-[13px]">¥{Number(value).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</span> : <span className="text-neutral-400">—</span>;
     } else if (field.type === "date") {
       control = value ? <span className="font-mono text-[13px]">{String(value)}</span> : <span className="text-neutral-400">—</span>;
+    } else if (field.type === "date_range") {
+      // TASK-012 四高级类型控件（补口轮）：区间双日期
+      const dr = (value ?? {}) as { start?: string; end?: string };
+      control = dr.start || dr.end ? <span className="font-mono text-[13px]">{dr.start ?? "?"} ~ {dr.end ?? "?"}</span> : <span className="text-neutral-400">—</span>;
+    } else if (field.type === "cascade") {
+      const path = Array.isArray(value) ? (value as string[]) : [];
+      const levels = field.cascade_config?.levels ?? [];
+      const labels = path.map((v, i) => levels[i]?.options?.find((o) => o.value === v)?.label ?? v);
+      control = path.length ? <span className="text-[13px]">{labels.join(" / ")}</span> : <span className="text-neutral-400">—</span>;
+    } else if (field.type === "relation") {
+      const n = Array.isArray(value) ? (value as unknown[]).length : 0;
+      control = n ? <span className="text-[13px] text-brand-600">🔗 {n} 个关联</span> : <span className="text-neutral-400">—</span>;
+    } else if (field.type === "attachment") {
+      const n = Array.isArray(value) ? (value as unknown[]).length : 0;
+      control = n ? <span className="text-[13px]">📎 {n} 个附件</span> : <span className="text-neutral-400">—</span>;
     } else {
       control = value != null && value !== "" ? <span className="text-[13px]">{String(value)}</span> : <span className="text-neutral-400">—</span>;
     }
-    control = editable ? (
+    // relation/attachment 的值经「关联分区/附件区」管理（§4.3 受限语义），本行只读呈现
+    const noInlineEdit = field.type === "relation" || field.type === "attachment";
+    control = editable && !noInlineEdit ? (
       <button className="text-left hover:bg-neutral-50 rounded px-1 -mx-1 min-w-0" data-sb-scope="drawer-cf-value"
         onClick={() => { setDraft(String(value ?? "")); setEditing(true); }}>{control}</button>
     ) : <span className="min-w-0">{control}</span>;
@@ -228,6 +245,39 @@ function CfRow({ field, value, editable, onSave, members }: {
     } else if (field.type === "textarea") {
       control = <textarea rows={2} className="border border-neutral-300 rounded p-1.5 text-[13px] w-full" data-sb-scope="drawer-cf-edit"
         defaultValue={draft} onBlur={(e) => commit(e.target.value || null)} />;
+    } else if (field.type === "date_range") {
+      // TASK-012（补口轮）：区间双日期，任一变更即整段提交（start ≤ end 由服务端 BR-06 校验）
+      const dr = (value ?? {}) as { start?: string; end?: string };
+      control = (
+        <span className="flex items-center gap-1" data-sb-scope="drawer-cf-edit">
+          <input type="date" aria-label="区间开始" defaultValue={dr.start ?? ""} className="h-7 border border-neutral-300 rounded px-1.5 text-[13px]"
+            onChange={(e) => commit({ start: e.target.value || dr.start || "", end: dr.end ?? e.target.value ?? "" })} />
+          <span className="text-neutral-400">~</span>
+          <input type="date" aria-label="区间结束" defaultValue={dr.end ?? ""} className="h-7 border border-neutral-300 rounded px-1.5 text-[13px]"
+            onChange={(e) => commit({ start: dr.start ?? "", end: e.target.value || dr.start || "" })} />
+        </span>
+      );
+    } else if (field.type === "cascade") {
+      // TASK-012（补口轮）：逐级联动下拉（子级选项按 parent_value 过滤，BR-04 连续性）
+      const path = Array.isArray(value) ? (value as string[]) : [];
+      const levels = field.cascade_config?.levels ?? [];
+      control = (
+        <span className="flex items-center gap-1 flex-wrap" data-sb-scope="drawer-cf-edit">
+          {levels.map((lv, i) => (
+            <select key={i} defaultValue={path[i] ?? ""} aria-label={`第 ${i + 1} 级`}
+              className="h-7 border border-neutral-300 rounded px-1 text-[12px]"
+              onChange={(e) => {
+                const next = [...path.slice(0, i), e.target.value].filter(Boolean);
+                commit(next.length ? next : null);
+              }}>
+              <option value="">{lv.name ?? `第 ${i + 1} 级`}</option>
+              {(lv.options ?? [])
+                .filter((o) => i === 0 || o.parent_value == null || o.parent_value === path[i - 1])
+                .map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          ))}
+        </span>
+      );
     } else {
       control = <input type="text" className="h-7 border border-neutral-300 rounded px-1.5 text-[13px] w-full" data-sb-scope="drawer-cf-edit"
         defaultValue={draft} onBlur={(e) => commit(e.target.value || null)} />;
@@ -299,9 +349,11 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
   /** C.23 属性行内编辑当前展开的下拉（状态 / 类型 / 优先级 / 负责人） */
   const [propMenu, setPropMenu] = useState<"state" | "type" | "priority" | "assignee" | null>(null);
   /** Sprint-7（WF-001 §3.4）：受控流转入口——available 边按钮 + 守卫对话框。
-   *  fallback=true（无工作流）时保持 V1.0 状态下拉（零回归）。 */
+   *  fallback=true（无工作流）时保持 V1.0 状态下拉（零回归）。
+   *  currentLocks：当前状态字段锁（WF-004 §3.2 锁定灰显，available 响应携带）。 */
   const [flowEdges, setFlowEdges] = useState<TransitionAvailableItem[]>([]);
   const [isControlled, setIsControlled] = useState(false);
+  const [currentLocks, setCurrentLocks] = useState<Set<string>>(new Set());
   const [guardDlg, setGuardDlg] = useState<{
     transitionId: string; toStateId: string; transitionName: string; failures: GuardItem[];
   } | null>(null);
@@ -445,13 +497,16 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
     // Sprint-7：当前可用流转（受控项目边按钮；无工作流 fallback 保持状态下拉）
     WorkflowAPI.available(slug, projectId, issueId)
       .then((r) => {
-        const d = (r as unknown as { data?: { fallback: boolean; available: TransitionAvailableItem[] | null } }).data;
+        const d = (r as unknown as { data?: { fallback: boolean; available: TransitionAvailableItem[] | null;
+          current_locks?: string[] } }).data;
         if (d && d.fallback === false && d.available) {
           setIsControlled(true);
           setFlowEdges(d.available);
+          setCurrentLocks(new Set(d.current_locks ?? []));
         } else {
           setIsControlled(false);
           setFlowEdges([]);
+          setCurrentLocks(new Set());
         }
       })
       .catch(() => { /* available 拉不到不阻断抽屉 */ });
@@ -794,7 +849,13 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
   /** C.55 动态字段值落库（PATCH 合并语义；显式清空传 null）。 */
   async function setFieldValue(key: string, value: unknown) {
     try {
-      await IssueAPI.patch(slug, projectId, issueId, { custom_fields: { [key]: value } });
+      const r = await IssueAPI.patch(slug, projectId, issueId, { custom_fields: { [key]: value } });
+      // TASK-012 §4.4（补口轮）：BR-16 静默丢弃 readonly/hidden 的提示钩子
+      const dropped = (r as unknown as { meta?: { warning?: { dropped_fields?: string[] } } })
+        ?.meta?.warning?.dropped_fields;
+      if (dropped?.length) {
+        toast(`权限不足，未写入：${dropped.join("、")}`, "warning");
+      }
       await refresh(); saved();
     } catch (e: unknown) {
       const err = e as ApiError;
@@ -1171,9 +1232,11 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
                   )}
                 </div>
 
-                <label className="text-[13px] text-neutral-500">开始</label>
+                <label className="text-[13px] text-neutral-500">开始{currentLocks.has("start_date") && " 🔒"}</label>
                 <input type="date" aria-label="开始日期" data-sb-scope="drawer-attr-start"
-                  className="justify-self-start h-7 border border-neutral-300 rounded px-1.5 text-[13px] bg-white hover:border-neutral-400"
+                  disabled={currentLocks.has("start_date")}
+                  title={currentLocks.has("start_date") ? "当前状态锁定该字段（WF-004 字段锁）" : undefined}
+                  className="justify-self-start h-7 border border-neutral-300 rounded px-1.5 text-[13px] bg-white hover:border-neutral-400 disabled:bg-neutral-50 disabled:text-neutral-400"
                   value={startDraft}
                   onChange={(e) => {
                     const v = e.target.value;
@@ -1182,9 +1245,11 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
                       .then((ok) => { if (!ok) setStartDraft(issue.start_date ?? ""); });
                   }} />
 
-                <label className="text-[13px] text-neutral-500">截止</label>
+                <label className="text-[13px] text-neutral-500">截止{currentLocks.has("target_date") && " 🔒"}</label>
                 <input type="date" aria-label="截止日期" data-sb-scope="drawer-attr-target"
-                  className="justify-self-start h-7 border border-neutral-300 rounded px-1.5 text-[13px] bg-white hover:border-neutral-400"
+                  disabled={currentLocks.has("target_date")}
+                  title={currentLocks.has("target_date") ? "当前状态锁定该字段（WF-004 字段锁）" : undefined}
+                  className="justify-self-start h-7 border border-neutral-300 rounded px-1.5 text-[13px] bg-white hover:border-neutral-400 disabled:bg-neutral-50 disabled:text-neutral-400"
                   value={targetDraft}
                   onChange={(e) => {
                     const v = e.target.value;

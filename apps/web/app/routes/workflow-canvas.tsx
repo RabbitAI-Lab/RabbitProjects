@@ -12,7 +12,7 @@ import {
 import dagre from "dagre";
 import "@xyflow/react/dist/style.css";
 
-import { ProjectAPI, WorkflowAPI, type WorkflowDetail } from "../services/api";
+import { ApprovalFlowAPI, ProjectAPI, WorkflowAPI, type WorkflowDetail } from "../services/api";
 import type { ApiError } from "../services/axios";
 import { Topbar } from "../components/Topbar";
 import { ProjectSidebar } from "../components/ProjectSidebar";
@@ -92,7 +92,14 @@ export default function WorkflowCanvas() {
       setWf(r.data);
       setNodes(toFlowNodes(r.data));
       setEdges(toFlowEdges(r.data));
+      syncEdgeMeta(r.data);
+      const newEtag = (r as unknown as { headers?: { etag?: string } })?.headers?.etag;
+      if (newEtag) setEtag(newEtag.replace(/^W\//, "").replace(/"/g, ""));
     }).catch(() => { /* 404 等由路由层呈现 */ });
+    // WF-002 §3.3 审批分区数据源：项目审批流列表（侧栏挂接 approval_flow_id）
+    void ApprovalFlowAPI.list(ws, projectId).then((r) => {
+      setFlows((r as unknown as { data: typeof flows }).data ?? []);
+    }).catch(() => { /* 无审批流项目仅显示「无」 */ });
   }, [ws, projectId, wfId]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -110,6 +117,20 @@ export default function WorkflowCanvas() {
 
   const nodeTypes = useMemo(() => ({ stateNode: StateNodeView }), []);
 
+  /** 边业务元数据（守卫/审批流）——随图加载与保存往返；编辑在侧栏改、save() 全量带回。
+   *  WF-002 §3.3 审批分区 + WF-004 §3.1 守卫配置（2026-09-09 补口轮）。 */
+  const [edgeMeta, setEdgeMeta] = useState<Record<string, { guards: Array<{ type: string; config?: Record<string, unknown> }>;
+    approval_flow_id: string | null }>>({});
+  const [flows, setFlows] = useState<Array<{ id: string; name: string; is_active: boolean }>>([]);
+
+  function syncEdgeMeta(detail: WorkflowDetail) {
+    const m: typeof edgeMeta = {};
+    detail.transitions.forEach((t) => {
+      m[t.id] = { guards: t.guards ?? [], approval_flow_id: t.approval_flow_id };
+    });
+    setEdgeMeta(m);
+  }
+
   async function save() {
     if (!ws || !projectId || !wfId || !etag) return;
     setBusy(true);
@@ -125,12 +146,15 @@ export default function WorkflowCanvas() {
         transitions: edges.filter((e) => !e.id.startsWith("tmp-")).map((e) => ({
           id: e.id, from_state_id: e.source, to_state_id: e.target,
           name: (e.label as string) || "未命名",
-          guards: [], side_effects: [], approval_flow_id: null, sort_order: 1000,
+          guards: edgeMeta[e.id]?.guards ?? [],
+          side_effects: [],
+          approval_flow_id: edgeMeta[e.id]?.approval_flow_id ?? null, sort_order: 1000,
         })),
       }, etag);
       setWf(r.data);
       setNodes(toFlowNodes(r.data));
       setEdges(toFlowEdges(r.data));
+      syncEdgeMeta(r.data);
       setDirty(false);
       setMessage("画布已保存");
       const newEtag = (r as unknown as { headers?: { etag?: string } })?.headers?.etag;
@@ -232,9 +256,37 @@ export default function WorkflowCanvas() {
                 }}
                 className="mt-1 w-full border border-neutral-200 rounded px-2 h-8 text-sm" />
             </label>
-            <div className="text-xs text-neutral-400 space-y-1">
-              <div>守卫与副作用配置在发布前经服务端校验；</div>
-              <div>审批流挂接经 approval_flow_id 字段（画布侧栏 §3.3 完整配置面在 WF-002 联调窗交付）。</div>
+
+            {/* WF-002 §3.3 审批分区（补口轮）：审批流挂接 */}
+            <label className="block text-xs text-neutral-500">
+              审批流（202 挂起）
+              <select value={edgeMeta[selectedEdge.id]?.approval_flow_id ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value || null;
+                  setEdgeMeta((m) => ({ ...m, [selectedEdge.id]: {
+                    guards: m[selectedEdge.id]?.guards ?? [], approval_flow_id: v } }));
+                  setDirty(true);
+                }}
+                data-sb-scope="edge-approval-select"
+                className="mt-1 w-full border border-neutral-200 rounded px-2 h-8 text-sm">
+                <option value="">无（直接迁移）</option>
+                {flows.map((f) => <option key={f.id} value={f.id}>{f.name}{f.is_active ? "" : "（已停用）"}</option>)}
+              </select>
+            </label>
+
+            {/* WF-004 §3.1 守卫配置（补口轮）：四类守卫按需挂载 */}
+            <div className="border-t border-neutral-100 pt-2 space-y-1.5" data-sb-scope="edge-guards">
+              <div className="text-xs text-neutral-400">守卫（不满足则拦截）</div>
+              <GuardEditor edgeId={selectedEdge.id} meta={edgeMeta}
+                onChange={(guards) => {
+                  setEdgeMeta((m) => ({ ...m, [selectedEdge.id]: {
+                    guards, approval_flow_id: m[selectedEdge.id]?.approval_flow_id ?? null } }));
+                  setDirty(true);
+                }} />
+            </div>
+
+            <div className="text-xs text-neutral-400 space-y-1 border-t border-neutral-100 pt-2">
+              <div>守卫/审批配置随「保存」写入图（发布前服务端校验 §3.3）。</div>
             </div>
             <button type="button"
               onClick={() => { setEdges((es) => es.filter((x) => x.id !== selectedEdge.id)); setSelectedEdge(null); setDirty(true); }}
@@ -246,6 +298,76 @@ export default function WorkflowCanvas() {
       </div>
         </main>
       </div>
+    </div>
+  );
+}
+
+/** 守卫编辑器（WF-004 §4.2 四类）——勾选即挂载，required_fields 多选字段集。 */
+const GUARD_FIELDS = ["assignees", "target_date", "start_date", "estimate_minutes", "labels", "name", "description_html"];
+function findGuard(meta: Record<string, { guards: Array<{ type: string; config?: Record<string, unknown> }>; approval_flow_id: string | null }>,
+  edgeId: string, type: string) {
+  return meta[edgeId]?.guards.find((g) => g.type === type);
+}
+function GuardEditor({ edgeId, meta, onChange }: {
+  edgeId: string;
+  meta: Record<string, { guards: Array<{ type: string; config?: Record<string, unknown> }>; approval_flow_id: string | null }>;
+  onChange: (guards: Array<{ type: string; config?: Record<string, unknown> }>) => void;
+}) {
+  const guards = meta[edgeId]?.guards ?? [];
+  const rf = findGuard(meta, edgeId, "required_fields");
+  const rfFields = new Set<string>(((rf?.config ?? {}) as { fields?: string[] }).fields ?? []);
+  const toggleGuard = (g: { type: string; config?: Record<string, unknown> } | null) => {
+    const without = guards.filter((x) => x.type !== g?.type);
+    onChange(g ? [...without, g] : without);
+  };
+  const box = "flex items-center gap-1.5 text-[12px] text-neutral-600";
+  return (
+    <div className="space-y-1.5">
+      <label className={box}>
+        <input type="checkbox" checked={!!rf}
+          onChange={(e) => toggleGuard(e.target.checked
+            ? { type: "required_fields", config: { fields: ["assignees"] } } : null)}
+          data-sb-scope="guard-required-fields" />
+        必填字段
+      </label>
+      {rf && (
+        <div className="flex flex-wrap gap-1 pl-5" data-sb-scope="guard-rf-fields">
+          {GUARD_FIELDS.map((fld) => (
+            <button key={fld} type="button"
+              onClick={() => {
+                const next = new Set(rfFields);
+                if (next.has(fld)) next.delete(fld); else next.add(fld);
+                toggleGuard({ type: "required_fields", config: { fields: [...next] } });
+              }}
+              className={`px-1.5 py-0.5 rounded border text-[11px] ${rfFields.has(fld)
+                ? "border-brand-400 bg-brand-50 text-brand-600" : "border-neutral-200 text-neutral-500"}`}>
+              {fld}
+            </button>
+          ))}
+        </div>
+      )}
+      <label className={box}>
+        <input type="checkbox" checked={!!findGuard(meta, edgeId, "estimate_required")}
+          onChange={(e) => toggleGuard(e.target.checked ? { type: "estimate_required", config: {} } : null)}
+          data-sb-scope="guard-estimate" />
+        预估工时必填
+      </label>
+      <label className={box}>
+        <input type="checkbox" checked={!!findGuard(meta, edgeId, "blocker_completed")}
+          onChange={(e) => toggleGuard(e.target.checked ? { type: "blocker_completed", config: {} } : null)}
+          data-sb-scope="guard-blocker" />
+        前置任务须全部完成
+      </label>
+      <label className={box}>
+        <select value={(findGuard(meta, edgeId, "role_required")?.config as { role?: string } | undefined)?.role ?? ""}
+          onChange={(e) => toggleGuard(e.target.value ? { type: "role_required", config: { role: e.target.value } } : null)}
+          data-sb-scope="guard-role"
+          className="border border-neutral-200 rounded px-1.5 h-7 text-[12px] flex-1">
+          <option value="">角色门槛：无</option>
+          <option value="PROJ_ADMIN">项目管理员</option>
+          <option value="PROJ_MEMBER">项目成员</option>
+        </select>
+      </label>
     </div>
   );
 }

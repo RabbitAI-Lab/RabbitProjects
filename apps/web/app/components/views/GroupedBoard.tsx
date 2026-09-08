@@ -421,6 +421,8 @@ export function GroupedBoard({ vp, workspaceSlug, projectId, canEdit, blockedIds
                           className={`absolute top-1.5 left-1.5 w-[18px] h-[18px] accent-brand-500 z-[2] cursor-pointer transition-opacity ${selected || bulk.anySelected ? "opacity-100" : "opacity-0 group-hover/card:opacity-100"}`} />
                       )}
                       {blocked && <span className="absolute top-1.5 right-1.5 text-amber-500 text-[13px]" role="img" title={tip} aria-label={`被未完成前置任务阻塞：${tip}`} data-sb-scope="board-blocked-badge">⛔</span>}
+                      {/* WF-002 §3.5（补口轮）：审批中徽标——流转 202 挂起的可视锚点 */}
+                      {it.has_pending_approval && <span className="absolute top-1.5 right-6 text-[11px] px-1 rounded bg-violet-50 text-violet-600 font-medium" data-sb-scope="board-approval-badge" title="审批中（流转挂起，待审批人处理）">审</span>}
                       <div className="text-[13px] text-neutral-900 flex gap-1.5 items-start pl-1 pr-4">
                         <span className="font-mono text-[11px] px-1.5 py-px bg-neutral-100 rounded text-neutral-500 shrink-0">{it.issue_key}</span>
                         <span className="line-clamp-3">{it.name}</span>

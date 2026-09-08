@@ -163,6 +163,21 @@ export default function WorklogPage() {
           {ledger.length === 0 ? (
             <div className="text-sm text-neutral-400 py-12 text-center">暂无台账数据</div>
           ) : (
+            <>
+            <div className="flex justify-end mb-2">
+              {/* TASK-013 §3.3（补口轮）：台账导出——页内数据客户端生成 CSV */}
+              <button type="button" data-sb-scope="ledger-export-btn"
+                onClick={() => {
+                  const head = "成员,周,工时(小时),任务数,超8h天数,冻结";
+                  const csv = [head, ...ledger.map((r) =>
+                    [r.actor_name, r.week_start, (r.total_minutes / 60).toFixed(1), r.task_count, r.over_8h_days, r.is_frozen ? "是" : "否"].join(","))].join("\n");
+                  const url = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv" }));
+                  const a = document.createElement("a");
+                  a.href = url; a.download = `worklog-ledger-${weekStart}.csv`; a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="h-7 px-2.5 rounded border border-neutral-300 text-[12.5px] hover:bg-neutral-50">导出 CSV</button>
+            </div>
             <table className="w-full bg-white rounded-lg border border-neutral-200 text-sm">
               <thead>
                 <tr className="text-left text-neutral-500 border-b border-neutral-200">
@@ -187,6 +202,7 @@ export default function WorklogPage() {
                 ))}
               </tbody>
             </table>
+            </>
           )}
         </section>
       )}

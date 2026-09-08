@@ -521,6 +521,23 @@ class IssuePropertyDetailView(APIView):
                     raise AppValidationError(exc.extra_details) from None
             d.default_value = dv
 
+        # TASK-012 §4.4（2026-09-09 补口轮）：permission_config 可经 PATCH 更新
+        # （与创建同源校验 BR-08/BR-17——权限矩阵网格的写路径）
+        if "permission_config" in payload:
+            from plane.db.services.custom_fields import validate_permission_config
+
+            pc = payload.get("permission_config") or {}
+            pc_issues = validate_permission_config(pc)
+            if d.is_required:
+                read = set(pc.get("read", []) or [])
+                write = set(pc.get("write", []) or [])
+                if read and write and (read - write):
+                    pc_issues.append({"field": "permission_config", "code": "INVALID",
+                                      "message": "is_required 字段不得使任一可读角色落入 readonly（BR-17）"})
+            if pc_issues:
+                _raise(pc_issues)
+            d.permission_config = pc
+
         # BR-10：重新启用 / 新增索引标记时复检上限
         _check_limits(
             d.workspace_id,

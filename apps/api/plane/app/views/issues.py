@@ -22,7 +22,7 @@ import base64
 import time
 
 from django.db import transaction
-from django.db.models import Max, Q
+from django.db.models import Exists, Max, OuterRef, Q
 from rest_framework.exceptions import NotFound
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
 from rest_framework.views import APIView
@@ -49,7 +49,7 @@ from plane.app.serializers.issue import (
 from plane.app.views._access import get_project_or_404
 from plane.base.exception import AppException
 from plane.base.response import created_response, success_response
-from plane.db.models import Issue, IssueActivity, IssueType, IssueView, Label, State
+from plane.db.models import ApprovalInstance, Issue, IssueActivity, IssueType, IssueView, Label, State
 from plane.db.models.roles import ProjectRole
 from plane.db.services.custom_fields import (
     assign_auto_increments,
@@ -161,6 +161,11 @@ class IssueListCreateView(ListCreateAPIView):
         return (
             qs.select_related("project", "state", "issue_type", "created_by")
             .prefetch_related("issue_assignees", "issue_labels")
+            # WF-002 §3.5（补口轮）：审批中徽标——Exists 子查询一次注入（详情等
+            # 非 list 上下文不经此路径，SerializerMethodField 回落 False）
+            .annotate(_has_pending_approval=Exists(
+                ApprovalInstance.objects.filter(
+                    issue_id=OuterRef("pk"), status=ApprovalInstance.Status.PENDING)))
         )
 
     def list(self, request, *args, **kwargs):

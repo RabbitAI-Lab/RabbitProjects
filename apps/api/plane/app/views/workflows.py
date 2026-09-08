@@ -329,6 +329,12 @@ class IssueTransitionsAvailableView(APIView):
             wf.transitions.filter(from_state__state_id=issue.state_id)
             .select_related("to_state__state", "from_state__state")
             .order_by("sort_order"))
+        # WF-004 §3.2（补口轮）：当前状态的字段锁（前端锁定灰显数据源）
+        from plane.db.models import WorkflowState
+
+        current_locks = list(WorkflowState.objects.filter(
+            workflow=wf, state_id=issue.state_id)
+            .values_list("field_locks", flat=True).first() or [])
         from plane.db.services.field_schema import resolve_fields
         from plane.workflow.guards import has_any_role, run_guards
 
@@ -369,6 +375,7 @@ class IssueTransitionsAvailableView(APIView):
         return success_response({
             "workflow": {"id": str(wf.id), "name": wf.name, "version": wf.version},
             "current_state": _state_brief(issue.state),
+            "current_locks": [lk.get("field") for lk in current_locks if isinstance(lk, dict)],
             "available": available,
             "fallback": False,
         })

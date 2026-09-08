@@ -64,6 +64,8 @@ export default function ProjectFields() {
   const [editModal, setEditModal] = useState<CustomFieldDef | null | undefined>(undefined);
   /** M-DELFIELD 三段式 */
   const [delModal, setDelModal] = useState<CustomFieldDef | null>(null);
+  /** TASK-012 §4.4（补口轮）：权限矩阵弹层 */
+  const [permModal, setPermModal] = useState<CustomFieldDef | null>(null);
   /** 202 删除受理后的顶部黄条（C.54：后台任务进度链接占位） */
   const [delAccepted, setDelAccepted] = useState<{ name: string; affected: number; taskUrl: string } | null>(null);
 
@@ -191,6 +193,10 @@ export default function ProjectFields() {
                 <button role="menuitem" data-sb-scope="field-menu-edit" disabled={readonly}
                   onClick={() => { setRowMenuFor(null); setEditModal(d); }}
                   className="w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50 disabled:opacity-40">编辑</button>
+                {/* TASK-012 §4.4（补口轮）：权限矩阵网格入口 */}
+                <button role="menuitem" data-sb-scope="field-menu-perm" disabled={readonly}
+                  onClick={() => { setRowMenuFor(null); setPermModal(d); }}
+                  className="w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50 disabled:opacity-40">字段权限…</button>
                 <button role="menuitem" data-sb-scope="field-menu-toggle" disabled={readonly}
                   onClick={() => { setRowMenuFor(null); void toggleActive(d); }}
                   className="w-full text-left px-3 h-8 text-[13px] hover:bg-neutral-50 disabled:opacity-40">
@@ -321,6 +327,110 @@ export default function ProjectFields() {
           onConfirm={() => void doDelete(delModal)}
         />
       )}
+
+      {/* TASK-012 §4.4（补口轮）：权限矩阵网格 */}
+      {permModal && (
+        <PermissionMatrixModal
+          slug={workspaceSlug!} projectId={projectId!} field={permModal}
+          onClose={() => setPermModal(null)}
+          onSaved={() => { void load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ═══════════ TASK-012 §4.4 权限矩阵网格（补口轮）═══════════ */
+
+const PERM_ROLES = [
+  { token: "role:proj_admin", label: "管理员" },
+  { token: "role:proj_contributor", label: "成员" },
+  { token: "role:proj_commenter", label: "评论者" },
+  { token: "role:proj_viewer", label: "只读" },
+];
+type PermSets = { read: Set<string>; write: Set<string>; required_for: Set<string> };
+
+function PermissionMatrixModal({ slug, projectId, field, onClose, onSaved }: {
+  slug: string; projectId: string; field: CustomFieldDef; onClose: () => void; onSaved: () => void;
+}) {
+  const cfg = field.permission_config ?? {};
+  const [sets, setSets] = useState<PermSets>({
+    read: new Set(cfg.read ?? []),
+    write: new Set(cfg.write ?? []),
+    required_for: new Set(cfg.required_for ?? []),
+  });
+  const [busy, setBusy] = useState(false);
+
+  function toggle(key: keyof PermSets, token: string) {
+    setSets((s) => {
+      const n = new Set(s[key]);
+      if (n.has(token)) n.delete(token); else n.add(token);
+      return { ...s, [key]: n };
+    });
+  }
+
+  async function save() {
+    setBusy(true);
+    try {
+      const payload = {
+        read: [...sets.read], write: [...sets.write], required_for: [...sets.required_for],
+      };
+      await FieldAPI.patch(slug, projectId, field.id, { permission_config: payload });
+      toast("字段权限已保存（access 缓存 60s 内收敛）", "ok");
+      onSaved();
+      onClose();
+    } catch (e) {
+      const err = e as ApiError;
+      toast(err?.details?.[0]?.message ?? err?.message ?? "保存失败（BR-08/BR-17 校验）", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const cell = (key: keyof PermSets, token: string) => (
+    <td key={token} className="px-3 py-2 border-b border-neutral-100 text-center">
+      <input type="checkbox" checked={sets[key].has(token)}
+        data-sb-scope="perm-cell" data-set={key} data-token={token}
+        onChange={() => toggle(key, token)} />
+    </td>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25" data-sb-scope="perm-matrix">
+      <div className="bg-white rounded-xl shadow-2xl w-[560px] max-h-[85vh] overflow-auto p-5" role="dialog" aria-modal="true" aria-label="字段权限矩阵">
+        <h2 className="text-sm font-semibold">字段权限 · {field.name}</h2>
+        <p className="text-[12px] text-neutral-400 mt-1 mb-3">
+          留空 = 全员；read 限可读（未列角色 <b>hidden</b>）、write 限可写（只读角色 <b>readonly</b>）、required_for 按角色必填
+        </p>
+        <table className="w-full text-sm border border-neutral-200 rounded-lg">
+          <thead>
+            <tr className="text-left text-[11px] uppercase tracking-wider text-neutral-400 border-b border-neutral-200">
+              <th className="px-3 py-2 font-semibold">角色</th>
+              <th className="px-3 py-2 font-semibold text-center">可读</th>
+              <th className="px-3 py-2 font-semibold text-center">可写</th>
+              <th className="px-3 py-2 font-semibold text-center">必填</th>
+            </tr>
+          </thead>
+          <tbody>
+            {PERM_ROLES.map((r) => (
+              <tr key={r.token}>
+                <td className="px-3 py-2 border-b border-neutral-100 text-neutral-700">{r.label}</td>
+                {cell("read", r.token)}
+                {cell("write", r.token)}
+                {cell("required_for", r.token)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="text-[12px] text-neutral-400 mt-3">
+          当前字段全局必填={String(field.required)}——全局必填字段不得把可读角色落入只读（BR-17）。
+        </p>
+        <div className="flex justify-end gap-2 mt-4">
+          <button type="button" onClick={onClose} className="h-8 px-3 rounded-md border border-neutral-200 text-sm">取消</button>
+          <button type="button" data-sb-scope="perm-save-btn" disabled={busy} onClick={() => void save()}
+            className="h-8 px-3 rounded-md bg-brand-600 text-white text-sm disabled:opacity-50">保存权限</button>
+        </div>
+      </div>
     </div>
   );
 }

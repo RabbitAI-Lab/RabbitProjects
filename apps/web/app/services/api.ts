@@ -602,6 +602,10 @@ export interface CustomFieldDef {
   groupable: boolean;
   indexed: boolean;
   is_active?: boolean;
+  /** TASK-012 §4.4：{"read":["role:member"],"write":[…],"required_for":[…]}（token：role:* / user:*） */
+  permission_config?: { read?: string[]; write?: string[]; required_for?: string[] };
+  /** TASK-012 §4.3：级联配置（cascade 类型）。 */
+  cascade_config?: { levels?: Array<{ name?: string; options?: Array<{ label: string; value: string; parent_value?: string | null }> }> };
 }
 export interface FieldSchema {
   builtin: Array<{ key: string; name: string; type: string; filterable: boolean; sortable: boolean; groupable: boolean }>;
@@ -624,7 +628,8 @@ export const FieldAPI = {
   /** 编辑（BR-01/06：field_key / field_type 创建后不可变）。 */
   patch: (slug: string, projectId: string, propertyId: string, payload: Partial<{
     name: string; description: string; is_active: boolean; is_required: boolean; is_indexed: boolean;
-    options: Array<{ label: string; value: string; color?: string; sort_order?: number }>; applicable_types: string[]; default_value: unknown;
+    options: Array<{ label: string; value: string; color?: string; sort_order: number }>; applicable_types: string[]; default_value: unknown;
+    permission_config: { read?: string[]; write?: string[]; required_for?: string[] };
   }>) => api.patch<CustomFieldDef>(`workspaces/${slug}/projects/${projectId}/issue-properties/${propertyId}/`, payload),
   /** 删除（软删 + 异步清理 → 202 {task_id, affected_issues, status_url}）。 */
   del: (slug: string, projectId: string, propertyId: string) =>

@@ -860,10 +860,13 @@ export default function IssuesList() {
                     )}
                     {it.archived_at && (
                       <span className="text-neutral-400" title="已归档" aria-label="已归档" data-sb-scope="list-arch-icon">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/></svg>
-                      </span>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/></svg>                      </span>
                     )}
                     <span className={`truncate ${tree && depth === 1 ? "font-medium" : ""}`}>{it.name}</span>
+                    {/* WF-002 §3.5（补口轮）：审批中徽标——流转 202 挂起的可视锚点 */}
+                    {it.has_pending_approval && (
+                      <span className="shrink-0 text-[11px] px-1 rounded bg-violet-50 text-violet-600 font-medium" data-sb-scope="list-approval-badge" title="审批中（流转挂起，待审批人处理）">审</span>
+                    )}
                     {isTemp && <span className="ml-1 font-mono text-[11px] text-neutral-400">…</span>}
                     {tree && depth < MAX_ISSUE_DEPTH && !isTemp && (
                       <button

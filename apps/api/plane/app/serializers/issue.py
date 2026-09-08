@@ -111,6 +111,12 @@ class IssueSerializer(serializers.ModelSerializer):
             "updated_at",
             "archived_at",
         )
+        # WF-002 §3.5（2026-09-09 补口轮）：任务/看板审批徽标——列表视图 annotate
+        # _has_pending_approval（Exists 子查询），非列表上下文缺注解时回落 False
+        has_pending_approval = serializers.SerializerMethodField()
+
+        def get_has_pending_approval(self, obj) -> bool:
+            return bool(getattr(obj, "_has_pending_approval", False))
         read_only_fields = (
             "id",
             "project_id",

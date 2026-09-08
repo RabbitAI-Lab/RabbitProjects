@@ -26,12 +26,14 @@ async function apiCall(page: Page, method: string, path: string, data?: unknown)
 }
 
 async function createProject(page: Page, tag: string) {
-  // 标识符 ≤5 字符且跨 run 唯一（重跑残留不撞 409）
-  const ident = `${tag}${Date.now() % 100}`.slice(0, 5);
-  const r = await apiCall(page, "POST", `/workspaces/${WS}/projects/`,
-    { name: `S7UI ${tag}`, identifier: ident });
-  expect(r.status, `建项目 ${tag}`).toBe(HTTP.CREATED);
-  return r.body.data.id as string;
+  // 标识符 ≤5 字符（tag 3 位 + 随机 2 位）；跨 run 残留撞 409 则换号重试
+  for (let i = 0; i < 8; i += 1) {
+    const ident = `${tag}${String(Math.floor(Math.random() * 90) + 10)}`.slice(0, 5);
+    const r = await apiCall(page, "POST", `/workspaces/${WS}/projects/`,
+      { name: `S7UI ${tag}`, identifier: ident });
+    if (r.status === HTTP.CREATED) return r.body.data.id as string;
+  }
+  throw new Error(`建项目 ${tag} 重试耗尽`);
 }
 
 test.describe("Sprint-7 UI 补口（C.144~C.149 · 入口与管理面）", () => {

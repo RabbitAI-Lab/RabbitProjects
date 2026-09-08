@@ -189,7 +189,7 @@ class TestRunEventIntegration:
         assert run.status == AutomationRun.Status.SUCCESS
 
     def test_chain_blocked_with_allow_rule_chain_off(self, env):
-        rule = AutomationRule.objects.create(
+        AutomationRule.objects.create(
             project=env["proj"], name="链锁",
             trigger={"type": "state_changed", "config": {"to_group": "started"}},
             actions=[{"type": "set_field", "config": {"field": "priority",
@@ -206,7 +206,7 @@ class TestRunEventIntegration:
 
     def test_transition_action_runs_engine(self, env):
         """transition 动作走 WF-001 引擎完整路径（守卫照常）。"""
-        rule = AutomationRule.objects.create(
+        AutomationRule.objects.create(
             project=env["proj"], name="auto-submit",
             trigger={"type": "state_changed", "config": {"to_group": "started"}},
             actions=[{"type": "transition", "config":

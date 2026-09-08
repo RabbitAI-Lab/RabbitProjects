@@ -52,7 +52,8 @@ def get_or_create_config(project) -> ProjectWorklogConfig:
 def _check_daily_hard_limit(actor_id, project_id, worked_on, minutes_to_add):
     """BR-08 硬上限：单日单人累计 ≤ 1440。跨行用 SELECT FOR UPDATE 锁当日未锁行后聚合。"""
     with transaction.atomic():
-        locked_ids = list(
+        # 求值本身即副作用：触发 SELECT FOR UPDATE 锁当日未锁行（锁后聚合见下）
+        list(
             WorkLog.objects.select_for_update().filter(
                 actor_id=actor_id, issue__project_id=project_id, worked_on=worked_on,
                 locked=False, deleted_at__isnull=True

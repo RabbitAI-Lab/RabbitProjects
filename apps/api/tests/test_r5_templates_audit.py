@@ -93,7 +93,7 @@ class TestDistribution:
         tpl = WorkflowTemplate.objects.get(workspace=env["ws"], name="日常任务流程")
         dist = distribute(template=tpl, project=env["proj"], actor=env["owner"])
         before = State.objects.filter(project=env["proj"]).count()
-        wf = confirm_distribution(dist=dist, project=env["proj"], actor=env["owner"])
+        confirm_distribution(dist=dist, project=env["proj"], actor=env["owner"])
         after = State.objects.filter(project=env["proj"]).count()
         # seed_project_states 已建「待办/进行中/已完成/已取消」——模板三态全部同名复用（BR-05 零重复建）
         assert after - before == 0

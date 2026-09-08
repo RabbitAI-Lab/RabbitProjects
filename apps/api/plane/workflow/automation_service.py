@@ -48,7 +48,7 @@ def validate_rule_definition(payload: dict) -> list[dict]:
     trigger = payload.get("trigger") or {}
     t_type = trigger.get("type")
     if t_type not in TRIGGER_TYPES:
-        issues.append({"field": "trigger.type", "code": "NOT_A_CHOICE",  # noqa: B904--校验聚合非异常链
+        issues.append({"field": "trigger.type", "code": "NOT_A_CHOICE",  # noqa: B904 -- 校验聚合非异常链
                        "message": f"未知触发器 {t_type!r}，合法枚举 {list(TRIGGER_TYPES)}"})
     if t_type == "due_approaching":
         cfg = trigger.get("config") or {}
@@ -153,8 +153,7 @@ def run_event(event: dict) -> dict:
     issue_id = event.get("issue_id")
     settings = get_settings(project_id)
     allow_chain = bool(settings and settings.allow_rule_chain)
-    chain_depth = int(event.get("chain_depth") or 0)
-    # 闸 1/2
+    # 闸 1/2（深度判定收敛在 event_gate 内）
     gate = event_gate(event)
     if gate == "chain_depth":
         # BR-08 熔断 + 告警（生产告警通道，dev 日志）

@@ -23,6 +23,8 @@ import type { ApiError } from "../services/axios";
 import { useStores } from "../stores";
 import { useIssueRemoteFlash } from "../realtime/useIssueRemoteFlash";
 import { StateBadge } from "./StateBadge";
+import { GuardDialog, isGuardBlocked, type GuardItem } from "./workflow/GuardDialog";
+import { WorkflowAPI, type TransitionAvailableItem } from "../services/api";
 import { toast } from "./Toast";
 import { CommentThreadTab } from "./CommentThread";
 import { IssueTreeDrawer } from "./IssueTreeDrawer";
@@ -296,6 +298,14 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
   const [labelsMenuOpen, setLabelsMenuOpen] = useState(false);
   /** C.23 属性行内编辑当前展开的下拉（状态 / 类型 / 优先级 / 负责人） */
   const [propMenu, setPropMenu] = useState<"state" | "type" | "priority" | "assignee" | null>(null);
+  /** Sprint-7（WF-001 §3.4）：受控流转入口——available 边按钮 + 守卫对话框。
+   *  fallback=true（无工作流）时保持 V1.0 状态下拉（零回归）。 */
+  const [flowEdges, setFlowEdges] = useState<TransitionAvailableItem[]>([]);
+  const [isControlled, setIsControlled] = useState(false);
+  const [guardDlg, setGuardDlg] = useState<{
+    transitionId: string; toStateId: string; transitionName: string; failures: GuardItem[];
+  } | null>(null);
+  const [flowNotice, setFlowNotice] = useState<string | null>(null);
   const [activityHasMore, setActivityHasMore] = useState(false);
   const labelsMenuRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -307,6 +317,35 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
   const isAdmin = myRole >= 20;
   const canWrite = myRole >= 15;
   const myUserId = stores.session.user?.id ?? null;
+
+  /** Sprint-7：执行受控流转（WF-001 execute）——200 迁移 / 202 审批挂起 /
+   *  400 守卫拦截 → GuardDialog（WF-004 BR-05 guard_payload 单请求补齐）。 */
+  async function runTransition(edge: TransitionAvailableItem) {
+    setFlowNotice(null);
+    try {
+      const r = await WorkflowAPI.execute(slug, projectId, issueId, {
+        to_state_id: edge.to_state.id, transition_id: edge.transition_id });
+      const st = r.status;
+      if (st === 202) {
+        setFlowNotice("已发起审批，等待审批人处理");
+        void refresh();
+        onChanged?.();
+        return;
+      }
+      void refresh();
+      onChanged?.();
+    } catch (e) {
+      // axios 层 reject 的是 friendly ApiError（code/details 顶层字段——services/axios.ts §解包）
+      const err = e as ApiError;
+      if (err.details && isGuardBlocked(err.code)) {
+        setGuardDlg({
+          transitionId: edge.transition_id, toStateId: edge.to_state.id,
+          transitionName: edge.name, failures: err.details as unknown as GuardItem[] });
+      } else {
+        setFlowNotice(err.message || "流转失败");
+      }
+    }
+  }
 
   /** C.42 关联三分区数据（relations_of 创建时间倒序；三组由前端按 relation_type 分组） */
   const [relations, setRelations] = useState<RelationRow[]>([]);
@@ -403,6 +442,19 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
     ProjectMemberAPI.list(slug, projectId, { per_page: 100 })
       .then((r) => setMembers(unwrap<typeof members>(r) ?? []))
       .catch(() => {});
+    // Sprint-7：当前可用流转（受控项目边按钮；无工作流 fallback 保持状态下拉）
+    WorkflowAPI.available(slug, projectId, issueId)
+      .then((r) => {
+        const d = (r as unknown as { data?: { fallback: boolean; available: TransitionAvailableItem[] | null } }).data;
+        if (d && d.fallback === false && d.available) {
+          setIsControlled(true);
+          setFlowEdges(d.available);
+        } else {
+          setIsControlled(false);
+          setFlowEdges([]);
+        }
+      })
+      .catch(() => { /* available 拉不到不阻断抽屉 */ });
     // Sprint-2 分区数据：关联 / 工时 / 字段 Schema / 子树口径工时
     refreshRelations();
     refreshWorklogs();
@@ -993,6 +1045,21 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
                     在抽屉里根本改不了 —— 只有标签那一行是可用的。 */}
 
                 <label className="text-[13px] text-neutral-500">状态</label>
+                {isControlled ? (
+                  /* Sprint-7（WF-001 §3.4 / WF-004 §3.1）：受控流转——边名按钮 + 守卫对话框 */
+                  <div className="flex flex-wrap items-center gap-1.5" data-sb-scope="drawer-transitions">
+                    <StateBadge group={issue.state_group ?? "unstarted"} name={issue.state_name ?? "—"} />
+                    {flowEdges.filter((e) => e.allowed).map((e) => (
+                      <button key={e.transition_id} type="button" data-flow-name={e.name}
+                        onClick={() => void runTransition(e)}
+                        className="h-6 px-2 rounded border border-brand-200 text-brand-600 text-xs hover:bg-brand-50 transition">
+                        {e.name}{e.has_approval ? " ·审" : ""}
+                      </button>
+                    ))}
+                    {flowNotice && <span className="text-xs text-amber-600" data-sb-scope="flow-notice">{flowNotice}</span>}
+                  </div>
+                ) : (
+                <>
                 <button type="button" data-sb-scope="drawer-prop-menu" aria-label="修改状态"
                   onClick={() => setPropMenu(propMenu === "state" ? null : "state")}
                   
@@ -1008,6 +1075,8 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
                       {s.name}
                     </MenuItem>
                   ))}</PropMenu>
+                )}
+                </>
                 )}
 
                 <label className="text-[13px] text-neutral-500">类型</label>
@@ -1739,6 +1808,17 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
           onClose={() => setTreeNodeIssueId(null)}
           onChanged={() => { void refresh(); onChanged?.(); }}
         />
+      )}
+
+      {/* Sprint-7（WF-004 §3.1）：守卫拦截补齐对话框（400 结构化 → guard 键分区渲染） */}
+      {guardDlg && (
+        <GuardDialog
+          ws={slug} projectId={projectId} issueId={issueId}
+          transitionId={guardDlg.transitionId} toStateId={guardDlg.toStateId}
+          transitionName={guardDlg.transitionName} failures={guardDlg.failures}
+          members={members}
+          onClose={() => setGuardDlg(null)}
+          onDone={() => { void refresh(); onChanged?.(); }} />
       )}
 
       {/* ── Sprint-2 弹层 ── */}

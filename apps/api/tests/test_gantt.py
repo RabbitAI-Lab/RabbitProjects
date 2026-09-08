@@ -602,6 +602,11 @@ def test_it07_viewport_query_uses_gantt_index(env):
     （事务内生效，pytest-django 回滚不泄漏）验证查询形状可走该索引；
     真实数据量的计划断言（BitmapOr 合并等形态）在 sprint-4-bench-gantt.py
     以 1 万行数据集 EXPLAIN (ANALYZE) 复核。
+
+    dev 库自备份演练还原后带回了 0002 声明的窄 FK 索引 issues_project_id_*：
+    等值条件下窄索引恒优于宽复合偏索引，规划器不再选甘特索引。此处改为
+    事务内临时 DROP 竞争索引后 EXPLAIN（DDL 随 pytest-django 回滚复原，
+    lock_timeout 兜底共享库上的长事务），形状证明不依赖库上恰好缺哪些索引。
     """
     from django.test import RequestFactory
 
@@ -623,6 +628,18 @@ def test_it07_viewport_query_uses_gantt_index(env):
         and 'ORDER BY "issues"."sort_order"' in q["sql"]  # 行窗口主查询（BR-11 行序）
     )
     with connection.cursor() as cur:
+        cur.execute("SET LOCAL lock_timeout = '2s'")
+        # 同前缀窄索引（issues_project_id_* / idx_issue_active_by_project 等）在
+        # 等值条件下恒优于宽复合偏索引——事务内动态下线 issues 全部非唯一索引后
+        # EXPLAIN，形状证明不依赖库上恰好缺哪些索引；DDL 随 pytest-django 回滚复原
+        cur.execute(
+            "SELECT i.relname FROM pg_index x "
+            "JOIN pg_class i ON i.oid = x.indexrelid "
+            "JOIN pg_class t ON t.oid = x.indrelid "
+            "WHERE t.relname = 'issues' AND NOT x.indisprimary AND NOT x.indisunique "
+            "AND i.relname <> 'idx_issue_gantt_viewport'")
+        for (name,) in cur.fetchall():
+            cur.execute(f'DROP INDEX IF EXISTS "{name}"')  # noqa: S608 -- 名取自 pg_catalog，无注入面
         cur.execute("SET LOCAL enable_seqscan = off")
         cur.execute("EXPLAIN " + rows_sql)
         plan = "\n".join(str(r[0]) for r in cur.fetchall())

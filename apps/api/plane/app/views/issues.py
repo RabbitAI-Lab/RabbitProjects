@@ -627,7 +627,9 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
         # 写入路径的 non-writable 静默（rbac §11.2；meta.warning 透出钩子）——
         # 前端旧缓存兼容（v6 决策）
         if "custom_fields" in data and data["custom_fields"] is not None:
-            from plane.db.models import CustomFieldDefinition, Q
+            from django.db.models import Q
+
+            from plane.db.models import CustomFieldDefinition
             from plane.db.services.field_permissions import FieldPermissionService
 
             _cf_defs = list(CustomFieldDefinition.objects
@@ -1038,7 +1040,16 @@ class IssueSubIssueListCreateView(APIView):
             .prefetch_related("issue_assignees")
             .order_by("sort_order", "-created_at")
         )
-        data = _strip_hidden(IssueSerializer(subs, many=True).data, self._list_access)
+        # TASK-012 §4.4：hidden 剔除须请求级 resolve access（与列表视图同源；
+        # 原实现误用 self._list_access——该属性只在列表视图 get 内设置，此处 500）
+        from plane.db.models import CustomFieldDefinition as _CFD4
+        from plane.db.services.field_permissions import FieldPermissionService
+
+        _cf_defs = list(_CFD4.objects
+                        .filter(workspace_id=project.workspace_id)
+                        .filter(Q(project=project) | Q(project__isnull=True)))
+        _access = FieldPermissionService().cached_resolve(request, request.user, project, _cf_defs)
+        data = _strip_hidden(IssueSerializer(subs, many=True).data, _access)
         return success_response(
             data,
             meta={

@@ -23,7 +23,7 @@ function mondayOf(d: Date): string {
 }
 
 export default function WorklogPage() {
-  const { ws, projectId } = useParams();
+  const { workspaceSlug: ws, projectId } = useParams();
   const [view, setView] = useState<"mine" | "queue" | "ledger">("mine");
   const [weekStart, setWeekStart] = useState(mondayOf(new Date()));
   const [batches, setBatches] = useState<Array<{ id: string; actor_name: string; week_start: string; status: string; review_note: string }>>([]);

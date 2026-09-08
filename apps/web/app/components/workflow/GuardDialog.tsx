@@ -6,6 +6,7 @@
 import { useState } from "react";
 
 import { WorkflowAPI } from "../../services/api";
+import type { ApiError } from "../../services/axios";
 
 export interface GuardItem {
   field: string;
@@ -24,13 +25,15 @@ export function isGuardBlocked(code: string | undefined): boolean {
     || code === "RESOURCE_TRANSITION_BLOCKED";
 }
 
-export function GuardDialog({ ws, projectId, issueId, transitionId, transitionName, failures, onClose, onDone }: {
+export function GuardDialog({ ws, projectId, issueId, transitionId, toStateId, transitionName, failures, members = [], onClose, onDone }: {
   ws: string;
   projectId: string;
   issueId: string;
   transitionId: string;
+  toStateId: string;
   transitionName: string;
   failures: GuardItem[];
+  members?: Array<{ user: { id: string; display_name: string } }>;
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -43,21 +46,23 @@ export function GuardDialog({ ws, projectId, issueId, transitionId, transitionNa
     setBusy(true);
     setRetryErrors(null);
     try {
-      const payload: Record<string, unknown> = { to_state_id: "", transition_id: transitionId };
-      // estimate 特殊：数字
+      const payload: Record<string, unknown> = { to_state_id: toStateId, transition_id: transitionId };
+      // estimate 数字 / assignees 数组（后端 _apply_guard_payload 按 M2M id 列表处理——标量会被拆成单字符）/ 其余字符串
       for (const [k, v] of Object.entries(values)) {
-        payload.guard_payload = { ...(payload.guard_payload as object), [k]: k === "estimate_minutes" ? Number(v) : v };
+        const val = k === "estimate_minutes" ? Number(v)
+          : k === "assignees" ? (v ? [v] : [])
+          : v;
+        payload.guard_payload = { ...(payload.guard_payload as object), [k]: val };
       }
       // to_state_id 由调用方在 open 时注入（简化：守卫对话框不重复持有目标态）
-      await WorkflowAPI.execute(ws, projectId, issueId, payload as { to_state_id: string });
+      await WorkflowAPI.execute(ws, projectId, issueId, payload as Parameters<typeof WorkflowAPI.execute>[3]);
       onDone();
       onClose();
     } catch (e) {
-      const err = e as { response?: { data?: { error?: { details?: GuardItem[]; code?: string } } } };
-      const errObj = err.response?.data?.error;
-      const details = errObj?.details;
-      if (details && isGuardBlocked(errObj?.code)) {
-        setRetryErrors(details); // 新一轮缺口（§2.6 循环补齐——全量协议收敛）
+      // axios 层 reject 的是 friendly ApiError（code/details 顶层字段——services/axios.ts §解包）
+      const err = e as ApiError;
+      if (err.details && isGuardBlocked(err.code)) {
+        setRetryErrors(err.details as unknown as GuardItem[]); // 新一轮缺口（§2.6 循环补齐——全量协议收敛）
       } else {
         setRetryErrors([{ field: "error", code: "ERROR", message: "重试失败，请刷新", guard: "error" }]);
       }
@@ -94,6 +99,15 @@ export function GuardDialog({ ws, projectId, issueId, transitionId, transitionNa
                         className="mt-1 w-full border border-neutral-200 rounded-md px-2 h-9">
                         <option value="">请选择</option>
                         {f.meta.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    ) : f.field === "assignees" ? (
+                      <select value={values[f.field] ?? ""}
+                        onChange={(e) => setValues((v) => ({ ...v, [f.field]: e.target.value }))}
+                        className="mt-1 w-full border border-neutral-200 rounded-md px-2 h-9">
+                        <option value="">请选择负责人</option>
+                        {members.map((m) => (
+                          <option key={m.user.id} value={m.user.id}>{m.user.display_name}</option>
+                        ))}
                       </select>
                     ) : f.field === "target_date" ? (
                       <input type="date" value={values[f.field] ?? ""}

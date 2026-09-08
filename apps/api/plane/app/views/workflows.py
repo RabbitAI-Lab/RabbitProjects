@@ -305,7 +305,7 @@ class WorkflowArchiveView(APIView):
 
 
 class IssueTransitionsAvailableView(APIView):
-    """GET 当前可用流转列表（§4.8①）：按兜底链解析，fallback=true 时退化为 V1.0。"""
+    """GET 当前可用流转列表（§4.8① + WF-004 §4.6）：blocked_by 执行态预览计数。"""
 
     permission_classes = [IsAuthenticated, ProjectPermission]
 
@@ -325,8 +325,12 @@ class IssueTransitionsAvailableView(APIView):
             })
         edges = list(
             wf.transitions.filter(from_state__state_id=issue.state_id)
-            .select_related("to_state__state")
+            .select_related("to_state__state", "from_state__state")
             .order_by("sort_order"))
+        from plane.db.services.field_schema import resolve_fields
+        from plane.workflow.guards import has_any_role, run_guards
+
+        definitions = {d.field_key: d for d in resolve_fields(project, issue.issue_type_id)}
         available = []
         for e in edges:
             guards = e.guards or []
@@ -334,13 +338,32 @@ class IssueTransitionsAvailableView(APIView):
             for g in guards:
                 if g.get("type") == "required_fields":
                     requires += (g.get("config") or {}).get("fields") or []
-            available.append({
+                if g.get("type") == "estimate_required":
+                    requires.append("estimate_minutes")
+            # role_allowed 预览（§4.6）：不满足 → allowed:false + deny_reason（不进 blocked_by）
+            role_guard = next((g for g in guards if g.get("type") == "role_allowed"), None)
+            allowed, deny = True, None
+            if role_guard is not None:
+                roles = (role_guard.get("config") or {}).get("roles") or []
+                if not has_any_role(request.user, project.id, roles):
+                    allowed, deny = False, "PERM_TRANSITION_NOT_ALLOWED"
+            # blocked_by 执行态轻量求值（计数模式；role_allowed 已单独表达）
+            preview_guards = [g for g in guards if g.get("type") != "role_allowed"]
+            failures = run_guards(preview_guards, issue=issue, actor=request.user,
+                                  to_state=e.to_state.state, payload=None,
+                                  definitions=definitions)
+            blocked_by = [{"type": f.type, "count": len(f.items)} for f in failures]
+            item = {
                 "transition_id": str(e.id), "name": e.name,
                 "to_state": _state_brief(e.to_state.state),
                 "requires_payload": requires,
                 "has_approval": e.approval_flow_id is not None,
-                "allowed": True,
-            })
+                "allowed": allowed,
+                "blocked_by": blocked_by,
+            }
+            if deny:
+                item["deny_reason"] = deny
+            available.append(item)
         return success_response({
             "workflow": {"id": str(wf.id), "name": wf.name, "version": wf.version},
             "current_state": _state_brief(issue.state),
@@ -370,6 +393,8 @@ class IssueTransitionExecuteView(APIView):
                 issue_id=issue.id, to_state_id=to_state_id, actor=request.user,
                 transition_id=request.data.get("transition_id"),
                 guard_payload=request.data.get("guard_payload"),
+                force=bool(request.data.get("force")),
+                force_comment=request.data.get("comment") or "",
             )
         except TransitionBlockedError as exc:  # TASK-005 409 BLOCKED（blockers[] 同 §4 格式）
             raise AppException("RESOURCE_TRANSITION_BLOCKED",

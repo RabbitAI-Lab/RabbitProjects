@@ -164,11 +164,18 @@ export function DisplayDrawer({ vp, onClose }: { vp: ViewPage; onClose: () => vo
           <button type="button" data-sb-scope="disp-reset"
             onClick={() => vp.patchDisplay({ card_fields: { ...DEFAULT_CARD_FIELDS }, show_empty_groups: true, columns: Object.keys(TABLE_COL_NAMES), group_by: "state_id", order_by: "sort_order" })}
             className="h-7 px-2.5 border border-neutral-300 bg-white rounded-md text-[12.5px] text-neutral-700 hover:bg-neutral-50">重置</button>
-          <button type="button" data-sb-scope="disp-save"
-            onClick={() => { onClose(); void vp.saveInPlace(); }}
-            disabled={!vp.currentView}
-            title={vp.currentView ? undefined : "「全部」裸态无视图存档——请先另存为视图"}
-            className="h-7 px-2.5 bg-brand-500 text-white rounded-md text-[12.5px] hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed">保存到视图</button>
+          {vp.currentView ? (
+            <button type="button" data-sb-scope="disp-save"
+              onClick={() => { onClose(); void vp.saveInPlace(); }}
+              className="h-7 px-2.5 bg-brand-500 text-white rounded-md text-[12.5px] hover:bg-brand-600">保存到视图</button>
+          ) : (
+            /* 「全部」裸态无视图存档（§3.6）——不再灰置，主动引导另存为
+               （2026-09-08 体验优化；事件接线与 FilterPanelDrawer「另存为」同款）。 */
+            <button type="button" data-sb-scope="disp-saveas"
+              onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("rp:open-save-view")); }}
+              title="「全部」不入库——另存为个人视图后即可保存显示配置"
+              className="h-7 px-2.5 bg-brand-500 text-white rounded-md text-[12.5px] hover:bg-brand-600">另存为视图</button>
+          )}
         </div>
       </aside>
     </div>

@@ -25,7 +25,17 @@ from django.db import connection
 from plane.utils.exceptions import CustomFieldValidationError, field_error
 
 if TYPE_CHECKING:
-    from plane.db.models import CustomFieldDefinition, Project
+    from plane.db.models import (
+        CustomFieldDefinition,
+        Project,
+    )
+
+
+#: TASK-012（Sprint-7 R2）：四类型校验器在文件靠后位置定义，需文件级延迟 import
+# 避免部分 Django 启动顺序的解析告警——inline 函数内 import 会与 case _ 分支的
+# lazy 路径形成二次解析。
+from plane.db.models import FileAsset as _FileAsset  # noqa: E402
+from plane.db.models import Issue as _Issue
 
 logger = logging.getLogger(__name__)
 
@@ -55,13 +65,16 @@ def _is_project_member(project_id: uuid_module.UUID | None, value: Any) -> bool:
 
 
 def validate_field_value(
-    definition: CustomFieldDefinition, value: Any, *, project: Project | None = None
+    definition: CustomFieldDefinition, value: Any, *, project: Project | None = None,
+    issue: _Issue | None = None,
 ) -> Any:
     """校验并规范化单个自定义字段值，返回可直接写入 JSONB 的 Python 对象。
 
     校验失败抛 ``CustomFieldValidationError``（400 VALIDATION_CUSTOM_FIELD_INVALID）；
     空值（None/""）在非必填时返回 None（不落 key，BR-07），必填时 400 REQUIRED。
+    issue（BR-05）：仅 relation 类型消费——禁自引用判定；其余类型忽略。
     """
+    issue_ctx = issue
     FT = definition.FieldType  # noqa: N806 —— 对齐架构文档 §3.4 写法
 
     # ---- 空值分支 ----
@@ -154,8 +167,190 @@ def validate_field_value(
         case FT.AUTO_INCREMENT:
             raise _err(definition, "READ_ONLY", "自增编号由系统生成，不接受客户端赋值")
 
+        # ---- TASK-012（Sprint-7 R2）：四高级类型显式分支 ----
+        case FT.CASCADE:
+            return _validate_cascade(value, definition)
+        case FT.RELATION:
+            return _validate_relation(value, definition, project, issue_ctx)
+        case FT.DATE_RANGE:
+            return _validate_date_range(value, definition)
+        case FT.ATTACHMENT:
+            return _validate_attachment(value, definition)
+
         case _:
             raise _err(definition, "INVALID", f"暂不支持的字段类型 {definition.field_type}")
+
+
+# ── TASK-012（Sprint-7 R2）：四高级类型校验器与配置校验 ──────────────
+
+def _validate_cascade(value: Any, definition: CustomFieldDefinition) -> Any:
+    """级联值 = 逐级 value 数组（长度=级数）；父链连续（BR-04）。"""
+    levels = (definition.cascade_config or {}).get("levels") or []
+    if not isinstance(value, list) or len(value) != len(levels):
+        raise _err(definition, "INVALID", f"级联值须为长度 {len(levels)} 的逐级 value 数组")
+    parent = None
+    for i, v in enumerate(value):
+        options = {o["value"]: o for o in (levels[i].get("options") or [])}
+        if v not in options:
+            raise _err(definition, "INVALID", f"第 {i + 1} 级值不在选项集内")
+        if i > 0 and options[v].get("parent_value") != parent:
+            raise _err(definition, "INVALID", "级联路径不连续（父值不匹配）")
+        parent = v
+    return value
+
+
+def _validate_relation(value: Any, definition: CustomFieldDefinition,
+                       project: Project | None,
+                       issue: _Issue | None = None) -> Any:
+    """关联工作项：同项目、未删除、非自身（BR-05）；≤20 去重。"""
+    if not isinstance(value, list):
+        raise _err(definition, "INVALID", "必须为数组（Issue UUID）")
+    if len(value) > 20:
+        raise _err(definition, "TOO_LONG", "关联工作项至多 20 个")
+    try:
+        ids = [uuid_module.UUID(str(v)) for v in dict.fromkeys(value)]
+    except (ValueError, TypeError):
+        raise _err(definition, "INVALID", "关联工作项须为 UUID 数组") from None
+    if issue is not None and issue.id in ids:  # 禁自引用（BR-05）
+        raise _err(definition, "INVALID", "不能关联任务自身")
+    qs = _Issue.objects.filter(id__in=ids, deleted_at__isnull=True)
+    if project is not None:
+        qs = qs.filter(project=project)
+    found = set(qs.values_list("id", flat=True))
+    missing = sorted(str(i) for i in ids if i not in found)
+    if missing:
+        raise _err(definition, "DOES_NOT_EXIST",
+                   f"关联工作项不存在或跨项目：{', '.join(missing)}")
+    return [str(i) for i in ids]
+
+
+def _validate_date_range(value: Any, definition: CustomFieldDefinition) -> Any:
+    """日期区间：双键必填、ISO、start ≤ end（BR-06）。"""
+    if not isinstance(value, dict) or "start" not in value or "end" not in value:
+        raise _err(definition, "REQUIRED", "区间须同时含 start 与 end")
+    try:
+        start, end = date.fromisoformat(str(value["start"])), date.fromisoformat(str(value["end"]))
+    except (TypeError, ValueError):
+        raise _err(definition, "INVALID_DATE", "日期须为 YYYY-MM-DD") from None
+    if start > end:
+        raise _err(definition, "INVALID_DATE_RANGE", "start 须不晚于 end")
+    return {"start": value["start"], "end": value["end"]}
+
+
+def _validate_attachment(value: Any, definition: CustomFieldDefinition) -> Any:
+    """附件：FileAsset 存在、同空间、已完成上传（BR-07）；≤10 去重。"""
+    if not isinstance(value, list):
+        raise _err(definition, "INVALID", "必须为数组（FileAsset UUID）")
+    if len(value) > 10:
+        raise _err(definition, "TOO_LONG", "附件至多 10 个")
+    try:
+        ids = [uuid_module.UUID(str(v)) for v in dict.fromkeys(value)]
+    except (ValueError, TypeError):
+        raise _err(definition, "INVALID", "附件须为 UUID 数组") from None
+    from plane.db.models import FileAsset
+
+    found = _FileAsset.objects.filter(
+        id__in=ids, workspace_id=definition.workspace_id,
+        status=FileAsset.Status.UPLOADED, deleted_at__isnull=True)
+    if found.count() != len(set(ids)):
+        raise _err(definition, "DOES_NOT_EXIST", "附件不存在、未完成上传或跨工作空间")
+    return [str(i) for i in ids]
+
+
+def backfill_cascade_options(definition: CustomFieldDefinition) -> None:
+    """cascade 类型：拍平全级选项为 TASK-008 §4.1.1 可接受占位（创建/改配服务侧
+    调用；TASK-008 待回改两处登记见 TASK-012 §4.3 注）。"""
+    levels = (definition.cascade_config or {}).get("levels") or []
+    definition.options = [{"label": o["label"], "value": o["value"]}
+                          for level in levels for o in (level.get("options") or [])]
+
+
+#: 角色码白名单（rbac §2.2/§2.3 小写形；ws_* 惰性保留——Sprint 8 AUTH-008 复用）
+ROLE_CODES = frozenset({"ws_owner", "ws_admin", "ws_member", "ws_guest",
+                        "proj_admin", "proj_contributor", "proj_commenter", "proj_viewer"})
+_GRANT_RE = __import__("re").compile(
+    r"^(role:[a-z_]+|user:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$")
+
+
+def validate_permission_config(cfg: dict) -> list[dict]:
+    """permission_config 保存校验（BR-08/BR-17）：返回 details[] 项（空=通过）。"""
+    if not isinstance(cfg, dict):
+        return [{"field": "permission_config", "code": "INVALID", "message": "须为对象"}]
+    allowed_keys = {"read", "write", "required_for"}
+    issues: list[dict] = []
+    for key in set(cfg) - allowed_keys:
+        issues.append({"field": f"permission_config.{key}", "code": "NOT_A_CHOICE",
+                       "message": f"未知键 {key}（启用前不放开）"})
+    for key in ("read", "write", "required_for"):
+        members = cfg.get(key)
+        if members is None:
+            continue
+        if not isinstance(members, list):
+            issues.append({"field": f"permission_config.{key}", "code": "INVALID",
+                           "message": "须为数组"})
+            continue
+        for i, m in enumerate(members):
+            if not isinstance(m, str) or not _GRANT_RE.fullmatch(m):
+                issues.append({"field": f"permission_config.{key}[{i}]", "code": "NOT_A_CHOICE",
+                               "message": f"成员须为 role:<角色码> 或 user:<UUID>：{m!r}"})
+                continue
+            if m.startswith("role:"):
+                if m.split(":", 1)[1] not in ROLE_CODES:
+                    issues.append({"field": f"permission_config.{key}[{i}]", "code": "NOT_A_CHOICE",
+                                   "message": f"未知角色码 {m}"})
+                if key == "required_for":
+                    continue  # required_for 仅 role:（BR-08）——user: 前缀已被正则分开报
+            if key == "required_for" and m.startswith("user:"):
+                issues.append({"field": f"permission_config.required_for[{i}]", "code": "NOT_A_CHOICE",
+                               "message": "required_for 仅接受 role: 成员"})
+    return issues
+
+
+def validate_cascade_config(cfg: dict) -> list[dict]:
+    """cascade_config 保存校验（BR-03/04）：级数 2-3、每级 ≤100、整树 ≤300、
+    value 全树唯一、父链完整。返回 details[] 项（空=通过）。"""
+    if not isinstance(cfg, dict):
+        return [{"field": "cascade_config", "code": "INVALID", "message": "须为对象"}]
+    levels = cfg.get("levels")
+    if not isinstance(levels, list) or not (2 <= len(levels) <= 3):
+        return [{"field": "cascade_config.levels", "code": "INVALID",
+                 "message": "级数须为 2-3 级（BR-03）"}]
+    issues: list[dict] = []
+    seen_values: set[str] = set()
+    prev_level_values: set[str] = set()
+    total = 0
+    for li, level in enumerate(levels):
+        if not isinstance(level, dict) or not (level.get("name") or "").strip():
+            issues.append({"field": f"cascade_config.levels[{li}].name", "code": "REQUIRED",
+                           "message": "级名称必填"})
+        options = level.get("options") or []
+        if len(options) > 100:
+            issues.append({"field": f"cascade_config.levels[{li}].options", "code": "LIMIT",
+                           "message": "每级选项 ≤100（BR-03）"})
+        cur_values: set[str] = set()
+        for oi, o in enumerate(options):
+            v, label = o.get("value"), o.get("label")
+            if not v or not label:
+                issues.append({"field": f"cascade_config.levels[{li}].options[{oi}]",
+                               "code": "REQUIRED", "message": "选项 label/value 必填"})
+                continue
+            if v in seen_values:
+                issues.append({"field": f"cascade_config.levels[{li}].options[{oi}]",
+                               "code": "UNIQUE", "message": f"选项 value 全树唯一：{v}"})
+            seen_values.add(v)
+            cur_values.add(v)
+            if li > 0:
+                pv = o.get("parent_value")
+                if not pv or pv not in prev_level_values:
+                    issues.append({"field": f"cascade_config.levels[{li}].options[{oi}].parent_value",
+                                   "code": "DOES_NOT_EXIST",
+                                   "message": f"父值不存在于上一级选项集：{pv!r}（BR-04）"})
+        prev_level_values = cur_values
+        total += len(options)
+    if total > 300:
+        issues.append({"field": "cascade_config.levels", "code": "LIMIT",
+                       "message": "选项树整体 ≤300 项（BR-03）"})
+    return issues
 
 
 def _unknown_key_error(unknown: set[str]) -> CustomFieldValidationError:
@@ -168,6 +363,7 @@ def validate_custom_fields(
     project: Project,
     issue_type_id: uuid_module.UUID | None,
     payload: dict,
+    issue: _Issue | None = None,
 ) -> dict:
     """创建路径整体校验：未知 key 拒绝（BR-07）→ 逐字段校验 → 默认值填充 → 必填拦截（BR-08）→ 空值不落 key。"""
     from plane.db.services.field_schema import resolve_fields
@@ -184,7 +380,7 @@ def validate_custom_fields(
     cleaned: dict[str, Any] = {}
     for key, d in definitions.items():
         if key in payload:
-            value = validate_field_value(d, payload[key], project=project)
+            value = validate_field_value(d, payload[key], project=project, issue=issue)
         elif d.default_value is not None:
             value = d.default_value
         elif d.is_required:
@@ -201,6 +397,7 @@ def merge_custom_fields(
     issue_type_id: uuid_module.UUID | None,
     current: dict,
     payload: dict,
+    issue: _Issue | None = None,
 ) -> dict:
     """PATCH 合并语义（TASK-008 §4.2.4）：
 
@@ -228,7 +425,7 @@ def merge_custom_fields(
                 raise _err(d, "REQUIRED", f"「{d.name}」为必填字段，不能清空")
             merged.pop(key, None)
             continue
-        cleaned = validate_field_value(d, value, project=project)
+        cleaned = validate_field_value(d, value, project=project, issue=issue)
         if cleaned is None:
             merged.pop(key, None)
         else:

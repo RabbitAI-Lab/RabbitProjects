@@ -251,9 +251,17 @@ export function useViewPage(opts: { workspaceSlug?: string | undefined; projectI
     setSp((prev) => { const n = new URLSearchParams(prev); n.delete("filters"); return n; }, { preventScrollReset: true });
   }
 
+  /** 「全部」裸态首次改显示配置的引导提示——每页面会话一次（防逐开关刷屏，
+   *  2026-09-08 体验优化：「全部」不入库，此前仅靠灰按钮 tooltip，用户不知如何保存）。 */
+  const allViewHintedRef = useRef(false);
+
   /** 分组/显示/列等覆盖 → 黄条（BOARD-003 §3.1）。 */
   function patchDisplay(patch: Partial<ViewDisplayProps>) {
     viewStore.patchOverride({ displayProps: patch });
+    if (!currentView && !allViewHintedRef.current) {
+      allViewHintedRef.current = true;
+      toast("「全部」不入库：修改仅本次生效，可点「另存为视图」保存", "info");
+    }
     bump();
   }
 

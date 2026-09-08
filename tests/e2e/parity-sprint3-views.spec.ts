@@ -6,7 +6,7 @@
  *    C.65 视图已修改黄条 + 保存（PATCH display_props）
  *    C.66 五维分组列头（优先级枚举列 / __none__ 哨兵列 / 空列恒在）
  *    C.67 跨维度拖拽 dropToWrite（priority PATCH / __none__ 拦截 / BR-15 替换确认）
- *    C.68 显示配置 Drawer（320px / 卡片开关 / 空组显隐 / 保存到视图）
+ *    C.68 显示配置 Drawer（320px / 卡片开关 / 空组显隐 / 保存到视图；「全部」裸态改引导另存为——2026-09-08 体验优化）
  *    C.69 保存/另存为弹层（名称/8 icon/布局四选 → POST views 201 → 新 Tab 选中 + ?view_id=）
  *    C.70 视图结果为空 / 首次引导
  *    C.71~C.74 筛选面板（组节点/条件行/快捷 chips/配额/命中数/视图段叠加/最近）
@@ -339,6 +339,46 @@ test.describe("Sprint-3 Phase 3-A 视图与筛选（BOARD-003 / TASK-011 · C.64
     await page.reload();
     await waitTabs(page);
     await expect(page.locator('[data-sb-scope="bcol-collapsed"]').first()).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("S3V-7b C.68 「全部」裸态：另存为视图主动引导（原灰按钮）+ 首改 toast → POST views 201", async ({ page }) => {
+    test.setTimeout(90_000);
+    await loginDemo(page);
+    await createProject(page);
+    await waitTabs(page);
+    // 「全部」为固定首项（§3.6 不入库）——新项目默认落地；打开显示配置
+    await expect(page.locator('[data-sb-scope="view-tab"][data-view-id="__all__"]')).toHaveAttribute("aria-selected", "true");
+    await page.locator('[data-sb-scope="view-display-btn"]').click();
+    const drawer = page.locator('[data-sb-scope="display-drawer"]');
+    await expect(drawer).toBeVisible();
+    // 2026-09-08 体验优化：无视图存档时不再灰置「保存到视图」，改为可点「另存为视图」
+    await expect(drawer.locator('[data-sb-scope="disp-saveas"]')).toBeVisible();
+    await expect(drawer.locator('[data-sb-scope="disp-saveas"]')).toBeEnabled();
+    await expect(drawer.locator('[data-sb-scope="disp-save"]')).toHaveCount(0);
+    // 首次改显示配置 → toast 引导（每页面会话一次）；再点一次不刷屏
+    await drawer.getByRole("switch", { name: "优先级" }).click();
+    await expect(page.locator('[data-sb-scope="toast-text"]')).toContainText("「全部」不入库");
+    await drawer.getByRole("switch", { name: "优先级" }).click();
+    await expect(page.locator('[data-sb-scope="toast-text"]')).toHaveCount(1);
+    // 黄条出现（§3.1 dirty）——「全部」态黄条无 [保存]，仅另存为/放弃
+    await expect(page.locator('[data-sb-scope="view-dirty-bar"]')).toBeVisible();
+    await expect(page.locator('[data-sb-scope="view-dirty-save"]')).toHaveCount(0);
+    // 行为三件套：[另存为视图] → SaveViewModal（默认名「未命名视图」）→ POST views/ 201
+    await page.locator('[data-sb-scope="disp-saveas"]').click();
+    const modal = page.locator('[data-sb-scope="save-view-modal"]');
+    await expect(modal).toBeVisible();
+    await expect(modal.locator('[data-sb-scope="save-view-name"]')).toHaveValue("未命名视图");
+    await modal.locator('[data-sb-scope="save-view-name"]').fill("S3V7b 全部另存");
+    const post = page.waitForResponse((r: Response) =>
+      /\/views\/$/.test(r.url()) && r.request().method() === "POST");
+    await modal.locator('[data-sb-scope="save-view-submit"]').click();
+    const res = await post;
+    expect(res.status()).toBe(HTTP.CREATED);
+    const created = ((await res.json()) as { data?: { id?: string } }).data?.id ?? "";
+    expect(created).not.toBe("");
+    // UI 回读：新视图选中（?view_id=）+ dirty 黄条收起（已随创建落库）
+    await page.waitForURL(new RegExp(`view_id=${created}`), { timeout: 10_000 });
+    await expect(page.locator('[data-sb-scope="view-dirty-bar"]')).toBeHidden({ timeout: 10_000 });
   });
 
   /* ═══════════ C.72~C.74 筛选面板：树/快捷 chips/配额/命中数/应用 URL ═══════════ */

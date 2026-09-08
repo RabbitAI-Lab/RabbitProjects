@@ -366,8 +366,8 @@ case("AC-2", "meta 9 字段 + per_page=30（组数口径）",
                                 "prev_page_results", "count", "total_count",
                                 "total_pages", "page", "per_page"))
      and meta_ac.get("per_page") == 30)
-case("AC-3", "kind ∈ {activity,comment,batch} 三态行域",
-     {r.get("kind") for r in (b or {}).get("data") or []} <= {"activity", "comment", "batch"})
+case("AC-3", "kind ∈ {activity,comment,batch,project} 四态行域（project=文件域无 issue 归属行，Sprint-5 T5-02）",
+     {r.get("kind") for r in (b or {}).get("data") or []} <= {"activity", "comment", "batch", "project"})
 _, b = expect("AC-4", "非法 event → 400 INVALID_PARAM", "GET", f"{acts}?event=foo",
               HTTP["BAD_REQUEST"])
 case("AC-5", "details (field=event, code=NOT_A_CHOICE)", err_field(b, "event", "NOT_A_CHOICE") is not None)

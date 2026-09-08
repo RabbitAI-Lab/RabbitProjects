@@ -1303,9 +1303,9 @@ GET  /api/v1/tasks/{task_id}/                    → 200
 | 载荷结构 | `{ event, event_id, occurred_at, workspace_id, project_id, data, previous }`（`previous` 仅 updated 事件提供变更前值） |
 | 签名 | `X-RP-Signature: sha256=<hmac>`，HMAC-SHA256(secret, timestamp + "." + body)；同时发送 `X-RP-Timestamp`，接收方需校验时间偏差 ≤ 5 分钟以防重放 |
 | 投递保证 | at-least-once；接收方必须以 `event_id` 去重 |
-| 重试策略 | 指数退避 6 次（1s / 10s / 1m / 10m / 1h / 6h），期间非 2xx 均重试；全部失败进入死信队列并在 UI 中提示 |
+| 重试策略 | 指数退避 6 次（1s / 10s / 1m / 10m / 1h / 6h），初始尝试 + 6 次重试共 7 次尝试，期间非 2xx 均重试；终态死信为 `WebhookDelivery.status=dead` 单表设计（每次尝试的请求/响应快照以 Attempt JSON 追加于同一行，保留 30 天可手动重放，UI 投递日志「死信」Tab 提示——INTG-002 BR-06/07） |
 | 超时 | 单次投递 10 秒超时 |
-| 自动禁用 | 连续 50 次失败自动停用该 Webhook 并通知创建者 |
+| 自动禁用 | 连败计数（`consecutive_failures`——**无时间窗终态计数器**：死信终态 +1 / 成功终态 −1 钳位 ≥0，跨事件累计，`webhook.ping` 不计）达 50 自动停用（`auto_disabled`）并通知创建者 |
 
 ### 13.4 CORS 与安全响应头
 

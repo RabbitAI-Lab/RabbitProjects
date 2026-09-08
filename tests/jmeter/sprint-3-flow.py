@@ -169,9 +169,9 @@ def _sql_insert_issues(proj: str, actor_id: str, state_id: str, prefix: str, n: 
     sql = (
         "INSERT INTO issues (id, project_id, name, description_json, description_html, "
         " priority, sequence_id, sort_order, custom_fields, state_id, created_by_id, "
-        " created_at, updated_at, attachment_count) "
+        " created_at, updated_at, attachment_count, github_context) "
         "SELECT gen_random_uuid(), %s, %s || g, '{}'::jsonb, '<p></p>', 'none', "
-        + str(int(seq_start)) + " + g, g * 100.0, '{}'::jsonb, %s, %s, now(), now(), 0 "
+        + str(int(seq_start)) + " + g, g * 100.0, '{}'::jsonb, %s, %s, now(), now(), 0, '{}'::jsonb "
         "FROM generate_series(1, " + str(int(n)) + ") g")
     _pg_exec(sql, (proj, prefix, state_id, actor_id))
 
@@ -298,14 +298,28 @@ def cleanup():
         DELETE FROM issue_links WHERE issue_id IN (SELECT id FROM issues WHERE project_id IN (SELECT id FROM sp));
         DELETE FROM issue_assignees WHERE issue_id IN (SELECT id FROM issues WHERE project_id IN (SELECT id FROM sp));
         DELETE FROM issue_labels WHERE issue_id IN (SELECT id FROM issues WHERE project_id IN (SELECT id FROM sp));
+        DELETE FROM file_share_accesses WHERE share_id IN
+          (SELECT id FROM file_share_links WHERE asset_id IN (SELECT id FROM file_assets WHERE project_id IN (SELECT id FROM sp)));
+        DELETE FROM file_share_links WHERE asset_id IN (SELECT id FROM file_assets WHERE project_id IN (SELECT id FROM sp));
+        DELETE FROM file_versions WHERE asset_id IN (SELECT id FROM file_assets WHERE project_id IN (SELECT id FROM sp));
+        DELETE FROM upload_sessions WHERE project_id IN (SELECT id FROM sp);
         DELETE FROM file_assets WHERE project_id IN (SELECT id FROM sp);
+        DELETE FROM file_folders WHERE project_id IN (SELECT id FROM sp);
         DELETE FROM issues WHERE project_id IN (SELECT id FROM sp);
         DELETE FROM issue_views WHERE project_id IN (SELECT id FROM sp);
+        DELETE FROM issue_activities WHERE project_id IN (SELECT id FROM sp);
         DELETE FROM custom_field_definitions WHERE project_id IN (SELECT id FROM sp);
         DELETE FROM labels WHERE project_id IN (SELECT id FROM sp);
         DELETE FROM states WHERE project_id IN (SELECT id FROM sp);
         DELETE FROM project_members WHERE project_id IN (SELECT id FROM sp);
         DELETE FROM project_favorites WHERE project_id IN (SELECT id FROM sp);
+        DELETE FROM project_status_logs WHERE project_id IN (SELECT id FROM sp);
+        DELETE FROM webhook_deliveries WHERE endpoint_id IN
+          (SELECT id FROM webhook_endpoints WHERE project_id IN (SELECT id FROM sp));
+        DELETE FROM webhook_endpoints WHERE project_id IN (SELECT id FROM sp);
+        DELETE FROM integration_sync_conflict_logs WHERE binding_id IN
+          (SELECT id FROM integration_installations WHERE project_id IN (SELECT id FROM sp));
+        DELETE FROM integration_installations WHERE project_id IN (SELECT id FROM sp);
         DELETE FROM projects WHERE id IN (SELECT id FROM sp);
         DELETE FROM issue_types WHERE workspace_id IN
           (SELECT id FROM workspaces WHERE created_by_id IN ({users_sql}));
@@ -313,7 +327,23 @@ def cleanup():
           (SELECT id FROM workspaces WHERE created_by_id IN ({users_sql}));
         DELETE FROM workspace_members WHERE workspace_id IN
           (SELECT id FROM workspaces WHERE created_by_id IN ({users_sql}));
+        DELETE FROM custom_field_definitions WHERE project_id IS NULL AND workspace_id IN
+          (SELECT id FROM workspaces WHERE created_by_id IN ({users_sql}));
+        DELETE FROM workspace_login_daily WHERE workspace_id IN
+          (SELECT id FROM workspaces WHERE created_by_id IN ({users_sql}));
+        DELETE FROM workspace_labels WHERE workspace_id IN
+          (SELECT id FROM workspaces WHERE created_by_id IN ({users_sql}));
+        DELETE FROM project_templates WHERE workspace_id IN
+          (SELECT id FROM workspaces WHERE created_by_id IN ({users_sql}));
         DELETE FROM workspaces WHERE created_by_id IN ({users_sql});
+        DELETE FROM workspace_login_daily WHERE member_id IN ({users_sql});
+        DELETE FROM workspace_labels WHERE created_by_id IN ({users_sql});
+        DELETE FROM project_templates WHERE created_by_id IN ({users_sql});
+        DELETE FROM notifications WHERE receiver_id IN ({users_sql});
+        DELETE FROM password_reset_tokens WHERE user_id IN ({users_sql});
+        DELETE FROM backup_runs WHERE created_by_id IN ({users_sql});
+        DELETE FROM release_gates WHERE created_by_id IN ({users_sql});
+        DELETE FROM release_gate_events WHERE actor_id IN ({users_sql});
         DELETE FROM system_admins WHERE user_id IN ({users_sql});
         DELETE FROM users WHERE id IN ({users_sql});
         DROP TABLE sp;
@@ -330,6 +360,7 @@ def cleanup():
 # ═══ 主流程 ═══
 
 def main() -> int:
+    cleanup()  # 幂等起步：清掉历史失败 run 的残留（sprint-4-flow 同纪律）
     admin = Client(BASE)
     admin_email, ws = signup(admin, "s3flow-")
     member = Client(BASE)

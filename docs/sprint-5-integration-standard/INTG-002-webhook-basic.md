@@ -80,7 +80,7 @@ Webhook 是系统对外界的**事件脉搏**：任务创建、状态流转、�
 | `COLLAB-001` | 通知通道 | 50 连败停用的创建者通知（见 §2.3 COLLAB-001 待回改登记） |
 | `INFRA-002` | Celery 队列拓扑（`webhooks` 队列由 INFRA-002 §4.3 编排就位）、出网策略（白名单条目待 INFRA-002 后续补登） | 投递 |
 
-> **sprint-overview 待回改登记（上游待回改——本文不可越界改概览，仅登记范围，上表两处「概览依赖图待回改同步」均属本登记）**：① **概览依赖图**——`comment.created` / `project.*` 事件产生端为 `COLLAB-002` / `PROJ-003` 独立挂点直调 `dispatch_events`（不经 `TASK-010` Activity），依赖图需补挂点边；② **概览 §9 风险表多处冲突**——退避表（概览风险 #2 写 30s/2m/10m/30m/2h/6h，`api-conventions.md` §13.3 与本文 BR-06 为 1s/10s/1m/10m/1h/6h）、表名（概览风险 #2 写死信入 `webhook_dead_letters` 表，本文为 `WebhookDelivery.status=dead` 单表设计、无独立死信表）、失败计数窗口（概览风险 #2 写滑窗 1 小时粒度，本文 BR-08 为**无时间窗**的 `consecutive_failures` 累计计数器——终态 dead +1 / success −1 钳位 ≥0，§4.3.3）、幂等键前缀（概览风险 #3 写出站幂等键 `event_id` 带 `evt_` 前缀，本文 §2.3 锚点规则为**裸 UUID v4**——事件真相表主键直取 / `webhook.ping` 场景 `uuid.uuid4()`，载荷与 Delivery 全程无 `evt_` 前缀）、权限码（概览 §5 联调依赖写 `INTG-002` 用 `integration.manage` / `Workspace.setting.manage`，本文权限码一律 `integration.config`——`rbac-permission-model.md` §8.2，无 `integration.manage`）。以本文与 `docs/architecture/` 为准，sprint-overview 待回改同步（上游待回改）。
+> **sprint-overview 待回改登记（✅ 已回改收口，2026-09-08 Sprint-7 R0 文档批次——known-tech-debt #12）**：① **概览依赖图**——已补 `COLLAB-002`（`comment.created`）与 `PROJ-003`（`project.*` 五事件）独立挂点直调 `dispatch_events` 的虚线边 + 事件挂点注（不经 `TASK-010` Activity）；② **概览 §9 风险表五处冲突已全部对齐本文实现口径**——退避表（风险 #2 已改 1s/10s/1m/10m/1h/6h）、表名（风险 #2 已改 `WebhookDelivery.status=dead` 单表设计）、失败计数窗口（风险 #2 已改无时间窗 `consecutive_failures` 终态计数器）、幂等键前缀（风险 #3 已改裸 UUID v4 锚点规则）、权限码（§3 横切依赖已改 `integration.config`）；同步 `api-conventions.md` §13.3 重试/自动禁用两行按本文 BR-06/BR-08 精确化（死信单表 + 无时间窗计数器语义）。
 
 ### 1.6 竞品参考
 

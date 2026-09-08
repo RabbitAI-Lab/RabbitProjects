@@ -1013,10 +1013,10 @@ big = _mk9("T9-巨大树")
 _pg_exec(
     "INSERT INTO issues (id, project_id, name, description_json, description_html, "
     " priority, sequence_id, sort_order, custom_fields, parent_id, created_at, updated_at, "
-    " state_id, attachment_count) "
+    " state_id, attachment_count, github_context) "
     "SELECT gen_random_uuid(), (SELECT project_id FROM issues WHERE id = %s), 'bulk', "
     "'{}'::jsonb, '<p></p>', 'none', g + 100000, g * 100.0, '{}'::jsonb, %s, now(), now(), "
-    "(SELECT state_id FROM issues WHERE id = %s), 0 "
+    "(SELECT state_id FROM issues WHERE id = %s), 0, '{}'::jsonb "
     "FROM generate_series(1, 505) g",
     (big["id"], big["id"], big["id"]))
 code, body = admin.req("POST", iurl + f"{big['id']}/duplicate/", {}, {"X-CSRFToken": admin.csrf()})

@@ -35,6 +35,7 @@ app = Celery(
         "plane.bgtasks.share_sweep",       # FILE-004：过期分享清扫（beat 每小时）
         "plane.bgtasks.worklog",
         "plane.bgtasks.workspace_invite",
+        "plane.bgtasks.audit",               # AUTH-010 占位（R4 兑现真管道；AUTH-007 事件投递）
         "plane.workflow.tasks",               # WF-002：审批通知/超时扫描（shared_task 需 worker 侧 import）
         "plane.workflow.automation_tasks",    # WF-003：自动化引擎（同上，celery include 漏登即 unregistered）
         "plane.db.services.webhook_outbound",   # INTG-002：出站投递/清理/到期扫描

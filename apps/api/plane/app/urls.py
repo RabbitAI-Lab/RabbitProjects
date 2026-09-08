@@ -175,6 +175,7 @@ FEATURE_MODULES = (
     "automation",       # M11-WF 自动化规则（WF-003，Sprint-7 R3）
     "worklog_approval", # M4-TASK 工时审批（TASK-013，Sprint-7 R3）
     "templates_audit",  # M11-WF 模板库与审计（WF-005/006，Sprint-7 R5）
+    "departments",      # M1-AUTH 部门组织架构（AUTH-007，Sprint-8 R1）
 )
 
 for _name in FEATURE_MODULES:

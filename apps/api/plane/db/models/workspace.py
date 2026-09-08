@@ -140,6 +140,16 @@ class WorkspaceMember(BaseModel):
     role = models.IntegerField(choices=WorkspaceRole.choices, default=WorkspaceRole.MEMBER)
     is_active = models.BooleanField(default=True)
     company_role = models.TextField(null=True, blank=True, verbose_name="公司内职务")
+    # AUTH-007（Sprint-8）：一人一部门（BR-05）；null = 未分配。岗位复用既有
+    # company_role（rbac §3.2 展示用职位），不另建 position 列。删部门受限
+    # 于 BR-04 Service 层校验（仅空部门可删），SET_NULL 仅兜底。
+    department = models.ForeignKey(
+        "db.Department",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="members",
+    )
 
     class Meta(BaseModel.Meta):
         db_table = "workspace_members"

@@ -265,7 +265,9 @@ def test_file_activity_none_project_noop(env):
 
     emit_file_activity(project_id=None, asset_id=None, actor_id=env["owner"].id,
                        action="uploaded", comment="不投")
-    assert IssueActivity.objects.filter(field="file.uploaded").count() == 0
+    # 作用域过滤（坑 18）：全表 count 会撞 dev 库 worker 异步落库的残留
+    assert IssueActivity.objects.filter(
+        field="file.uploaded", comment="不投").count() == 0
 
 
 def test_emit_file_activity_via_enqueue(env, monkeypatch):

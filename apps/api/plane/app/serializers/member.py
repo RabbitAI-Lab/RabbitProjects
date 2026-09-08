@@ -39,11 +39,16 @@ class WorkspaceMemberSerializer(serializers.ModelSerializer):
     user = serializers.SerializerMethodField()
     joined_at = serializers.SerializerMethodField()
     is_owner = serializers.SerializerMethodField()
+    department_id = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkspaceMember
-        fields = ("id", "user", "role", "is_active", "joined_at", "is_owner")
-        read_only_fields = ("id", "is_active", "joined_at", "is_owner")
+        fields = (
+            "id", "user", "role", "is_active", "joined_at", "is_owner",
+            "company_role", "department_id",
+        )
+        read_only_fields = ("id", "is_active", "joined_at", "is_owner",
+                            "company_role", "department_id")
 
     def get_user(self, obj):
         m = obj.member
@@ -62,6 +67,10 @@ class WorkspaceMemberSerializer(serializers.ModelSerializer):
     def get_is_owner(self, obj):
         return obj.role == WorkspaceRole.OWNER
 
+    def get_department_id(self, obj) -> str | None:
+        # AUTH-007：成员归属部门（null = 未分配）
+        return str(obj.department_id) if obj.department_id else None
+
 
 class WorkspaceMemberRoleChangeSerializer(serializers.Serializer):
     """PATCH .../members/{member_id}/ —— 仅 role 字段（BR-05/BR-06）。"""
@@ -76,6 +85,35 @@ class WorkspaceMemberRoleChangeSerializer(serializers.Serializer):
         if value not in (WorkspaceRole.MEMBER, WorkspaceRole.ADMIN):
             raise serializers.ValidationError("角色非法", code="NOT_A_CHOICE")
         return value
+
+
+class WorkspaceMemberPatchSerializer(serializers.Serializer):
+    """PATCH .../members/{member_id}/ —— AUTH-007 扩白名单字段。
+
+    role（既有，可选）+ department_id（可选，null=移入未分配，BR-05）+
+    company_role（可选岗位，≤64 字符，UT-14）——三者至少提供一项。
+    """
+
+    role = serializers.IntegerField(required=False)
+    department_id = serializers.UUIDField(required=False, allow_null=True)
+    company_role = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True, max_length=64,
+    )
+
+    def validate_role(self, value):
+        if value == WorkspaceRole.OWNER:
+            raise serializers.ValidationError(
+                "所有者仅能通过转让所有权产生", code="NOT_A_CHOICE",
+            )
+        if value not in (WorkspaceRole.MEMBER, WorkspaceRole.ADMIN):
+            raise serializers.ValidationError("角色非法", code="NOT_A_CHOICE")
+        return value
+
+    def validate(self, attrs):
+        if not any(k in attrs for k in ("role", "department_id", "company_role")):
+            raise serializers.ValidationError(
+                "role / department_id / company_role 至少提供一项")
+        return attrs
 
 
 class WorkspaceInviteSerializer(serializers.Serializer):

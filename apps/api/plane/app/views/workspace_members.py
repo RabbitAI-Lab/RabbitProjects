@@ -25,6 +25,7 @@ import hashlib
 import logging
 
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import NotFound
@@ -34,13 +35,14 @@ from rest_framework.views import APIView
 
 from plane.app.permissions import (
     IsAuthenticatedAndActive,
+    assert_can_manage_member,
     require_permission,
     require_role,
 )
 from plane.app.serializers.member import (
     WorkspaceInviteLiteSerializer,
     WorkspaceInviteSerializer,
-    WorkspaceMemberRoleChangeSerializer,
+    WorkspaceMemberPatchSerializer,
     WorkspaceMemberSerializer,
     WorkspaceTransferOwnershipSerializer,
     mask_email,
@@ -48,7 +50,8 @@ from plane.app.serializers.member import (
 from plane.app.views._access import get_workspace_or_404
 from plane.base.exception import AppException
 from plane.base.response import success_response
-from plane.db.models import WorkspaceMember, WorkspaceMemberInvite
+from plane.bgtasks.audit import record_audit
+from plane.db.models import Department, WorkspaceMember, WorkspaceMemberInvite
 from plane.db.models.roles import WorkspaceRole
 from plane.db.services.workspace_member import MemberService
 
@@ -128,6 +131,24 @@ class WorkspaceMemberListView(APIView):
                 ) from exc
             qs = qs.filter(role__gte=role_gte_int)
 
+        # AUTH-007 §2.2：按部门过滤（?department=<id>，可叠 &with_descendants=true）
+        department = request.query_params.get("department")
+        if department is not None:
+            try:
+                dept = Department.objects.get(
+                    pk=department, workspace=ws, deleted_at__isnull=True,
+                )
+            except (ValueError, Department.DoesNotExist):
+                raise NotFound("RESOURCE_NOT_FOUND") from None
+            if request.query_params.get("with_descendants") in ("true", "1"):
+                dept_ids = Department.objects.filter(
+                    workspace=ws, deleted_at__isnull=True,
+                    path__startswith=dept.path,
+                ).values_list("id", flat=True)
+                qs = qs.filter(department_id__in=dept_ids)
+            else:
+                qs = qs.filter(department=dept)
+
         return success_response(WorkspaceMemberSerializer(qs, many=True).data)
 
 
@@ -150,14 +171,53 @@ class WorkspaceMemberDetailView(APIView):
     def patch(self, request, slug, member_id):
         ws, _ = get_workspace_or_404(slug, request.user)
         # workspace.member.manage 由 _MemberAPIViewPermission 守护
-        s = WorkspaceMemberRoleChangeSerializer(data=request.data)
+        s = WorkspaceMemberPatchSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         member = self._get_member(ws, member_id)
-        svc = MemberService()
-        member = svc.change_role(
-            workspace=ws, member=member,
-            new_role=s.validated_data["role"], actor=request.user,
-        )
+
+        # AUTH-007：挂部门 / 岗位（R2 层级保护同口径——管理成员行即受 §7.1 约束，
+        # PM-03：WS_ADMIN 改 WS_OWNER 行 → 403 PERM_ROLE_INSUFFICIENT）
+        if any(k in s.validated_data for k in ("department_id", "company_role")):
+            operator_role = (
+                WorkspaceMember.objects
+                .filter(workspace=ws, member=request.user,
+                        is_active=True, deleted_at__isnull=True)
+                .values_list("role", flat=True).first()
+            )
+            if operator_role is None:
+                raise NotFound("RESOURCE_NOT_FOUND") from None
+            if operator_role != WorkspaceRole.OWNER:  # OWNER 全权（rbac §7.1 顶格）
+                assert_can_manage_member(
+                    operator_role=operator_role, target_role=member.role)
+            if "department_id" in s.validated_data:
+                new_dept = s.validated_data["department_id"]
+                if new_dept is not None:
+                    Department.objects.get(
+                        pk=new_dept, workspace=ws, deleted_at__isnull=True,
+                    )  # 出域 / 已删 → 404
+                member.department_id = new_dept
+            if "company_role" in s.validated_data:
+                member.company_role = s.validated_data["company_role"]
+            member.updated_by = request.user
+            update_fields = ["updated_by", "updated_at"]
+            if "department_id" in s.validated_data:
+                update_fields.append("department_id")
+            if "company_role" in s.validated_data:
+                update_fields.append("company_role")
+            member.save(update_fields=update_fields)
+            transaction.on_commit(
+                lambda: record_audit.delay(
+                    "department.member_assigned",
+                    actor_id=str(request.user.id),
+                    object_id=str(member.id),
+                )
+            )
+
+        if "role" in s.validated_data:
+            member = MemberService().change_role(
+                workspace=ws, member=member,
+                new_role=s.validated_data["role"], actor=request.user,
+            )
         return success_response(WorkspaceMemberSerializer(member).data)
 
     def delete(self, request, slug, member_id):

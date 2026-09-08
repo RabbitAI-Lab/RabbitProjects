@@ -8,12 +8,18 @@
  *    C.17 邀请接受页（三态：有效/不匹配/失效）
  *    C.35 工作台首页（4 卡 + 7 日趋势 + 通知摘要卡 + 「🎉 已处理全部通知」空态） */
 import { expect, test } from "@playwright/test";
-import { HTTP } from "./no-console-errors";
+import { attachGuards, HTTP } from "./no-console-errors";
 
-const getErrs = () => [] as string[];
+// Sprint-7 教训补口：本 spec 曾以「噪声由同会话其他 spec 承担」自豁免守卫——
+// 后台请求的非预期 4xx/5xx 由此漏网。现与其他 spec 同口径（console+网络双守卫）。
+let guards: ReturnType<typeof attachGuards> | null = null;
 
 test.beforeEach(async ({ page }) => {
-  getErrs().length = 0; // 自身不监听 console：浏览器噪声由同会话其他 spec 承担
+  guards = attachGuards(page);
+});
+
+test.afterEach(async () => {
+  expect(guards?.report() ?? [], "console/net errors").toEqual([]);
 });
 
 test.describe("Sprint 1 UI parity（C.10/C.11/C.14/C.17/C.35）", () => {
@@ -65,6 +71,9 @@ test.describe("Sprint 1 UI parity（C.10/C.11/C.14/C.17/C.35）", () => {
 
   // ── C.17 邀请接受页（公共路由；需先有 token 才进入分支）──
   test("C.17 /invite/__bogus__ 走错误分支（不会白屏）", async ({ page }) => {
+    // 被测行为本身：伪造 token 401/404 错误分支（防枚举），白屏才是缺陷
+    guards?.allow({ method: "GET", url: "/invitations/", status: HTTP.UNAUTHORIZED });
+    guards?.allow({ method: "GET", url: "/invitations/", status: HTTP.NOT_FOUND });
     const resp = await page.goto("/invite/__bogus_token__");
     expect(resp).not.toBeNull();
     // 页面至少渲染出 Logo + 「RabbitProjects」字样（公共 layout 在）

@@ -15,7 +15,7 @@
  *  （VIEWER 前端工具条不可见 + 后端 bulk 写端点 403）；console guard 全量；API_TRUTH import。
  */
 import { test, expect, type Page, type Response } from "@playwright/test";
-import { attachConsoleGuard, HTTP } from "./no-console-errors";
+import { attachGuards, HTTP } from "./no-console-errors";
 
 const API_ORIGIN = process.env.E2E_BASE_URL ?? "http://localhost:3001";
 /** 当前测试的工作空间 slug（每 test 独立注册用户 → 独立 bulk throttle 桶，BR-06 隔离）。 */
@@ -89,13 +89,13 @@ async function expectBar(page: Page, n: number) {
 }
 
 test.describe("Sprint-3 Phase 3-B 批量操作（BOARD-004 · C.77~C.83）", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
     await page.context().clearCookies();
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
   });
   test.afterEach(async () => {
-    expect.soft(getErrs(), "console errors").toEqual([]);
+    expect.soft(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
 
   /* ═══════════ C.78 + C.80 列表多选 → 批量优先级（行为三件套） ═══════════ */
@@ -255,6 +255,8 @@ test.describe("Sprint-3 Phase 3-B 批量操作（BOARD-004 · C.77~C.83）", () 
 
   test("S3B-5 C.82 批量改状态被流转守卫拦截 → 400 details → 弹层定位 → 移除重试 200", async ({ page }) => {
     test.setTimeout(120_000);
+    // 被测行为本身：守卫拦截 400（details 定位被阻塞项；BOARD-004 §C.82）
+    getErrs?.allow({ method: "PATCH", url: "/issues/bulk/", status: HTTP.BAD_REQUEST });
     await loginFresh(page);
     const proj = await createProject(page);
     const blocker = await mkIssue(page, proj.id, "S3B5 前置任务"); // 不入批（入批会先完成、解阻塞）

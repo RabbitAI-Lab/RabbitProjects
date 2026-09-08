@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, expect, type Page } from "@playwright/test";
 import { execSync } from "node:child_process";
-import { attachConsoleGuard, HTTP } from "./no-console-errors";
+import { attachGuards, HTTP } from "./no-console-errors";
 
 // 造数自动清理（afterAll 幂等；S4_E2E_NO_CLEANUP=1 可跳过以保留现场调试）
 test.afterAll(() => {
@@ -129,13 +129,13 @@ async function dropUpload(page: Page, files: Array<{ name: string; content: stri
 }
 
 test.describe("Sprint-4 预览/版本/分享 + space（FILE-003/004 · C.119~C.125）", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
     await page.context().clearCookies();
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
   });
   test.afterEach(async () => {
-    expect.soft(getErrs(), "console errors").toEqual([]);
+    expect.soft(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
 
   /* ═══════════ C.120 预览抽屉五通道 + 排队/超限/不可预览 + 框架 parity ═══════════ */
@@ -297,7 +297,9 @@ test.describe("Sprint-4 预览/版本/分享 + space（FILE-003/004 · C.119~C.1
     test.setTimeout(300_000);
     // route.abort 注入的传输失败是本测试刻意制造（S4F-2 先例：guard 剔除 net::ERR_FAILED）
     const rawErrs = getErrs;
-    getErrs = () => rawErrs().filter((e) => !e.includes("net::ERR_FAILED"));
+    getErrs = Object.assign(() => rawErrs?.().filter((e) => !e.includes("net::ERR_FAILED")) ?? [], {
+      report: () => rawErrs?.report().filter((e) => !e.includes("net::ERR_FAILED")) ?? [],
+    });
     await loginDemo(page);
     const proj = await createProject(page, "S4Pchunk");
     const des = await createFolder(page, proj.id, "大文件");
@@ -511,6 +513,8 @@ test.describe("Sprint-4 预览/版本/分享 + space（FILE-003/004 · C.119~C.1
 
   test("S4P-5 C.122 缩略图落位：网格卡片缩略（derivatives/thumbnail 302）+ 列表悬浮 200ms 小卡", async ({ page }) => {
     test.setTimeout(120_000);
+    // 被测行为本身：衍生图异步生成（worker 队列）——就绪前 thumbnail 404 即 C.120 排队态
+    getErrs?.allow({ method: "GET", url: "/derivatives/thumbnail/", status: HTTP.NOT_FOUND });
     await loginDemo(page);
     const proj = await createProject(page, "S4Pthumb");
     const des = await createFolder(page, proj.id, "设计稿");
@@ -547,6 +551,11 @@ test.describe("Sprint-4 预览/版本/分享 + space（FILE-003/004 · C.119~C.1
 
   test("S4P-6 C.125 space 匿名页三态：密码门（抖动+剩余次数）→ 文件页（倒计时/预览/下载 aria）+ 仅预览 + 锁定 + 失效统一", async ({ page }) => {
     test.setTimeout(180_000);
+    // 被测行为本身：错误密码 unlock 401（抖动+剩余次数）+ 已吊销/失效 410（统一失效）；
+    // 连续试错触发公网试错限流 429 亦为设计行为（Sprint-6 三层限流——密码门防暴力）
+    getErrs?.allow({ method: "POST", url: "/unlock/", status: HTTP.UNAUTHORIZED });
+    getErrs?.allow({ method: "POST", url: "/unlock/", status: HTTP.TOO_MANY });
+    getErrs?.allow({ method: "GET", url: "/public/shares/", status: HTTP.GONE });
     // 前置：web 域造分享（密码 30 天 download / 无密码永久 view / 密码锁定专用 / 已吊销）
     await loginDemo(page);
     const proj = await createProject(page, "S4Pspace");
@@ -641,10 +650,13 @@ test.describe("Sprint-4 预览/版本/分享 + space（FILE-003/004 · C.119~C.1
   test("S4P-7 WS：file.version.created 事件刷新版本面板（双用户：A 上传同名新版 → B 面板无刷新自更新）", async ({ browser }) => {
     test.setTimeout(240_000);
     const errGetters: Array<() => string[]> = [];
-    getErrs = () => errGetters.flatMap((g) => g());
+    getErrs = Object.assign(() => errGetters.flatMap((g) => g()), {
+      report: () => errGetters.flatMap((g) => g.report()),
+      allow: () => {}, // 多页聚合无单一 allow 通道；需要时在页级 guard 上声明
+    });
     const ctxA = await browser.newContext();
     const aPage = await ctxA.newPage();
-    errGetters.push(attachConsoleGuard(aPage));
+    errGetters.push(attachGuards(aPage));
     await loginDemo(aPage);
     const proj = await createProject(aPage, "S4Pws");
     const des = await createFolder(aPage, proj.id, "协作");
@@ -659,7 +671,7 @@ test.describe("Sprint-4 预览/版本/分享 + space（FILE-003/004 · C.119~C.1
     expect(link, "SMTP 降级 invite_links").toBeTruthy();
     const ctxB = await browser.newContext();
     const bPage = await ctxB.newPage();
-    errGetters.push(attachConsoleGuard(bPage));
+    errGetters.push(attachGuards(bPage));
     await bPage.goto("/register");
     await bPage.getByLabel(/邮箱/).fill(bEmail);
     await bPage.getByLabel("密码", { exact: false }).first().fill("Rabbit123!");

@@ -15,7 +15,7 @@
  */
 import { test, expect, type Page, type Response } from "@playwright/test";
 import { execSync } from "node:child_process";
-import { attachConsoleGuard, CODES, HTTP } from "./no-console-errors";
+import { attachGuards, CODES, HTTP } from "./no-console-errors";
 
 // 造数自动清理（afterAll 幂等；S4_E2E_NO_CLEANUP=1 可跳过以保留现场调试）
 test.afterAll(() => {
@@ -182,13 +182,16 @@ async function dragBarBy(page: Page, issueId: string, dxPx: number) {
 }
 
 test.describe("Sprint-4 甘特视图（GANTT-001/002 · C.98~C.111）", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
     await page.context().clearCookies();
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
+    // BR-13 限流（overdue-summary）：本 spec 十余用例两分钟内连开甘特即超试错闸——
+    // 被设计行为（限流不改数据语义，黄条降级）；其余端点断言不受影响
+    getErrs.allow({ method: "GET", url: "/gantt/overdue-summary/", status: HTTP.TOO_MANY });
   });
   test.afterEach(async () => {
-    expect.soft(getErrs(), "console errors").toEqual([]);
+    expect.soft(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
 
   /* ═══════════ C.98~C.103 / C.105 / C.109 parity 全表面 ═══════════ */
@@ -311,7 +314,9 @@ test.describe("Sprint-4 甘特视图（GANTT-001/002 · C.98~C.111）", () => {
     // 被测降级路径的一部分，从 console guard 过滤（对齐 no-console-errors 白名单
     // 对 4xx 回声的处理先例）
     const rawErrs = getErrs;
-    getErrs = () => rawErrs().filter((m) => !/net::ERR_FAILED|Failed to load resource/i.test(m));
+    getErrs = Object.assign(() => rawErrs?.().filter((m) => !/net::ERR_FAILED|Failed to load resource/i.test(m)) ?? [], {
+      report: () => rawErrs?.report().filter((m) => !/net::ERR_FAILED|Failed to load resource/i.test(m)) ?? [],
+    });
     await loginDemo(page);
     const s = await seedGantt(page, "S4Gskel");
     // gantt/ 行取数延迟 1.2s → 骨架可见（占位宽度定长防 CLS）
@@ -577,10 +582,13 @@ test.describe("Sprint-4 甘特视图（GANTT-001/002 · C.98~C.111）", () => {
     test.setTimeout(120_000);
     // console guard 覆盖双页（聚合后 afterEach 统一断言）
     const errGetters: Array<() => string[]> = [];
-    getErrs = () => errGetters.flatMap((g) => g());
+    getErrs = Object.assign(() => errGetters.flatMap((g) => g()), {
+      report: () => errGetters.flatMap((g) => g.report()),
+      allow: () => {}, // 多页聚合无单一 allow 通道；需要时在页级 guard 上声明
+    });
     const ctxA = await browser.newContext();
     const aPage = await ctxA.newPage();
-    errGetters.push(attachConsoleGuard(aPage));
+    errGetters.push(attachGuards(aPage));
     await loginDemo(aPage);
     const proj = await createProject(aPage, "S4Gviewer");
     const { body } = await apiCall(aPage, "POST", `/api/v1/workspaces/${WS}/projects/${proj.id}/issues/`, { name: "只读目标", target_date: dISO(6) });
@@ -596,7 +604,7 @@ test.describe("Sprint-4 甘特视图（GANTT-001/002 · C.98~C.111）", () => {
     expect(link, "SMTP 降级 invite_links").toBeTruthy();
     const ctxB = await browser.newContext();
     const bPage = await ctxB.newPage();
-    errGetters.push(attachConsoleGuard(bPage));
+    errGetters.push(attachGuards(bPage));
     await bPage.goto("/register");
     await bPage.getByLabel(/邮箱/).fill(bEmail);
     await bPage.getByLabel("密码", { exact: false }).first().fill("Rabbit123!");

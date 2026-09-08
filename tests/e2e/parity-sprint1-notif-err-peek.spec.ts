@@ -1,8 +1,16 @@
 /** Sprint 1 补充 parity（C.30 Hover Peek / C.34 通知抽屉 / C.36 全局错误）。
  *  ADR-0010 ③：断言由清单行生成；每条带 `// C.x <清单行原文摘要>` 出处注释。 */
 import { expect, test } from "@playwright/test";
+import { attachGuards, HTTP } from "./no-console-errors";
 
 test.describe("Sprint 1 补充 parity（C.30/C.34/C.36）", () => {
+  let guards: ReturnType<typeof attachGuards> | null = null;
+  test.beforeEach(async ({ page }) => {
+    guards = attachGuards(page);
+  });
+  test.afterEach(async () => {
+    expect(guards?.report() ?? [], "console/net errors").toEqual([]);
+  });
 
   // ── C.34 铃铛/抽屉与 C.36 全局表面：公共路由不白屏（组件挂载前提） ──
   test("C.36 403 公共页可渲染（全局表面健康）", async ({ page }) => {
@@ -20,6 +28,9 @@ test.describe("Sprint 1 补充 parity（C.30/C.34/C.36）", () => {
 
   // ── C.36 未知工作空间路由不白屏（ErrorBoundary / Guard 兜底链路） ──
   test("C.36 未知路由不白屏", async ({ page }) => {
+    // 被测行为本身：未知 ws 下 Guard 探会话 → me 401/403 → 兜底渲染
+    guards?.allow({ method: "GET", url: "/users/me/", status: HTTP.UNAUTHORIZED });
+    guards?.allow({ method: "GET", url: "/users/me/", status: HTTP.FORBIDDEN });
     await page.goto("__definitely_missing_ws__/projects");
     await expect(page.getByText("RabbitProjects").first()).toBeVisible({ timeout: 8000 });
     const body = await page.locator("body").innerText();

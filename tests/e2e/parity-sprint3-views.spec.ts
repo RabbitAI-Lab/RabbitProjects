@@ -19,7 +19,7 @@
  *  console guard 全量；API_TRUTH import（禁止硬编码状态码）。
  */
 import { test, expect, type Page, type Response } from "@playwright/test";
-import { attachConsoleGuard, HTTP } from "./no-console-errors";
+import { attachGuards, HTTP } from "./no-console-errors";
 
 const WS = "workspace";
 const API_ORIGIN = process.env.E2E_BASE_URL ?? "http://localhost:3001";
@@ -88,13 +88,13 @@ async function switchGroup(page: Page, name: string) {
 }
 
 test.describe("Sprint-3 Phase 3-A 视图与筛选（BOARD-003 / TASK-011 · C.64~C.76）", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
     await page.context().clearCookies();
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
   });
   test.afterEach(async () => {
-    expect.soft(getErrs(), "console errors").toEqual([]);
+    expect.soft(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
 
   /* ═══════════ C.64 视图切换器工具条 parity ═══════════ */
@@ -497,15 +497,21 @@ test.describe("Sprint-3 Phase 3-A 视图与筛选（BOARD-003 / TASK-011 · C.64
     await page.goto(`/${WS}/projects/${proj.id}/issues?view_id=${poolId}`);
     await expect(page.locator('th[data-col="priority"]')).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('th[data-col="title"]')).toBeVisible();
-    // 打开显示配置 → 切隐藏优先级列（行为三件套：交互 → PATCH 200 → 列表 <th> 消失）
+    // 打开显示配置 → 切隐藏优先级列（ADR-0029/0030 契约：chip 为本地覆盖即时生效，
+    // 持久化经抽屉「保存到视图」→ PATCH display_props）
     const patch = page.waitForResponse((r: Response) =>
       /\/views\/[0-9a-f-]+\/$/.test(r.url()) && r.request().method() === "PATCH");
     await page.locator('[data-sb-scope="view-display-btn"]').click();
     const drawer = page.locator('[data-sb-scope="display-drawer"]');
     await expect(drawer.locator('[data-sb-scope="disp-sec-columns"]')).toBeVisible();
-    await drawer.locator('[data-sb-scope="disp-col-chip"][data-col="priority"]').click();
+    const priorityChip = drawer.locator('[data-sb-scope="disp-col-chip"][data-col="priority"]');
+    await priorityChip.click();
+    // 偶发首击落在抽屉挂载动画上未生效——补点一次再等（本地覆盖即时生效）
+    await expect(page.locator('th[data-col="priority"]')).toBeHidden({ timeout: 3_000 })
+      .catch(() => priorityChip.click());
+    await expect(page.locator('th[data-col="priority"]')).toBeHidden({ timeout: 5_000 });
+    await drawer.getByRole("button", { name: /保存到视图/ }).click();
     expect((await patch).status()).toBe(HTTP.OK);
-    await expect(page.locator('th[data-col="priority"]')).toBeHidden({ timeout: 10_000 });
     await expect(page.locator('th[data-col="title"]')).toBeVisible();
     await expect(page.locator('th[data-col="key"]')).toBeVisible();
     // 切到表格布局 → 同一份 display_props.columns 生效，<th data-col="priority"> 也应不可见
@@ -531,6 +537,8 @@ test.describe("Sprint-3 Phase 3-A 视图与筛选（BOARD-003 / TASK-011 · C.64
 
   test("S3V-12 C.70/C.76 鉴权负向成对：不可见视图 URL → 前端黄条回退 + API 404（BR-11 存在性隐藏）", async ({ page }) => {
     test.setTimeout(90_000);
+    // 被测行为本身：不可见视图 → 视图装载请求 404（BR-11 存在性隐藏——看板/列表两入口同口径）
+    getErrs?.allow({ method: "GET", url: "/issues/", status: HTTP.NOT_FOUND });
     await loginDemo(page);
     const proj = await createProject(page);
     await mkIssue(page, proj.id, "S3V12 负向");

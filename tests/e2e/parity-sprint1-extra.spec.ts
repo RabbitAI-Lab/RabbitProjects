@@ -17,12 +17,12 @@
  *  运行：E2E_NO_SERVER=1 pnpm exec playwright test tests/e2e/parity-sprint1-extra.spec.ts --reporter=line
  */
 import { test, expect } from "@playwright/test";
-import { attachConsoleGuard } from "./no-console-errors";
+import { attachGuards } from "./no-console-errors";
 
 test.describe("Sprint-1 extra UI parity（C.25/C.26/C.28/C.29/C.31/C.32）", () => {
-  let getErrs: () => string[] = () => [];
-  test.beforeEach(async ({ page }) => { getErrs = attachConsoleGuard(page); });
-  test.afterEach(async () => { expect(getErrs(), "console errors").toEqual([]); });
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
+  test.beforeEach(async ({ page }) => { getErrs = attachGuards(page); });
+  test.afterEach(async () => { expect(getErrs?.report() ?? [], "console/net errors").toEqual([]); });
 
   /* ── C.26 标签管理面板 720px（调试入口 /labels-admin?slug=…&projectId=…）── */
   test("C.26 标签管理面板 720px 渲染面板头 + 新建标签 + 空态", async ({ page }) => {

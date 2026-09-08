@@ -5,7 +5,7 @@
  *  TC-PROJ1-007a 项目删除：confirm != name → 删除按钮 disabled（DOM 断言）
  *  运行前 API(8000) + Web(3001) 就绪：E2E_NO_SERVER=1 pnpm exec playwright test tests/e2e/coverage.spec.ts */
 import { test, expect, type Page } from "@playwright/test";
-import { attachConsoleGuard, HTTP } from "./no-console-errors";
+import { attachGuards, HTTP } from "./no-console-errors";
 
 const TEST_PASSWORD = "Rabbit123";
 
@@ -24,14 +24,19 @@ async function registerAndLandProjects(page: Page, email = freshEmail()) {
 }
 
 test.describe("覆盖补全（原 Nightly / 占位用例）", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
   });
   test.afterEach(async () => {
-    expect(getErrs(), "console errors").toEqual([]);
+    expect(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
   test("TC-AUTH2-007：401/403 拦截 → 自动跳登录页", async ({ page, context }) => {
+    // 被测行为本身：登出后 me 401/403 拦截，网络层预期失败与接口契约一致；
+    // 未认证态下顶栏/守卫顺带拉的工作空间列表同属拦截面
+    getErrs?.allow({ method: "GET", url: "/users/me/", status: HTTP.UNAUTHORIZED });
+    getErrs?.allow({ method: "GET", url: "/users/me/", status: HTTP.FORBIDDEN });
+    getErrs?.allow({ method: "GET", url: "/workspaces/", status: HTTP.UNAUTHORIZED });
     await registerAndLandProjects(page);
     const url = page.url(); // 受保护页
     // 断言：登出后 /users/me/ 返回 401/403（HTTP.OK 不匹配）

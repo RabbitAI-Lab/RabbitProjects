@@ -63,20 +63,67 @@ def main() -> None:
         workspace=ws_obj, is_default=True, deleted_at__isnull=True,
         defaults={"name": "任务", "created_by_id": admin_uid})
 
-    # 幂等清场：软删旧 S7AC 项目
+    # 幂等清场：软删旧 S7AC 项目（webhook 等副作用走 API）+ SQL 全序硬清
+    # （PROTECT FK 按依赖序删，口径同 tests/e2e/_cleanup_s5.py 的全序纪律——
+    #  S7 增补审批/工作流/自动化/工时/模板分发各表；跨 WS 按 identifier 清）
     old = admin.req("GET", f"/api/v1/workspaces/{q(ws)}/projects/?status=all")[1]["data"] or []
     for p in old:
         if p.get("identifier") == IDENT:
             admin.req("DELETE", f"/api/v1/workspaces/{q(ws)}/projects/{p['id']}/",
                       {}, {"X-CSRFToken": admin.csrf()})
-    # ORM 清残留（软删行）
-    from plane.db.models import Workflow, WorkflowState, WorkflowTransition
-    for p in Project.objects.filter(identifier=IDENT):
-        for w in Workflow.all_objects.filter(project=p):
-            WorkflowTransition.objects.filter(workflow=w).delete()
-            WorkflowState.objects.filter(workflow=w).delete()
-        w.delete()
-        p.hard_delete() if hasattr(p, "hard_delete") else p.delete()
+    from django.db import connection
+    _PIDS = "SELECT id FROM projects WHERE identifier = 'S7AC'"
+    _IIDS = f"SELECT id FROM issues WHERE project_id IN ({_PIDS})"
+    _WFIDS = f"SELECT id FROM workflows WHERE project_id IN ({_PIDS})"
+    _AFIDS = f"SELECT id FROM approval_flows WHERE project_id IN ({_PIDS})"
+    # 实例经 issue 或 transition 归域（无 project_id 列）
+    _AINS = (f"SELECT id FROM approval_instances WHERE issue_id IN ({_IIDS})"
+             f" OR transition_id IN (SELECT id FROM workflow_transitions WHERE workflow_id IN ({_WFIDS}))")
+    for sql in [
+        # 依赖序：实例域先删（其域子查询引用 transitions/transitions 引用 flows、
+        # distributions 引用 workflows——均须在各自父表前）
+        f"DELETE FROM approval_audit_events WHERE instance_id IN ({_AINS})",
+        f"DELETE FROM approval_records WHERE instance_id IN ({_AINS})",
+        f"DELETE FROM approval_instances WHERE id IN ({_AINS})",
+        f"DELETE FROM template_unlock_requests WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM template_distributions WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM workflow_transitions WHERE workflow_id IN ({_WFIDS})",
+        f"DELETE FROM workflow_states WHERE workflow_id IN ({_WFIDS})",
+        f"DELETE FROM workflows WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM approval_nodes WHERE flow_id IN ({_AFIDS})",
+        f"DELETE FROM approval_flows WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM automation_runs WHERE rule_id IN (SELECT id FROM automation_rules WHERE project_id IN ({_PIDS}))",
+        f"DELETE FROM automation_rules WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM automation_settings WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM worklog_approvals WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM worklog_summaries WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM project_worklog_configs WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM comment_reactions WHERE comment_id IN (SELECT id FROM issue_comments WHERE issue_id IN ({_IIDS}))",
+        f"DELETE FROM issue_comments WHERE issue_id IN ({_IIDS})",
+        f"DELETE FROM issue_activities WHERE issue_id IN ({_IIDS})",
+        f"DELETE FROM work_logs WHERE issue_id IN ({_IIDS})",
+        f"DELETE FROM issue_assignees WHERE issue_id IN ({_IIDS})",
+        f"DELETE FROM issue_labels WHERE issue_id IN ({_IIDS})",
+        f"DELETE FROM issue_links WHERE issue_id IN ({_IIDS})",
+        f"DELETE FROM issues WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM issue_activities WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM labels WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM states WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM project_members WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM issue_views WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM project_status_logs WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM project_favorites WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM file_folders WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM upload_sessions WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM file_assets WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM custom_field_definitions WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM webhook_deliveries WHERE endpoint_id IN (SELECT id FROM webhook_endpoints WHERE project_id IN ({_PIDS}))",
+        f"DELETE FROM webhook_endpoints WHERE project_id IN ({_PIDS})",
+        f"DELETE FROM integration_installations WHERE project_id IN ({_PIDS})",
+        "DELETE FROM projects WHERE identifier = 'S7AC'",
+    ]:
+        with connection.cursor() as _c:
+            _c.execute(sql)
 
     # 建项目
     code, body = admin.req("POST", f"/api/v1/workspaces/{q(ws)}/projects/",

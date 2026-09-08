@@ -19,7 +19,7 @@
  *  （①交互 → ②waitForResponse 对应请求 2xx → ③UI 回读）；负向成对；console guard 全量。
  */
 import { test, expect, type Page, type Response } from "@playwright/test";
-import { attachConsoleGuard, CODES, HTTP } from "./no-console-errors";
+import { attachGuards, CODES, HTTP } from "./no-console-errors";
 
 const WS = "workspace";
 const API_ORIGIN = process.env.E2E_BASE_URL ?? "http://localhost:3001";
@@ -117,13 +117,13 @@ async function openDrawer(page: Page, name: string) {
 }
 
 test.describe("Sprint-2 前端批量（TASK-005~010 / C.42~C.62）", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
     await page.context().clearCookies();
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
   });
   test.afterEach(async () => {
-    expect.soft(getErrs(), "console errors").toEqual([]);
+    expect.soft(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
 
   /* ═══════════ TASK-005 关联 ═══════════ */
@@ -177,6 +177,8 @@ test.describe("Sprint-2 前端批量（TASK-005~010 / C.42~C.62）", () => {
 
   test("T005-2 C.43 添加关联弹层：类型四项 + 语义提示 + 搜索选目标 → POST 201 → 分区回读；已关联灰显；409 环红条（负向）", async ({ page }) => {
     test.setTimeout(90_000);
+    // 被测行为本身：重复关联 409（RESOURCE_ALREADY_EXISTS 环红条负向）
+    getErrs?.allow({ method: "POST", url: "/relations/", status: HTTP.CONFLICT });
     await loginDemo(page);
     const proj = await createProject(page);
     const a = await mkIssue(page, proj.id, "弹层甲");
@@ -248,6 +250,8 @@ test.describe("Sprint-2 前端批量（TASK-005~010 / C.42~C.62）", () => {
 
   test("T005-3 C.44 完成被拦截：详情状态菜单 → 409 → M-BLOCKED（阻塞列表 + 我知道了）；管理员强制完成 ≥5 字 → PATCH force 200", async ({ page }) => {
     test.setTimeout(90_000);
+    // 被测行为本身：前置未完成 → 409 RESOURCE_TRANSITION_BLOCKED（M-BLOCKED 弹层）
+    getErrs?.allow({ method: "PATCH", url: "/issues/", status: HTTP.CONFLICT });
     await loginDemo(page);
     const proj = await createProject(page);
     const target = await mkIssue(page, proj.id, "被拦主任务");
@@ -298,6 +302,8 @@ test.describe("Sprint-2 前端批量（TASK-005~010 / C.42~C.62）", () => {
 
   test("T005-4 C.45 看板 ⛔ 角标 + 列头计数 + 拖拽 409 拦截对话框；?blocked 筛选 Chip（列表）", async ({ page }) => {
     test.setTimeout(90_000);
+    // 被测行为本身：拖拽被阻塞任务 → 409 拦截对话框（BLOCKED_BY）
+    getErrs?.allow({ method: "PATCH", url: "/issues/", status: HTTP.CONFLICT });
     await loginDemo(page);
     const proj = await createProject(page);
     const target = await mkIssue(page, proj.id, "看板被阻任务");
@@ -978,7 +984,7 @@ test.describe("Sprint-2 前端批量（TASK-005~010 / C.42~C.62）", () => {
     const list = drawer.locator('[data-sb-scope="drawer-activity-list"]');
     await expect(list).toBeVisible({ timeout: 10_000 });
     // C.61 日期分区头：今天（sticky）
-    await expect.soft(drawer.locator('[data-sb-scope="act-day"]').first()).toContainText(/今天|\d+月\d+日/);
+    await expect.soft(drawer.locator('[data-sb-scope="act-day"]').first()).toContainText(/今天|昨天|\d+月\d+日/);
     // C.61 epoch 组：组头行（时间 mono + 操作者 + 动作摘要）+ 缩进字段行（字段 旧值 → 新值，旧值删除线、新值加粗）
     const group = list.locator('[data-sb-scope="act-group"]').first();
     await expect(group).toBeVisible();
@@ -1092,16 +1098,18 @@ test.describe("Sprint-2 前端批量（TASK-005~010 / C.42~C.62）", () => {
 
 test("T010-3 C.62 死信页 403 分支：非 SystemAdmin 访问显示权限提示（非空态）", async ({ page }) => {
   test.setTimeout(60_000);
-  const getErrs = attachConsoleGuard(page);
+  const getErrs = attachGuards(page);
+  // 被测行为本身：非 SystemAdmin 访问死信页 → 403（PERM_ROLE_INSUFFICIENT）
+  getErrs.allow({ method: "GET", url: "/activity-dead-letters/", status: HTTP.FORBIDDEN });
   await loginDemo(page);
   // 2026-09-07 勘误：死信页是系统级顶层路由（routes.ts「不嵌 workspace」），
   // 原 `${WS}/admin/dead-letters` 落到通配 404 页、dlq-forbidden 永不渲染——
   // 该用例自 0324e45 出生即红（且引用了不存在的 expectNoConsoleErrors）；
-  // 顶层路径才是被测 403 分支，console guard 改用本文件 attachConsoleGuard 惯例。
+  // 顶层路径才是被测 403 分支，console guard 改用本文件 attachGuards 惯例。
   await page.goto("/admin/dead-letters");
   const tip = page.locator('[data-sb-scope="dlq-forbidden"]');
   await expect(tip, "权限空态可见（含权限码提示，非误导性「没有死信」）").toBeVisible({ timeout: 10_000 });
   await expect(tip).toContainText("system.audit.read");
   await expect(page.locator("table")).toHaveCount(0); // 不渲染表格
-  expect(getErrs(), "console errors").toEqual([]);
+  expect(getErrs?.report() ?? [], "console/net errors").toEqual([]);
 });

@@ -5,7 +5,7 @@
  *  - 断言对象是"冻结稿规定的字段必须存在/可见/可用"，不由实现反推（防自我印证）
  *  运行：E2E_NO_SERVER=1 pnpm exec playwright test tests/e2e/parity.spec.ts */
 import { test, expect } from "@playwright/test";
-import { attachConsoleGuard, HTTP } from "./no-console-errors";
+import { attachGuards, HTTP } from "./no-console-errors";
 
 function freshEmail(prefix = "parity"): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e4)}@rabbit.dev`;
@@ -14,12 +14,12 @@ function freshEmail(prefix = "parity"): string {
 const PW = "Rabbit123";
 
 test.describe("C.1-C.8 全屏字段级 parity 扫描", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
   });
   test.afterEach(async () => {
-    expect(getErrs(), "console errors").toEqual([]);
+    expect(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
 
 test("C.1-C.8 全屏字段级 parity 扫描", async ({ page }) => {
@@ -133,7 +133,8 @@ test("C.1-C.8 全屏字段级 parity 扫描", async ({ page }) => {
   await page.waitForURL(/\/issues/);
   await expect.soft(page.getByText("任务列表").first()).toBeVisible();
   await expect.soft(page.getByText("1 个任务")).toBeVisible();
-  for (const h of ["编号", "标题", "状态", "负责人", "截止时间"]) {
+  // ADR-0030 列头统一命名：due 列头为「截止」（卡片字段面仍是「截止时间」）
+  for (const h of ["编号", "标题", "状态", "负责人", "截止"]) {
     await expect.soft(page.locator("th").filter({ hasText: h })).toBeVisible();
   }
   await expect.soft(page.getByPlaceholder(/按回车快速创建/)).toBeVisible();

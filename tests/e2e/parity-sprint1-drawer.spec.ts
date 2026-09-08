@@ -10,7 +10,7 @@
  *  （被测路径不执行、白屏也绿），是团队设置 403 漏网的同族缺陷。
  */
 import { test, expect, type Page } from "@playwright/test";
-import { attachConsoleGuard } from "./no-console-errors";
+import { attachGuards } from "./no-console-errors";
 
 const rid = (n = 5) =>
   Array.from({ length: n }, () => String.fromCharCode(65 + Math.floor(Math.random() * 26))).join("");
@@ -43,13 +43,13 @@ async function createTaskAndOpenDrawer(page: Page, title: string) {
 }
 
 test.describe("Sprint-1 Drawer UI parity（C.23/C.24/C.25/C.31/C.32/C.33）", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
     await page.context().clearCookies();
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
   });
   test.afterEach(async () => {
-    expect(getErrs(), "console errors").toEqual([]);
+    expect(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
 
   test("C.25 抽屉四 Tab「描述｜评论｜动态｜附件」全部可点且切换生效", async ({ page }) => {

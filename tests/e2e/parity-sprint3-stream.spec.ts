@@ -13,7 +13,7 @@
  *  前置：celery worker（activity 队列）在跑——动态行为异步落库，spec 内轮询收敛。
  */
 import { test, expect, type Page, type Response } from "@playwright/test";
-import { attachConsoleGuard, HTTP } from "./no-console-errors";
+import { attachGuards, HTTP } from "./no-console-errors";
 
 const WS = "workspace";
 const API_ORIGIN = process.env.E2E_BASE_URL ?? "http://localhost:3001";
@@ -82,13 +82,13 @@ async function gotoActivity(page: Page) {
 }
 
 test.describe("Sprint-3 Phase 3-C 动态流页（COLLAB-003 · C.89~C.92）", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
     await page.context().clearCookies();
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
   });
   test.afterEach(async () => {
-    expect.soft(getErrs(), "console errors").toEqual([]);
+    expect.soft(getErrs?.report() ?? [], "console/net errors").toEqual([]);
   });
 
   /* ═══════════ C.89/C.90 视图条 + 侧栏入口 + 三态行 + 分区 + 加载更早 ═══════════ */
@@ -289,7 +289,9 @@ test.describe("Sprint-3 Phase 3-C 动态流页（COLLAB-003 · C.89~C.92）", ()
 
     const victim = await page.context().browser()!.newContext();
     const vpage = await victim.newPage();
-    const vErrs = attachConsoleGuard(vpage);
+    const vErrs = attachGuards(vpage);
+    // 被测行为本身：移出成员后项目全域 404（BR-01 存在性隐藏——详情/动态/成员同口径）
+    vErrs.allow({ method: "GET", url: "/projects/", status: HTTP.NOT_FOUND });
     await victim.clearCookies();
     await vpage.goto("/register");
     await vpage.getByLabel(/邮箱/).fill(victimEmail);

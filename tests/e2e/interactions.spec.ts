@@ -6,7 +6,7 @@
  *  卡片→抽屉 peekIssue/标题编辑/⋯ 删除）、列表（快速建焦点保持/行点抽屉/编号复制）。
  *  运行：E2E_NO_SERVER=1 pnpm exec playwright test tests/e2e/interactions.spec.ts */
 import { test, expect, type Page } from "@playwright/test";
-import { attachConsoleGuard, freshEmail } from "./no-console-errors";
+import { attachGuards, freshEmail, HTTP } from "./no-console-errors";
 
 const PW = "Rabbit123";
 /** 演示账号持久：identifier/团队名必须每次运行唯一，否则 409 连锁失败 */
@@ -33,13 +33,13 @@ async function createProject(page: Page, name: string, id: string) {
 }
 
 test.describe("交互元素全覆盖", () => {
-  let getErrs: () => string[] = () => [];
+  let getErrs: ReturnType<typeof attachGuards> | undefined;
   test.beforeEach(async ({ page }) => {
     // 规范 ③：跨 test 状态边界——显式清 cookies，禁止依赖 Worker 复用自动清理
     await page.context().clearCookies();
-    getErrs = attachConsoleGuard(page);
+    getErrs = attachGuards(page);
   });
-  test.afterEach(async () => { expect(getErrs(), "console errors").toEqual([]); });
+  test.afterEach(async () => { expect(getErrs?.report() ?? [], "console/net errors").toEqual([]); });
 
   /* ── 登录页 ── */
   test("INT-A1 眼睛切换 password↔text", async ({ page }) => {
@@ -60,6 +60,8 @@ test.describe("交互元素全覆盖", () => {
   });
 
   test("INT-A3 错误密码 → 表单 Alert", async ({ page }) => {
+    // 被测行为本身：错误密码 401（AUTH_INVALID_CREDENTIALS）
+    getErrs?.allow({ method: "POST", url: "/auth/sign-in/", status: HTTP.UNAUTHORIZED });
     await page.goto("/login");
     await page.getByLabel("邮箱").fill("zhangsan@rabbit.dev");
     await page.getByLabel("密码", { exact: true }).fill("Wrong123");
@@ -94,6 +96,8 @@ test.describe("交互元素全覆盖", () => {
   });
 
   test("INT-B3 重复邮箱 409 → 直接登录链接", async ({ page }) => {
+    // 被测行为本身：重复邮箱 409（RESOURCE_ALREADY_EXISTS）
+    getErrs?.allow({ method: "POST", url: "/auth/sign-up/", status: HTTP.CONFLICT });
     await page.goto("/register");
     await page.getByLabel("邮箱").fill("zhangsan@rabbit.dev");
     await page.getByLabel("密码", { exact: true }).fill("Rabbit123");
@@ -147,6 +151,8 @@ test.describe("交互元素全覆盖", () => {
 
   /* ── 项目 ── */
   test("INT-D1 identifier 大写 + 409 试试建议采纳", async ({ page }) => {
+    // 被测行为本身：大写归一后 identifier 重复 409（PROJECT_ID_NORMALIZE 建议采纳）
+    getErrs?.allow({ method: "POST", url: "/projects/", status: HTTP.CONFLICT });
     await loginDemo(page);
     const ida = rid(); await createProject(page, uname("Int Proj"), ida);
     await page.getByRole("navigation").getByRole("link", { name: "返回项目列表" }).click();

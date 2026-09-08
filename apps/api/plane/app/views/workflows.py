@@ -21,6 +21,7 @@ from plane.base.exception import AppException
 from plane.base.response import created_response, success_response
 from plane.db.models import Issue, State, Workflow, WorkflowState, WorkflowTransition
 from plane.db.services.issue_transition_guard import TransitionBlockedError
+from plane.workflow.approval import ApprovalError
 from plane.workflow.services import (
     EFFECT_TYPES,
     GUARD_TYPES,
@@ -187,7 +188,8 @@ class WorkflowGraphView(APIView):
             raise AppException("RESOURCE_STATE_INVALID", message="仅草稿可保存画布（BR-11）")
         # If-Match 乐观锁（§3.3）：不匹配 → 409 RESOURCE_CONFLICT
         if_match = request.headers.get("If-Match")
-        if if_match and if_match != _wf_etag(wf):
+        # RFC 7232：`*` 匹配任意现值（首存/无缓存场景）
+        if if_match and if_match != "*" and if_match != _wf_etag(wf):
             raise AppException("RESOURCE_CONFLICT", message="画布已被他人修改，请刷新后重试")
 
         states_in = request.data.get("states") or []
@@ -396,6 +398,11 @@ class IssueTransitionExecuteView(APIView):
                 force=bool(request.data.get("force")),
                 force_comment=request.data.get("comment") or "",
             )
+        except ApprovalError as exc:  # WF-002 立案失败（EMPTY_APPROVERS/DISABLED）→ 信封
+            raise AppException(exc.code,
+                               details=([{"field": exc.field, "code": exc.sub}]
+                                        if exc.field and exc.sub else None),
+                               message=exc.message) from None
         except TransitionBlockedError as exc:  # TASK-005 409 BLOCKED（blockers[] 同 §4 格式）
             raise AppException("RESOURCE_TRANSITION_BLOCKED",
                                details=[{"field": "blockers", "code": "INVALID",

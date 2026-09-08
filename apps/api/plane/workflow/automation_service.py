@@ -48,14 +48,14 @@ def validate_rule_definition(payload: dict) -> list[dict]:
     trigger = payload.get("trigger") or {}
     t_type = trigger.get("type")
     if t_type not in TRIGGER_TYPES:
-        issues.append({"field": "trigger.type", "code": "NOT_A_CHOICE",
+        issues.append({"field": "trigger.type", "code": "NOT_A_CHOICE",  # noqa: B904--校验聚合非异常链
                        "message": f"未知触发器 {t_type!r}，合法枚举 {list(TRIGGER_TYPES)}"})
     if t_type == "due_approaching":
         cfg = trigger.get("config") or {}
         h = cfg.get("hours_before")
         if not isinstance(h, int) or not (1 <= h <= 168):
             issues.append({"field": "trigger.config.hours_before", "code": "INVALID",
-                           "message": "hours_before 须为 1..168 整数"})
+                           "message": "hours_before 须为 1..168 整数"})  # noqa: B904 -- 校验聚合
 
     conds = payload.get("conditions") or []
     if len(conds) > MAX_CONDITIONS:

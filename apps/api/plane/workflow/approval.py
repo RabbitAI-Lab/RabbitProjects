@@ -139,6 +139,12 @@ class ApprovalService:
         flow = transition.approval_flow
         if flow is None:  # 引擎仅在 approval_flow_id 非空分支调用——防御窄化
             raise ApprovalError("VALIDATION_ERROR", 400, message="流转边未挂审批流")
+        # BR-10：同任务同边仅一个 pending——服务层显式 409（部分唯一索引兜底并发）
+        if ApprovalInstance.objects.filter(
+                issue=issue, transition=transition,
+                status=ApprovalInstance.Status.PENDING).exists():
+            raise ApprovalError("RESOURCE_ALREADY_EXISTS", 409,
+                                message="已存在进行中的审批")
         if not flow.is_active:
             raise ApprovalError("RESOURCE_CONFLICT", 409, sub="DISABLED",
                                 message="该审批流已停用")

@@ -145,7 +145,13 @@ class WorkflowService:
         if cached is not None:
             if cached == "NONE":
                 return None
-            return Workflow.objects.filter(pk=cached).first()
+            # 防陈旧：命中 id 必须仍是 published（归档/替换竞态下缓存残留时
+            # 以 DB 为准穿透回源——dev LocMem 无 TTL 抖动的兜底，prod Redis 同益）
+            wf = Workflow.objects.filter(
+                pk=cached, status=Workflow.Status.PUBLISHED).first()
+            if wf is not None:
+                return wf
+            cache.delete(key)
         wf = self._resolve_published(issue.project, issue.issue_type_id)
         cache.set(key, str(wf.id) if wf else "NONE", RESOLVED_TTL)
         return wf

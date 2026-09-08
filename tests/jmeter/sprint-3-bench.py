@@ -162,13 +162,13 @@ def seed_issues(proj: str, actor: str, state_todo: str, state_done: str, prefix:
     psql(
         "INSERT INTO issues (id, project_id, name, description_json, description_html, "
         " priority, sequence_id, sort_order, custom_fields, state_id, created_by_id, "
-        " created_at, updated_at, attachment_count) "
+        " created_at, updated_at, attachment_count, github_context) "
         "SELECT gen_random_uuid(), '" + proj + "', '" + prefix + "' || g, '{}'::jsonb, '<p></p>', "
         " (ARRAY['urgent','high','medium','low','none'])[1 + g % 5], "
         + str(int(seq_start)) + " + g, g * 100.0, "
         + (cf_map if with_values else "'{}'::jsonb") + ", "
         " CASE WHEN g % 4 = 0 THEN '" + state_done + "'::uuid ELSE '" + state_todo + "'::uuid END, "
-        " '" + actor + "', now() - ((g % 20000) || ' minutes')::interval, now(), 0 "
+        " '" + actor + "', now() - ((g % 20000) || ' minutes')::interval, now(), 0, '{}'::jsonb "
         "FROM generate_series(1, " + str(int(n)) + ") g")
 
 

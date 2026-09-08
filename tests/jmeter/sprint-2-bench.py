@@ -110,7 +110,7 @@ def main() -> int:
     # 直接 SQL 灌 10 万（bench 项目 1 万 + 其余 9 万散布同库；字段值按 key 落 jsonb）
     psql(f"""
     INSERT INTO issues (id, project_id, name, description_json, description_html, priority,
-                        sequence_id, sort_order, custom_fields, state_id, created_at, updated_at, attachment_count)
+                        sequence_id, sort_order, custom_fields, state_id, created_at, updated_at, attachment_count, github_context)
     SELECT gen_random_uuid(), '{proj}', '{BENCH_TAG}-w' || g, '{{}}'::jsonb, '<p></p>', 'none',
            g, g * 100.0,
            jsonb_build_object(
@@ -120,17 +120,17 @@ def main() -> int:
              'cf_bench_day', to_char(date '2026-01-01' + (g % 280), 'YYYY-MM-DD'),
              'cf_bench_on', (g % 2 = 0)),
            '{todo_state}', now() - interval '30 days' + (g % 600 || ' minutes')::interval, now(),
-           0
+           0, '{{}}'::jsonb
     FROM generate_series(1, 10000) g
     """)
     # 口径：10 万总量 / 单项目 1 万——其余 9 万放独立噪声项目（同库同负载，不进 bench 项目）
     psql(f"""
     INSERT INTO issues (id, project_id, name, description_json, description_html, priority,
-                        sequence_id, sort_order, custom_fields, state_id, created_at, updated_at, attachment_count)
+                        sequence_id, sort_order, custom_fields, state_id, created_at, updated_at, attachment_count, github_context)
     SELECT gen_random_uuid(),
            (SELECT id FROM projects WHERE identifier='BNZ' AND deleted_at IS NULL),
            '{BENCH_TAG}-n' || g, '{{}}'::jsonb, '<p></p>', 'none',
-           g, g * 100.0, '{{}}'::jsonb, '{todo_state}', now(), now(), 0
+           g, g * 100.0, '{{}}'::jsonb, '{todo_state}', now(), now(), 0, '{{}}'::jsonb
     FROM generate_series(1, 90000) g
     """)
     print("  数据集就绪：100,000 行（bench 项目内）")
@@ -154,9 +154,9 @@ def main() -> int:
                      {"name": f"{BENCH_TAG}-root"}, {"X-CSRFToken": admin.csrf()})
     root = b["data"]["id"]
     psql(f"""INSERT INTO issues (id, project_id, name, description_json, description_html, priority,
-           sequence_id, sort_order, custom_fields, state_id, parent_id, created_at, updated_at, attachment_count)
+           sequence_id, sort_order, custom_fields, state_id, parent_id, created_at, updated_at, attachment_count, github_context)
            SELECT gen_random_uuid(), '{proj}', '{BENCH_TAG}-n' || g, '{{}}'::jsonb, '<p></p>', 'none',
-           200000 + g, g * 100.0, '{{}}'::jsonb, '{todo_state}', '{root}', now(), now(), 0
+           200000 + g, g * 100.0, '{{}}'::jsonb, '{todo_state}', '{root}', now(), now(), 0, '{{}}'::jsonb
            FROM generate_series(1, 199) g""")
     samples, p = timed(lambda: admin.req("GET",
         f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{root}/subtree/"))

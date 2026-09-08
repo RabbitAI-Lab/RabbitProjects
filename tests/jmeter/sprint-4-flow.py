@@ -263,11 +263,19 @@ def _cleanup_sql():
     DELETE FROM issue_labels WHERE issue_id IN (SELECT id FROM issues WHERE project_id IN (SELECT id FROM sp));
     DELETE FROM issues WHERE project_id IN (SELECT id FROM sp);
     DELETE FROM issue_views WHERE project_id IN (SELECT id FROM sp);
+    DELETE FROM issue_activities WHERE project_id IN (SELECT id FROM sp);
     DELETE FROM custom_field_definitions WHERE project_id IN (SELECT id FROM sp);
     DELETE FROM labels WHERE project_id IN (SELECT id FROM sp);
     DELETE FROM states WHERE project_id IN (SELECT id FROM sp);
     DELETE FROM project_members WHERE project_id IN (SELECT id FROM sp);
     DELETE FROM project_favorites WHERE project_id IN (SELECT id FROM sp);
+    DELETE FROM project_status_logs WHERE project_id IN (SELECT id FROM sp);
+    DELETE FROM webhook_deliveries WHERE endpoint_id IN
+      (SELECT id FROM webhook_endpoints WHERE project_id IN (SELECT id FROM sp));
+    DELETE FROM webhook_endpoints WHERE project_id IN (SELECT id FROM sp);
+    DELETE FROM integration_sync_conflict_logs WHERE binding_id IN
+      (SELECT id FROM integration_installations WHERE project_id IN (SELECT id FROM sp));
+    DELETE FROM integration_installations WHERE project_id IN (SELECT id FROM sp);
     DELETE FROM projects WHERE id IN (SELECT id FROM sp);
     DELETE FROM issue_types WHERE workspace_id IN
       (SELECT id FROM workspaces WHERE created_by_id IN ({users_sql}));
@@ -275,7 +283,23 @@ def _cleanup_sql():
       (SELECT id FROM workspaces WHERE created_by_id IN ({users_sql}));
     DELETE FROM workspace_members WHERE workspace_id IN
       (SELECT id FROM workspaces WHERE created_by_id IN ({users_sql}));
+    DELETE FROM custom_field_definitions WHERE project_id IS NULL AND workspace_id IN
+      (SELECT id FROM workspaces WHERE created_by_id IN ({users_sql}));
+    DELETE FROM workspace_login_daily WHERE workspace_id IN
+      (SELECT id FROM workspaces WHERE created_by_id IN ({users_sql}));
+    DELETE FROM workspace_labels WHERE workspace_id IN
+      (SELECT id FROM workspaces WHERE created_by_id IN ({users_sql}));
+    DELETE FROM project_templates WHERE workspace_id IN
+      (SELECT id FROM workspaces WHERE created_by_id IN ({users_sql}));
     DELETE FROM workspaces WHERE created_by_id IN ({users_sql});
+    DELETE FROM workspace_login_daily WHERE member_id IN ({users_sql});
+    DELETE FROM workspace_labels WHERE created_by_id IN ({users_sql});
+    DELETE FROM project_templates WHERE created_by_id IN ({users_sql});
+    DELETE FROM notifications WHERE receiver_id IN ({users_sql});
+    DELETE FROM password_reset_tokens WHERE user_id IN ({users_sql});
+    DELETE FROM backup_runs WHERE created_by_id IN ({users_sql});
+    DELETE FROM release_gates WHERE created_by_id IN ({users_sql});
+    DELETE FROM release_gate_events WHERE actor_id IN ({users_sql});
     DELETE FROM system_admins WHERE user_id IN ({users_sql});
     DELETE FROM users WHERE id IN ({users_sql});
     DROP TABLE sp; DROP TABLE sa;
@@ -1378,9 +1402,9 @@ def gantt2_segment(admin, member, c_agg, ws, admin_id, member_id):
     _pg_exec(
         "INSERT INTO issues (id, project_id, name, description_json, description_html, "
         " priority, sequence_id, sort_order, target_date, custom_fields, state_id, "
-        " created_by_id, created_at, updated_at, attachment_count) "
+        " created_by_id, created_at, updated_at, attachment_count, github_context) "
         "SELECT gen_random_uuid(), %s, 'S4O-bulk-' || g, '{}'::jsonb, '<p></p>', 'medium', "
-        " 100 + g, g * 100.0, date %s - (5 + g), '{}'::jsonb, %s, %s, now(), now(), 0 "
+        " 100 + g, g * 100.0, date %s - (5 + g), '{}'::jsonb, %s, %s, now(), now(), 0, '{}'::jsonb "
         "FROM generate_series(1, 25) g", (proj, today_api, state_todo, admin_id))
     total_overdue = 27  # 25 SQL + 2 指派
     max_days = 30       # today_api - (5+25)

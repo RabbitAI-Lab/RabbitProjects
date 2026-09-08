@@ -147,7 +147,7 @@ def seed_dataset(proj: str, actor: str, state_todo: str, state_done: str) -> Non
     psql(
         "INSERT INTO issues (id, project_id, name, description_json, description_html, "
         " priority, sequence_id, sort_order, start_date, target_date, estimate_minutes, "
-        " custom_fields, state_id, created_by_id, created_at, updated_at, attachment_count) "
+        " custom_fields, state_id, created_by_id, created_at, updated_at, attachment_count, github_context) "
         "SELECT " + issue_uuid("g") + ", '" + proj + "', '" + BENCH + "-g' || g, '{}'::jsonb, '<p></p>', "
         " (ARRAY['urgent','high','medium','low','none'])[1 + g % 5], "
         " g, (g * 100.0), "
@@ -158,13 +158,13 @@ def seed_dataset(proj: str, actor: str, state_todo: str, state_done: str) -> Non
         " CASE WHEN g % 3 = 0 THEN 60 * (1 + g % 16) ELSE NULL END, "
         " '{}'::jsonb, "
         " CASE WHEN g % 4 = 0 THEN '" + state_done + "'::uuid ELSE '" + state_todo + "'::uuid END, "
-        " '" + actor + "', now() - ((g % 20000) || ' minutes')::interval, now(), 0 "
+        " '" + actor + "', now() - ((g % 20000) || ' minutes')::interval, now(), 0, '{}'::jsonb "
         "FROM generate_series(1, 10000) g")
     # 聚合父的子任务：50 父 × 2 子（g=200k，子 g=10000+c / 10050+c）
     psql(
         "INSERT INTO issues (id, project_id, name, description_json, description_html, "
         " priority, sequence_id, sort_order, parent_id, start_date, target_date, "
-        " custom_fields, state_id, created_by_id, created_at, updated_at, attachment_count) "
+        " custom_fields, state_id, created_by_id, created_at, updated_at, attachment_count, github_context) "
         "SELECT " + issue_uuid("10000 + c") + ", '" + proj + "', '" + BENCH + "-agg-c' || c, '{}'::jsonb, '<p></p>', "
         " 'medium', 10000 + c, (10000 + c) * 100.0, "
         " " + issue_uuid("(CASE WHEN c <= 50 THEN c ELSE c - 50 END) * 200") + ", "
@@ -172,7 +172,7 @@ def seed_dataset(proj: str, actor: str, state_todo: str, state_done: str) -> Non
         "   + CASE WHEN c <= 50 THEN 0 ELSE 5 END, "
         " DATE '" + BASE_DATE + "' + (((CASE WHEN c <= 50 THEN c ELSE c - 50 END) * 200) % " + str(SPAN_DAYS) + ")"
         "   + CASE WHEN c <= 50 THEN 0 ELSE 5 END + 10, "
-        " '{}'::jsonb, '" + state_todo + "'::uuid, '" + actor + "', now(), now(), 0 "
+        " '{}'::jsonb, '" + state_todo + "'::uuid, '" + actor + "', now(), now(), 0, '{}'::jsonb "
         "FROM generate_series(1, 100) c")
     # 连线：450 blocks 对 + 50 relates_to 对（成对正向 + 镜像行，TASK-005 存储形态）
     psql(

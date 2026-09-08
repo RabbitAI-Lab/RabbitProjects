@@ -1,6 +1,7 @@
 from .account import PasswordResetToken
 from .approval import ApprovalFlow, ApprovalInstance, ApprovalNode, ApprovalRecord
 from .asset import FileAsset
+from .automation import AutomationRule, AutomationRun, AutomationSetting
 from .backup import BackupRun
 from .base import BaseModel, SoftDeleteManager, SoftDeleteQuerySet
 from .comment import CommentReaction, IssueComment
@@ -21,6 +22,7 @@ from .view import IssueView
 from .webhook import WebhookDelivery, WebhookEndpoint
 from .workflow import Workflow, WorkflowState, WorkflowTemplate, WorkflowTransition
 from .worklog import WorkLog
+from .worklog_approval import ProjectWorklogConfig, WorkLogApproval, WorkLogSummary
 from .workspace import Workspace, WorkspaceLabel, WorkspaceLoginDailyAggregate, WorkspaceMember, WorkspaceMemberInvite
 
 __all__ = [
@@ -65,6 +67,12 @@ __all__ = [
     "Notification",
     "PasswordResetToken",
     "WorkLog",
+    "WorkLogApproval",
+    "WorkLogSummary",
+    "ProjectWorklogConfig",
+    "AutomationRule",
+    "AutomationRun",
+    "AutomationSetting",
     "WorkspaceRole",
     "ProjectRole",
     "CustomFieldDefinition",

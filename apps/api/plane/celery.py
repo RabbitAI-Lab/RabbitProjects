@@ -74,6 +74,15 @@ app.conf.beat_schedule = {
         "task": "plane.workflow.tasks.approval_timeout_scan",
         "schedule": crontab(minute="*/15"),
     },
+    # ── WF-003 §4.3（Sprint-7 R3）：自动化 due 扫描（每 15min）+ 90 天日志清理（每日 03:37）──
+    "automation-due-scan": {
+        "task": "plane.workflow.automation_tasks.automation_due_scan",
+        "schedule": crontab(minute="*/15"),
+    },
+    "automation-purge-old-runs": {
+        "task": "plane.workflow.automation_tasks.automation_purge_old_runs",
+        "schedule": crontab(hour=3, minute=37),
+    },
 }
 
 
@@ -91,6 +100,10 @@ app.conf.task_routes = {
     "plane.bgtasks.project_activity.record_project_activity": {"queue": "activity"},
     # Sprint-7（WF-002 §4.7）：审批超时扫描入 workflow 新队列（tech-stack §9 待补登）
     "plane.workflow.tasks.approval_timeout_scan": {"queue": "workflow"},
+    # Sprint-7 R3（WF-003 §4.3）：自动化引擎任务入 workflow 队列
+    "plane.workflow.automation_tasks.automation_match": {"queue": "workflow"},
+    "plane.workflow.automation_tasks.automation_due_scan": {"queue": "workflow"},
+    "plane.workflow.automation_tasks.automation_purge_old_runs": {"queue": "workflow"},
 }
 app.conf.task_queues = (
     Queue("activity", Exchange("activity", type="direct"), routing_key="activity",

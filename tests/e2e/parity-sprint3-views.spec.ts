@@ -482,6 +482,37 @@ test.describe("Sprint-3 Phase 3-A 视图与筛选（BOARD-003 / TASK-011 · C.64
     await expect(page.locator('th[data-col="priority"]')).toBeHidden({ timeout: 10_000 });
   });
 
+  /* ═══════════ ADR-0030 列表布局响应 display_props.columns ═══════════ */
+
+  test("S3V-10b 列表布局响应 display_props.columns — 切隐藏后 <th data-col> 与 <td data-col> 同步消失", async ({ page }) => {
+    test.setTimeout(90_000);
+    await loginDemo(page);
+    const proj = await createProject(page);
+    await mkIssue(page, proj.id, "S3V10b 列表行");
+    await waitTabs(page);
+    // 直接进列表布局（带需求池 view_id，URL 路由跳转比 layout seg 更稳）
+    const pool = page.locator('[data-sb-scope="view-tab"][data-view-name="需求池"]');
+    await expect(pool).toBeVisible();
+    const poolId = await pool.getAttribute("data-view-id");
+    await page.goto(`/${WS}/projects/${proj.id}/issues?view_id=${poolId}`);
+    await expect(page.locator('th[data-col="priority"]')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('th[data-col="title"]')).toBeVisible();
+    // 打开显示配置 → 切隐藏优先级列（行为三件套：交互 → PATCH 200 → 列表 <th> 消失）
+    const patch = page.waitForResponse((r: Response) =>
+      /\/views\/[0-9a-f-]+\/$/.test(r.url()) && r.request().method() === "PATCH");
+    await page.locator('[data-sb-scope="view-display-btn"]').click();
+    const drawer = page.locator('[data-sb-scope="display-drawer"]');
+    await expect(drawer.locator('[data-sb-scope="disp-sec-columns"]')).toBeVisible();
+    await drawer.locator('[data-sb-scope="disp-col-chip"][data-col="priority"]').click();
+    expect((await patch).status()).toBe(HTTP.OK);
+    await expect(page.locator('th[data-col="priority"]')).toBeHidden({ timeout: 10_000 });
+    await expect(page.locator('th[data-col="title"]')).toBeVisible();
+    await expect(page.locator('th[data-col="key"]')).toBeVisible();
+    // 切到表格布局 → 同一份 display_props.columns 生效，<th data-col="priority"> 也应不可见
+    await page.goto(`/${WS}/projects/${proj.id}/table?view_id=${poolId}`);
+    await expect(page.locator('th[data-col="priority"]')).toBeHidden({ timeout: 10_000 });
+  });
+
   /* ═══════════ C.70 空态/引导 + 鉴权负向成对 ═══════════ */
 
   test("S3V-11 C.70 首次引导气泡（无自定义视图时出现 + 知道了记忆）", async ({ page }) => {

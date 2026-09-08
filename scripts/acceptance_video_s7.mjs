@@ -23,19 +23,43 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ONLY = (process.env.ONLY ?? "").split(",").filter(Boolean);
 const S7 = `${WEB}/${WS}/projects`;
 
-async function runScene(browser, name, fn, { pages = 1 } = {}) {
+async function runScene(browser, name, fn, { pages = 1, allow = [] } = {}) {
   sceneNo += 1;
   if (ONLY.length && !ONLY.some((k) => name.includes(k))) {
     console.log(`⊘ 幕${String(sceneNo).padStart(2, "0")} ${name}（ONLY 过滤跳过）`);
     return;
   }
   const id = String(sceneNo).padStart(2, "0");
+  // 网络/console 守卫（与 tests/e2e/no-console-errors.ts attachGuards 同口径）：
+  // 幕内页面全部 ≥400 响应须在 allow 清单内（与接口契约一致的预期失败），
+  // console 5xx 回声/JS 异常直接失败——防止「服务器开小差」toast 再混进成片
+  const bag = { console: [], net: [] };
+  const hook = (p) => {
+    p.on("console", (m) => {
+      if (m.type() !== "error") return;
+      const t = String(m.text() ?? "").trim();
+      if (/^Failed to load resource/i.test(t)) return;      // 真身以响应级记录为准
+      if (/\[vite\]|React DevTools|react-devtools/i.test(t)) return;
+      const u = m.location?.()?.url ?? "";
+      if (u.includes("/live/") || u.includes("realtime-token")) return; // BR-10 已文档化降级
+      bag.console.push(t);
+    });
+    p.on("pageerror", (e) => bag.console.push(String(e).trim()));
+    p.on("response", (r) => {
+      const s = r.status();
+      if (s < 400) return;
+      const u = r.url();
+      if (u.includes("realtime-token") || u.includes("/live/")) return;
+      bag.net.push(`${s} ${r.request().method()} ${u}`);
+    });
+  };
   const ctxs = [], ps = [];
   for (let i = 0; i < pages; i += 1) {
     const ctx = await browser.newContext({
       baseURL: WEB, viewport: { width: 1440, height: 900 },
       recordVideo: { dir: OUT, size: { width: 1440, height: 900 } },
     });
+    ctx.on("page", hook);
     ctxs.push(ctx); ps.push(await ctx.newPage());
   }
   const t0 = Date.now();
@@ -48,6 +72,15 @@ async function runScene(browser, name, fn, { pages = 1 } = {}) {
     await sleep(1200);
   }
   await sleep(900);
+  // 守卫期末断言：非预期网络失败 + console 错误均须为空
+  const unexpected = bag.net.filter((line) =>
+    !allow.some((a) => line.startsWith(`${a.status} `) && line.includes(a.url)
+      && (a.method === undefined || line.startsWith(`${a.status} ${a.method} `))));
+  if (ok && (unexpected.length || bag.console.length)) {
+    ok = false;
+    err = [`非预期网络失败: ${unexpected.join(" ; ") || "无"}`, `console 错误: ${bag.console.join(" ; ") || "无"}`].join(" | ");
+    console.error(`  ✗ 幕${id} ${name} 守卫拦截：\n${err}`);
+  }
   const videos = ps.map((p) => p.video());
   await Promise.all(ctxs.map((c) => c.close()));
   const suffix = pages === 1 ? [""] : ["a", "b"];
@@ -277,7 +310,10 @@ async function scene06(page) {
 const browser = await chromium.launch();
 try {
   await runScene(browser, "画布全貌", scene01);
-  await runScene(browser, "守卫拦截补齐流转", scene02);
+  await runScene(browser, "守卫拦截补齐流转", scene02, {
+    // 幕02 演示本体：守卫拦截 400（VALIDATION_REQUIRED_FIELD_MISSING，WF-004 §3.1）
+    allow: [{ status: 400, method: "POST", url: "/transitions/" }],
+  });
   await runScene(browser, "审批五场景核心链", scene03, { pages: 2 });
   await runScene(browser, "自动化DryRun", scene04);
   await runScene(browser, "工时提交驳回通过台账", scene05, { pages: 2 });

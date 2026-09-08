@@ -66,6 +66,15 @@ PERMISSION_MATRIX: dict[str, dict[str, int]] = {
         # 默认 PROJ_ADMIN（rbac 表 CONTRIBUTOR 列为「⚠️ 可配置开关」——P3 起可
         # 下放；P2 按默认列实现）。创建另叠加 can_view_file（不能分享自己看不见的文件）。
         "file.share": ProjectRole.ADMIN,             # 创建/列表/延期/吊销
+        # ── Sprint-7 M11-WF（rbac §8.2 注册表；概览 §5 权限行）──
+        # workflow.manage：WF-001/002/004/005 项目侧配置（PROJ_ADMIN+）；
+        # automation.manage：WF-003 规则引擎（rbac §8.2 注册表专行，R3 轮消费）；
+        # approval.act / approval.withdraw：WF-002 审批动作（真正判定在业务层——
+        # 当前级指定审批人 / 仅发起人，矩阵只承担成员门槛，§8.4 R8 口径）。
+        "workflow.manage": ProjectRole.ADMIN,
+        "automation.manage": ProjectRole.ADMIN,
+        "approval.act": ProjectRole.COMMENTER,
+        "approval.withdraw": ProjectRole.CONTRIBUTOR,
     },
 }
 
@@ -111,6 +120,11 @@ PERMISSION_LABELS: dict[str, str] = {
     "folder.manage": "管理文件目录",
     "file.version.manage": "管理文件版本",
     "file.share": "分享文件",
+    # Sprint-7 M11-WF
+    "workflow.manage": "管理工作流",
+    "automation.manage": "管理自动化规则",
+    "approval.act": "审批操作",
+    "approval.withdraw": "撤回审批",
 }
 
 

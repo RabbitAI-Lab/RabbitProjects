@@ -5,14 +5,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
 import {
-  ReactFlow, Background, Controls, MiniMap,
+  ReactFlow, Background, Controls, MiniMap, Handle, Position,
   addEdge, applyEdgeChanges, applyNodeChanges,
   type Connection, type Edge, type EdgeChange, type Node, type NodeChange,
 } from "@xyflow/react";
 import dagre from "dagre";
 import "@xyflow/react/dist/style.css";
 
-import { WorkflowAPI, type WorkflowDetail } from "../services/api";
+import { ProjectAPI, WorkflowAPI, type WorkflowDetail } from "../services/api";
+import type { ApiError } from "../services/axios";
+import { Topbar } from "../components/Topbar";
+import { ProjectSidebar } from "../components/ProjectSidebar";
 
 /** 状态节点数据载荷。 */
 interface StateNodeData extends Record<string, unknown> {
@@ -65,19 +68,26 @@ function toFlowEdges(wf: WorkflowDetail): Edge[] {
 }
 
 export default function WorkflowCanvas() {
-  const { ws, projectId, wfId } = useParams();
+  const { workspaceSlug: ws, projectId, wfId } = useParams();
   const [wf, setWf] = useState<WorkflowDetail | null>(null);
   const [etag, setEtag] = useState<string | null>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [dirty, setDirty] = useState(false);
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
-  const [publishIssues, setPublishIssues] = useState<Array<{ code: string; message: string }>>([]);
+  const [publishIssues, setPublishIssues] = useState<Array<{ code?: string; message?: string }>>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [projName, setProjName] = useState("…");
+  const [projIdentifier, setProjIdentifier] = useState("");
 
   useEffect(() => {
     if (!ws || !projectId || !wfId) return;
+    ProjectAPI.detail(ws, projectId).then((r) => {
+      const d = (r as unknown as { data: { name?: string; identifier?: string } }).data;
+      setProjName(d?.name ?? "…");
+      setProjIdentifier(d?.identifier ?? "");
+    }).catch(() => {});
     void WorkflowAPI.detail(ws, projectId, wfId).then((r) => {
       setWf(r.data);
       setNodes(toFlowNodes(r.data));
@@ -141,8 +151,9 @@ export default function WorkflowCanvas() {
       await WorkflowAPI.publish(ws, projectId, wfId);
       setMessage("已发布生效");
     } catch (e) {
-      const err = e as { response?: { data?: { error?: { details?: Array<{ code: string; message: string }> } } } };
-      setPublishIssues(err.response?.data?.error?.details ?? [{ code: "ERROR", message: "发布失败" }]);
+      // axios 层 reject 的是 friendly ApiError（details 顶层字段——services/axios.ts §解包）
+      const err = e as ApiError;
+      setPublishIssues(err.details ?? [{ code: "ERROR", message: "发布失败" }]);
     } finally {
       setBusy(false);
     }
@@ -153,10 +164,16 @@ export default function WorkflowCanvas() {
     setDirty(true);
   }
 
-  if (!wf) return <div className="flex-1 p-4 text-sm text-neutral-400">加载中…</div>;
+  if (!wf) return <div className="p-4 text-sm text-neutral-400">加载中…</div>;
 
+  // 布局骨架与 board 同构（h-screen 自给高度——app 布局是 min-h-screen 块级容器，
+  // flex-1 链在无显式高度时会让 ReactFlow 容器塌成 0 高，节点不出测量尺寸、边层不渲染）
   return (
-    <div className="flex-1 flex flex-col bg-white" data-sb-scope="workflow-canvas">
+    <div className="flex flex-col h-screen bg-white" data-sb-scope="workflow-canvas">
+      <Topbar />
+      <div className="flex flex-1 min-h-0">
+        <ProjectSidebar projectName={projName} identifier={projIdentifier} />
+        <main className="flex-1 min-w-0 flex flex-col">
       <header className="h-12 border-b border-neutral-200 px-4 flex items-center gap-3">
         <h1 className="text-sm font-semibold">{wf.name}</h1>
         <span className={`px-1.5 py-0.5 rounded text-xs ${wf.status === "published"
@@ -190,7 +207,7 @@ export default function WorkflowCanvas() {
         </div>
       )}
 
-      <div className="flex-1 flex">
+      <div className="flex-1 flex min-h-0">
         <div className="flex-1 relative">
           <ReactFlow
             nodes={nodes} edges={edges} nodeTypes={nodeTypes}
@@ -227,15 +244,19 @@ export default function WorkflowCanvas() {
           </aside>
         )}
       </div>
+        </main>
+      </div>
     </div>
   );
 }
 
-/** 状态节点视图（§3.1 线框：名称 + group 色 + 初始态标记）。 */
+/** 状态节点视图（§3.1 线框：名称 + group 色 + 初始态标记）。
+ *  自定义节点必须自带 <Handle>（v12 error#008：无挂载点的边整条不渲染）。 */
 function StateNodeView({ data }: { data: StateNodeData }) {
   return (
-    <div className="px-3 py-2 rounded-lg border-2 bg-white shadow-sm min-w-32"
+    <div className="px-3 py-2 rounded-lg border-2 bg-white shadow-sm min-w-32 relative"
       style={{ borderColor: data.color }} data-sb-scope="wf-state-node" data-state-id={data.stateId}>
+      <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-neutral-400" />
       <div className="flex items-center gap-1.5">
         {data.isInitial && <span className="w-2 h-2 rounded-full bg-brand-500" title="初始状态" />}
         <span className="text-sm font-medium text-neutral-800">{data.name}</span>
@@ -244,6 +265,7 @@ function StateNodeView({ data }: { data: StateNodeData }) {
       {data.fieldLocks.length > 0 && (
         <div className="text-[10px] text-amber-600">🔒 {data.fieldLocks.length} 字段锁定</div>
       )}
+      <Handle type="source" position={Position.Right} className="!w-2 !h-2 !bg-neutral-400" />
     </div>
   );
 }

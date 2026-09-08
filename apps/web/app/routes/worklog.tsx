@@ -19,7 +19,9 @@ const STATUS_TEXT: Record<string, string> = {
 function mondayOf(d: Date): string {
   const m = new Date(d);
   m.setDate(m.getDate() - m.getDay() + 1);
-  return m.toISOString().slice(0, 10);
+  // 本地分量拼串：toISOString 是 UTC——东八区 0~8 点会取到前一天，把周一算到上周（提交 400）
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${m.getFullYear()}-${p(m.getMonth() + 1)}-${p(m.getDate())}`;
 }
 
 export default function WorklogPage() {

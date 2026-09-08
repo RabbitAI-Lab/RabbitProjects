@@ -1,5 +1,6 @@
 import { AvatarStack } from "../issue-dialogs";
 import { StateBadge } from "../StateBadge";
+import { toast } from "../Toast";
 import { PRIORITY_COLUMNS } from "./view-dsl";
 import type { Issue } from "@rp/types";
 
@@ -17,7 +18,17 @@ export interface RenderCellCtx {
 export function renderTableCell(it: Issue, col: string, ctx: RenderCellCtx) {
   switch (col) {
     case "key":
-      return <span className="font-mono text-xs text-neutral-500 whitespace-nowrap">{it.issue_key}</span>;
+      // 编号即按钮：点击复制（C.38 列表/G1 parity——1f520bb 共用化重构曾丢此行为）
+      return (
+        <button type="button" className="font-mono text-xs text-neutral-500 hover:text-brand-600 whitespace-nowrap"
+          title="点击复制编号"
+          onClick={(e) => {
+            e.stopPropagation();
+            navigator.clipboard?.writeText(it.issue_key)
+              .then(() => toast(`已复制 ${it.issue_key}`))
+              .catch(() => toast(`复制失败：${it.issue_key}`, "error"));
+          }}>{it.issue_key}</button>
+      );
     case "title":
       return <span className="text-[13px] text-neutral-900 truncate">{it.name}</span>;
     case "state":

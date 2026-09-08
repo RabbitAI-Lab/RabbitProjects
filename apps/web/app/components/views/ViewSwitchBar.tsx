@@ -84,8 +84,11 @@ export function ViewSwitchBar({ vp }: { vp: ViewPage }) {
   const [renameDraft, setRenameDraft] = useState("");
   /** 右键菜单（Tab contextmenu；锚定固定定位）。 */
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; viewId: string } | null>(null);
-  /** ＋▾ 折叠下拉。 */
+  /** ＋▾ 折叠下拉（fixed 定位——view-tabs 容器 overflow-hidden 会把向下展开的
+   *  absolute 菜单整体裁掉，Sprint-8 缺陷：菜单 DOM 已开但视觉不可见）。 */
   const [moreOpen, setMoreOpen] = useState(false);
+  const moreBtnRef = useRef<HTMLButtonElement>(null);
+  const [morePos, setMorePos] = useState<{ x: number; y: number } | null>(null);
   /** 分组切换下拉。 */
   const [groupOpen, setGroupOpen] = useState(false);
   /** 首次引导（§3.6：项目无自定义视图时出现；知道了 → localStorage 记忆）。 */
@@ -189,11 +192,23 @@ export function ViewSwitchBar({ vp }: { vp: ViewPage }) {
           );
         })}
         <span className="relative" data-sb-scope="views-more">
-          <button type="button" aria-haspopup="menu" aria-expanded={moreOpen} data-sb-scope="views-more-btn"
-            onClick={() => setMoreOpen((v) => !v)}
+          <button type="button" ref={moreBtnRef} aria-haspopup="menu" aria-expanded={moreOpen} data-sb-scope="views-more-btn"
+            onClick={() => {
+              if (!moreOpen) {
+                const r = moreBtnRef.current?.getBoundingClientRect();
+                if (r) setMorePos({ x: r.left, y: r.bottom + 6 });
+              }
+              setMoreOpen((v) => !v);
+            }}
             className="h-7 px-2 rounded-md text-[12.5px] text-neutral-400 inline-flex items-center gap-1 hover:bg-neutral-100 hover:text-neutral-600">＋ ▾</button>
           {moreOpen && (
-            <div role="menu" aria-label="更多视图" className="absolute left-0 top-[34px] z-40 min-w-[190px] bg-white border border-neutral-200 rounded-lg shadow-lg py-1 max-h-[320px] overflow-y-auto">
+            <div role="menu" aria-label="更多视图" style={morePos ? {
+              position: "fixed",
+              left: Math.min(morePos.x, window.innerWidth - 200),
+              top: morePos.y,
+              zIndex: 60,
+            } : undefined}
+              className="min-w-[190px] bg-white border border-neutral-200 rounded-lg shadow-lg py-1 max-h-[320px] overflow-y-auto">
               {overflowTabs.map((t) => (
                 <MenuItem key={t.id ?? "__all__"} label={`${t.icon ? t.icon + " " : ""}${t.name}${t.id === defaultVid ? " ★" : ""}`}
                   checked={(t.id ?? null) === (viewId ?? null)}

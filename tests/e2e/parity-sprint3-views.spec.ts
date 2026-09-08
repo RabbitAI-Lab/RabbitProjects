@@ -295,6 +295,18 @@ test.describe("Sprint-3 Phase 3-A 视图与筛选（BOARD-003 / TASK-011 · C.64
     // §3.1「超出 6 个折叠进＋ ▾」：全部+5 内置占满 6 个内联位 → 新视图入下拉（选中态 ✓）
     await page.locator('[data-sb-scope="views-more-btn"]').click();
     await expect(page.locator('[data-sb-scope="views-more"]').getByRole("menuitem", { name: /✓.*救火看板S3V/ })).toBeVisible({ timeout: 10_000 });
+    // 防裁剪回归（Sprint-8 缺陷：view-tabs 容器 overflow-hidden 曾把向下展开的 absolute
+    // 菜单整体裁掉——toBeVisible 只查 bounding box 非空，对被裁剪元素是盲区、缺陷期全绿）：
+    // elementFromPoint 于菜单中心必须命中菜单自身（真实可见，未被裁剪/遮挡）
+    const reallyVisible = await page.evaluate(() => {
+      const menu = document.querySelector('[data-sb-scope="views-more"] > div[role="menu"]');
+      if (!menu) return false;
+      const r = menu.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return false;
+      const el = document.elementFromPoint(r.x + r.width / 2, r.y + Math.min(r.height / 2, 30));
+      return !!el && (menu === el || menu.contains(el));
+    });
+    expect(reallyVisible, "＋ ▾ 下拉须真实可见（未被 overflow:hidden 裁剪）").toBe(true);
     await page.keyboard.press("Escape");
     // 刷新还原：URL ?view_id= 仍指向新视图 + 已保存分组保持（E2E-01 完整还原口径）
     await page.reload();

@@ -24,6 +24,7 @@ from .sso import IdentityProvider, SSOAccount
 from .state import State
 from .user import User
 from .view import IssueView
+from .view_preference import UserViewPreference
 from .webhook import WebhookDelivery, WebhookEndpoint
 from .workflow import (
     TemplateDistribution,
@@ -39,6 +40,7 @@ from .workspace import Workspace, WorkspaceLabel, WorkspaceLoginDailyAggregate, 
 
 __all__ = [
     "AuditLog",
+    "UserViewPreference",
     "IdentityProvider",
     "SSOAccount",
     "CustomRole",

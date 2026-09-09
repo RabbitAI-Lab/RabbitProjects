@@ -131,6 +131,12 @@ class ProjectMemberService:
             )
             results.append({"member_id": mid, "status": "added",
                             "project_member_id": str(pm.id), "role": role})
+            # BOARD-005 §2.2：新成员自动订阅项目默认视图（on_commit，幂等）
+            def _subscribe_on_commit(_pid: str = str(project.id),
+                                     _mid: str = str(mid)) -> None:
+                _subscribe_default_view(project_id=_pid, user_id=_mid)
+
+            transaction.on_commit(_subscribe_on_commit)
         return results
 
     # ────────── 保护规则 ──────────
@@ -201,9 +207,14 @@ class ProjectMemberService:
             project_id=project.id, member_id=member.member_id, actor=actor
         )
         # AUTH-008 BR-11：移出项目 → 自定义角色挂接行级联删除 + 缓存失效
-        from plane.db.models import ProjectRoleAssignment
+        from plane.db.models import ProjectRoleAssignment, UserViewPreference
         ProjectRoleAssignment.objects.filter(
             project=project, user_id=member.member_id,
+            deleted_at__isnull=True,
+        ).delete()
+        # BOARD-005 BR-16：移出项目 → 其该项目订阅行级联软删
+        UserViewPreference.objects.filter(
+            user_id=member.member_id, project=project,
             deleted_at__isnull=True,
         ).delete()
         from plane.app.effective_perms import invalidate
@@ -317,3 +328,24 @@ class ProjectMemberService:
                 },
             )
         return project
+
+
+def _subscribe_default_view(*, project_id, user_id) -> None:
+    """BOARD-005 §2.2：新成员订阅项目默认视图（幂等；on_commit 后运行）。"""
+    from plane.db.models import IssueView, UserViewPreference
+
+    default = IssueView.objects.filter(
+        project_id=project_id, is_project_default=True,
+        deleted_at__isnull=True).first()
+    if default is None:
+        return
+    pref = UserViewPreference.objects.filter(user_id=user_id,
+                                             view=default).first()
+    if pref is None:
+        UserViewPreference.objects.create(user_id=user_id,
+                                          project_id=project_id,
+                                          view=default, pinned=True)
+    else:
+        pref.pinned = True
+        pref.deleted_at = None
+        pref.save(update_fields=["pinned", "deleted_at", "updated_at"])

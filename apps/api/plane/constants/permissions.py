@@ -83,6 +83,12 @@ PERMISSION_MATRIX: dict[str, dict[str, int]] = {
         "automation.manage": ProjectRole.ADMIN,
         "approval.act": ProjectRole.COMMENTER,
         "approval.withdraw": ProjectRole.CONTRIBUTOR,
+        # ── Sprint-8 BOARD-005（rbac §8.2 既有注册码落地）──
+        "board.read": ProjectRole.VIEWER,
+        "view.create.own": ProjectRole.VIEWER,
+        "view.create.shared": ProjectRole.CONTRIBUTOR,
+        "view.manage": ProjectRole.ADMIN,
+        "board.lock": ProjectRole.ADMIN,
     },
 }
 
@@ -137,6 +143,11 @@ PERMISSION_LABELS: dict[str, str] = {
     "automation.manage": "管理自动化规则",
     "approval.act": "审批操作",
     "approval.withdraw": "撤回审批",
+    "board.read": "查看看板",
+    "view.create.own": "创建个人视图",
+    "view.create.shared": "创建共享视图",
+    "view.manage": "管理他人共享视图",
+    "board.lock": "锁定组织标准视图",
 }
 
 

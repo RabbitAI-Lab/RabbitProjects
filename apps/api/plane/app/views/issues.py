@@ -186,6 +186,21 @@ class IssueListCreateView(ListCreateAPIView):
         dimension = None
         if request.query_params.get("group_by"):
             dimension = resolve_dimension(project, request.query_params.get("group_by"))
+        # ── sub_group_by 二维泳道（BOARD-005 §2.3：白名单同集且不得与列维度相同）──
+        sub_dimension = None
+        if request.query_params.get("sub_group_by"):
+            if not dimension:
+                raise AppException(
+                    "VALIDATION_INVALID_PARAM",
+                    message="sub_group_by 需与 group_by 搭配使用")
+            sub_dimension = resolve_dimension(project,
+                                              request.query_params.get("sub_group_by"))
+            if sub_dimension == dimension:  # BR-07
+                raise AppException(
+                    "VALIDATION_ERROR",
+                    message="行分组维度不得与列分组维度相同",
+                    details=[{"field": "sub_group_by", "code": "INVALID",
+                              "message": "行分组维度不得与列分组维度相同"}])
 
         # ── 编译上下文（TASK-011 §4.3：占位符解析与 cf 分派共用）──
         ctx = CompileContext.build(project=project, user=request.user, access_map=self._list_access)
@@ -198,9 +213,12 @@ class IssueListCreateView(ListCreateAPIView):
         degraded = None
         if raw_vid := request.query_params.get("view_id"):
             view = IssueView.objects.filter(id=raw_vid, project=project, deleted_at__isnull=True).first()
-            # 应用面（列表/分组消费）比详情审计面严格：仅内置或本人可用——board.manage
-            # 审计通道只在 views/{id}/ CRUD 面（ADR-0021；Phase 5 验收发现的 P2 缺陷修复）
-            if view is None or not (view.is_system or view.owner_id == request.user.id):
+            # 应用面（列表/分组消费）：内置 / 本人 / 共享视图全员可用
+            # （BOARD-005 BR-01 放开 shared；personal 他人视图仍存在性隐藏）
+            if view is None or not (
+                view.is_system or view.owner_id == request.user.id
+                or view.access == "shared"
+            ):
                 raise NotFound("RESOURCE_NOT_FOUND") from None  # 存在性隐藏（§6-9/BR-11）
             view_tree, degraded = resolve_view(view, project=project, user=request.user)
             view_q = compile_dsl(view_tree, ctx)
@@ -251,6 +269,10 @@ class IssueListCreateView(ListCreateAPIView):
         )
 
         # ── group_by 走分组分支（BOARD-002 契约的维度泛化，BOARD-003 §4.2.2）──
+        if dimension and sub_dimension:
+            return self._matrix_response(
+                request, project, qs, dimension, sub_dimension,
+                view_applied, applied_extra, degraded, view_meta)
         if dimension:
             base_unfiltered = self._base_queryset(project, include_archived=include_archived)
             return self._grouped_response(
@@ -385,6 +407,74 @@ class IssueListCreateView(ListCreateAPIView):
         if filterset.ignored_params:
             meta["ignored_params"] = filterset.ignored_params
         return success_response(grouped, meta=meta)
+
+    def _matrix_response(
+        self, request, project, qs, dimension, sub_dimension,
+        view_applied, applied_extra, degraded, view_id_out,
+    ):
+        """二维泳道矩阵（BOARD-005 §2.3/§4.3）。
+
+        服务端聚合（格计数不拉全量卡片）；复用一维 group_filter_q 双键
+        AND——M2M 维度语义与一维完全一致。降级两闸（§2.5）：格数预算
+        （列×行 ≤ 400）与时间预算（5s）——任一触发降级一维分组 +
+        meta.degraded.matrix_*。
+        """
+        import time as _time
+
+        from plane.db.services.issue_grouping import get_group_columns, group_filter_q
+
+        t0 = _time.monotonic()
+        columns = get_group_columns(project, dimension)
+        rows_def = get_group_columns(project, sub_dimension)
+        matrix_degraded = None
+        if len(columns) * len(rows_def) > 400:
+            matrix_degraded = "matrix_dimensions"
+        if matrix_degraded is None:
+            matrix = []
+            for col in columns:
+                if _time.monotonic() - t0 > 5.0:
+                    matrix_degraded = "matrix_timeout"
+                    break
+                for row in rows_def:
+                    cell_qs = qs.filter(
+                        group_filter_q(dimension, col["key"]),
+                        group_filter_q(sub_dimension, row["key"]))
+                    count = cell_qs.count()
+                    sample_ids = []
+                    if count:
+                        sample_ids = [str(i) for i in
+                                      cell_qs.order_by("sort_order", "id")
+                                      .values_list("id", flat=True)[:8]]
+                    matrix.append({
+                        "col": col["key"], "row": row["key"],
+                        "count": count, "sample_issue_ids": sample_ids,
+                    })
+        if matrix_degraded:
+            # 降级一维（§2.5）：沿用既有分组响应 + meta.degraded
+            base_unfiltered = self._base_queryset(project, include_archived=False)
+            filterset = IssueFilterSet(request, drop_keys=(), project=project)
+            resp = self._grouped_response(
+                request, project, qs, base_unfiltered, filterset, None,
+                dimension, view_applied, applied_extra, degraded,
+                view_id_out=view_id_out)
+            resp.data["meta"]["degraded"] = {"sub_group_by": matrix_degraded}
+            return resp
+        meta = {
+            "grouped_by": dimension,
+            "sub_grouped_by": sub_dimension,
+            "total_count": qs.count(),
+            "columns": [{"key": c["key"]} for c in columns],
+            "rows": [{"key": r["key"]} for r in rows_def],
+            "matrix": matrix,
+            "applied": {**view_applied, **(applied_extra or {})},
+        }
+        if view_id_out:
+            meta["view_id"] = view_id_out["id"]
+        if degraded:
+            meta["degraded"] = degraded
+        return success_response({"matrix": matrix,
+                                 "columns": meta.pop("columns"),
+                                 "rows": meta.pop("rows")}, meta=meta)
 
     # ----------------------- 游标与 per_page -----------------------
     def _parse_per_page(self) -> int:

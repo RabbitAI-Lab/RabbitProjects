@@ -30,7 +30,11 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture(autouse=True)
 def _sync_audit(monkeypatch):
-    """delay → 同步执行 worker 体（测试事务内直落库）。"""
+    """桥同步直落 + worker 体同步执行（测试事务内直落库）。
+
+    record_audit 已是 web 进程同步 shim（on_commit 内跑 record → _enqueue
+    → audit_record.delay）；两层都 patch 成直调 worker 体。
+    """
     from plane.bgtasks import audit_record as mod
     monkeypatch.setattr(mod.audit_record, "delay",
                         lambda payload: mod.audit_record.run(payload))
@@ -117,7 +121,10 @@ class TestPipeline:
     def test_chain_verify_detects_tamper(self, env):
         write_chained_row(_payload(env, "k1"))
         write_chained_row(_payload(env, "k2"))
-        assert verify_hash_chain(sample_rows=10)["broken"] == []
+        vr = verify_hash_chain(sample_rows=10)
+        mine = {str(r.id) for r in AuditLog.objects.filter(
+            workspace_id=env["ws"].id, event_key__in=("k1", "k2"))}
+        assert not [b for b in vr["broken"] if b in mine]  # 本作用域两行不破链
         # 裸 SQL 篡改 detail（绕 ORM 只增约束模拟攻击）
         with connection.cursor() as cur:
             cur.execute(

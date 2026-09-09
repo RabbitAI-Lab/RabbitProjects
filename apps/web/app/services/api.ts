@@ -1,4 +1,5 @@
 import { api } from "./axios";
+import { API_BASE_URL } from "../config";
 import type {
   DeleteSubtreeResult,
   InviteResult,
@@ -1583,6 +1584,13 @@ export const CustomRoleAPI = {
     api.get<Record<string, unknown>>(`workspaces/${slug}/projects/${projectId}/members/${memberId}/effective-permissions/`),
   bulkAssign: (slug: string, projectId: string, roleId: string, body: Record<string, unknown>) =>
     api.post(`workspaces/${slug}/projects/${projectId}/roles/${roleId}/assignments/bulk/`, body),
+};
+
+export const SSOAPI = {
+  route: (email: string) => api.post("auth/sso/route/", { email }),
+  signInUrl: (slug: string, next = "/") =>
+    `${API_BASE_URL}/auth/sso/${slug}/sign-in/?next=${encodeURIComponent(next)}`,
+  claim: (password: string) => api.post("auth/sso/claim/", { password }),
 };
 
 export const SiteAuditAPI = {

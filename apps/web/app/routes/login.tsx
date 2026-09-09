@@ -74,7 +74,7 @@ export default function Login() {
       <form onSubmit={submit}>
         <div className="mb-4">
           <label className="block text-[13px] font-medium text-neutral-700 mb-1.5" htmlFor="email">邮箱</label>
-          <input id="email" className="w-full h-9 border border-neutral-300 rounded-md px-2.5 bg-white focus:outline-none focus:border-brand-500 focus:ring-[3px] focus:ring-brand-50" type="email" autoFocus autoComplete="email" placeholder="you@company.com" value={email} onChange={(e) => { setEmail(e.target.value); if (disabledAlert) setDisabledOk(true); setRoute(null); }} onBlur={discoverRoute} data-sb-scope="login-email" />
+          <input id="email" className="w-full h-9 border border-neutral-300 rounded-md px-2.5 bg-white focus:outline-none focus:border-brand-500 focus:ring-[3px] focus:ring-brand-50" type="email" autoFocus autoComplete="email" placeholder="you@company.com" value={email} onChange={(e) => { setEmail(e.target.value); if (disabledAlert) setDisabledOk(true); setRoute(null); }} onBlur={(e) => discoverRoute(e.target.value)} data-sb-scope="login-email" />
         </div>
         <div className="mb-4">
           <label className="block text-[13px] font-medium text-neutral-700 mb-1.5" htmlFor="pw">密码</label>

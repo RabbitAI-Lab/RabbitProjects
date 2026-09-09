@@ -61,7 +61,7 @@ def write_chained_row(payload: dict):
             actor_id=payload.get("actor_id"),
             actor_snapshot=payload.get("actor") or {},
             object_type=(payload.get("object") or {}).get("type"),
-            object_id=(payload.get("object") or {}).get("id"),
+            object_id=payload.get("object_id") or (payload.get("object") or {}).get("id"),
             object_snapshot=payload.get("object") or {},
             detail=payload.get("detail") or {},
             ip=payload.get("ip"), user_agent=payload.get("user_agent") or "",

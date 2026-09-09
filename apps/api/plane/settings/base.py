@@ -66,6 +66,7 @@ INSTALLED_APPS = [
 
 # ── 中间件：六件套顺序即 §4.6 编号（顺序敏感，禁止重排）────
 MIDDLEWARE = [
+    "plane.audit.middleware.AuditContextMiddleware",  # AUTH-010：审计 ip/ua threadlocal
     "plane.base.middleware.RequestIDMiddleware",  # ①
     "plane.base.middleware.StructuredLoggingMiddleware",  # ②
     "plane.base.middleware.RateLimitHeaderMiddleware",  # ③

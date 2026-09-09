@@ -71,6 +71,8 @@ test.describe("S8E2E · 组织/角色/审计 parity", () => {
     await page.goto(`/${WS}/projects`);
     await page.getByRole("link", { name: "组织" }).first().click();
     await page.waitForURL(/\/org$/);
+    // 侧栏在场（整改回归：四页曾漏挂 Sidebar）
+    await expect(page.locator("nav.w-60").first()).toBeVisible();
     // 树与计数（C.150 树行；作用域限定侧栏树——成员表下拉含同名 option）
     const tree = page.locator("aside").first();
     await expect(tree.getByText("S8E2E 研发中心")).toBeVisible();
@@ -154,6 +156,14 @@ test.describe("S8E2E · 组织/角色/审计 parity", () => {
     await expect(
       page.locator('[data-sb-scope="audit-rows"]').getByText("department", { exact: true }).first(),
     ).toBeVisible({ timeout: 30_000 });
+    // 快照列非空（整改回归：曾全为 —）：造数者张三 + 对象名 + IP 至少一行齐备
+    const firstRow = page.locator('[data-sb-scope="audit-rows"] tr').first();
+    await expect(firstRow).toContainText("张三");
+    const cells = await firstRow.locator("td").allTextContents();
+    const objCell = (cells[3] ?? "").trim();
+    expect(objCell.length > 1 && objCell !== "—", "对象列不应为空——").toBeTruthy();
+    const ipCell = (cells[4] ?? "").trim();
+    expect(/\d+\.\d+\.\d+\.\d+/.test(ipCell), "IP 列不应为空").toBeTruthy();
     // 详情抽屉（C.152 抽屉行）
     await page.locator('[data-sb-scope="audit-rows"] tr').first().click();
     await expect(page.locator('[data-sb-scope="audit-detail"]')).toBeVisible();

@@ -10,7 +10,7 @@
 | 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md)（§2.11 IssueLink）、[`api-conventions.md`](../architecture/api-conventions.md) |
 | 上游依赖 | `GANTT-001`（甘特视口查询与渲染基座）；`GANTT-002`（拖拽改期管线——CPM 重算挂点）；`TASK-005`（blocks 依赖图无环约束——CPM 的前提）；`PROJ-004`（跨项目边**不参与** CPM 的边界） |
 | 下游消费 | P4 关键路径锁定、P4 `AI-001`（自动调优建议数据源）；`RPT-004`（阻塞率维度可消费关键链统计） |
-| 文档状态 | 待评审（Draft） |
+| 文档状态 | 已实现（Sprint-9，2026-09-10；偏差登记 ADR-0031） |
 | 最后更新日期 | 2026-09-05（R2 复评 PASS 后随手收口：`newly_critical` 补「存在旧行」守卫（首算/新建即关键不误报 BR-09）+ UT-18/19/20、BR-08 论证句收窄、§3.1 RBT-155 float=-3 对齐、UT-07 去「抛错」、`is_critical` 去冗余 db_index、autoretry_for 配套、视口过滤谓词与 anchor_today 辨析、recompute 202 响应体引用 §13.1、WF-005 依赖边语义说明、cpm.updated 待回改标注） |
 
 ---

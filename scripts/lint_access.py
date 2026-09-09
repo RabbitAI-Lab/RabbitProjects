@@ -63,9 +63,14 @@ def scan_views() -> list[str]:
                             "super()/accessible_queryset/accessible_by（AUTH-006 BR-01）")
             if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Attribute) \
                     and node.targets[0].attr == "status":
-                violations.append(
-                    f"AC-06 {rel}:{node.lineno} 视图直改 .status ——状态迁移唯一入口为"
-                    " ProjectLifecycleService.transition（PROJ-003 BR-01）")
+                # AC-06 守 Project 生命周期唯一入口（PROJ-003 BR-01）——仅匹配
+                # project 变量名；Cycle（RPT-003 迭代状态机 planned→active→completed，
+                # §4.5 start/complete 端点）等自有状态机不属本规则域
+                tgt = node.targets[0].value
+                if isinstance(tgt, ast.Name) and tgt.id == "project":
+                    violations.append(
+                        f"AC-06 {rel}:{node.lineno} 视图直改 project.status ——状态迁移唯一入口为"
+                        " ProjectLifecycleService.transition（PROJ-003 BR-01）")
             if isinstance(node, ast.Call) and "AC-02" not in allowed:
                 f = node.func
                 if (isinstance(f, ast.Attribute) and f.attr == "all"

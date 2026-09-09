@@ -41,6 +41,24 @@ export default [
     route(":workspaceSlug/projects/:projectId/stats", "routes/project-stats.tsx"),
     route(":workspaceSlug/projects/:projectId/settings/integrations", "routes/project-integrations.tsx"),
     route(":workspaceSlug/projects/:projectId/settings/webhooks", "routes/project-webhooks.tsx"),
+    // Sprint-9（PROJ-004 §3）：项目集（空间级——组合树 + 汇总面板/里程碑/依赖图）
+    route(":workspaceSlug/portfolios", "routes/portfolios.tsx"),
+    route(":workspaceSlug/portfolios/:portfolioId/milestones", "routes/portfolio-milestones.tsx"),
+    route(":workspaceSlug/portfolios/:portfolioId/graph", "routes/portfolio-graph.tsx"),
+    // Sprint-9（RPT-003 §3.1）：迭代管理 + 燃尽图
+    route(":workspaceSlug/projects/:projectId/cycles", "routes/cycles.tsx"),
+    // Sprint-9（RPT-003 §3.2/§3.3 + RPT-004 §3）：项目报表族
+    route(":workspaceSlug/projects/:projectId/reports/velocity", "routes/report-velocity.tsx"),
+    route(":workspaceSlug/projects/:projectId/reports/cumulative-flow", "routes/report-cfd.tsx"),
+    route(":workspaceSlug/projects/:projectId/reports/health", "routes/report-health.tsx"),
+    route(":workspaceSlug/projects/:projectId/reports/workload", "routes/report-workload.tsx"),
+    // Sprint-9（FILE-005 §3.1/§3.2）：Wiki（空间内页面树 + 版本）
+    route(":workspaceSlug/projects/:projectId/wiki", "routes/wiki.tsx"),
+    route(":workspaceSlug/projects/:projectId/wiki/trash", "routes/wiki-trash.tsx"),
+    // Sprint-9（FILE-005 §3.3）：知识检索（空间级独立入口）
+    route(":workspaceSlug/wiki-search", "routes/wiki-search.tsx"),
+    // Sprint-9（GANTT-003 §3.3）：预警配置（甘特子页）
+    route(":workspaceSlug/projects/:projectId/gantt/cpm", "routes/gantt-cpm.tsx"),
     // Sprint-2（TASK-010 §3.2 / C.62）：admin 死信补偿页（系统级顶层资源，不嵌 workspace）
     route("admin/dead-letters", "routes/admin-dead-letters.tsx"),
     ...settingsRoutes,

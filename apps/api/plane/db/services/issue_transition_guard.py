@@ -23,8 +23,12 @@ BLOCKER_SQL = """
        AND l.relation_type = 'is_blocked_by'
        AND l.deleted_at IS NULL
        AND i.deleted_at IS NULL
+       AND i.project_id = %(proj)s
        AND COALESCE(s."group", 'unstarted') NOT IN ('completed', 'cancelled')
 """
+# PROJ-004 §4.4（BR-07 软策略，Sprint-9）：仅同项目阻塞源参与完成拦截——
+# 跨项目依赖只做可视化与统计（组合树上下文不同，硬拦易误伤）；
+# 环检测（issue_link._reaches）不加项目过滤：环就是环，跨项目同样禁止（BR-09）。
 
 
 def assert_completable(*, issue: Issue, to_state: State, force: bool, is_admin: bool) -> None:
@@ -32,7 +36,7 @@ def assert_completable(*, issue: Issue, to_state: State, force: bool, is_admin: 
     if to_state.group != "completed":
         return
     with connection.cursor() as cursor:
-        cursor.execute(BLOCKER_SQL, {"me": issue.id})
+        cursor.execute(BLOCKER_SQL, {"me": issue.id, "proj": issue.project_id})
         blockers = cursor.fetchall()
     if not blockers:
         return
@@ -59,7 +63,10 @@ def assert_completable(*, issue: Issue, to_state: State, force: bool, is_admin: 
 
 
 def open_blocker_count(issue_id: uuid.UUID) -> int:
-    """?blocked=true 筛选与看板角标共用：未完成前置数（0 = 未被阻塞）。"""
+    """?blocked=true 筛选与看板角标共用：未完成前置数（0 = 未被阻塞）。
+
+    口径与 assert_completable 一致（同项目阻塞源，PROJ-004 BR-07）。"""
+    proj_id = Issue.objects.filter(pk=issue_id).values_list("project_id", flat=True).first()
     with connection.cursor() as cursor:
-        cursor.execute(BLOCKER_SQL, {"me": issue_id})
+        cursor.execute(BLOCKER_SQL, {"me": issue_id, "proj": proj_id})
         return len(cursor.fetchall())

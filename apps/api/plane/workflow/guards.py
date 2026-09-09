@@ -212,7 +212,7 @@ def check_blocker_completed(config: dict, *, issue: Issue, actor: User,
     if to_state.group != "completed" or issue.state.group == "completed":
         return None  # 判定域与 assert_completable 完全一致：仅「迁入 completed」拦截
     with connection.cursor() as cursor:
-        cursor.execute(BLOCKER_SQL, {"me": issue.id})
+        cursor.execute(BLOCKER_SQL, {"me": issue.id, "proj": issue.project_id})
         rows = cursor.fetchall()
     if not rows:
         return None

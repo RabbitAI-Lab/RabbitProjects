@@ -7,16 +7,20 @@ from .automation import AutomationRule, AutomationRun, AutomationSetting
 from .backup import BackupRun
 from .base import BaseModel, SoftDeleteManager, SoftDeleteQuerySet
 from .comment import CommentReaction, IssueComment
+from .cpm import CPMAlertConfig, IssueCPMCache
 from .custom_field import CustomFieldDefinition
 from .custom_role import CustomRole, ProjectRoleAssignment
+from .cycle import Cycle, CycleSnapshot, DailyGroupSnapshot, ProjectReportConfig
 from .department import Department, DepartmentGrantBatch
 from .file import FileFolder, FileVersion, UploadSession
 from .file_share import FileShareAccess, FileShareLink
+from .health import ExportTask, HealthConfig, HealthSnapshot
 from .integration import IntegrationInstallation, SyncConflictLog
 from .issue import Issue, IssueActivity, IssueAssignee, IssueLabel, IssueLink
 from .issue_type import IssueType
 from .label import Label
 from .notification import Notification
+from .portfolio import MilestoneItem, Portfolio, PortfolioMilestone, PortfolioProject
 from .project import Project, ProjectFavorite, ProjectMember, ProjectStatusLog, ProjectTemplate, SystemAdmin
 from .release import ReleaseGate, ReleaseGateEvent
 from .roles import ProjectRole, WorkspaceRole
@@ -26,6 +30,7 @@ from .user import User
 from .view import IssueView
 from .view_preference import UserViewPreference
 from .webhook import WebhookDelivery, WebhookEndpoint
+from .wiki import WikiPage, WikiPageVersion, WikiSpace
 from .workflow import (
     TemplateDistribution,
     TemplateUnlockRequest,
@@ -109,4 +114,20 @@ __all__ = [
     "ApprovalNode",
     "ApprovalInstance",
     "ApprovalRecord",
+    "Portfolio",
+    "PortfolioProject",
+    "PortfolioMilestone",
+    "MilestoneItem",
+    "Cycle",
+    "CycleSnapshot",
+    "ProjectReportConfig",
+    "DailyGroupSnapshot",
+    "WikiSpace",
+    "WikiPage",
+    "WikiPageVersion",
+    "CPMAlertConfig",
+    "IssueCPMCache",
+    "HealthSnapshot",
+    "HealthConfig",
+    "ExportTask",
 ]

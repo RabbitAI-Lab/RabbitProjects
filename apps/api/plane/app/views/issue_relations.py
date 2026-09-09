@@ -22,6 +22,7 @@ from plane.db.services.issue_link import (
     CircularDependencyError,
     DirtyDependencyGraphError,
     RelationValidationError,
+    TargetInvisibleError,
     create_relation,
     delete_relation,
     relations_of,
@@ -87,6 +88,9 @@ class IssueRelationListCreateView(APIView):
             ) from None
         except DirtyDependencyGraphError:
             raise AppException("SERVER_ERROR", message="依赖图数据异常，已记录告警") from None
+        except TargetInvisibleError:
+            # PROJ-004 §4.4：跨项目目标不可见——存在性隐藏，不区分 403/404 细节
+            raise NotFound("RESOURCE_NOT_FOUND") from None
         return created_response(
             {
                 "id": str(forward.id),

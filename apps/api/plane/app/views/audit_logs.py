@@ -162,11 +162,15 @@ class AuditCatalogView(APIView):
                                             "total_count": len(data)})
 
 
-class AuditExportView(APIView):
-    """POST .../audit-logs/exports/ —— CSV 流式导出（BR-04/BR-08）。
+AUDIT_SYNC_EXPORT_ROW_LIMIT = 20_000   # 同步流式上界；超出转 ExportTask 异步两段式
 
-    偏差登记：规格 §4.2 为 202 异步 + 预签名（S9 与 A#1 统一范式）；本版
-    同步流式（WF-006 直下范式），audit.exported 自审计与链断冻结齐备。
+
+class AuditExportView(APIView):
+    """POST .../audit-logs/exports/ —— CSV 导出（BR-04/BR-08）。
+
+    ≤2 万行同步流式（WF-006 直下范式）；超出 202 异步两段式（task_id/
+    status_url + MinIO 预签名）——S9 R4 与 known-debt A#1 统一接入，原偏差
+    登记随之闭环。audit.exported 自审计与链断冻结两路径齐备。
     """
 
     permission_classes = [IsAuthenticatedAndActive]
@@ -191,6 +195,26 @@ class AuditExportView(APIView):
         if total > 500_000:  # §2.2 上限
             raise AppException("RESOURCE_LIMIT_EXCEEDED",
                                message="导出上限 50 万行，请收窄条件")
+        # S8 A#1 债收口（Sprint-9）：>2 万行转异步两段式（202 + task_id/status_url
+        # + MinIO 预签名，ExportTask 统一范式）；小请求保持同步流式
+        if total > AUDIT_SYNC_EXPORT_ROW_LIMIT:
+            from plane.db.models import ExportTask
+            from plane.db.services.health import run_export_task
+            task = ExportTask.objects.create(
+                export_type="audit_csv", workspace=ws,
+                params={"workspace_id": str(ws.id),
+                        "filters": {k: v for k, v in request.query_params.items()
+                                    if k in FILTER_KEYS},
+                        "total_hint": total},
+                created_by=request.user)
+            run_export_task.delay(str(task.id))
+            from rest_framework import status as _st
+            from rest_framework.response import Response as _Resp
+            return _Resp(
+                {"status": "success",
+                 "data": {"task_id": str(task.id), "state": task.status,
+                          "status_url": f"/api/v1/workspaces/{slug}/exports/{task.id}/"}},
+                status=_st.HTTP_202_ACCEPTED)
         conditions = {k: v for k, v in request.query_params.items()
                       if k in FILTER_KEYS}
 

@@ -112,9 +112,9 @@ $1
   local rc=$?; cd - >/dev/null; return $rc
 }
 
-check TC-INF4-006 "错误码注册表规模 = 75" \
+check TC-INF4-006 "错误码注册表规模 = 77" \
   "s1py \"from plane.base.error_codes import ErrorCodes
-print('OK' if len(ErrorCodes.all())==75 else 'NG')\""
+print('OK' if len(ErrorCodes.all())==77 else 'NG')\""
 check TC-INF4-007 "默认文案覆盖全部注册码（双向差集为空）" \
   "s1py \"from plane.base.error_codes import ErrorCodes, DEFAULT_MESSAGES
 print('OK' if set(ErrorCodes.all())==set(DEFAULT_MESSAGES) else 'NG')\""

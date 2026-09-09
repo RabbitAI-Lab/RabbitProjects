@@ -17,6 +17,7 @@ from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from plane.app.effective_perms import custom_codes
 from plane.app.permissions import is_system_admin
 from plane.base.response import success_response
 from plane.db.models import Project, ProjectMember, WorkspaceMember
@@ -99,6 +100,9 @@ class UserPermissionsView(APIView):
                 "workspace_id": str(workspace_id),
                 "role": role,
                 "inherited": inherited,
+                # S8 A#5（Sprint-9 R4 前端轮收口）：自定义角色挂接并集码集下发——
+                # 前端 usePermission 码级显隐消费（rbac §11.4 委托口径）
+                "custom_codes": sorted(custom_codes(user.id, project_id)),
             }
 
         # ── 组装响应（序列化器只承担 shape 文档化，逻辑已在上方聚合完毕）──

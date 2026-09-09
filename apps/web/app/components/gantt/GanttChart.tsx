@@ -38,6 +38,8 @@ function monthStart(iso: string): string {
 }
 
 /** 行摘要 aria-label（§3.6：屏幕阅读器可线性消费）。 */
+const EMPTY_SET = new Set<string>();
+
 function rowAria(r: GanttRow): string {
   return `${r.issue_key} ${r.name}，${r.start_date ? fmtCn(r.start_date) : "未设置开始"}至${r.target_date ? fmtCn(r.target_date) : "未设置截止"}，进度 ${r.progress}%，${STATE_CN[r.state_group] ?? r.state_group}`;
 }
@@ -53,10 +55,14 @@ export interface GanttChartProps {
   canEdit: boolean;
   /** 导出入口（工具条 ⋯ 注入；键盘 ⌘E 走组件内同一 doExport）。 */
   exportFnRef: React.MutableRefObject<() => void>;
+  /** GANTT-003 §3.1：关键路径高亮——关键任务集合与开关（空集=无 CPM 数据）。 */
+  criticalIds?: Set<string>;
+  criticalOn?: boolean;
 }
 
 export const GanttChart = observer(function GanttChart(props: GanttChartProps) {
-  const { store, memberName, openPeek, onOpenList, projectName, viewName, userName, canEdit, exportFnRef } = props;
+  const { store, memberName, openPeek, onOpenList, projectName, viewName, userName, canEdit, exportFnRef,
+          criticalIds = EMPTY_SET, criticalOn = false } = props;
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const leftBodyRef = useRef<HTMLDivElement | null>(null);
   const headRef = useRef<HTMLDivElement | null>(null);
@@ -416,8 +422,10 @@ export const GanttChart = observer(function GanttChart(props: GanttChartProps) {
       ? "访客只读：拖拽改期需 CONTRIBUTOR+（PATCH 403）"
       : smallScreen ? "小屏只读：拖拽改期仅桌面端（≥1024px）"
       : immutable ? `${STATE_CN[row.state_group]}任务不可拖拽` : undefined;
+    const isCrit = criticalOn && criticalIds.has(row.id);
     const cls = [
       "rp-gbar", row.is_aggregated ? "agg" : stCls,
+      criticalOn ? (isCrit ? "crit" : "cp-dim") : "",
       row.is_overdue ? "overdue" : "",
       geom.openStart ? "open-start" : "",
       geom.openEnd ? "open-end" : "",

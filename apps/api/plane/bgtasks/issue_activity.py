@@ -110,8 +110,48 @@ def record_activity_row(
             old_value=old_value, new_value=new_value,
             old_identifier=old_identifier, new_identifier=new_identifier,
             comment=comment)
+        if field == "state" and new_identifier:
+            _dispatch_automation_state_changed(
+                issue_id=issue_id, actor_id=actor_id, epoch=epoch,
+                old_identifier=old_identifier, new_identifier=new_identifier)
     except Exception as exc:  # noqa: BLE001 —— TASK-010 DLQ 兜底
         raise self.retry(countdown=4**self.request.retries, exc=exc) from exc
+
+
+def _dispatch_automation_state_changed(
+    *, issue_id: str, actor_id: str | None, epoch: float,
+    old_identifier: str | None, new_identifier: str | None) -> None:
+    """S7 A#3 债收口：state_changed 生产事件源投递（WF-003 §2.2 唯一缺口）。
+
+    行已落库（幂等键去重后）才投递；引擎侧防循环三闸 + event_gate 已备
+    （sprint-7 R3 35 断言）。任何投递异常不得影响 Activity 主路径。
+    """
+    try:
+        from plane.db.models import Issue, State
+        issue = Issue.objects.select_related("project").filter(pk=issue_id).first()
+        if issue is None:
+            return
+        to_state = State.objects.filter(pk=new_identifier).values_list("group", flat=True).first()
+        from_group = (State.objects.filter(pk=old_identifier).values_list("group", flat=True).first()
+                      if old_identifier else None)
+        from plane.workflow.automation_tasks import automation_match
+        automation_match.delay({
+            "type": "state_changed",
+            "project_id": str(issue.project_id),
+            "issue_id": str(issue.id),
+            "epoch": epoch,
+            "payload": {
+                "from_state_id": old_identifier,
+                "to_state_id": new_identifier,
+                "from_group": from_group,
+                "to_group": to_state,
+                "actor_id": actor_id,
+            },
+        })
+    except Exception:  # noqa: BLE001 —— 总线投递失败不阻断 Activity 主路径
+        import logging
+        logging.getLogger(__name__).warning(
+            "automation_dispatch_failed issue=%s", issue_id, exc_info=True)
 
 
 def _write_activity_row(

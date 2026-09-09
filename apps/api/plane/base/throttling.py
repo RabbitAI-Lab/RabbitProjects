@@ -247,6 +247,19 @@ class PresignRateThrottle(RedisRateThrottle):
         return f"ip:{self.get_ident(request)}"
 
 
+class ReportAggRateThrottle(RedisRateThrottle):
+    """报表聚合端点族 10/min/用户（RPT-003 §4.5：燃尽/速率/CFD 三端点，
+    api-conventions §7.2 报表聚合配额）。"""
+
+    scope = "report_agg"
+    rate = "10/min"
+
+    def get_cache_key(self, request, view):
+        if request.user and request.user.is_authenticated:
+            return f"u:{request.user.id}"
+        return None
+
+
 class BulkRateThrottle(RedisRateThrottle):
     """批量端点族 10/min/用户（收编 sprint-2 BOARD-004 自带实现，scope
     ``issue_bulk`` 并入 ``bulk``，语义不变；单次 ≤100 条由 Serializer 层

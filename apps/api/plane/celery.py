@@ -92,6 +92,11 @@ app.conf.beat_schedule = {
         "task": "plane.bgtasks.audit_record.audit_daily_maintenance",
         "schedule": crontab(hour=2, minute=17),
     },
+    # ── RPT-003 §4.3（Sprint-9）：迭代/项目级每日快照（00:10，BR-05/BR-12）──
+    "cycle-daily-snapshot": {
+        "task": "plane.db.services.agile_reports.cycle_daily_snapshot",
+        "schedule": crontab(hour=0, minute=10),
+    },
     # ── PROJ-004 §4.5（Sprint-9）：里程碑延期预警（每日 09:00，BR-06）──
     "milestone-due-alerts": {
         "task": "plane.bgtasks.portfolio_alerts.milestone_due_alerts",

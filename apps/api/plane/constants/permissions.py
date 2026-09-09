@@ -89,6 +89,11 @@ PERMISSION_MATRIX: dict[str, dict[str, int]] = {
         "view.create.shared": ProjectRole.CONTRIBUTOR,
         "view.manage": ProjectRole.ADMIN,
         "board.lock": ProjectRole.ADMIN,
+        # ── Sprint-9 RPT-003（rbac §8.2 已登记行落地，零新增码）──
+        "cycle.manage": ProjectRole.ADMIN,        # ⚠️ 列=可配置开关，按默认列（同 file.share 模式）
+        "report.read": ProjectRole.VIEWER,
+        "report.export": ProjectRole.ADMIN,       # ⚠️ 列=可配置开关，按默认列
+        "project.setting.manage": ProjectRole.ADMIN,
     },
 }
 
@@ -148,6 +153,11 @@ PERMISSION_LABELS: dict[str, str] = {
     "view.create.shared": "创建共享视图",
     "view.manage": "管理他人共享视图",
     "board.lock": "锁定组织标准视图",
+    # Sprint-9 RPT-003
+    "cycle.manage": "管理迭代",
+    "report.read": "查看报表",
+    "report.export": "导出报表",
+    "project.setting.manage": "管理项目设置",
 }
 
 

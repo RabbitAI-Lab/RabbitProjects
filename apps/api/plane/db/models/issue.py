@@ -14,6 +14,13 @@ class Issue(BaseModel):
         HIGH = "high", "高"
         URGENT = "urgent", "紧急"
 
+    # Sprint-9（RPT-003 §4.2）：单值外键归属迭代——「一个工作项同时只属于一个
+    # 迭代」由单值列天然保证（架构 §7.4 处置，省掉 Plane CycleIssue 中间表）。
+    # 架构文档虽在 §7.4 声明 P0 预留，物理列实际未落地（R0 基线核对）——0033 补列。
+    cycle = models.ForeignKey(
+        "db.Cycle", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="issues",
+        verbose_name="所属迭代")
     # Sprint-5（INTG-001 §4.1.1 幂等锚点亮 + §4.1.2 PR/Commit 内联聚合）
     external_source = models.CharField(
         max_length=16, null=True, blank=True, db_index=True, verbose_name="外部来源")

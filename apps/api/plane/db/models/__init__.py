@@ -9,6 +9,7 @@ from .base import BaseModel, SoftDeleteManager, SoftDeleteQuerySet
 from .comment import CommentReaction, IssueComment
 from .custom_field import CustomFieldDefinition
 from .custom_role import CustomRole, ProjectRoleAssignment
+from .cycle import Cycle, CycleSnapshot, DailyGroupSnapshot, ProjectReportConfig
 from .department import Department, DepartmentGrantBatch
 from .file import FileFolder, FileVersion, UploadSession
 from .file_share import FileShareAccess, FileShareLink
@@ -114,4 +115,8 @@ __all__ = [
     "PortfolioProject",
     "PortfolioMilestone",
     "MilestoneItem",
+    "Cycle",
+    "CycleSnapshot",
+    "ProjectReportConfig",
+    "DailyGroupSnapshot",
 ]

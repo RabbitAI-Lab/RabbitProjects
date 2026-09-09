@@ -329,7 +329,7 @@ export function ViewSwitchBar({ vp }: { vp: ViewPage }) {
       {currentView?.is_locked && (
         <div data-sb-scope="view-locked-bar"
           className="flex items-center gap-2.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-lg px-3 py-1.5 text-[12.5px] w-full">
-          🔒 组织标准视图，只读
+          🔒 组织标准视图，只读（{currentView.locked_by_id ? `管理员 · ${new Date(currentView.locked_at ?? "").toLocaleDateString("zh-CN")} 锁定` : ""}）
           <button type="button" data-sb-scope="view-locked-fork"
             onClick={() => void gov.duplicate(currentView.id)}
             className="h-[26px] px-2.5 bg-white border border-blue-200 text-blue-600 rounded-md text-[12.5px] hover:bg-blue-50">另存为副本</button>

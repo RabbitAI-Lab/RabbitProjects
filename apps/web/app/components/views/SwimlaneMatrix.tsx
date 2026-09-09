@@ -84,21 +84,21 @@ export function SwimlaneMatrix({ vp, workspaceSlug, projectId, subGroupBy, reloa
         </div>
       )}
       {!degraded && (
-        <div className="mb-2 text-[12px] text-neutral-500" data-sb-scope="matrix-dims">
-          {DIM_NAMES[groupBy] ?? groupBy} × {DIM_NAMES[subGroupBy] ?? subGroupBy} · 共 {matrix.reduce((n, c) => n + c.count, 0)} 项
+        <div className="mb-2 text-xs text-neutral-400" data-sb-scope="matrix-dims">
+          {DIM_NAMES[groupBy] ?? groupBy} × {DIM_NAMES[subGroupBy] ?? subGroupBy} · 共 {matrix.reduce((n, c) => n + c.count, 0)} 项（Σ格计数与任务总数实时对账）
         </div>
       )}
       {!degraded && (
-        <table className="border-collapse text-sm" aria-label="二维分组矩阵">
+        <div className="overflow-auto rounded-lg border border-neutral-200 bg-white" data-sb-scope="swimlane-matrix-table">
+        <table className="matrix-tbl" aria-label="二维分组矩阵">
           <thead>
             <tr>
-              <th className="sticky left-0 z-10 bg-white border border-neutral-200 px-3 py-2 text-xs font-medium text-neutral-400">
-                {DIM_NAMES[subGroupBy] ?? subGroupBy} ＼ {DIM_NAMES[groupBy] ?? groupBy}
-              </th>
+              <th style={{ zIndex: 6 }}>{DIM_NAMES[subGroupBy] ?? subGroupBy} ＼ {DIM_NAMES[groupBy] ?? groupBy}</th>
               {columns.map((c) => (
-                <th key={c.key} className="border border-neutral-200 bg-neutral-50 px-3 py-2 text-[13px] font-medium min-w-[120px]"
-                    data-sb-scope="matrix-col-head">
-                  {colName(c.key)}
+                <th key={c.key} data-sb-scope="matrix-col-head">
+                  {groupBy === "state_id"
+                    ? <><span className="inline-block h-2 w-2 rounded-full mr-1.5" style={{ background: vp.states.find((s) => s.id === c.key)?.color ?? "#9ca3af" }} />{colName(c.key)}</>
+                    : colName(c.key)}
                 </th>
               ))}
             </tr>
@@ -106,34 +106,34 @@ export function SwimlaneMatrix({ vp, workspaceSlug, projectId, subGroupBy, reloa
           <tbody>
             {rows.map((r) => (
               <tr key={r.key} data-sb-scope="matrix-row">
-                <th className="sticky left-0 z-10 bg-neutral-50 border border-neutral-200 px-3 py-2 text-[13px] font-medium text-left"
-                    data-sb-scope="matrix-row-head">
-                  {rowName(r.key)}
+                <th data-sb-scope="matrix-row-head">
+                  {subGroupBy === "assignee_id" && r.key !== "__none__"
+                    ? <span className="inline-flex items-center gap-1.5">
+                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold text-white"
+                              style={{ background: "#3f76ff" }}>{rowName(r.key)[0]}</span>
+                        {rowName(r.key)}
+                      </span>
+                    : rowName(r.key)}
                 </th>
                 {columns.map((c) => {
                   const cell = cellMap.get(`${c.key}|${r.key}`);
                   const n = cell?.count ?? 0;
                   return (
-                    <td key={c.key} className="border border-neutral-200 px-2 py-1.5 align-top min-h-[52px]"
-                        data-sb-scope="matrix-cell">
+                    <td key={c.key} className="align-top" data-sb-scope="matrix-cell">
                       {n > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          <span className="inline-flex items-center rounded-full bg-brand-50 text-brand-700 px-2 py-0.5 text-xs font-medium"
-                                data-sb-scope="matrix-cell-count">
+                        <div className="flex flex-wrap items-center">
+                          <span className="cell-count" data-sb-scope="matrix-cell-count">
                             {n > 99 ? "99+" : n}
                           </span>
                           {(cell?.sample_issue_ids ?? []).slice(0, 8).map((id) => (
-                            <span key={id} title={`样例 ${id}`}
-                                  className="inline-block w-6 h-6 rounded border border-neutral-200 bg-white text-[10px] text-neutral-500 text-center leading-6"
-                                  data-sb-scope="matrix-cell-sample">
-                              {id.slice(0, 2).toUpperCase()}
+                            <span key={id} data-tip={`任务 ${id}`} data-sb-scope="matrix-cell-sample"
+                                  className="cell-sample">
+                              {id.slice(-3).toUpperCase()}
                             </span>
                           ))}
                         </div>
                       ) : (
-                        <div className="w-full h-8 rounded border border-dashed border-neutral-200 flex items-center justify-center text-[10px] text-neutral-300">
-                          拖拽任务到此
-                        </div>
+                        <div className="cell-empty">拖拽任务到此</div>
                       )}
                     </td>
                   );
@@ -142,6 +142,12 @@ export function SwimlaneMatrix({ vp, workspaceSlug, projectId, subGroupBy, reloa
             ))}
           </tbody>
         </table>
+        </div>
+      )}
+      {!degraded && (
+        <div className="mt-2 text-xs text-neutral-400">
+          格内计数服务端聚合（99+ 截断）；样例短卡悬浮显任务编号；点击格子 → 带双维过滤的一维看板
+        </div>
       )}
     </div>
   );

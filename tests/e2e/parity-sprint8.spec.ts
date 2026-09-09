@@ -80,6 +80,8 @@ test.describe("S8E2E · 组织/角色/审计 parity", () => {
     await page.locator('[data-sb-scope="org-new-name"]').fill("S8E2E 平台组");
     await page.locator('[data-sb-scope="org-new-submit"]').click();
     await expect(page.getByText(/创建失败|已存在/).first()).toBeVisible();
+    // 恒等式块（冻结稿 O1：树底实时对账）
+    await expect(page.getByText(/全体 \d+ = Σ部门直属/)).toBeVisible();
     // 成员归属列（C.150 成员表行）
     await expect(page.locator('[data-sb-scope="org-member-dept"]').first()).toBeVisible();
     // 批量授权弹窗（C.150 弹窗行）：父部门已选中 → 授权开 → 预览
@@ -123,10 +125,12 @@ test.describe("S8E2E · 组织/角色/审计 parity", () => {
     await firstCheck.click();
     await page.locator('[data-sb-scope="role-save"]').click();
     await expect(page.getByText("权限码已保存")).toBeVisible();
-    // 挂接面（C.151 挂接行）+ 我的权限（C.151 面板行）
+    // 已选 N/42 计数（冻结稿 O2）+ 勾选交互（域行）
+    await expect(page.getByText(/已选 \d+ \/ 42/)).toBeVisible();
+    // 挂接面（C.151 挂接行）+ 我的权限（冻结稿 O2：左列并集卡）
     await expect(page.getByText("成员挂接")).toBeVisible();
+    await expect(page.locator('[data-sb-scope="role-mycards"]')).toBeVisible();
     await page.locator('[data-sb-scope="role-assign-open"]').first().click();
-    await expect(page.locator('[data-sb-scope="role-effective"]')).toBeVisible();
     expect(guards.report() ?? []).toEqual([]);
   });
 
@@ -154,7 +158,8 @@ test.describe("S8E2E · 组织/角色/审计 parity", () => {
     await page.locator('[data-sb-scope="audit-rows"] tr').first().click();
     await expect(page.locator('[data-sb-scope="audit-detail"]')).toBeVisible();
     await expect(page.getByText("event_key").first()).toBeVisible();
-    // 导出对话框（C.152 导出行）——密码确认 UI（不真导出，断言对话框与确认禁用态）
+    // 导出对话框（C.152 导出行）——先点抽屉 ✕ 关闭（fixed 层盖住页头按钮）
+    await page.locator('[data-sb-scope="audit-detail"] button').first().click();
     await page.locator('[data-sb-scope="audit-export-open"]').click();
     await expect(page.locator('[data-sb-scope="audit-export-dialog"]')).toBeVisible();
     await expect(page.locator('[data-sb-scope="audit-export-confirm"]')).toBeDisabled();
@@ -195,8 +200,11 @@ test.describe("S8E2E · 视图治理与 SSO 表面", () => {
     const counts = await page.locator('[data-sb-scope="matrix-cell-count"]').allTextContents();
     const total = counts.reduce((n, c) => n + (parseInt(c, 10) || 0), 0);
     expect(total).toBe(3);  // Σ格计数 = 任务总数（§7.2 对账恒等式）
-    // 空格虚线框（C.154 空态）
-    await expect(page.locator('[data-sb-scope="matrix-cell"] .border-dashed').first()).toBeVisible();
+    // 空格虚线框（C.154 空态）+ 样例短卡（冻结稿 O5）
+    await expect(page.locator(".cell-empty").first()).toBeVisible();
+    await expect(page.locator('[data-sb-scope="matrix-cell-sample"]').first()).toBeVisible();
+    // Σ 对账口径行（冻结稿 O5）
+    await expect(page.getByText(/Σ格计数与任务总数/)).toBeVisible();
     expect(guards.report() ?? []).toEqual([]);
   });
 

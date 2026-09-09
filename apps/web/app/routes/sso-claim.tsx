@@ -29,10 +29,10 @@ export default function SSOClaimPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-neutral-50" data-sb-scope="sso-claim">
-      <div className="w-[400px] rounded-xl border bg-white p-6 shadow-sm">
-        <div className="mb-1 text-lg font-semibold">完成账号关联</div>
-        <p className="mb-4 text-[13px] text-neutral-500">
+    <div className="flex min-h-screen items-center justify-center bg-neutral-50 p-5" data-sb-scope="sso-claim">
+      <div className="w-[420px] max-w-full rounded-[14px] border border-neutral-200 bg-white p-8 shadow-md">
+        <div className="mb-1.5 flex items-center gap-2 text-[18px] font-semibold">🔗 完成账号关联</div>
+        <p className="mb-4.5 text-[13px] leading-relaxed text-neutral-500">
           你的 SSO 身份对应一个已存在的本地账号。输入该账号的密码完成绑定
           （仅需验证一次；此后直接 SSO 登录）。
         </p>
@@ -40,14 +40,14 @@ export default function SSOClaimPage() {
                onChange={(e) => setPassword(e.target.value)}
                onKeyDown={(e) => e.key === "Enter" && claim()}
                placeholder="本地账号密码" aria-label="本地账号密码"
-               className="mb-3 w-full rounded-md border px-3 py-2 text-sm" data-sb-scope="sso-claim-password" />
+               className="mb-3 h-9 w-full rounded-md border border-neutral-300 px-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-[3px] focus:ring-blue-50" data-sb-scope="sso-claim-password" />
         <button onClick={claim} disabled={busy || !password}
-                className="w-full rounded-md bg-brand-500 py-2 text-sm text-white disabled:opacity-50"
+                className="h-[34px] w-full rounded-md bg-blue-600 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                 data-sb-scope="sso-claim-submit">
           {busy ? "验证中…" : "验证并绑定"}
         </button>
         <p className="mt-3 text-center text-xs text-neutral-400">
-          事务 10 分钟内有效；超时请从 IdP 重新发起登录
+          事务 10 分钟内有效 · 超时请从 IdP 重新发起
         </p>
       </div>
     </div>

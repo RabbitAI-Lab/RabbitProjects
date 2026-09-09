@@ -20,6 +20,10 @@ type Member = {
 };
 type ProjectLite = { id: string; name: string };
 
+const WS_ROLE_LABEL: Record<number, string> = { 20: "所有者", 15: "管理员", 10: "成员", 5: "访客" };
+const AVA_COLORS = ["#3f76ff", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#6b7280"];
+const avatarColor = (n: string) => AVA_COLORS[(n.charCodeAt(0) || 48) % AVA_COLORS.length];
+
 const ROLE_OPTS = [
   { v: 5, n: "查看者" }, { v: 10, n: "评论者" },
   { v: 15, n: "协作者" }, { v: 20, n: "管理员" },
@@ -164,14 +168,18 @@ export default function OrgStructurePage() {
     return (childrenOf.get(parent) ?? []).map((d) => (
       <div key={d.id}>
         <div
-          className={`flex items-center gap-2 rounded px-2 py-1.5 cursor-pointer ${selected === d.id ? "bg-blue-50" : "hover:bg-neutral-100"}`}
-          style={{ paddingLeft: 8 + depth * 20 }}
+          className={`tree-node${selected === d.id ? " sel" : ""}`}
+          role="treeitem"
+          aria-selected={selected === d.id}
+          style={{ paddingLeft: 8 + depth * 18 }}
           onClick={() => setSelected(selected === d.id ? null : d.id)}
+          data-sb-scope="org-tree-node"
         >
-          <span className="text-sm">{d.name}</span>
-          <span className="text-xs text-neutral-400">
-            {d.member_count ?? 0}/{d.with_descendants_member_count ?? 0}
-          </span>
+          {depth < 2
+            ? <span style={{ fontSize: 9, color: "#a3a3a3" }}>▾</span>
+            : <span style={{ fontSize: 9 }}>·</span>}
+          <span className="text-[13.5px]">{d.name}</span>
+          <span className="cnt">{d.member_count ?? 0}/{d.with_descendants_member_count ?? 0}</span>
         </div>
         {renderTree(d.id, depth + 1)}
       </div>
@@ -184,12 +192,34 @@ export default function OrgStructurePage() {
     <div className="flex h-screen flex-col">
       <Topbar />
       <div className="flex flex-1 overflow-hidden">
-        <aside className="w-64 shrink-0 border-r bg-white p-3">
-          <div className="mb-2 text-xs font-medium text-neutral-400">
-            部门（直属/含子级）· 未分配 {unassigned} / 共 {total}
+        <main className="flex-1 overflow-auto p-4">
+        <div className="mx-auto max-w-[1240px] px-2 py-4">
+        <div className="mb-[18px] flex items-center gap-3">
+          <div>
+            <div className="text-[17px] font-semibold">组织架构</div>
+            <div className="text-[12.5px] text-neutral-400">部门树与成员归属 · 按部门批量授权（快照展开）</div>
           </div>
-          {renderTree(null)}
-          <div className="mt-3 border-t pt-3">
+          <div className="ml-auto flex gap-2">
+            <button className="h-7 rounded-md border border-neutral-300 px-2.5 text-xs text-neutral-600 hover:bg-neutral-50">导出</button>
+            <button onClick={() => selected && setGrantOpen(true)} disabled={!selected}
+                    className="h-7 rounded-md bg-blue-600 px-2.5 text-xs font-medium text-white disabled:opacity-50"
+                    data-sb-scope="org-grant-open">按部门授权</button>
+          </div>
+        </div>
+        <div className="grid items-start gap-4" style={{ gridTemplateColumns: "280px 1fr" }}>
+        <aside className="rounded-lg border bg-white p-2.5 shadow-sm">
+          <div className="px-2 pb-2 pt-1 text-xs text-neutral-400">部门 · 直属/含子级</div>
+          <div role="tree">{renderTree(null)}
+            <div className="tree-node" style={{ color: "#a3a3a3" }}>
+              <span style={{ fontSize: 9 }}>·</span><span>未分配</span>
+              <span className="cnt">{unassigned}</span>
+            </div>
+          </div>
+          <div className="mt-3 border-t border-neutral-200 px-2.5 py-2 text-[11.5px] leading-relaxed text-neutral-400">
+            全体 {total} = Σ部门直属 {total - unassigned} + 未分配 {unassigned}
+            <div style={{ color: "#a3a3a3" }}>（恒等式实时对账，AUTH-007 §2.2）</div>
+          </div>
+          <div className="mt-1 border-t border-neutral-200 pt-2.5">
             <input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
@@ -206,85 +236,97 @@ export default function OrgStructurePage() {
               新建部门
             </button>
             {selected && (
-              <div className="mt-2 flex gap-2">
-                <button
-                  onClick={() => setGrantOpen(true)}
-                  className="flex-1 rounded bg-emerald-600 py-1.5 text-xs text-white"
-                  data-sb-scope="org-grant-open"
-                >
-                  按部门授权
-                </button>
-                <button
-                  onClick={() => removeDept(selected)}
-                  className="rounded border border-red-200 px-2 py-1.5 text-xs text-red-600"
-                >
-                  删除
-                </button>
-              </div>
+              <button onClick={() => removeDept(selected)}
+                      className="mt-2 h-7 w-full rounded-md border border-red-200 text-[11.5px] text-red-600 hover:bg-red-50">
+                删除选中部门（须为空部门）
+              </button>
             )}
           </div>
         </aside>
-        <main className="flex-1 overflow-auto p-4">
-          <div className="mb-3 flex items-center gap-3">
-            <h1 className="text-base font-semibold">成员归属</h1>
+        <div className="overflow-hidden rounded-lg border bg-white shadow-sm">
+          <div className="flex items-center gap-2.5 border-b border-neutral-200 px-3.5 py-3">
+            <b className="text-[13.5px]">成员归属</b>
             <select
               value={filterDept ?? ""}
               onChange={(e) => setFilterDept(e.target.value || null)}
-              className="rounded border px-2 py-1 text-sm"
+              className="h-[30px] w-[150px] rounded-md border border-neutral-300 px-1.5 text-[12.5px]"
               data-sb-scope="org-member-filter"
             >
-              <option value="">全部成员</option>
-              <option value="__unassigned__">未分配</option>
-              {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              <option value="">全部成员（{members.length}）</option>
+              <option value="__unassigned__">未分配（{unassigned}）</option>
+              {depts.map((d) => <option key={d.id} value={d.id}>{d.name}（{d.member_count ?? 0}）</option>)}
             </select>
             {filterDept && (
-              <label className="flex items-center gap-1 text-xs text-neutral-500">
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-neutral-400">
                 <input type="checkbox" checked={withDesc}
                        onChange={(e) => setWithDesc(e.target.checked)} />
                 含子部门
               </label>
             )}
+            {selected && (
+              <button onClick={() => removeDept(selected)}
+                      className="ml-2 h-6 rounded-md border border-red-200 px-2 text-[11px] text-red-600 hover:bg-red-50">
+                删除选中部门
+              </button>
+            )}
+            <span className="ml-auto text-xs text-neutral-400">{shownMembers.length} 人</span>
           </div>
-          <table className="w-full text-sm">
-            <thead className="text-left text-xs text-neutral-400">
-              <tr><th className="py-1.5">成员</th><th>部门</th><th>岗位</th><th>操作</th></tr>
+          <table className="w-full text-[13px]">
+            <thead className="text-left text-xs font-medium text-neutral-400">
+              <tr><th className="px-3 py-2">成员</th><th className="w-[190px]">部门</th><th>岗位</th><th>空间角色</th></tr>
             </thead>
             <tbody>
               {shownMembers.map((m) => (
-                <tr key={m.id} className="border-t">
-                  <td className="py-1.5">{m.user.display_name}</td>
-                  <td>
+                <tr key={m.id} className="border-t border-neutral-200 hover:bg-neutral-50">
+                  <td className="px-3 py-2">
+                    <span className="inline-flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold text-white"
+                            style={{ background: avatarColor(m.user.display_name) }}>
+                        {m.user.display_name[0]}
+                      </span>
+                      {m.user.display_name}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2">
                     <select
-                      value={filterDept === "__unassigned__" ? "" : (m.department_id ?? "")}
+                      value={m.department_id ?? ""}
                       onChange={(e) => assignDept(m.id, e.target.value || null)}
-                      className="rounded border px-1.5 py-0.5 text-xs"
+                      className="h-7 rounded-md border border-neutral-300 px-1.5 text-[12.5px]"
                       data-sb-scope="org-member-dept"
                     >
                       <option value="">未分配</option>
                       {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                     </select>
                   </td>
-                  <td className="text-xs text-neutral-500">{m.company_role ?? "—"}</td>
-                  <td className="text-xs text-neutral-400">{deptName(m.department_id)}</td>
+                  <td className="text-xs text-neutral-400">{m.company_role ?? "—"}</td>
+                  <td className={m.role === 5 ? "text-[13px] text-amber-700" : "text-[13px]"}>
+                    {WS_ROLE_LABEL[m.role as keyof typeof WS_ROLE_LABEL] ?? "—"}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
           {!shownMembers.length && (
-            <div className="py-10 text-center text-sm text-neutral-400">
-              该部门暂无成员——用「按部门授权」批量加入项目
+            <div className="p-9 text-center">
+              <div className="text-[26px]">🏢</div>
+              <div className="mt-2 text-xs text-neutral-400">该部门暂无成员——用「按部门授权」批量加入项目</div>
             </div>
           )}
+        </div>
+        </div>
+        </div>
         </main>
       </div>
 
       {grantOpen && selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-          <div className="w-[420px] rounded-lg bg-white p-5 shadow-xl" data-sb-scope="org-grant-dialog">
-            <h2 className="mb-3 text-sm font-semibold">
-              按部门授权 · {deptName(selected)}
-            </h2>
-            <div className="space-y-2 text-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-[2px]">
+          <div className="w-[520px] max-w-full animate-[pop_.18s_cubic-bezier(.2,.9,.3,1.1)] rounded-xl bg-white p-6 shadow-2xl" role="dialog" aria-label="按部门授权" data-sb-scope="org-grant-dialog">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="text-base font-semibold">按部门授权 · {deptName(selected)}</div>
+              <button className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-100" onClick={() => { setGrantOpen(false); setGrantPreview(null); }}>✕</button>
+            </div>
+            <div className="mb-3.5 text-xs text-neutral-400">授权时刻把部门成员快照展开为项目成员（后续部门变动不影响已授权成员）</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <label className="block">
                 <span className="text-xs text-neutral-500">目标项目</span>
                 <select value={grantProj} onChange={(e) => setGrantProj(e.target.value)}
@@ -300,22 +342,25 @@ export default function OrgStructurePage() {
                   {ROLE_OPTS.map((r) => <option key={r.v} value={r.v}>{r.n}</option>)}
                 </select>
               </label>
-              {grantPreview && (
-                <div className="rounded bg-neutral-50 p-2 text-xs" data-sb-scope="org-grant-preview">
-                  预览：新增 {String(grantPreview.added?.length ?? 0)} ·
-                  调整 {String(grantPreview.role_changed?.length ?? 0)} ·
-                  跳过 {String(grantPreview.skipped?.length ?? 0)} ·
-                  不变 {String(grantPreview.unchanged?.length ?? 0)}
-                </div>
-              )}
             </div>
-            <div className="mt-4 flex justify-end gap-2">
+            <label className="mt-3 flex items-center gap-1.5 text-[13px] text-neutral-600">
+              <input type="checkbox" defaultChecked />含子部门（{depts.find(d => d.id === selected)?.with_descendants_member_count ?? 0} 人）
+            </label>
+            {grantPreview && (
+              <div className="mt-3.5 flex gap-3.5 rounded-lg bg-neutral-100 px-3 py-2.5 text-[12.5px] text-neutral-600" data-sb-scope="org-grant-preview">
+                <span>预览：<b className="text-emerald-700">新增 {String(grantPreview.added?.length ?? 0)}</b></span>
+                <span>调角色 {String(grantPreview.role_changed?.length ?? 0)}</span>
+                <span className="text-amber-700">跳过 {String(grantPreview.skipped?.length ?? 0)}（停用/访客上限）</span>
+                <span>不变 {String(grantPreview.unchanged?.length ?? 0)}</span>
+              </div>
+            )}
+            <div className="mt-5 flex justify-end gap-2.5">
               <button onClick={() => { setGrantOpen(false); setGrantPreview(null); }}
-                      className="rounded border px-3 py-1.5 text-sm">取消</button>
+                      className="h-8.5 rounded-md border border-neutral-300 px-3.5 text-[13px] text-neutral-600 hover:bg-neutral-50">取消</button>
               <button onClick={previewGrant} disabled={!grantProj}
-                      className="rounded border px-3 py-1.5 text-sm" data-sb-scope="org-grant-preview-btn">预览</button>
+                      className="h-8.5 rounded-md border border-neutral-300 px-3.5 text-[13px] text-neutral-600 hover:bg-neutral-50 disabled:opacity-50" data-sb-scope="org-grant-preview-btn">预览</button>
               <button onClick={execGrant} disabled={!grantProj}
-                      className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white" data-sb-scope="org-grant-submit">
+                      className="h-8.5 rounded-md bg-blue-600 px-3.5 text-[13px] font-medium text-white hover:bg-blue-700 disabled:opacity-50" data-sb-scope="org-grant-submit">
                 执行授权
               </button>
             </div>

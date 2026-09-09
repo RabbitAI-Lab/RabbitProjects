@@ -19,6 +19,8 @@ type CatalogGroup = { domain: string; codes: { code: string }[] };
 type Member = { id: string; user: { display_name: string }; role: number };
 type Assignment = { id: string; role_id: string; role_name: string };
 
+const AVA_COLORS = ["#3f76ff", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#6b7280"];
+
 const TEMPLATES = [
   { key: "qa_engineer", n: "测试工程师" },
   { key: "external_collab", n: "外包协作" },
@@ -161,25 +163,29 @@ export default function RolesAdminPage() {
       <div className="flex flex-1 overflow-hidden">
         <ProjectSidebar projectName={projName} identifier={projIdentifier} />
         <main className="flex-1 overflow-auto p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h1 className="text-base font-semibold">自定义角色（目录 {catalogCount} 码）</h1>
-            <div className="flex gap-2">
-              {TEMPLATES.map((t) => (
+          <div className="mb-[18px] flex items-center gap-3">
+            <div>
+              <div className="text-[17px] font-semibold">自定义角色</div>
+              <div className="text-[12.5px] text-neutral-400">42 码冻结目录 · 只加不减并集 · GUEST 天花板</div>
+            </div>
+            <div className="ml-auto flex gap-2">
+              {TEMPLATES.slice(0, 1).map((t) => (
                 <button key={t.key} onClick={() => createFromTemplate(t.key)}
-                        className="rounded border px-2.5 py-1 text-xs" data-sb-scope="role-template">
+                        className="h-7 rounded-md border border-neutral-300 px-2.5 text-xs text-neutral-600 hover:bg-neutral-50" data-sb-scope="role-template">
                   采用「{t.n}」
                 </button>
               ))}
               <button onClick={createBlank}
-                      className="rounded bg-blue-600 px-3 py-1 text-xs text-white" data-sb-scope="role-new">
+                      className="h-7 rounded-md bg-blue-600 px-2.5 text-xs font-medium text-white hover:bg-blue-700" data-sb-scope="role-new">
                 新建角色
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-[280px_1fr] gap-4">
-            {/* 角色列表 */}
-            <div className="rounded-lg border bg-white" data-sb-scope="role-list">
+          <div className="grid items-start gap-4" style={{ gridTemplateColumns: "300px 1fr" }}>
+            {/* 角色列表 + 我的权限（冻结稿 O2：左列两卡） */}
+            <div>
+            <div className="overflow-hidden rounded-lg border bg-white shadow-sm" data-sb-scope="role-list">
               {roles.map((r) => (
                 <button key={r.id}
                         onClick={() => { setSelected(r); setDraftPerms(new Set(r.permissions)); setEditing(false); }}
@@ -197,57 +203,89 @@ export default function RolesAdminPage() {
                 </div>
               )}
             </div>
+            <div className="mt-3 rounded-lg border bg-white p-3.5 shadow-sm" data-sb-scope="role-mycards">
+              <b className="text-[13px]">我的权限（并集）</b>
+              <div className="my-1.5 text-xs text-neutral-400">
+                固定角色 ∪ 已挂角色 = <b className="text-neutral-600">{(effective?.permissions as string[] | undefined)?.length ?? 14} 码</b>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {(((effective?.permissions as string[]) ?? []).slice(0, 14)).map((c) => (
+                  <span key={c} className="role-chip">{c}</span>
+                ))}
+              </div>
+            </div>
+            </div>
 
             {/* 矩阵编辑器 */}
             <div className="rounded-lg border bg-white p-3" data-sb-scope="role-matrix">
               {selected ? (
                 <>
-                  <div className="mb-2 flex items-center justify-between">
-                    <div>
-                      <span className="text-sm font-medium">{selected.name}</span>
-                      <span className="ml-2 text-xs text-neutral-400">{selected.description || "—"}</span>
-                    </div>
-                    <div className="flex gap-2">
+                  <div className="mb-1 flex items-center gap-2.5">
+                    <b className="text-[14.5px]">{selected.name}</b>
+                    {selected.is_builtin_template && <span className="text-xs text-neutral-400">内置模板 · 可调整</span>}
+                    <div className="ml-auto flex items-center gap-2">
+                      <span className="font-mono text-xs text-neutral-400">已选 {draftPerms.size} / {catalogCount}</span>
                       {!editing ? (
                         <button onClick={() => setEditing(true)}
-                                className="rounded border px-2.5 py-1 text-xs" data-sb-scope="role-edit">
+                                className="h-7 rounded-md border border-neutral-300 px-2.5 text-xs text-neutral-600 hover:bg-neutral-50" data-sb-scope="role-edit">
                           编辑权限
                         </button>
                       ) : (
-                        <button onClick={savePerms}
-                                className="rounded bg-blue-600 px-2.5 py-1 text-xs text-white" data-sb-scope="role-save">
-                          保存
-                        </button>
+                        <>
+                          <button onClick={() => { setEditing(false); setDraftPerms(new Set(selected.permissions)); }}
+                                  className="h-7 rounded-md border border-neutral-300 px-2.5 text-xs text-neutral-600 hover:bg-neutral-50">取消</button>
+                          <button onClick={savePerms}
+                                  className="h-7 rounded-md bg-blue-600 px-2.5 text-xs font-medium text-white hover:bg-blue-700" data-sb-scope="role-save">
+                            保存（即时生效）
+                          </button>
+                        </>
                       )}
                       <button onClick={() => removeRole(selected)}
-                              className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-600">
+                              className="h-7 rounded-md border border-red-200 px-2.5 text-xs text-red-600 hover:bg-red-50">
                         删除
                       </button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-x-4 md:grid-cols-3">
-                    {catalog.map((g) => (
+                  <div className="mb-3.5 text-xs text-neutral-400">保存后全部挂接者下一次操作即时生效（缓存主动失效）</div>
+                  <div className="grid gap-x-5" style={{ gridTemplateColumns: "1fr 1fr" }} data-sb-scope="role-matrix">
+                    {catalog.map((g) => {
+                      const on = g.codes.filter((c) => draftPerms.has(c.code)).length;
+                      const all = on === g.codes.length && g.codes.length > 0;
+                      return (
                       <div key={g.domain} className="mb-2">
-                        <div className="mb-1 text-xs font-medium text-neutral-500">{g.domain}</div>
+                        <div className="mb-1.5 flex items-center gap-2 border-b border-neutral-200 pb-1.5 text-xs font-semibold text-neutral-600">
+                          <span>{g.domain}</span>
+                          <label className="ml-auto flex cursor-pointer items-center gap-1.5 text-[11px] font-normal text-neutral-400"
+                                 onClick={() => {
+                                   if (!editing) return;
+                                   const next = new Set(draftPerms);
+                                   g.codes.forEach((c) => all ? next.delete(c.code) : next.add(c.code));
+                                   setDraftPerms(next);
+                                 }}>
+                            <span className={`inline-flex h-[13px] w-[13px] items-center justify-center rounded border-[1.5px] text-[10px] ${all ? "border-blue-500 bg-blue-500 text-white" : "border-neutral-300"}`}>{all ? "✓" : ""}</span>
+                            全选 {on}/{g.codes.length}
+                          </label>
+                        </div>
                         {g.codes.map((c) => {
-                          const on = draftPerms.has(c.code);
+                          const isOn = draftPerms.has(c.code);
                           return (
-                            <label key={c.code}
-                                   className={`flex items-center gap-1.5 py-0.5 text-xs ${editing ? "cursor-pointer" : "opacity-80"}`}>
-                              <input type="checkbox" checked={on} disabled={!editing}
-                                     onChange={(e) => {
-                                       const next = new Set(draftPerms);
-                                       if (e.target.checked) next.add(c.code);
-                                       else next.delete(c.code);
-                                       setDraftPerms(next);
-                                     }}
-                                     data-sb-scope="role-perm-check" />
-                              <span className={on ? "font-medium" : "text-neutral-500"}>{c.code}</span>
-                            </label>
+                            <div key={c.code}
+                                   className={`flex items-center gap-2 py-[3px] text-[12.5px] ${isOn ? "text-neutral-800" : "text-neutral-400"} ${editing ? "cursor-pointer hover:text-neutral-600" : ""}`}
+                                   role="checkbox" aria-checked={isOn}
+                                   onClick={() => {
+                                     if (!editing) return;
+                                     const next = new Set(draftPerms);
+                                     if (isOn) next.delete(c.code); else next.add(c.code);
+                                     setDraftPerms(next);
+                                   }}>
+                              <span className={`inline-flex h-[15px] w-[15px] items-center justify-center rounded border-[1.5px] text-[10px] ${isOn ? "border-blue-500 bg-blue-500 text-white" : "border-neutral-300"}`} data-sb-scope="role-perm-check">{isOn ? "✓" : ""}</span>
+                              <span className={`font-mono text-[11.5px] ${isOn ? "font-medium text-blue-700" : ""}`}>{c.code}</span>
+                            </div>
                           );
                         })}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </>
               ) : (
@@ -258,29 +296,40 @@ export default function RolesAdminPage() {
             </div>
           </div>
 
-          {/* 成员挂接 */}
-          <div className="mt-4 rounded-lg border bg-white">
-            <div className="border-b px-3 py-2 text-sm font-medium">成员挂接</div>
-            <table className="w-full text-sm">
-              <thead className="text-left text-xs text-neutral-400">
-                <tr><th className="px-3 py-1.5">成员</th><th>已挂角色</th><th>操作</th></tr>
+          {/* 成员挂接（冻结稿：卡内分区 + role-chip） */}
+          <div className="mt-4 border-t border-neutral-200 pt-3">
+            <b className="text-[13px]">成员挂接（{selected?.assigned_count ?? 0}）</b>
+            <table className="mt-1.5 w-full text-[13px]">
+              <thead className="text-left text-xs font-medium text-neutral-400">
+                <tr><th className="py-1.5">成员</th><th>已挂角色</th><th></th></tr>
               </thead>
               <tbody>
                 {members.map((m) => (
-                  <tr key={m.id} className="border-t">
-                    <td className="px-3 py-1.5">{m.user.display_name}</td>
-                    <td className="text-xs">
-                      {(memberAssign[m.id] ?? []).map((a) => a.role_name).join("、") || "—"}
+                  <tr key={m.id} className="border-t border-neutral-200">
+                    <td className="py-2">
+                      <span className="inline-flex items-center gap-2">
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold text-white"
+                              style={{ background: AVA_COLORS[(m.user.display_name.charCodeAt(0) || 48) % AVA_COLORS.length] }}>
+                          {m.user.display_name[0]}
+                        </span>
+                        {m.user.display_name}
+                      </span>
                     </td>
-                    <td className="px-3">
+                    <td className="text-xs">
+                      {(memberAssign[m.id] ?? []).length
+                        ? (memberAssign[m.id] ?? []).map((a) => (
+                            <span key={a.id} className="role-chip" style={{ marginRight: 4 }}>{a.role_name}</span>))
+                        : <span className="text-neutral-400">—</span>}
+                    </td>
+                    <td className="text-right">
                       <button onClick={() => openMember(m.id)}
-                              className="text-xs text-blue-600" data-sb-scope="role-assign-open">
+                              className="text-xs text-blue-700 hover:underline" data-sb-scope="role-assign-open">
                         {memberAssign[m.id] ? "刷新" : "挂接…"}
                       </button>
                       {(memberAssign[m.id] ?? []).map((a) => (
                         <button key={a.id} onClick={() => toggleAssign(m.id, selected!, false)}
-                                className="ml-2 text-xs text-red-500" title={selected?.name}>
-                          卸 {a.role_name}
+                                className="ml-2 text-xs text-red-500 hover:underline">
+                          卸除
                         </button>
                       ))}
                     </td>
@@ -289,23 +338,14 @@ export default function RolesAdminPage() {
               </tbody>
             </table>
             {selected && members.length > 0 && (
-              <div className="border-t px-3 py-2">
+              <div className="mt-2 border-t border-neutral-200 pt-2">
                 <button onClick={() => toggleAssign(members[0]!.id, selected, true)}
-                        className="text-xs text-emerald-600" data-sb-scope="role-assign-first">
-                  把「{selected.name}」挂给首位成员
+                        className="text-xs text-emerald-700 hover:underline" data-sb-scope="role-assign-first">
+                  把「{selected.name}」挂给首位成员（GUEST 目标将 409 拒绝并文案列越界码）
                 </button>
               </div>
             )}
           </div>
-
-          {effective && (
-            <div className="mt-4 rounded-lg border bg-neutral-50 p-3 text-xs" data-sb-scope="role-effective">
-              <span className="font-medium">我的权限（并集 {String((effective.permissions as string[])?.length ?? 0)} 码）：</span>
-              <span className="text-neutral-500">
-                {((effective.permissions as string[]) ?? []).slice(0, 20).join(" · ")}…
-              </span>
-            </div>
-          )}
         </main>
       </div>
     </div>

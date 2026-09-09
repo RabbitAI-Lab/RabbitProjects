@@ -108,24 +108,27 @@ export default function SSOConfigPage() {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar workspaceSlug={ws ?? ""} />
         <main className="flex-1 overflow-auto p-5" data-sb-scope="sso-config">
-          <h1 className="mb-1 text-base font-semibold">SSO 单点登录</h1>
-          <p className="mb-4 text-xs text-neutral-500">
-            企业身份提供方对接（OIDC / SAML 2.0）· JIT 开通 · 强制 SSO（含逃生名单）
-          </p>
+          <div className="mb-[18px]">
+            <div className="text-[17px] font-semibold">SSO 单点登录</div>
+            <div className="text-[12.5px] text-neutral-400">OIDC / SAML 2.0 · JIT 开通 · 强制与逃生（仅空间所有者可见此页）</div>
+          </div>
 
-          {/* 协议 */}
-          <section className="mb-4 rounded-lg border bg-white p-4">
-            <div className="mb-2 text-sm font-medium">① 协议与元数据</div>
-            <div className="flex gap-2">
+          {/* 段一：协议与元数据（冻结稿 O4 编号圆标） */}
+          <section className="mb-4 rounded-lg border bg-white p-4 shadow-sm">
+            <div className="mb-2.5 flex items-center gap-2.5 text-[13.5px] font-semibold">
+              <span className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-neutral-300 text-xs font-semibold text-neutral-600">1</span>
+              协议与元数据
+              <span className="ml-auto text-xs font-normal text-neutral-400">{cfg.is_enabled ? "启用中 · 不可切换协议（先停用）" : ""}</span>
+            </div>
+            <div className="mb-3.5 flex gap-2.5">
               {(["oidc", "saml"] as const).map((p) => (
                 <button key={p} onClick={() => save({ protocol: p })}
                         disabled={saving || cfg.is_enabled}
-                        className={`rounded border px-3 py-1.5 text-sm ${cfg.protocol === p ? "border-brand-500 bg-brand-50 text-brand-700" : ""} disabled:opacity-50`}
+                        className={`proto-pill ${cfg.protocol === p ? "on" : ""} disabled:opacity-50`}
                         data-sb-scope="sso-protocol">
                   {p === "oidc" ? "OIDC" : "SAML 2.0"}
                 </button>
               ))}
-              {cfg.is_enabled && <span className="self-center text-xs text-neutral-400">启用中不可换协议（先停用）</span>}
             </div>
             <div className="mt-3 grid grid-cols-2 gap-3">
               {cfg.protocol === "oidc" ? (
@@ -164,9 +167,15 @@ export default function SSOConfigPage() {
             )}
           </section>
 
-          {/* 干跑 + 启用 */}
-          <section className="mb-4 rounded-lg border bg-white p-4">
-            <div className="mb-2 text-sm font-medium">② 测试连接（干跑）与启用</div>
+          {/* 段二：干跑硬门槛（BR-04） */}
+          <section className="mb-4 rounded-lg border bg-white p-4 shadow-sm">
+            <div className="mb-2.5 flex items-center gap-2.5 text-[13.5px] font-semibold">
+              <span className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-neutral-300 text-xs font-semibold text-neutral-600">2</span>
+              测试连接（干跑）与启用
+              <span className="ml-auto">{cfg.last_test_passed_at
+                ? <span className="pass-badge ok">✓ {new Date(cfg.last_test_passed_at).toLocaleString("zh-CN", { hour12: false }).slice(0, 16)} 通过 · 验签 OK</span>
+                : <span className="pass-badge warn">⚠ 未通过——启用前必须干跑</span>}</span>
+            </div>
             <div className="flex items-center gap-3 text-xs">
               <button onClick={runCheck} disabled={checking}
                       className="rounded border px-3 py-1.5 text-sm disabled:opacity-50" data-sb-scope="sso-check">
@@ -187,9 +196,18 @@ export default function SSOConfigPage() {
             </div>
           </section>
 
-          {/* 强制 SSO */}
-          <section className="mb-4 rounded-lg border bg-white p-4">
-            <div className="mb-2 text-sm font-medium">③ 强制 SSO</div>
+          {/* 段三：强制 SSO（红警示条 O4） */}
+          <section className="mb-4 rounded-lg border bg-white p-4 shadow-sm">
+            <div className="mb-2.5 flex items-center gap-2.5 text-[13.5px] font-semibold">
+              <span className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-neutral-300 text-xs font-semibold text-neutral-600">3</span>
+              强制 SSO
+              <span className="ml-auto text-xs font-normal text-neutral-400">前置：≥1 名所有者已通过 SSO 登录绑定（防自锁）</span>
+            </div>
+            {cfg.enforce_sso && (
+              <div className="mb-2.5 flex items-center gap-2.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12.5px] text-red-600">
+                🔒 全员仅可 SSO 登录——逃生名单账号走环境变量 SSO_BREAK_GLASS_EMAILS（不入库不可改）
+              </div>
+            )}
             <div className="flex items-center gap-3 text-xs text-neutral-600">
               <button onClick={async () => { try { await SSOG.enforceOn(ws!); toast("已开启强制 SSO"); void load(); } catch (e) { toast((e as { message?: string })?.message ?? "开启失败（需 OWNER 先 SSO 登录一次）", "error"); } }}
                       disabled={cfg.enforce_sso}
@@ -206,9 +224,18 @@ export default function SSOConfigPage() {
             </div>
           </section>
 
-          {/* 绑定清单 */}
-          <section className="rounded-lg border bg-white p-4">
-            <div className="mb-2 text-sm font-medium">④ 已绑定成员（{bindings.length}）</div>
+          {/* 段四：绑定清单 + 证书临期（O4） */}
+          <section className="rounded-lg border bg-white p-4 shadow-sm">
+            <div className="mb-2.5 flex items-center gap-2.5 text-[13.5px] font-semibold">
+              <span className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-neutral-300 text-xs font-semibold text-neutral-600">4</span>
+              已绑定成员（{bindings.length}）
+              <span className="ml-auto text-xs font-normal text-neutral-400">IdP 侧禁用用户：会话最长 14 天滑动窗口（即时禁用待 AUTH-011 / P4）</span>
+            </div>
+            {cfg.cert_expires_in_days != null && cfg.cert_expires_in_days < 14 && (
+              <div className="mb-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                ⏳ IdP 证书剩余 <b>{cfg.cert_expires_in_days} 天</b>——即将过期，请安排轮换（AUTH-009 §2.6）
+              </div>
+            )}
             <table className="w-full text-sm">
               <thead className="text-left text-xs text-neutral-400">
                 <tr><th className="py-1">邮箱（绑定时）</th><th>subject</th><th>绑定时间</th></tr>

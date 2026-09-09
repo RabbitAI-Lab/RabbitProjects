@@ -80,3 +80,35 @@
 /* 甘特域通用小件（原型 133/390 行同源；sidebar 的 badge-id 此前无定义——顺手补齐） */
 .badge-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;padding:1px 6px;background:#f5f5f5;border-radius:4px;color:#525252;white-space:nowrap}
 .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;border:1px solid #d4d4d8;border-bottom-width:2px;border-radius:4px;padding:0 5px;background:#f5f5f5;color:#525252}
+
+/* ═════════ Sprint-8 高保真冻结稿专属类（docs/design/sprint-8-hifi-prototype.html
+   FROZEN 2026-09-09——六表面整改的视觉基准；token 与全局 Tailwind 主题同源） ═════════ */
+/* 审计分类色点 */
+.cat-dot{width:8px;height:8px;border-radius:9999px;display:inline-block;margin-right:7px;vertical-align:0}
+.cat-dot.auth{background:#6366f1}.cat-dot.member{background:#3f76ff}.cat-dot.department{background:#10b981}
+.cat-dot.role{background:#8b5cf6}.cat-dot.sso{background:#f59e0b}.cat-dot.audit{background:#6b7280}
+.cat-dot.workflow{background:#ec4899}.cat-dot.export{background:#0891b2}.cat-dot.system{background:#a3a3a3}
+/* 泳道矩阵（O5：双 sticky + 格徽章 + 样例短卡 + 虚线空格） */
+.matrix-tbl{border-collapse:separate;border-spacing:0;font-size:13px;min-width:760px}
+.matrix-tbl th,.matrix-tbl td{border-right:1px solid var(--color-neutral-200,#e5e5e5);border-bottom:1px solid var(--color-neutral-200,#e5e5e5);padding:6px 10px}
+.matrix-tbl thead th{position:sticky;top:0;background:#f5f5f5;z-index:5;font-size:12.5px;font-weight:500}
+.matrix-tbl tbody th{position:sticky;left:0;background:#f5f5f5;z-index:4;font-size:12.5px;font-weight:500;text-align:left;min-width:104px}
+.cell-count{display:inline-flex;align-items:center;background:#eef4ff;color:#2f5fe0;font-weight:600;font-size:12px;padding:1px 8px;border-radius:9999px;font-variant-numeric:tabular-nums}
+.cell-sample{display:inline-flex;align-items:center;width:26px;height:22px;border:1px solid #e5e5e5;border-radius:4px;background:#fff;font-family:ui-monospace,Menlo,monospace;font-size:10px;color:#8c8c8c;justify-content:center;margin-left:3px}
+.cell-empty{width:100%;min-height:34px;border:1.5px dashed #e5e5e5;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10.5px;color:#a3a3a3}
+/* 角色码徽章 / 通过徽章（O2/O4） */
+.role-chip{display:inline-flex;align-items:center;gap:6px;background:#eef4ff;color:#2f5fe0;border:1px solid #dbe7fe;font-size:12px;padding:2px 9px;border-radius:9999px;font-weight:500}
+.pass-badge{font-size:11.5px;padding:2px 8px;border-radius:9999px;font-weight:500}
+.pass-badge.ok{background:#ecfdf5;color:#059669}
+.pass-badge.warn{background:#fffbeb;color:#b45309}
+/* SSO 协议选择 pill（O4） */
+.proto-pill{padding:6px 16px;border:1.5px solid #d4d4d4;border-radius:8px;font-size:13.5px;font-weight:500;color:#525252}
+.proto-pill.on{border-color:#3f76ff;background:#eef4ff;color:#2f5fe0}
+/* 组织树节点（O1） */
+.tree-node{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:6px;cursor:pointer;color:#525252}
+.tree-node:hover{background:#f5f5f5}
+.tree-node.sel{background:#eef4ff;color:#2f5fe0;font-weight:500}
+.tree-node .cnt{font-size:11px;color:#a3a3a3;font-variant-numeric:tabular-nums}
+.tree-node.sel .cnt{color:#2f5fe0}
+@keyframes slide-r{from{transform:translateX(24px);opacity:0}}
+@keyframes slide-d{from{transform:translateY(-8px);opacity:0}}

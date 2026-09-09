@@ -178,6 +178,7 @@ FEATURE_MODULES = (
     "departments",      # M1-AUTH 部门组织架构（AUTH-007，Sprint-8 R1）
     "custom_roles",     # M1-AUTH 自定义角色组（AUTH-008，Sprint-8 R2）
     "sso",              # M1-AUTH SSO 单点登录（AUTH-009，Sprint-8 R3）
+    "audit_logs",       # M1-AUTH 全站审计（AUTH-010，Sprint-8 R4）
 )
 
 for _name in FEATURE_MODULES:

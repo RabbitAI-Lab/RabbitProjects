@@ -35,7 +35,8 @@ app = Celery(
         "plane.bgtasks.share_sweep",       # FILE-004：过期分享清扫（beat 每小时）
         "plane.bgtasks.worklog",
         "plane.bgtasks.workspace_invite",
-        "plane.bgtasks.audit",               # AUTH-010 占位（R4 兑现真管道；AUTH-007 事件投递）
+        "plane.bgtasks.audit",               # 兼容转发（record_audit 埋点，R1~R3 import 路径）
+        "plane.bgtasks.audit_record",        # AUTH-010：审计落库 worker + 每日维护（R4）
         "plane.workflow.tasks",               # WF-002：审批通知/超时扫描（shared_task 需 worker 侧 import）
         "plane.workflow.automation_tasks",    # WF-003：自动化引擎（同上，celery include 漏登即 unregistered）
         "plane.db.services.webhook_outbound",   # INTG-002：出站投递/清理/到期扫描
@@ -86,6 +87,11 @@ app.conf.beat_schedule = {
         "task": "plane.workflow.automation_tasks.automation_purge_old_runs",
         "schedule": crontab(hour=3, minute=37),
     },
+    # ── AUTH-010 §4.3（Sprint-8 R4）：审计每日维护（分区/留存/链校验）──
+    "audit-daily-maintenance": {
+        "task": "plane.bgtasks.audit_record.audit_daily_maintenance",
+        "schedule": crontab(hour=2, minute=17),
+    },
 }
 
 
@@ -107,6 +113,10 @@ app.conf.task_routes = {
     "plane.workflow.automation_tasks.automation_match": {"queue": "workflow"},
     "plane.workflow.automation_tasks.automation_due_scan": {"queue": "workflow"},
     "plane.workflow.automation_tasks.automation_purge_old_runs": {"queue": "workflow"},
+    # AUTH-010（§4.3）：审计落库入 audit 队列（DLX 同 activity 范式）
+    "plane.bgtasks.audit_record.audit_record": {"queue": "audit"},
+    "plane.audit.recorder.record_audit": {"queue": "audit"},
+    "plane.bgtasks.audit_record.audit_daily_maintenance": {"queue": "audit"},
 }
 app.conf.task_queues = (
     Queue("activity", Exchange("activity", type="direct"), routing_key="activity",
@@ -115,4 +125,9 @@ app.conf.task_queues = (
               "x-dead-letter-routing-key": "activity.dlq"}),
     Queue("activity.dlq", Exchange("activity.dlx", type="direct"), routing_key="activity.dlq"),
     Queue("workflow", Exchange("workflow", type="direct"), routing_key="workflow"),
+    Queue("audit", Exchange("audit", type="direct"), routing_key="audit",
+          queue_arguments={
+              "x-dead-letter-exchange": "audit.dlx",
+              "x-dead-letter-routing-key": "audit.dlq"}),
+    Queue("audit.dlq", Exchange("audit.dlx", type="direct"), routing_key="audit.dlq"),
 )

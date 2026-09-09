@@ -2,6 +2,7 @@ from .account import PasswordResetToken
 from .approval import ApprovalFlow, ApprovalInstance, ApprovalNode, ApprovalRecord
 from .approval_audit import ApprovalAuditEvent
 from .asset import FileAsset
+from .audit import AuditLog
 from .automation import AutomationRule, AutomationRun, AutomationSetting
 from .backup import BackupRun
 from .base import BaseModel, SoftDeleteManager, SoftDeleteQuerySet
@@ -37,6 +38,7 @@ from .worklog_approval import ProjectWorklogConfig, WorkLogApproval, WorkLogSumm
 from .workspace import Workspace, WorkspaceLabel, WorkspaceLoginDailyAggregate, WorkspaceMember, WorkspaceMemberInvite
 
 __all__ = [
+    "AuditLog",
     "IdentityProvider",
     "SSOAccount",
     "CustomRole",

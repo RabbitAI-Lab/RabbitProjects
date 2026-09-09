@@ -17,4 +17,10 @@ export const workbenchRoutes: RouteConfigEntry[] = [
   route(":workspaceSlug/projects/:projectId/audit", "routes/project-audit.tsx"),
   // TASK-013 §3.1~3.3 工时（C.142）
   route(":workspaceSlug/projects/:projectId/worklog", "routes/worklog.tsx"),
+  // AUTH-007 §3.1（C.150，Sprint-8 R6）：组织管理——部门树/成员归属/批量授权
+  route(":workspaceSlug/org", "routes/org-structure.tsx"),
+  // AUTH-010 §3.1（C.152，Sprint-8 R6）：全站审计日志——筛选/游标分页/导出
+  route(":workspaceSlug/audit-logs", "routes/audit-logs.tsx"),
+  // AUTH-008 §3.1/§3.2（C.151，Sprint-8 R6）：自定义角色与权限矩阵编辑器
+  route(":workspaceSlug/projects/:projectId/roles", "routes/roles-admin.tsx"),
 ];

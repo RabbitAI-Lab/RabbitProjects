@@ -210,6 +210,7 @@ class WorkspaceMemberDetailView(APIView):
                     "department.member_assigned",
                     actor_id=str(request.user.id),
                     object_id=str(member.id),
+                    workspace_id=str(ws.id),
                 )
             )
 

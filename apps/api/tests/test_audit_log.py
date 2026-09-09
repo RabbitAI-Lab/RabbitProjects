@@ -109,9 +109,10 @@ class TestPipeline:
         with django_capture_on_commit_callbacks(execute=True):
             record_audit("department.created", actor_id=str(env["owner"].id),
                          object_id="d1")
-        row = AuditLog.objects.filter(category="department").first()
-        assert row is not None and row.action == "created"
-        assert row.actor_id == str(env["owner"].id)
+        row = (AuditLog.objects
+               .filter(category="department", actor_id=str(env["owner"].id),
+                       action="created").first())  # 作用域过滤（坑 18：共享库有 worker 落行）
+        assert row is not None
 
     def test_chain_verify_detects_tamper(self, env):
         write_chained_row(_payload(env, "k1"))

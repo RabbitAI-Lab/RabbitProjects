@@ -104,10 +104,12 @@ def _path_names(department: Department, other: Department) -> str:
     return " → ".join(names)
 
 
-def _audit(event: str, *, actor_id: str, object_id, **extra) -> None:
+def _audit(event: str, *, actor_id: str, object_id, workspace_id=None, **extra) -> None:
     transaction.on_commit(
         lambda: record_audit.delay(event, actor_id=actor_id,
-                                   object_id=str(object_id) if object_id else None, **extra)
+                                   object_id=str(object_id) if object_id else None,
+                                   workspace_id=str(workspace_id) if workspace_id else None,
+                                   **extra)
     )
 
 
@@ -135,7 +137,8 @@ def create_department(*, actor, workspace, name: str, parent_id=None) -> Departm
     dept.path = (parent.path if parent else "/") + f"{dept.id}/"  # UUID 主键 init 即生成
     dept.full_clean()
     dept.save()
-    _audit("department.created", actor_id=actor.id, object_id=dept.id)
+    _audit("department.created", actor_id=actor.id, object_id=dept.id,
+           workspace_id=dept.workspace_id)
     return dept
 
 
@@ -147,7 +150,8 @@ def rename_department(*, actor, department: Department, name: str) -> Department
     department.name = name
     department.updated_by = actor
     department.save(update_fields=["name", "updated_by", "updated_at"])
-    _audit("department.renamed", actor_id=actor.id, object_id=department.id)
+    _audit("department.renamed", actor_id=actor.id, object_id=department.id,
+           workspace_id=department.workspace_id)
     return department
 
 
@@ -185,7 +189,8 @@ def reorder_department(*, actor, department: Department, sort_after_id) -> Depar
     department.sort_order = new_sort
     department.updated_by = actor
     department.save(update_fields=["sort_order", "updated_by", "updated_at"])
-    _audit("department.reordered", actor_id=actor.id, object_id=department.id)
+    _audit("department.reordered", actor_id=actor.id, object_id=department.id,
+           workspace_id=department.workspace_id)
     return department
 
 
@@ -229,7 +234,8 @@ def move_department(*, actor, department: Department, new_parent_id) -> Departme
             [department.path, len(old_prefix) + 1,
              department.workspace_id, old_prefix + "%"],
         )
-    _audit("department.moved", actor_id=actor.id, object_id=department.id)
+    _audit("department.moved", actor_id=actor.id, object_id=department.id,
+           workspace_id=department.workspace_id)
     return department
 
 
@@ -250,7 +256,8 @@ def delete_department(*, actor, department: Department) -> None:
         )
     dept_id = department.id
     department.delete()  # 软删（BaseModel）
-    _audit("department.deleted", actor_id=actor.id, object_id=dept_id)
+    _audit("department.deleted", actor_id=actor.id, object_id=dept_id,
+           workspace_id=department.workspace_id)
 
 
 # ── 成员归属 ──────────────────────────────────────────────
@@ -271,7 +278,7 @@ def bulk_move_members(*, actor, workspace, member_ids: list[str], department_id)
         wm.save(update_fields=["department_id", "updated_by", "updated_at"])
         count += 1
     _audit("department.members_moved", actor_id=actor.id, object_id=department_id,
-           moved=count)
+           workspace_id=workspace.id, moved=count)
     return count
 
 
@@ -397,6 +404,7 @@ def expand_grant(*, actor, department: Department, project: Project,
         created_by=actor, updated_by=actor,
     )
     _audit("department.granted", actor_id=actor.id, object_id=batch.id,
+           workspace_id=department.workspace_id,
            project_id=str(project.id), role=role)
     return batch
 

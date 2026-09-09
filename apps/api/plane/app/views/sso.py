@@ -57,12 +57,13 @@ def _get_idp(ws) -> IdentityProvider:
     return idp
 
 
-def _audit(event: str, *, actor_id, object_id=None, **extra) -> None:
+def _audit(event: str, *, actor_id, object_id=None, workspace_id=None, **extra) -> None:
     from django.db import transaction
 
     transaction.on_commit(
         lambda: record_audit.delay(event, actor_id=str(actor_id),
                                    object_id=str(object_id) if object_id else None,
+                                   workspace_id=str(workspace_id) if workspace_id else None,
                                    **extra))
 
 
@@ -149,7 +150,8 @@ class SSOConfigView(APIView):
                 setattr(idp, field, value)
         idp.updated_by_id = request.user.id if hasattr(idp, "updated_by_id") else None
         idp.save()
-        _audit("sso.config_updated", actor_id=request.user.id, object_id=idp.id)
+        _audit("sso.config_updated", actor_id=request.user.id, object_id=idp.id,
+               workspace_id=idp.workspace_id)
         return success_response(_idp_payload(idp))
 
 
@@ -177,7 +179,7 @@ class SSOConnectionCheckView(APIView):
             idp.last_test_passed_at = timezone.now()
             idp.save(update_fields=["last_test_passed_at", "updated_at"])
         _audit("sso.connection_check", actor_id=request.user.id, object_id=idp.id,
-               ok=result.get("ok"))
+               workspace_id=idp.workspace_id, ok=result.get("ok"))
         return success_response(result)
 
 
@@ -234,7 +236,8 @@ class SSOEnforceView(APIView):
             )
         idp.enforce_sso = True
         idp.save(update_fields=["enforce_sso", "updated_at"])
-        _audit("sso.enforce_on", actor_id=request.user.id, object_id=idp.id)
+        _audit("sso.enforce_on", actor_id=request.user.id, object_id=idp.id,
+                workspace_id=idp.workspace_id)
         return success_response({"enforce_sso": True})
 
     @_sso_manage
@@ -243,7 +246,8 @@ class SSOEnforceView(APIView):
         idp = _get_idp(ws)
         idp.enforce_sso = False
         idp.save(update_fields=["enforce_sso", "updated_at"])
-        _audit("sso.enforce_off", actor_id=request.user.id, object_id=idp.id)
+        _audit("sso.enforce_off", actor_id=request.user.id, object_id=idp.id,
+                 workspace_id=idp.workspace_id)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -379,7 +383,8 @@ class SSOCallbackView(APIView):
             })
             return resp
         _establish_session(request, user)
-        _audit("sso.login", actor_id=user.id, object_id=idp.id, protocol="oidc")
+        _audit("sso.login", actor_id=user.id, object_id=idp.id,
+                workspace_id=idp.workspace_id, protocol="oidc")
         resp = HttpResponseRedirect(txn.get("next") or "/")
         oidc.delete_txn_cookie(resp)
         resp["Cache-Control"] = "no-store"
@@ -419,7 +424,8 @@ class SSOClaimView(APIView):
         SSOAccount.objects.create(idp=idp, user=user, subject=txn["sub"],
                                   email_at_binding=txn["email"])
         _establish_session(request, user)
-        _audit("sso.claim", actor_id=user.id, object_id=idp.id)
+        _audit("sso.claim", actor_id=user.id, object_id=idp.id,
+                workspace_id=idp.workspace_id)
         resp = Response({"status": "success",
                          "data": {"next": txn.get("next") or "/"}},
                         status=status.HTTP_200_OK)
@@ -497,7 +503,8 @@ class SAMLACSView(APIView):
             raise AppException("AUTH_INVALID_CREDENTIALS",
                                message="该邮箱已存在本地账号，请联系管理员绑定") from None
         _establish_session(request, user)
-        _audit("sso.login", actor_id=user.id, object_id=idp.id, protocol="saml",
+        _audit("sso.login", actor_id=user.id, object_id=idp.id,
+               workspace_id=idp.workspace_id, protocol="saml",
                initiated_by=claims.get("initiated_by"))
         resp = HttpResponseRedirect(request.POST.get("RelayState") or "/")
         resp["Cache-Control"] = "no-store"

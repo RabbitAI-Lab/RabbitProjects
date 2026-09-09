@@ -18,12 +18,13 @@ from plane.db.models import IssueView, ProjectMember, UserViewPreference
 logger = logging.getLogger("plane.api.views")
 
 
-def _audit(event: str, *, actor_id, object_id, **extra) -> None:
+def _audit(event: str, *, actor_id, object_id, workspace_id=None, **extra) -> None:
     from plane.audit.recorder import record_audit
 
     transaction.on_commit(
         lambda: record_audit.delay(event, actor_id=str(actor_id),
                                    object_id=str(object_id) if object_id else None,
+                                   workspace_id=str(workspace_id) if workspace_id else None,
                                    **extra))
 
 
@@ -77,7 +78,8 @@ def lock_view(*, actor, view: IssueView, is_locked: bool,
     if view.is_project_default:
         _subscribe_all_members(view)  # 存量成员批量订阅（BR-16 +1）
     _audit("view.locked" if is_locked else "view.unlocked",
-           actor_id=actor.id, object_id=view.id, view_name=view.name)
+           actor_id=actor.id, object_id=view.id,
+           workspace_id=view.workspace_id, view_name=view.name)
     return view
 
 
@@ -115,7 +117,8 @@ def share_view(*, actor, view: IssueView, access: str) -> IssueView:
         UserViewPreference.objects.filter(
             view=view, deleted_at__isnull=True).delete()
     _audit("view.shared" if access == "shared" else "view.unshared",
-           actor_id=actor.id, object_id=view.id, view_name=view.name)
+           actor_id=actor.id, object_id=view.id,
+           workspace_id=view.workspace_id, view_name=view.name)
     return view
 
 
@@ -132,7 +135,7 @@ def duplicate_view(*, actor, view: IssueView) -> IssueView:
         created_by=actor, updated_by=actor,
     )
     _audit("view.duplicated", actor_id=actor.id, object_id=fork.id,
-           source=str(view.id), view_name=name)
+           workspace_id=view.workspace_id, source=str(view.id), view_name=name)
     return fork
 
 

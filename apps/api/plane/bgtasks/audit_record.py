@@ -20,6 +20,18 @@ from django.db import IntegrityError, OperationalError, connection, transaction
 logger = logging.getLogger("plane.audit")
 
 
+def _jsonify(value):
+    """递归净化：UUID/datetime 等非 JSON 基本类型转 str（psycopg jsonb
+    dumper 用纯 json.dumps，无 DjangoJSONEncoder——worker 侧兜底）。"""
+    if isinstance(value, dict):
+        return {str(k): _jsonify(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonify(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
 def _canonical(payload: dict) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False, default=str)
@@ -29,6 +41,7 @@ def write_chained_row(payload: dict):
     """链式哈希写入：读 prev → sha256(prev|canonical) → INSERT（临界区串行化）。"""
     from plane.db.models import AuditLog
 
+    payload = _jsonify(payload)
     with transaction.atomic():
         with connection.cursor() as cursor:
             cursor.execute(
@@ -56,7 +69,7 @@ def write_chained_row(payload: dict):
         )
 
 
-@shared_task(bind=True, queue="audit", max_retries=5,
+@shared_task(bind=True, max_retries=5,
              acks_late=True, acks_on_failure_or_timeout=False)
 def audit_record(self, payload: dict) -> None:
     """审计落库（at-least-once 消费，三层去重幂等收敛）。"""
@@ -93,7 +106,7 @@ def audit_record(self, payload: dict) -> None:
 
 # ── 每日维护（分区运维 + 留存 + 校验 + 重复发现）──────────
 
-@shared_task(queue="audit")
+@shared_task
 def audit_daily_maintenance() -> dict:
     """BR-07/12 + §2.4：前置建分区 / DEFAULT 巡检 / 180 天清理 / 链校验。"""
     result: dict = {}

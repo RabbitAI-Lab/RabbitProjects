@@ -126,9 +126,10 @@ def _ws_id_from(result) -> str | None:
     return str(getattr(ws, "id", ws))
 
 
-@shared_task(ignore_result=True, queue="audit")
+@shared_task(ignore_result=True)
 def record_audit(event: str, *, actor_id: str,
-                 object_id: str | None = None, **extra) -> None:
+                 object_id: str | None = None,
+                 workspace_id=None, **extra) -> None:
     """兼容桥（task 形态）：R1~R3 占位签名 → 真管道（.delay 调用点零改动）。
 
     event 形如 "department.created"（category.action）；event_key 每次唯一
@@ -146,7 +147,8 @@ def record_audit(event: str, *, actor_id: str,
         hashlib.sha256(f"{event}:{actor_id}:{object_id}:{uuid.uuid4()}".encode())
         .hexdigest()[:80],
         category=category, action=action,
+        workspace_id=workspace_id,
         actor={"id": actor_id},
-        obj=({"id": object_id} if object_id else {}),
+        obj=({"id": str(object_id)} if object_id else {}),
         detail=dict(extra) or None,
     )

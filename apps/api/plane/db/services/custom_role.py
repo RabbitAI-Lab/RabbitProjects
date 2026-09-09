@@ -52,10 +52,11 @@ BUILTIN_TEMPLATES: dict[str, dict] = {
 }
 
 
-def _audit(event: str, *, actor_id, object_id, **extra) -> None:
+def _audit(event: str, *, actor_id, object_id, workspace_id=None, **extra) -> None:
     transaction.on_commit(
         lambda: record_audit.delay(event, actor_id=str(actor_id),
                                    object_id=str(object_id) if object_id else None,
+                                   workspace_id=str(workspace_id) if workspace_id else None,
                                    **extra)
     )
 
@@ -135,7 +136,7 @@ class RoleService:
             created_by=actor, updated_by=actor,
         )
         _audit("role.create", actor_id=actor.id, object_id=role.id,
-               role_name=name)
+               workspace_id=role.project.workspace_id, role_name=name)
         return role
 
     @transaction.atomic
@@ -176,7 +177,7 @@ class RoleService:
                         .values_list("user_id", flat=True))
         transaction.on_commit(lambda: invalidate(affected, role.project_id))
         _audit("role.update", actor_id=actor.id, object_id=role.id,
-               role_name=role.name)
+               workspace_id=role.project.workspace_id, role_name=role.name)
         return role
 
     @transaction.atomic
@@ -194,7 +195,7 @@ class RoleService:
             )
         role.delete()
         _audit("role.delete", actor_id=actor.id, object_id=role.id,
-               role_name=role.name)
+               workspace_id=role.project.workspace_id, role_name=role.name)
 
     # ── 挂接 ──────────────────────────────────────────────
 
@@ -230,6 +231,7 @@ class RoleService:
             transaction.on_commit(
                 lambda: invalidate([target_user.id], role.project_id))
             _audit("role.assign", actor_id=actor.id, object_id=role.id,
+                   workspace_id=role.project.workspace_id,
                    target_user=str(target_user.id), role_name=role.name)
         return created
 
@@ -246,6 +248,7 @@ class RoleService:
             transaction.on_commit(
                 lambda: invalidate([target_user.id], role.project_id))
             _audit("role.revoke", actor_id=actor.id, object_id=role.id,
+                   workspace_id=role.project.workspace_id,
                    target_user=str(target_user.id), role_name=role.name)
 
     @transaction.atomic
@@ -311,6 +314,7 @@ class RoleService:
         transaction.on_commit(
             lambda: invalidate([m.member_id for m in members], role.project_id))
         _audit("role.granted", actor_id=actor.id, object_id=batch.id,
+               workspace_id=role.project.workspace_id,
                role_name=role.name, added=len(added))
         return {"batch_id": str(batch.id), "added": added,
                 "skipped": skipped}

@@ -14,12 +14,16 @@ type Workload = {
   matrix: { actor: string; actor_id: string; cells: Record<string, number> }[];
 };
 
+/** 本地时区安全格式化（toISOString 是 UTC——东八区 0 点会回退一天，BR-07 周一校验被误触发） */
+const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const monday = (offsetWeeks = 0) => {
   const t = new Date();
-  const m = new Date(t.getFullYear(), t.getMonth(), t.getDate() - ((t.getDay() + 6) % 7) - offsetWeeks * 7);
-  return m.toISOString().slice(0, 10);
+  return fmt(new Date(t.getFullYear(), t.getMonth(), t.getDate() - ((t.getDay() + 6) % 7) - offsetWeeks * 7));
 };
-const addDays = (d: string, n: number) => new Date(Date.parse(d) + n * 86400000).toISOString().slice(0, 10);
+const addDays = (d: string, n: number) => {
+  const x = new Date(Date.parse(d) + n * 86400000);
+  return fmt(x);
+};
 
 export default function ReportWorkloadPage() {
   const { workspaceSlug: ws, projectId } = useParams();

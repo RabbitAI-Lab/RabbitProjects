@@ -17,6 +17,7 @@ from .issue import Issue, IssueActivity, IssueAssignee, IssueLabel, IssueLink
 from .issue_type import IssueType
 from .label import Label
 from .notification import Notification
+from .portfolio import MilestoneItem, Portfolio, PortfolioMilestone, PortfolioProject
 from .project import Project, ProjectFavorite, ProjectMember, ProjectStatusLog, ProjectTemplate, SystemAdmin
 from .release import ReleaseGate, ReleaseGateEvent
 from .roles import ProjectRole, WorkspaceRole
@@ -109,4 +110,8 @@ __all__ = [
     "ApprovalNode",
     "ApprovalInstance",
     "ApprovalRecord",
+    "Portfolio",
+    "PortfolioProject",
+    "PortfolioMilestone",
+    "MilestoneItem",
 ]

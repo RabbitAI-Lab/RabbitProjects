@@ -50,6 +50,10 @@ class DirtyDependencyGraphError(Exception):
     """保险丝深度内回到起点（环链 ≥101 边）= 脏数据 → 500 + ERROR 告警。"""
 
 
+class TargetInvisibleError(Exception):
+    """PROJ-004 §4.4：跨项目关联的目标项目对 actor 不可见 → 404（存在性隐藏）。"""
+
+
 class TransitionBlockedError(Exception):
     """未完成前置拦截迁入 completed → 409 RESOURCE_TRANSITION_BLOCKED。"""
 
@@ -142,8 +146,21 @@ def create_relation(
         raise RelationValidationError("related_issue_id", "不能与自身建立关联")
     issue = Issue.objects.select_related("project").filter(id=issue_id, deleted_at__isnull=True).first()
     related = Issue.objects.select_related("project").filter(id=related_issue_id, deleted_at__isnull=True).first()
-    if issue is None or related is None or issue.project_id != related.project_id:  # BR-02
-        raise RelationValidationError("related_issue_id", "关联双方必须属于同一项目")
+    # PROJ-004 §4.4（BR-08，Sprint-9）：TASK-005 BR-02「同项目」放开为「同工作空间」
+    #（跨项目依赖仅可视化与统计，不参与单项目流转拦截——§2 范围裁定）。
+    # Issue 无 workspace 冗余列（经 project 隐含，unified-issue-model §4），比较走两侧项目。
+    if (issue is None or related is None
+            or issue.project.workspace_id != related.project.workspace_id):
+        raise RelationValidationError("related_issue_id", "仅支持同工作空间内建立关联")
+    # 双项目可见性（存在性隐藏，api-conventions §4.3「404 vs 403」）：目标项目不可见 → 404
+    if issue.project_id != related.project_id:
+        from plane.access.matrix import project_q
+        from plane.db.models import Project, User
+        actor = User.objects.filter(pk=actor_id).first()
+        if actor is None or not Project.objects.filter(
+                id=related.project_id).filter(
+                    project_q(actor, related.project.workspace_id)).exists():
+            raise TargetInvisibleError()
 
     if relation_type == "is_blocked_by":                                    # 归一化为正向
         issue_id, related_issue_id = related_issue_id, issue_id

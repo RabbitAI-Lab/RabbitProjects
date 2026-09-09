@@ -20,6 +20,8 @@ class Notification(BaseModel):
         ISSUE_UPDATED = "issue.updated", "任务被更新"
         # COLLAB-002 §4.3.4：楼中楼回复事件（与 mentioned / commented 三互斥）
         COMMENT_REPLIED = "comment.replied", "评论被回复"
+        # PROJ-004 §4.5（Sprint-9）：里程碑延期预警（每日一条至 manager / WS_ADMIN+）
+        MILESTONE_AT_RISK = "milestone.at_risk", "里程碑延期风险"
 
     receiver = models.ForeignKey(
         "db.User",

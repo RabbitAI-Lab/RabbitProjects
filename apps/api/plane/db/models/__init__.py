@@ -19,6 +19,7 @@ from .notification import Notification
 from .project import Project, ProjectFavorite, ProjectMember, ProjectStatusLog, ProjectTemplate, SystemAdmin
 from .release import ReleaseGate, ReleaseGateEvent
 from .roles import ProjectRole, WorkspaceRole
+from .sso import IdentityProvider, SSOAccount
 from .state import State
 from .user import User
 from .view import IssueView
@@ -36,6 +37,8 @@ from .worklog_approval import ProjectWorklogConfig, WorkLogApproval, WorkLogSumm
 from .workspace import Workspace, WorkspaceLabel, WorkspaceLoginDailyAggregate, WorkspaceMember, WorkspaceMemberInvite
 
 __all__ = [
+    "IdentityProvider",
+    "SSOAccount",
     "CustomRole",
     "ProjectRoleAssignment",
     "Department",

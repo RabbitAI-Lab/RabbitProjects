@@ -45,6 +45,12 @@ INTEGRATION_SECRET_KEY = env("INTEGRATION_SECRET_KEY", "")
 DEBUG = env_bool("DEBUG", False)
 ALLOWED_HOSTS = [h.strip() for h in env("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if h.strip()]
 
+# ── AUTH-009（Sprint-8 R3）：SSO 逃生通道与密钥加密 ──
+#: 逃生名单（BR-06：仅环境变量，不入库不可 API 改）——强制 SSO 下仍可密码登录
+SSO_BREAK_GLASS_EMAILS = [e.strip().lower() for e in env("SSO_BREAK_GLASS_EMAILS", "").split(",") if e.strip()]
+#: client_secret / SP 私钥 Fernet 主密钥（BR-14；缺省时 SSO 配置写入将报错提示设置）
+SSO_FERNET_KEY = env("SSO_FERNET_KEY", "")
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",

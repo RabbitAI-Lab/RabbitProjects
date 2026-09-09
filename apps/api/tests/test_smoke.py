@@ -14,8 +14,8 @@ from plane.constants.permissions import (  # noqa: E402
 )
 
 
-def test_error_registry_has_75_codes():
-    assert len(ErrorCodes.all()) == 75
+def test_error_registry_has_77_codes():
+    assert len(ErrorCodes.all()) == 77
 
 
 def test_permission_labels_cover_all_keys():

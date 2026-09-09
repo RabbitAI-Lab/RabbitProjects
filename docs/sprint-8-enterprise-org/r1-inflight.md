@@ -130,6 +130,22 @@
   event_key 80 字符上限（拼接超长改 sha256 截断）；DRF 视图 on_commit
   在测试事务内（capture + delay 同步化双管齐下）
 
+## R5 视图治理轮完成
+
+- 模型：IssueView 三列语义放开 + 三新列 + UserViewPreference（0030）；
+  锁定拦截优先于权限码（issue_views.update/destroy）；issues 应用面
+  shared 放开（`view.is_system or owner or access=='shared'`）
+- 治理：view_governance 服务 + lock/duplicate/pin/preferences 四组端点
+  （lock 走 require_permission("board.lock") 享 AUTH-008 并集分支）；
+  BR-15 两步解锁、BR-04 原子替换、BR-16 订阅口径全落地
+- 二维矩阵：_matrix_response（逐格 filter+count 复用一维语义——M2M
+  正确性优先于单查询优雅；格数 ≤400 + 5s 时间预算降级一维）
+- 测试 19 项 + 突变 2/2；全量 896 过。坑：IssueView.workspace 必填
+  （fixture 与 duplicate 双中招）；on_commit 在 pytest 事务内
+  （captureOnCommitCallbacks 类方法用法）
+- R6 入口：前端六表面（组织/角色矩阵/SSO 配置/审计页/共享锁定/二维
+  分组）+ parity spec + Keycloak 联调 + 验收视频 + 文档收口
+
 ## R3 入口原文（已收编）
 
 原「R2 入口」段落如下（已由上方实录收编）：

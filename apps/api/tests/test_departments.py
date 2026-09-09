@@ -425,7 +425,8 @@ class TestGrantExpansion:
         data = resp.json()["data"]
         assert data["dry_run"] is True and data["added"]
         assert ProjectMember.objects.filter(project=env["proj"]).count() == 0
-        assert DepartmentGrantBatch.objects.count() == 0
+        # 作用域过滤（坑 18）：dev PG 有 e2e/联跑残留批次，全表 count 会误红
+        assert DepartmentGrantBatch.objects.filter(workspace=env["ws"]).count() == 0
 
     def test_grant_role20_requires_admin(self, env):
         """BR-10：role=PROJ_ADMIN 且 actor 非项目/空间管理员 → 403。"""

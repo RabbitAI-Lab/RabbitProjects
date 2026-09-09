@@ -272,7 +272,6 @@ class TestExports:
         from plane.app.views import health as hv
         hv.SYNC_EXPORT_ROW_LIMIT = 0
         from plane.db.services import health as hsvc
-        calls = {}
 
         def fake_render(task):
             return "actor,week_start,minutes,load_ratio\n甲,2026-09-07,600,0.25"

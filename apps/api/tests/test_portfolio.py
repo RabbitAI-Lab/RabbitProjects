@@ -344,11 +344,22 @@ class TestAlertsAndPermissions:
             event=Notification.Event.MILESTONE_AT_RISK).count() == s1["sent"]
 
     def test_it04_alert_stops_at_full_progress(self, env):
+        """贡献项全部完成 → 本里程碑不预警（BR-06 达标停发）。
+
+        作用域断言（坑 18 同款）：beat 扫全库——演示种子等他人里程碑照常发，
+        全局 sent==0 断言会被库内数据误红。"""
         ms = self._milestone(env, days_left=3)
-        # 贡献项全部完成 → 完成度 100% → 不发
         done = State.objects.filter(project=env["proj"], group="completed").first()
         Issue.objects.filter(milestone_items__milestone=ms).update(state=done)
-        assert milestone_due_alerts()["sent"] == 0
+        before = set(Notification.objects.filter(
+            event=Notification.Event.MILESTONE_AT_RISK
+        ).values_list("dedup_key", flat=True))
+        milestone_due_alerts()
+        after = set(Notification.objects.filter(
+            event=Notification.Event.MILESTONE_AT_RISK
+        ).values_list("dedup_key", flat=True))
+        new_keys = after - before
+        assert all(f"ms:alert:{ms.id}" not in k for k in new_keys)  # 本里程碑零新增
 
     def test_ut12_item_scope_validation(self, env):
         leaf = _mk_pf(env, "范围组合")

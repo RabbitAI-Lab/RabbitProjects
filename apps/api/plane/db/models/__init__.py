@@ -7,6 +7,7 @@ from .automation import AutomationRule, AutomationRun, AutomationSetting
 from .backup import BackupRun
 from .base import BaseModel, SoftDeleteManager, SoftDeleteQuerySet
 from .comment import CommentReaction, IssueComment
+from .cpm import CPMAlertConfig, IssueCPMCache
 from .custom_field import CustomFieldDefinition
 from .custom_role import CustomRole, ProjectRoleAssignment
 from .cycle import Cycle, CycleSnapshot, DailyGroupSnapshot, ProjectReportConfig
@@ -28,6 +29,7 @@ from .user import User
 from .view import IssueView
 from .view_preference import UserViewPreference
 from .webhook import WebhookDelivery, WebhookEndpoint
+from .wiki import WikiPage, WikiPageVersion, WikiSpace
 from .workflow import (
     TemplateDistribution,
     TemplateUnlockRequest,
@@ -119,4 +121,9 @@ __all__ = [
     "CycleSnapshot",
     "ProjectReportConfig",
     "DailyGroupSnapshot",
+    "WikiSpace",
+    "WikiPage",
+    "WikiPageVersion",
+    "CPMAlertConfig",
+    "IssueCPMCache",
 ]

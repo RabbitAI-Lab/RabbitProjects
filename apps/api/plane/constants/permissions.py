@@ -94,6 +94,11 @@ PERMISSION_MATRIX: dict[str, dict[str, int]] = {
         "report.read": ProjectRole.VIEWER,
         "report.export": ProjectRole.ADMIN,       # ⚠️ 列=可配置开关，按默认列
         "project.setting.manage": ProjectRole.ADMIN,
+        # ── Sprint-9 FILE-005（rbac §8.1 Wiki 三态行落地，零新增码）──
+        # BR-06 inherit 映射：VIEWER/COMMENTER→viewer(read)、CONTRIBUTOR→editor(update)、ADMIN→manager(manage)
+        "wiki.read": ProjectRole.VIEWER,
+        "wiki.update": ProjectRole.CONTRIBUTOR,
+        "wiki.manage": ProjectRole.ADMIN,
     },
 }
 
@@ -158,6 +163,10 @@ PERMISSION_LABELS: dict[str, str] = {
     "report.read": "查看报表",
     "report.export": "导出报表",
     "project.setting.manage": "管理项目设置",
+    # Sprint-9 FILE-005
+    "wiki.read": "查看知识库",
+    "wiki.update": "编辑知识库",
+    "wiki.manage": "管理知识库空间",
 }
 
 

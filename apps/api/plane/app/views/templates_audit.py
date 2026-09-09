@@ -65,6 +65,13 @@ class WorkflowTemplateListCreateView(APIView):
         if WorkflowTemplate.objects.filter(
                 workspace=ws, name=name, deleted_at__isnull=True).exists():
             raise AppException("RESOURCE_ALREADY_EXISTS", message="同名模板已存在")
+        # S7 A#4 债收口：保存侧图快照结构校验（BR-02——此前仅实例化侧防御缺键跳过）
+        snapshot = request.data.get("graph_snapshot") or {}
+        if snapshot and not (isinstance(snapshot.get("nodes"), list)
+                             and isinstance(snapshot.get("edges"), list)):
+            raise AppException("VALIDATION_ERROR",
+                               details=[{"field": "graph_snapshot", "code": "INVALID",
+                                         "message": "图快照必须含 nodes/edges 数组"}])
         tpl = WorkflowTemplate.objects.create(
             workspace=ws, name=name, description=request.data.get("description") or "",
             status="draft", is_builtin=False,

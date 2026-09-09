@@ -488,27 +488,24 @@ input[type=range]{accent-color:var(--brand-500)}
         </div>
         <div class="graph-col" style="grid-template-columns:250px 250px 250px;display:grid;gap:40px">
           <div style="display:flex;flex-direction:column;gap:18px">
-            <div class="gnode"><span class="proj-tag" style="background:var(--proj-app)">App</span><div class="id">APP-102</div><div class="ttl">订单中心重构</div></div>
-            <div class="gnode" style="margin-top:26px"><span class="proj-tag" style="background:var(--proj-app)">App</span><div class="id">APP-88</div><div class="ttl">联调用例通过</div></div>
+            <div class="gnode" data-node="app102"><span class="proj-tag" style="background:var(--proj-app)">App</span><div class="id">APP-102</div><div class="ttl">订单中心重构</div></div>
+            <div class="gnode" data-node="app88" style="margin-top:26px"><span class="proj-tag" style="background:var(--proj-app)">App</span><div class="id">APP-88</div><div class="ttl">联调用例通过</div></div>
           </div>
           <div style="display:flex;flex-direction:column;gap:18px">
-            <div class="gnode"><span class="proj-tag" style="background:var(--proj-gw)">网关</span><div class="id">GW-41</div><div class="ttl">网关验收</div></div>
-            <div class="gnode"><span class="proj-tag" style="background:var(--proj-gw)">网关</span><div class="id">GW-44</div><div class="ttl">限流配置</div></div>
+            <div class="gnode" data-node="gw41"><span class="proj-tag" style="background:var(--proj-gw)">网关</span><div class="id">GW-41</div><div class="ttl">网关验收</div></div>
+            <div class="gnode" data-node="gw44"><span class="proj-tag" style="background:var(--proj-gw)">网关</span><div class="id">GW-44</div><div class="ttl">限流配置</div></div>
           </div>
           <div style="display:flex;flex-direction:column;gap:18px">
-            <div class="gnode"><span class="proj-tag" style="background:var(--proj-dm)">迁移</span><div class="id">DM-17</div><div class="ttl">双写校验报告</div></div>
-            <div class="gnode" style="margin-top:26px"><span class="proj-tag" style="background:var(--proj-dm)">迁移</span><div class="id">DM-22</div><div class="ttl">存量数据切流</div></div>
+            <div class="gnode" data-node="dm17"><span class="proj-tag" style="background:var(--proj-dm)">迁移</span><div class="id">DM-17</div><div class="ttl">双写校验报告</div></div>
+            <div class="gnode" data-node="dm22" style="margin-top:26px"><span class="proj-tag" style="background:var(--proj-dm)">迁移</span><div class="id">DM-22</div><div class="ttl">存量数据切流</div></div>
           </div>
         </div>
-        <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none" viewBox="0 0 790 300" preserveAspectRatio="none">
+        <!-- 连线由 layoutGraphEdges() 按节点实际渲染位置动态生成（像素坐标，
+             无 viewBox 拉伸——容器/字号变化自动重算，ResizeObserver + 视图切换触发） -->
+        <svg id="graph-svg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible">
           <defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8c8c8c"/></marker>
           <marker id="arrx" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b45309"/></marker></defs>
-          <!-- 跨项目边：虚线 amber（外部） -->
-          <path d="M258,58 C330,58 330,120 392,120" fill="none" stroke="#b45309" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrx)"/>
-          <path d="M258,148 C340,148 330,66 392,66" fill="none" stroke="#b45309" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrx)"/>
-          <path d="M522,120 C600,120 600,60 662,60" fill="none" stroke="#b45309" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrx)"/>
-          <!-- 同项目关键边：实线灰 -->
-          <path d="M392,148 C392,190 392,190 392,196" fill="none" stroke="#8c8c8c" stroke-width="1.4" marker-end="url(#arr)"/>
+          <g id="graph-edges"></g>
         </svg>
         <div class="graph-legend">
           <span><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="#b45309" stroke-width="1.6" stroke-dasharray="6 4"/></svg> 跨项目边（虚线 + <span class="ext-badge">外部</span>）</span>
@@ -962,7 +959,70 @@ function route(){
   });
   document.querySelector('.pmain').scrollTop = 0;
 }
-addEventListener('hashchange', route);
+/* ═══ V-GRAPH 连线动态布局：节点实际 rect → 贝塞尔 path（评审修复：手写坐标+viewBox 拉伸致错位） ═══ */
+const GRAPH_EDGES = [
+  { from: 'app102', to: 'gw41', cross: true  },   // 订单中心重构 → 网关验收（跨项目）
+  { from: 'app88',  to: 'gw44', cross: true  },   // 联调用例通过 → 限流配置（跨项目）
+  { from: 'gw41',   to: 'dm17', cross: true  },   // 网关验收 → 双写校验报告（跨项目）
+  { from: 'gw41',   to: 'gw44', cross: false },   // 同项目关键边（列内垂直）
+];
+function layoutGraphEdges(){
+  const wrap = document.querySelector('#v-graph .graph-wrap');
+  const g = document.getElementById('graph-edges');
+  if (!wrap || !g) return;
+  const wrapRect = wrap.getBoundingClientRect();
+  const pos = {};
+  wrap.querySelectorAll('[data-node]').forEach(n => {
+    const r = n.getBoundingClientRect();
+    pos[n.dataset.node] = {
+      x: r.left - wrapRect.left, y: r.top - wrapRect.top, w: r.width, h: r.height };
+  });
+  const NS = 'http://www.w3.org/2000/svg';
+  g.innerHTML = '';
+  for (const e of GRAPH_EDGES){
+    const a = pos[e.from], b = pos[e.to];
+    if (!a || !b) continue;
+    let d, badge;
+    if (e.cross){                                   // 水平：源右缘中点 → 目标左缘中点
+      const x1 = a.x + a.w, y1 = a.y + a.h / 2;
+      const x2 = b.x - 5.5, y2 = b.y + b.h / 2;     // 5.5 = 箭头长度余量，终点贴卡片左缘
+      const cx = (x2 - x1) / 2;
+      d = `M${x1},${y1} C${x1 + cx},${y1} ${x2 - cx},${y2} ${x2},${y2}`;
+      badge = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
+    } else {                                        // 垂直：源下缘中点 → 目标上缘中点
+      const x1 = a.x + a.w / 2, y1 = a.y + a.h;
+      const x2 = b.x + b.w / 2, y2 = b.y - 5.5;
+      const cy = (y2 - y1) / 2;
+      d = `M${x1},${y1} C${x1},${y1 + cy} ${x2},${y2 - cy} ${x2},${y2}`;
+    }
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', d); path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', e.cross ? '#b45309' : '#8c8c8c');
+    path.setAttribute('stroke-width', e.cross ? 1.6 : 1.4);
+    if (e.cross) path.setAttribute('stroke-dasharray', '6 4');
+    path.setAttribute('marker-end', e.cross ? 'url(#arrx)' : 'url(#arr)');
+    g.appendChild(path);
+    if (e.cross && badge){                          // 「外部」徽标盖在线中点（遮线，视觉锚）
+      const t = document.createElementNS(NS, 'text');
+      t.setAttribute('x', badge.x); t.setAttribute('y', badge.y + 3.5);
+      t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('font-size', '10.5'); t.setAttribute('fill', '#b45309');
+      t.setAttribute('style', 'paint-order:stroke;stroke:#fff;stroke-width:8px;font-family:var(--font-ui)');
+      t.textContent = '外部';
+      g.appendChild(t);
+    }
+  }
+}
+const _routeBase = route;
+route = function(){                                 // 视图切换进入 V-GRAPH 后重画
+  _routeBase();
+  if ((location.hash || '').startsWith('#/portfolios/graph'))
+    requestAnimationFrame(() => requestAnimationFrame(layoutGraphEdges));
+};
+window.addEventListener('resize', () => {
+  if ((location.hash || '').startsWith('#/portfolios/graph')) layoutGraphEdges();
+});
+addEventListener('hashchange', route);   // 注册包装版（含 V-GRAPH 重画钩子）
 
 /* ═══ toast / 弹窗 / 抽屉（基线沿用） ═══ */
 function toast(msg,type){

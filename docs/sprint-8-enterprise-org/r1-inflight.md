@@ -74,7 +74,27 @@
 - 曾发生对方半成品致 dev server 500（automation-rules.tsx 缺失）——已由对方
   自行补齐；后续轮开工前先 git status 核对对方状态
 
-## R2 入口（AUTH-008 自定义角色）
+## R2 自定义角色轮完成（5099244）
+
+- 42 码冻结目录（constants/custom_role_catalog.py：rbac §8.2 可自定义子集
+  推导定稿——排除 *.manage/系统级/P4/integration.config，CATALOG_THRESHOLDS
+  供 GUEST 天花板与目录端点）；CustomRole + ProjectRoleAssignment（0026）+
+  批次表 target_type 判别列（0027）
+- 判定层：require_permission 并集提升分支（threshold 先行 + custom_codes
+  只加不减——零差异的结构保证）；effective_perms.py（模块级 Redis 单例
+  + 主动失效 + TTL 300s + 回源降级；注意 permissions.py 是模块不能建同名包，
+  故平铺 effective_perms.py）
+- 9 端点 + BR-11（成员移出级联清挂接，挂 remove_member）+ BR-16（挂接拒绝
+  + WS 降级级联卸除——GUEST 降级真入口是 member_admin.bulk_role_workspace
+  而非 change_role）+ BR-17 名称解析（单对象/404/歧义 409）
+- 测试 28 项全绿（零差异/跨项目隔离/即时生效/P99<1ms）+ 突变 2/2；
+  全量 835 过零回归
+- 待 R6：前端角色管理页/权限矩阵编辑器/我的权限面板 + users/me/permissions
+  快照契约扩展（AUTH-005 待回改）+ usePermission 并集分支
+
+## R3 入口（AUTH-009 SSO——风险最高轮）
+
+原「R2 入口」段落如下（已由上方实录收编）：
 
 - 规格：docs/sprint-8-enterprise-org/AUTH-008-custom-roles.md（687 行）
 - CustomRole + project_role_assignment（42 码并集）+ effective_codes() 单一

@@ -19,15 +19,13 @@ export default function Login() {
   const [routeBusy, setRouteBusy] = useState(false);
   const next = params.get("next");
 
-  async function discoverRoute() {
-    if (!email.includes("@")) return;
+  async function discoverRoute(v?: string) {
+    const em = v ?? email;
+    if (!em.includes("@")) return;
     setRouteBusy(true);
     try {
-      const { default: apiMod } = await import("../services/api") as { default?: unknown };
-      const api = (apiMod ?? (await import("../services/api"))) as {
-        post: (u: string, b: unknown) => Promise<unknown>;
-      };
-      const r = await api.post("auth/sso/route/", { email });
+      const { SSOAPI } = await import("../services/api");
+      const r = await SSOAPI.route(em);
       setRoute((r as { data?: { mode: "sso" | "password"; sso_login_url?: string } }).data ?? null);
     } catch { setRoute(null); }  // 发现失败不打扰——默认密码路径
     finally { setRouteBusy(false); }

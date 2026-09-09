@@ -14,6 +14,7 @@ from .cycle import Cycle, CycleSnapshot, DailyGroupSnapshot, ProjectReportConfig
 from .department import Department, DepartmentGrantBatch
 from .file import FileFolder, FileVersion, UploadSession
 from .file_share import FileShareAccess, FileShareLink
+from .health import ExportTask, HealthConfig, HealthSnapshot
 from .integration import IntegrationInstallation, SyncConflictLog
 from .issue import Issue, IssueActivity, IssueAssignee, IssueLabel, IssueLink
 from .issue_type import IssueType
@@ -126,4 +127,7 @@ __all__ = [
     "WikiPageVersion",
     "CPMAlertConfig",
     "IssueCPMCache",
+    "HealthSnapshot",
+    "HealthConfig",
+    "ExportTask",
 ]

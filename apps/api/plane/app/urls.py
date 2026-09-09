@@ -183,6 +183,7 @@ FEATURE_MODULES = (
     "cycles",           # M10-RPT 敏捷报表迭代（RPT-003，Sprint-9）
     "wiki",             # M7-FILE Wiki 知识库（FILE-005，Sprint-9）
     "gantt_cpm",        # M6-GANTT 关键路径（GANTT-003，Sprint-9）
+    "health_reports",   # M10-RPT 健康度/负载（RPT-004，Sprint-9）
 )
 
 for _name in FEATURE_MODULES:

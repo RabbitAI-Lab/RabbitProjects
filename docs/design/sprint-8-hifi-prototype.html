@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RabbitProjects · Sprint 8 高保真原型 · 企业组织权限治理</title>
+<!--
+════════════════════════════════════════════════════════════════════════════════
+RabbitProjects · Sprint 8 高保真可交互原型（企业组织权限治理）
+══════════════════════════════════════════════════════════════════════════════════
+状态：FROZEN 2026-09-09（用户认可「按照高保真整改页面」即冻结；O1~O7
+      开放点随冻结生效）——本文件为 Sprint-8 六页面整改的视觉/交互验收基准
+补做说明：本文件为流程补做件——Sprint-5~8 四个迭代未走「先原型后开发」
+      纪律（CLAUDE.md 工作流约定），Sprint-8 已按规格 §3 直接实现；本原型
+      评审冻结后按稿整改现有六页面并更新 parity 断言。Sprint-5~7 存量表面
+      原型已登记 known-tech-debt 分期补。
+
+基线与依据
+  · 视觉语言基线：docs/design/sprint-4-hifi-prototype.html（FROZEN 2026-09-06）
+    token / 控件 / 外壳 / dock 模式全部延续。
+  · 表面定义：5 份规格 §3（AUTH-007/008/009/010、BOARD-005）。
+  · 附录 C 对应行：C.150~C.155（已随实现批次登记；冻结后按稿复核）。
+
+原型自定开放点（规格未规定视觉细节，原型先行定义，评审时可改）
+  O1 组织页布局：左部门树（280px，节点双计数「直属/含子级」）+ 右成员表
+     （部门列内联下拉）；未分配恒等式常驻树底（AUTH-007 §3.1）。
+  O2 权限矩阵：42 码按域分组两列网格，域头带全选开关；勾选即时计数回显
+     （「已选 9 / 42」）；GUEST 越界码在挂接弹窗内以红点+行内警示演出。
+  O3 审计表：category 色点 + 动作文案列；时间列等宽数字；详情抽屉 380px
+     右滑；导出对话框密码输入 + 「本动作将入审计」提示常驻。
+  O4 SSO 配置：四段纵排卡片（协议 → 干跑 → 强制 → 绑定清单），干跑通过
+     徽标常驻段头；强制区红色警示条只在开启后出现。
+  O5 泳道矩阵：表头双 sticky（首行 + 首列）；格内 count 徽章 + ≤8 样例
+     短卡（短卡为任务编号尾段，悬浮显任务名）；空格虚线占位。
+  O6 视图治理：并入看板视图条——Tab 右侧 ⋯ 按钮（不依赖右键发现性差）；
+     Tab 标识 🔒★👤；锁定横幅为蓝色信息条（区别于 amber 警告条）。
+  O7 登录页路由发现：邮箱失焦后蓝条滑入（不弹窗不打断），含「前往 SSO
+     登录」链接；密码路径零变化。
+
+视图 / 弹窗 ID → 表面覆盖映射（六表面，规格 §3 逐条）
+  V-ORG    #/org          组织管理页（AUTH-007 §3.1 树+详情 · §3.2 批量授权弹窗
+                          · §3.3 成员部门列/筛选 · §3.4 空态 · §3.5 a11y）
+  V-ROLES  #/p/rbt/roles  角色管理页（AUTH-008 §3.1 列表+矩阵 · §3.2 挂接弹窗
+                          · §3.3 我的权限 · §3.4 空态/失败）
+  V-SSO    #/settings/sso SSO 配置页（AUTH-009 §3.1 四段 · 证书临期横幅）
+  V-AUDIT  #/audit-logs   审计日志页（AUTH-010 §3.1 筛选/表格/抽屉 · §3.2 导出）
+  V-BOARD  #/p/rbt/board  看板治理增强（BOARD-005 §3.1 视图条标识+锁定横幅
+                          · §3.2 共享与锁定对话框 · §3.3 泳道配置 + 二维矩阵）
+  V-LOGIN  #/login        登录页邮箱路由（AUTH-009 §3.2）+ 认领页（#sso-claim）
+  DOCK     演示面板        页面直达 · 共享→锁定→默认全流程演出 · 矩阵降级
+                          · GUEST 越界拒绝 · 强制门拦截 · 认领两步
+══════════════════════════════════════════════════════════════════════════════════
+-->
+<style>
+/* ═════════ 设计 token · 与 sprint-0~4 冻结基线一致 ═════════ */
+:root{
+  --brand-50:#eef4ff;--brand-100:#dbe7fe;--brand-500:#3f76ff;--brand-600:#2f5fe0;
+  --state-unstarted:#9ca3af;--state-started:#3b82f6;--state-completed:#10b981;--state-cancelled:#6b7280;
+  --danger:#ef4444;--danger-bg:#fef2f2;--danger-line:#fecaca;--ok:#059669;--ok-bg:#ecfdf5;
+  --warn:#f59e0b;--amber-bg:#fffbeb;--amber-line:#fde68a;--amber-ink:#b45309;
+  --info-bg:#eff6ff;--info-line:#bfdbfe;--info-ink:#1d4ed8;
+  --bg:#fafafa;--surface:#ffffff;--surface-2:#f5f5f5;--surface-3:#ececec;
+  --line:#e5e5e5;--line-strong:#d4d4d4;
+  --ink:#262626;--ink-2:#525252;--ink-3:#8c8c8c;--ink-4:#a3a3a3;
+  --radius-card:.5rem;--radius-md:6px;--radius-lg:8px;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.05);--shadow-md:0 4px 12px rgba(0,0,0,.08);--shadow-lg:0 12px 32px rgba(0,0,0,.14);
+  --font-ui:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --header-h:48px;--ease-spring:cubic-bezier(.2,.9,.3,1.1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--font-ui);background:var(--bg);color:var(--ink);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,textarea,select{font:inherit;color:inherit}
+svg{flex-shrink:0}
+:focus-visible{outline:2px solid var(--brand-500);outline-offset:1px;border-radius:4px}
+[hidden]{display:none!important}
+.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+
+/* ═════════ 基础控件（基线沿用） ═════════ */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 14px;border-radius:var(--radius-md);font-weight:500;font-size:13px;transition:background .12s,border-color .12s,opacity .12s;white-space:nowrap}
+.btn-primary{background:var(--brand-500);color:#fff}
+.btn-primary:hover{background:var(--brand-600)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-ghost{background:var(--surface);border:1px solid var(--line-strong);color:var(--ink-2)}
+.btn-ghost:hover{background:var(--surface-2)}
+.btn-ghost:disabled{opacity:.5;cursor:not-allowed}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-danger:hover{background:#dc2626}
+.btn-sm{height:28px;padding:0 10px;font-size:12px}
+.icon-btn{width:30px;height:30px;border-radius:var(--radius-md);display:inline-flex;align-items:center;justify-content:center;color:var(--ink-3)}
+.icon-btn:hover{background:var(--surface-2);color:var(--ink)}
+.input{width:100%;height:36px;border:1px solid var(--line-strong);border-radius:var(--radius-md);padding:0 10px;background:var(--surface);transition:border-color .12s,box-shadow .12s}
+.input:focus{outline:none;border-color:var(--brand-500);box-shadow:0 0 0 3px var(--brand-50)}
+textarea.input{height:auto;padding:8px 10px;resize:vertical;line-height:1.6}
+.label{display:block;font-size:13px;font-weight:500;color:var(--ink-2);margin-bottom:6px}
+.hint{font-size:12px;color:var(--ink-3)}
+.badge-id{font-family:var(--font-mono);font-size:11px;padding:1px 6px;background:var(--surface-2);border-radius:4px;color:var(--ink-2);white-space:nowrap}
+.avatar{width:28px;height:28px;border-radius:50%;color:#fff;font-size:12px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.avatar-sm{width:20px;height:20px;font-size:10px}
+a{color:var(--brand-600);text-decoration:none}
+a:hover{text-decoration:underline}
+[data-tip]{position:relative}
+[data-tip]:hover::after,[data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#262626;color:#fff;font-size:12px;font-weight:400;padding:4px 9px;border-radius:6px;white-space:nowrap;z-index:300;pointer-events:none;text-decoration:none}
+
+/* ═════════ 弹层 / 下拉 / Toast / 菜单（基线沿用） ═════════ */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.32);backdrop-filter:blur(2px);z-index:90;display:flex;align-items:center;justify-content:center;padding:16px;animation:fade .15s ease}
+.modal{background:var(--surface);border-radius:12px;box-shadow:var(--shadow-lg);width:480px;max-width:100%;max-height:88vh;overflow:auto;padding:24px;animation:pop .18s var(--ease-spring)}
+.modal.w400{width:400px}.modal.w520{width:520px}.modal.w640{width:640px}
+.modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.modal-title{font-size:16px;font-weight:600}
+.modal-foot{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}
+.menu{position:fixed;z-index:200;min-width:180px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-lg);padding:5px;animation:pop .14s var(--ease-spring)}
+.menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;border-radius:6px;font-size:13px;color:var(--ink-2);text-align:left}
+.menu-item:hover{background:var(--surface-2)}
+.menu-item.danger{color:var(--danger)}
+.menu-item.disabled{opacity:.4;cursor:not-allowed}
+.menu-sep{height:1px;background:var(--line);margin:5px 8px}
+.toast-wrap{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:400;display:flex;flex-direction:column;gap:8px;align-items:center}
+.toast{background:#262626;color:#fff;font-size:13px;padding:9px 16px;border-radius:8px;box-shadow:var(--shadow-md);animation:pop .18s var(--ease-spring)}
+.toast-ok{background:var(--ok)}
+.toast-err{background:var(--danger)}
+.toast-warn{background:var(--amber-ink)}
+
+/* ═════════ 应用壳（基线沿用） ═════════ */
+.app{height:100vh;display:flex;flex-direction:column}
+.topbar{height:var(--header-h);background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 16px;flex-shrink:0}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.shell{flex:1;display:flex;min-height:0}
+.psidebar{width:220px;border-right:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:2px;padding:12px;flex-shrink:0;overflow:auto}
+.p-id{display:flex;gap:10px;align-items:center;padding:6px 8px 12px}
+.p-id .nm{font-size:13.5px;font-weight:600}
+.side-item{display:flex;align-items:center;gap:9px;height:34px;padding:0 10px;border-radius:var(--radius-md);font-size:13.5px;color:var(--ink-2);text-align:left}
+.side-item:hover{background:var(--surface-2)}
+.side-item.active{background:var(--brand-50);color:var(--brand-600);font-weight:500}
+.side-label{font-size:11px;color:var(--ink-4);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px 8px}
+.pmain{flex:1;overflow:auto;min-width:0}
+.page{padding:22px 26px;max-width:1240px;margin:0 auto}
+.page-head{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.page-title{font-size:17px;font-weight:600}
+.page-sub{font-size:12.5px;color:var(--ink-3)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-card);box-shadow:var(--shadow-sm)}
+
+/* ═════════ 表格（基线沿用） ═════════ */
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{font-size:12px;font-weight:500;color:var(--ink-3);text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+.tbl td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tbody tr:hover{background:var(--surface-2)}
+
+/* ═════════ 演示 dock（基线沿用） ═════════ */
+.dock{position:fixed;top:64px;right:16px;width:270px;max-height:calc(100vh - 90px);overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-lg);z-index:95;padding:12px 14px;font-size:12.5px}
+.dock h4{font-size:11px;color:var(--ink-4);text-transform:uppercase;letter-spacing:.05em;margin:10px 0 6px}
+.dock h4:first-child{margin-top:0}
+.dock-btn{display:flex;width:100%;align-items:center;gap:8px;min-height:30px;padding:3px 10px;border-radius:6px;font-size:12.5px;color:var(--ink-2);text-align:left}
+.dock-btn:hover{background:var(--surface-2)}
+.dock-btn.on{background:var(--brand-50);color:var(--brand-600);font-weight:500}
+.dock-sep{height:1px;background:var(--line);margin:8px 0}
+
+@keyframes fade{from{opacity:0}}
+@keyframes pop{from{opacity:0;transform:scale(.96)}}
+@keyframes slide-r{from{transform:translateX(24px);opacity:0}}
+@keyframes slide-d{from{transform:translateY(-8px);opacity:0}}
+.kbd{font-family:var(--font-mono);font-size:11px;border:1px solid var(--line-strong);border-bottom-width:2px;border-radius:4px;padding:0 5px;background:var(--surface-2);color:var(--ink-2)}
+
+/* ═════════ Sprint-8 专属 ═════════ */
+/* 组织树 */
+.tree{font-size:13.5px}
+.tree-node{display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:6px;cursor:pointer;color:var(--ink-2)}
+.tree-node:hover{background:var(--surface-2)}
+.tree-node.sel{background:var(--brand-50);color:var(--brand-600);font-weight:500}
+.tree-node .cnt{font-size:11px;color:var(--ink-4);font-variant-numeric:tabular-nums}
+.tree-node.sel .cnt{color:var(--brand-600)}
+.tree-identity{margin-top:12px;padding:8px 10px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-3);line-height:1.7}
+/* 权限矩阵 */
+.matrix-domains{display:grid;grid-template-columns:1fr 1fr;gap:14px 22px}
+.domain-head{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--ink-2);padding:6px 0;border-bottom:1px solid var(--line);margin-bottom:6px}
+.perm-row{display:flex;align-items:center;gap:8px;padding:2.5px 0;font-size:12.5px;color:var(--ink-3);cursor:pointer}
+.perm-row:hover{color:var(--ink-2)}
+.perm-row.on{color:var(--ink)}
+.perm-row.on .code{color:var(--brand-600);font-weight:500}
+.perm-row .code{font-family:var(--font-mono);font-size:11.5px}
+.cbx{width:15px;height:15px;border:1.5px solid var(--line-strong);border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:#fff;flex-shrink:0;transition:all .1s}
+.cbx.on{background:var(--brand-500);border-color:var(--brand-500)}
+/* 审计 */
+.cat-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:7px;vertical-align:0}
+.audit-detail{position:fixed;top:0;right:0;bottom:0;width:380px;background:var(--surface);border-left:1px solid var(--line);box-shadow:-8px 0 24px rgba(0,0,0,.06);z-index:80;overflow:auto;padding:20px;animation:slide-r .2s var(--ease-spring)}
+.kv{display:grid;grid-template-columns:88px 1fr;gap:4px 10px;font-size:12.5px}
+.kv dt{color:var(--ink-4)}
+.kv dd{color:var(--ink-2);word-break:break-all}
+/* 泳道矩阵 */
+.matrix-tbl{border-collapse:separate;border-spacing:0;font-size:13px;min-width:760px}
+.matrix-tbl th,.matrix-tbl td{border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:6px 10px}
+.matrix-tbl thead th{position:sticky;top:0;background:var(--surface-2);z-index:5;font-size:12.5px;font-weight:500}
+.matrix-tbl tbody th{position:sticky;left:0;background:var(--surface-2);z-index:4;font-size:12.5px;font-weight:500;text-align:left;min-width:104px}
+.cell-count{display:inline-flex;align-items:center;background:var(--brand-50);color:var(--brand-600);font-weight:600;font-size:12px;padding:1px 8px;border-radius:99px;font-variant-numeric:tabular-nums}
+.cell-sample{display:inline-flex;align-items:center;width:26px;height:22px;border:1px solid var(--line);border-radius:4px;background:var(--surface);font-family:var(--font-mono);font-size:10px;color:var(--ink-3);justify-content:center;margin-left:3px}
+.cell-empty{width:100%;min-height:34px;border:1.5px dashed var(--line);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10.5px;color:var(--ink-4)}
+/* SSO 配置段 */
+.sso-sec{margin-bottom:16px}
+.sso-sec-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.sso-sec-no{width:22px;height:22px;border-radius:50%;background:var(--surface-3);color:var(--ink-2);font-size:12px;font-weight:600;display:inline-flex;align-items:center;justify-content:center}
+.proto-pill{padding:6px 16px;border:1.5px solid var(--line-strong);border-radius:8px;font-size:13.5px;font-weight:500;color:var(--ink-2)}
+.proto-pill.on{border-color:var(--brand-500);background:var(--brand-50);color:var(--brand-600)}
+.pass-badge{font-size:11.5px;padding:2px 8px;border-radius:99px;font-weight:500}
+.pass-badge.ok{background:var(--ok-bg);color:var(--ok)}
+.pass-badge.warn{background:var(--amber-bg);color:var(--amber-ink)}
+/* 视图条（看板） */
+.viewbar{display:flex;align-items:center;gap:2px;padding:10px 26px 0;max-width:1240px;margin:0 auto;flex-wrap:wrap}
+.vtab{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;border-radius:8px 8px 0 0;font-size:13px;color:var(--ink-2);cursor:pointer;border:1px solid transparent;border-bottom:none}
+.vtab:hover{background:var(--surface-2)}
+.vtab.active{background:var(--surface);border-color:var(--line);color:var(--ink);font-weight:500}
+.locked-banner{display:flex;align-items:center;gap:10px;background:var(--info-bg);border:1px solid var(--info-line);color:var(--info-ink);border-radius:8px;padding:8px 14px;font-size:12.5px;margin:10px 0}
+/* 登录 */
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);padding:20px}
+.login-card{width:420px;max-width:100%;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-md);padding:34px 36px 28px}
+.sso-route-tip{display:flex;align-items:center;gap:8px;background:var(--info-bg);border:1px solid var(--info-line);color:var(--info-ink);border-radius:8px;padding:8px 12px;font-size:12.5px;margin-bottom:14px;animation:slide-d .18s ease}
+/* 权限码选择器标签 */
+.role-chip{display:inline-flex;align-items:center;gap:6px;background:var(--brand-50);color:var(--brand-600);border:1px solid var(--brand-100);font-size:12px;padding:2px 9px;border-radius:99px;font-weight:500}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div class="toast-wrap" id="toasts"></div>
+<div id="overlay-root"></div>
+<div id="dock-root"></div>
+<script>
+"use strict";
+/* ═════════════════════════════ 工具 ═════════════════════════════ */
+const $=(s,el=document)=>el.querySelector(s), $$=(s,el=document)=>[...el.querySelectorAll(s)];
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function toast(msg,type="info",ms=2600){const t=document.createElement("div");t.className=`toast ${type==="ok"?"toast-ok":type==="err"?"toast-err":type==="warn"?"toast-warn":""}`;t.innerHTML=msg;$("#toasts").appendChild(t);setTimeout(()=>t.remove(),ms)}
+const AVA={zs:"#3f76ff",ls:"#10b981",ww:"#f59e0b",zl:"#8b5cf6",guest:"#6b7280"};
+const ava=(n,sm)=>`<span class="avatar${sm?" avatar-sm":""}" style="background:${AVA[{张三:"zs",李四:"ls",王五:"ww",赵六:"zl","外包·周":"guest"}[n]]||"#6b7280"}">${n[0]}</span>`;
+
+/* ═════════════════════════════ 演示数据 ═════════════════════════════ */
+/* 组织树（AUTH-007 §1.2 四层示例裁剪为三层） */
+const DEPTS=[
+ {id:"d1",name:"研发中心",depth:0,cnt:12,sub:28},
+ {id:"d11",name:"平台组",depth:1,cnt:8,sub:16},
+ {id:"d111",name:"后端小组",depth:2,cnt:5,sub:5},
+ {id:"d12",name:"业务组",depth:1,cnt:12,sub:12},
+ {id:"d2",name:"产品部",depth:0,cnt:5,sub:5},
+];
+const ORG_MEMBERS=[
+ {name:"张三",dept:"d111",pos:"后端工程师",wsRole:"成员"},
+ {name:"李四",dept:"d11",pos:"前端工程师",wsRole:"成员"},
+ {name:"王五",dept:"d12",pos:"产品经理",wsRole:"管理员"},
+ {name:"赵六",dept:null,pos:"",wsRole:"成员"},
+ {name:"外包·周",dept:"d12",pos:"外部测试",wsRole:"访客"},
+];
+/* 权限目录 42 码（按域分组演示 3 域 + 计数徽标承载全量语义） */
+const CATALOG=[
+ {domain:"project 项目",codes:["project.read","project.update","project.delete","project.archive","project.favorite","project.member.read"]},
+ {domain:"issue 任务",codes:["issue.read","issue.create","issue.update","issue.delete","issue.delete.own","issue.assign","issue.state.transition","issue.archive","issue.bulk.update","issue.field.write"]},
+ {domain:"comment 评论",codes:["comment.read","comment.create","comment.update.own","comment.delete","comment.delete.own"]},
+ {domain:"file 文件",codes:["file.read","file.upload","file.update","file.delete","file.share"]},
+ {domain:"board 看板",codes:["board.read","board.update","board.lock","view.create.own","view.create.shared"]},
+ {domain:"approval 审批",codes:["approval.read","approval.act","approval.withdraw"]},
+ {domain:"其他",codes:["gantt.read","gantt.update","worklog.create","worklog.read","notification.read","integration.link","report.read","report.export"]},
+];
+const ROLES=[
+ {id:"r1",name:"测试工程师",tpl:true,perms:["issue.read","issue.create","issue.update","issue.state.transition","comment.create","comment.update.own","comment.delete.own","file.read","file.upload"],assigned:6},
+ {id:"r2",name:"外包协作",tpl:true,perms:["issue.read","comment.read","comment.create","comment.update.own"],assigned:2},
+];
+/* 审计事件（category 色点映射） */
+const CAT_COLOR={auth:"#6366f1",member:"#3f76ff",department:"#10b981",role:"#8b5cf6",sso:"#f59e0b",audit:"#6b7280",workflow:"#ec4899"};
+const AUDIT=[
+ {t:"09-09 14:32:05",cat:"department",act:"新建部门",who:"张三",obj:"平台组",ip:"10.0.1.23",detail:{name:"平台组",parent:"研发中心"}},
+ {t:"09-09 14:28:41",cat:"role",act:"更新角色权限",who:"张三",obj:"测试工程师",ip:"10.0.1.23",detail:{diff:{removed:["issue.delete"],added:[]},affected:"6 名挂接者即时生效"}},
+ {t:"09-09 14:20:12",cat:"sso",act:"SSO 登录",who:"李四",obj:"Keycloak · rabbit realm",ip:"203.0.113.8",detail:{protocol:"oidc",jit:false,binding:"li4@acme.com"}},
+ {t:"09-09 13:55:37",cat:"member",act:"角色变更",who:"张三",obj:"王五 @ 官网重构",ip:"10.0.1.23",detail:{role:{from:"PROJ_VIEWER",to:"PROJ_CONTRIBUTOR"}}},
+ {t:"09-09 13:41:02",cat:"audit",act:"导出审计 CSV",who:"张三",obj:"条件：最近 7 天 + role",ip:"10.0.1.23",detail:{rows:12450,self_audited:true}},
+ {t:"09-09 11:02:19",cat:"auth",act:"登录失败",who:"—（邮箱）",obj:"unknown@acme.com",ip:"198.51.100.7",detail:{reason:"password",burst:"同 (email,ip) 1 分钟内第 23 次 → 已折叠"}},
+ {t:"09-09 10:47:55",cat:"department",act:"按部门授权",who:"王五",obj:"研发中心 → 官网重构",ip:"10.0.1.31",detail:{added:16,role_changed:2,skipped:1,skipped_detail:"1 名停用成员"}},
+];
+/* 看板 */
+const STATES=[{k:"s1",n:"待办",c:"#9ca3af"},{k:"s2",n:"进行中",c:"#3b82f6"},{k:"s3",n:"待评审",c:"#f59e0b"},{k:"s4",n:"已完成",c:"#10b981"}];
+const BOARD_ISSUES=[
+ {id:"RBT-101",t:"登录页邮箱路由",st:"s2",who:"张三"},
+ {id:"RBT-102",t:"JIT 建号链路",st:"s2",who:"张三"},
+ {id:"RBT-103",t:"认领页文案",st:"s1",who:null},
+ {id:"RBT-104",t:"强制门拦截",st:"s3",who:"李四"},
+ {id:"RBT-105",t:"逃生名单说明",st:"s3",who:"李四"},
+ {id:"RBT-106",t:"证书临期横幅",st:"s4",who:"王五"},
+ {id:"RBT-107",t:"SAML 元数据页",st:"s1",who:null},
+ {id:"RBT-108",t:"会话时长口径",st:"s4",who:"王五"},
+];
+
+/* ═════════════════════════════ 状态 ═════════════════════════════ */
+const S={
+ route:location.hash||"#/org",
+ orgSel:"d11", orgFilter:"", orgWithSub:true,
+ rolesSel:"r1", editing:false, draft:new Set(ROLES[0].perms),
+ auditDetail:null, auditExport:false, auditCat:"",
+ boardView:"locked", swimlane:true, degraded:false,
+ ssoPassed:true, ssoEnabled:true, enforced:false,
+ loginEmail:"", ssoRouted:false, claim:false,
+ dock:true,
+};
+const VIEWS={"#/org":"org","#/p/rbt/roles":"roles","#/settings/sso":"sso","#/audit-logs":"audit","#/p/rbt/board":"board","#/login":"login"};
+
+/* ═════════════════════════════ 壳 ═════════════════════════════ */
+function appShell(nav,inner){
+ const side=[
+  ["home","🏠 概览","#/org"],["board","▦ 看板","#/p/rbt/board"],["issues","📋 任务","#/p/rbt/issues"],
+  ["org","🏢 组织","#/org"],["roles","🛡 角色","#/p/rbt/roles"],
+  ["audit","📜 审计","#/audit-logs"],["sso","🔐 SSO 登录","#/settings/sso"],["settings","⚙ 设置","#/settings/sso"]];
+ return `<div class="app">
+  <div class="topbar">
+    <span style="font-weight:700;color:var(--brand-600)">🐇 RabbitProjects</span>
+    <span class="badge-id">Acme 工作区</span><span class="hint">/</span><b style="font-size:13px">RBT 项目管理系统</b>
+    <div class="topbar-right"><span class="hint">原型 · Sprint 8 ${S.enforced?'<span class="pass-badge warn">🔒 强制 SSO</span>':""}</span>${ava("张三")}<button class="icon-btn" data-act="noop" data-tip="账号菜单">⋯</button></div>
+  </div>
+  <div class="shell">
+    <div class="psidebar">
+      <div class="p-id"><span style="font-size:18px">🧩</span><div><div class="nm">RBT 项目</div><div class="hint mono">RBT-1 · 进行中</div></div></div>
+      ${side.map(([k,l,h])=>`<button class="side-item${k===nav?" active":""}" data-act="nav" data-h="${h}">${l}</button>`).join("")}
+      <div class="side-label">演示</div>
+      <button class="side-item" data-act="dock-toggle">${S.dock?"✕ 收起面板":"🎛 演示面板"}</button>
+    </div>
+    <div class="pmain">${inner}</div>
+  </div>
+ </div>`;
+}
+
+/* ═════════════════════════════ V-ORG 组织管理页 ═════════════════════════════ */
+function vOrg(){
+ const sel=DEPTS.find(d=>d.id===S.orgSel);
+ const members=ORG_MEMBERS.filter(m=>!S.orgFilter||m.dept===S.orgFilter);
+ return `<div class="page">
+  <div class="page-head">
+    <div><div class="page-title">组织架构</div><div class="page-sub">部门树与成员归属 · 按部门批量授权（快照展开）</div></div>
+    <div style="margin-left:auto;display:flex;gap:8px">
+      <button class="btn btn-ghost btn-sm" data-act="noop" data-tip="导出组织架构 CSV">导出</button>
+      <button class="btn btn-primary btn-sm" data-act="org-grant-open" ${sel?"":"disabled"}>按部门授权</button>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:280px 1fr;gap:16px;align-items:start">
+    <div class="card" style="padding:10px">
+      <div class="hint" style="padding:2px 8px 8px">部门 · 直属/含子级</div>
+      <div class="tree" role="tree">
+        ${DEPTS.map(d=>`<div class="tree-node${d.id===S.orgSel?" sel":""}" role="treeitem" aria-selected="${d.id===S.orgSel}" style="padding-left:${8+d.depth*18}px" data-act="org-sel" data-id="${d.id}">
+          ${d.depth<2?"<span style='font-size:9px;color:var(--ink-4)'>▾</span>":"<span style='font-size:9px'>·</span>"}<span>${esc(d.name)}</span>
+          <span class="cnt">${d.cnt}/${d.sub}</span></div>`).join("")}
+        <div class="tree-node" style="color:var(--ink-4)"><span style="font-size:9px">·</span><span>未分配</span><span class="cnt">1</span></div>
+      </div>
+      <div class="tree-identity">全体 5 = Σ部门直属 4 + 未分配 1<br><span style="color:var(--ink-4)">（恒等式实时对账，AUTH-007 §2.2）</span></div>
+      <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:2px">
+        <input class="input" style="height:32px;font-size:13px" placeholder="${sel?`在「${sel.name}」下新建部门…`:"新建根部门…"}" aria-label="新部门名称">
+        <button class="btn btn-primary btn-sm" style="width:100%;margin-top:8px" data-act="org-create">新建部门</button>
+      </div>
+    </div>
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)">
+        <b style="font-size:13.5px">成员归属</b>
+        <select class="input" style="width:150px;height:30px;font-size:12.5px" aria-label="部门筛选">
+          <option>全部成员（5）</option><option>未分配（1）</option>
+          ${DEPTS.map(d=>`<option ${d.id===S.orgFilter?"selected":""}>${esc(d.name)}（${d.cnt}）</option>`).join("")}
+        </select>
+        <label class="hint" style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" checked>含子部门</label>
+        <span class="hint" style="margin-left:auto">${members.length} 人</span>
+      </div>
+      <table class="tbl">
+        <thead><tr><th>成员</th><th style="width:190px">部门</th><th>岗位</th><th>空间角色</th></tr></thead>
+        <tbody>
+        ${members.map(m=>`<tr>
+          <td><span style="display:inline-flex;align-items:center;gap:8px">${ava(m.name)}${esc(m.name)}</span></td>
+          <td><select class="input" style="height:28px;font-size:12.5px" aria-label="部门">
+            <option value="">未分配</option>${DEPTS.map(d=>`<option ${d.id===m.dept?"selected":""}>${esc(d.name)}</option>`).join("")}</select></td>
+          <td class="hint">${m.pos||"—"}</td>
+          <td>${m.wsRole==="访客"?"<span style='color:var(--amber-ink)'>访客</span>":m.wsRole}</td></tr>`).join("")}
+        </tbody>
+      </table>
+      ${!members.length?`<div style="padding:36px;text-align:center"><div style="font-size:26px">🏢</div><div class="hint" style="margin:8px 0 4px">该部门暂无成员</div><div class="hint" style="font-size:11.5px">用「按部门授权」把成员批量加入项目</div></div>`:""}
+    </div>
+  </div>
+ </div>`;
+}
+/* 批量授权弹窗（AUTH-007 §3.2） */
+function grantModal(){
+ const sel=DEPTS.find(d=>d.id===S.orgSel);
+ return `<div class="overlay"><div class="modal w520" role="dialog" aria-label="按部门授权">
+  <div class="modal-head"><div class="modal-title">按部门授权 · ${esc(sel?.name||"")}</div><button class="icon-btn" data-act="modal-close">✕</button></div>
+  <div class="hint" style="margin-bottom:14px">授权时刻把部门成员快照展开为项目成员（后续部门变动不影响已授权成员）</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <div><label class="label">目标项目</label><select class="input"><option>RBT 项目管理系统</option><option>官网重构</option></select></div>
+    <div><label class="label">项目角色</label><select class="input"><option>协作者</option><option>查看者</option><option>评论者</option><option>管理员</option></select></div>
+  </div>
+  <label style="display:flex;align-items:center;gap:7px;margin-top:12px;font-size:13px;color:var(--ink-2)"><input type="checkbox" checked>含子部门（${sel?sel.sub:0} 人）</label>
+  <div style="margin-top:14px;background:var(--surface-2);border-radius:8px;padding:10px 12px;font-size:12.5px;color:var(--ink-2);display:flex;gap:14px">
+    <span>预览：<b style="color:var(--ok)">新增 14</b></span><span>调角色 2</span><span style="color:var(--amber-ink)">跳过 1（访客上限）</span><span>不变 3</span>
+  </div>
+  <div class="modal-foot"><button class="btn btn-ghost" data-act="modal-close">取消</button><button class="btn btn-primary" data-act="org-grant-exec">执行授权</button></div>
+ </div></div>`;
+}
+
+/* ═════════════════════════════ V-ROLES 角色管理页 ═════════════════════════════ */
+function vRoles(){
+ const role=ROLES.find(r=>r.id===S.rolesSel);
+ const totalSel=[...S.draft].length;
+ return `<div class="page">
+  <div class="page-head">
+    <div><div class="page-title">自定义角色</div><div class="page-sub">42 码冻结目录 · 只加不减并集 · GUEST 天花板</div></div>
+    <div style="margin-left:auto;display:flex;gap:8px">
+      <button class="btn btn-ghost btn-sm" data-act="role-tpl" data-k="stakeholder_readonly">采用「只读干系人」</button>
+      <button class="btn btn-primary btn-sm" data-act="role-new">新建角色</button>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start">
+    <div>
+     <div class="card">
+      ${ROLES.map(r=>`<button style="display:block;width:100%;text-align:left;padding:11px 14px;border-bottom:1px solid var(--line)" data-act="role-sel" data-id="${r.id}">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <b style="font-size:13.5px">${esc(r.name)}${r.tpl?' <span class="hint" style="font-weight:400">模板</span>':""}</b>
+          <span class="hint">${r.assigned} 人</span></div>
+        <div class="hint" style="margin-top:2px">${r.perms.length} 码</div></button>`).join("")}
+      <div style="padding:26px;text-align:center" id="role-empty" hidden><div style="font-size:24px">🛡</div><div class="hint" style="margin-top:6px">从内置模板开始，或新建空白角色</div></div>
+     </div>
+     <div class="card" style="margin-top:12px;padding:14px">
+       <b style="font-size:13px">我的权限（并集）</b>
+       <div class="hint" style="margin:6px 0 8px">固定角色 VIEWER ∪ 测试工程师 = <b style="color:var(--ink-2)">13 码</b></div>
+       <div style="display:flex;flex-wrap:wrap;gap:5px">${["project.read","issue.read","comment.read","board.read","gantt.read","notification.read","report.read","approval.read","file.read","issue.create","issue.update","issue.state.transition","comment.create"].map(c=>`<span class="role-chip">${c}</span>`).join("")}</div>
+     </div>
+    </div>
+    <div class="card" style="padding:18px 20px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+        <b style="font-size:14.5px">${esc(role?.name||"")}</b>
+        ${role?.tpl?'<span class="hint">内置模板 · 可调整</span>':""}
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <span class="hint mono">已选 ${totalSel} / 42</span>
+          ${!S.editing?`<button class="btn btn-ghost btn-sm" data-act="role-edit">编辑权限</button>`
+            :`<button class="btn btn-ghost btn-sm" data-act="role-edit-cancel">取消</button><button class="btn btn-primary btn-sm" data-act="role-save">保存（即时生效）</button>`}
+          <button class="icon-btn" data-act="role-menu" data-tip="更多">⋯</button>
+        </div>
+      </div>
+      <div class="hint" style="margin-bottom:14px">保存后全部挂接者下一次操作即时生效（缓存主动失效）</div>
+      <div class="matrix-domains">
+        ${CATALOG.map(dom=>{
+          const on=dom.codes.filter(c=>S.draft.has(c)).length;
+          return `<div><div class="domain-head">
+            <span>${dom.domain}</span>
+            <label style="margin-left:auto;display:flex;gap:5px;align-items:center;font-size:11px;color:var(--ink-4);font-weight:400;cursor:pointer" data-act="domain-all" data-dom="${esc(dom.domain)}">
+              <span class="cbx ${on===dom.codes.length?"on":""}" style="width:13px;height:13px">${on===dom.codes.length?"✓":""}</span>全选 ${on}/${dom.codes.length}</label></div>
+            ${dom.codes.map(c=>`<div class="perm-row ${S.draft.has(c)?"on":""}" data-act="perm-toggle" data-code="${c}" role="checkbox" aria-checked="${S.draft.has(c)}" ${S.editing?"":'style="cursor:default"'} tabindex="0">
+              <span class="cbx ${S.draft.has(c)?"on":""}">${S.draft.has(c)?"✓":""}</span><span class="code">${c}</span></div>`).join("")}
+          </div>`}).join("")}
+      </div>
+      <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:12px">
+        <b style="font-size:13px">成员挂接（${role?.assigned||0}）</b>
+        <table class="tbl" style="margin-top:6px"><thead><tr><th>成员</th><th>已挂角色</th><th></th></tr></thead><tbody>
+        ${ORG_MEMBERS.slice(0,3).map(m=>`<tr><td><span style="display:inline-flex;gap:8px;align-items:center">${ava(m.name,1)}${esc(m.name)}</span></td>
+          <td>${m.name==="赵六"?"—":`<span class="role-chip">${role?.name||""}</span>`}</td>
+          <td style="text-align:right">${m.name==="赵六"?`<button class="link-btn" style="font-size:12px" data-act="role-assign" data-n="${esc(m.name)}">挂接…</button>`:`<button class="link-btn" style="font-size:12px;color:var(--danger)" data-act="role-unassign">卸除</button>`}</td></tr>`).join("")}
+        </tbody></table>
+      </div>
+    </div>
+  </div>
+ </div>`;
+}
+
+/* ═════════════════════════════ V-SSO 配置页 ═════════════════════════════ */
+function vSSO(){
+ return `<div class="page" style="max-width:880px">
+  <div class="page-head"><div><div class="page-title">SSO 单点登录</div><div class="page-sub">OIDC / SAML 2.0 · JIT 开通 · 强制与逃生（仅空间所有者可见此页）</div></div></div>
+
+  <div class="card sso-sec" style="padding:16px 20px">
+    <div class="sso-sec-head"><span class="sso-sec-no">1</span><b style="font-size:13.5px">协议与元数据</b>
+      <span class="hint" style="margin-left:auto">${S.ssoEnabled?"启用中 · 不可切换协议（先停用）":""}</span></div>
+    <div style="display:flex;gap:10px;margin-bottom:14px">
+      <button class="proto-pill on" data-act="noop">OIDC</button>
+      <button class="proto-pill" data-act="noop" ${S.ssoEnabled?"disabled style='opacity:.5'":""}>SAML 2.0</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div><label class="label">Issuer</label><input class="input" value="https://sso.acme.com/realms/main"></div>
+      <div><label class="label">Client ID</label><input class="input" value="rabbit-projects"></div>
+      <div><label class="label">Client Secret <span class="hint">（已设置 · 输入以轮换，永不回显）</span></label><input class="input" type="password" placeholder="••••••••••••"></div>
+    </div>
+    <div class="hint" style="margin-top:8px">回调地址（ IdP 侧白名单登记 ）：<span class="mono">https://rp.acme.com/api/v1/auth/sso/callback/</span></div>
+  </div>
+
+  <div class="card sso-sec" style="padding:16px 20px">
+    <div class="sso-sec-head"><span class="sso-sec-no">2</span><b style="font-size:13.5px">测试连接（干跑）与启用</b>
+      <span style="margin-left:auto">${S.ssoPassed?'<span class="pass-badge ok">✓ 09-09 14:02 通过 · 验签 OK</span>':'<span class="pass-badge warn">⚠ 未通过——启用前必须干跑</span>'}</span></div>
+    <div style="display:flex;gap:10px;align-items:center">
+      <button class="btn btn-ghost btn-sm" data-act="sso-check">测试连接</button>
+      <label style="display:flex;align-items:center;gap:7px;font-size:13px;color:var(--ink-2)"><input type="checkbox" ${S.ssoEnabled?"checked":""} ${S.ssoPassed?"":"disabled"} data-act="sso-toggle"> 启用 SSO 登录入口</label>
+      <span class="hint">干跑 = 验签 + 取 claims，不建会话（BR-04 硬门槛）</span>
+    </div>
+  </div>
+
+  <div class="card sso-sec" style="padding:16px 20px">
+    <div class="sso-sec-head"><span class="sso-sec-no">3</span><b style="font-size:13.5px">强制 SSO</b>
+      <span style="margin-left:auto" class="hint">前置：≥1 名所有者已通过 SSO 登录绑定（防自锁）</span></div>
+    ${S.enforced?`<div style="display:flex;align-items:center;gap:10px;background:var(--danger-bg);border:1px solid var(--danger-line);border-radius:8px;padding:8px 12px;font-size:12.5px;color:var(--danger);margin-bottom:10px">🔒 全员仅可 SSO 登录——逃生名单账号走环境变量 SSO_BREAK_GLASS_EMAILS（不入库不可改）</div>`:""}
+    <div style="display:flex;gap:10px;align-items:center">
+      <button class="btn btn-sm ${S.enforced?"":"btn-danger"}" style="${S.enforced?"border:1px solid var(--line-strong)":""}" data-act="sso-enforce">${S.enforced?"关闭强制":"开启强制"}</button>
+      <span class="hint">开启后密码登录对全员 403（逃生名单除外）；关闭即恢复</span>
+    </div>
+  </div>
+
+  <div class="card sso-sec" style="padding:16px 20px">
+    <div class="sso-sec-head"><span class="sso-sec-no">4</span><b style="font-size:13.5px">已绑定成员（3）</b>
+      <span class="hint" style="margin-left:auto">IdP 侧禁用用户：会话最长 14 天滑动窗口（AUTH-011 即时禁用待 P4）</span></div>
+    <table class="tbl"><thead><tr><th>邮箱（绑定时）</th><th>subject</th><th>绑定时间</th></tr></thead><tbody>
+      <tr><td>li4@acme.com</td><td class="mono hint">f55369f4-1fe0-4cb5…</td><td class="hint">09-08</td></tr>
+      <tr><td>wang5@acme.com</td><td class="mono hint">c92ab771-34de-88f0…</td><td class="hint">09-09</td></tr>
+      <tr><td>guest1@partner.com</td><td class="mono hint">0a11bb2c-9d43-77aa…</td><td class="hint">09-09</td></tr>
+    </tbody></table>
+    <div style="margin-top:10px;background:var(--amber-bg);border:1px solid var(--amber-line);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--amber-ink)">⏳ IdP 证书剩余 <b>9 天</b>——即将过期，请安排轮换（AUTH-009 §2.6）</div>
+  </div>
+ </div>`;
+}
+
+/* ═════════════════════════════ V-AUDIT 审计日志页 ═════════════════════════════ */
+function vAudit(){
+ const rows=AUDIT.filter(e=>!S.auditCat||e.cat===S.auditCat);
+ return `<div class="page">
+  <div class="page-head"><div><div class="page-title">审计日志</div><div class="page-sub">全站敏感操作留痕 · 哈希链完整性保护 · 留存 180 天</div></div>
+    <div style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-ghost btn-sm" data-act="noop" data-tip="sha256 链校验">🔗 链校验</button><button class="btn btn-primary btn-sm" data-act="audit-export">导出 CSV</button></div></div>
+  <div class="card">
+    <div style="display:flex;gap:8px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap">
+      <select class="input" style="width:130px;height:30px;font-size:12.5px" aria-label="分类" data-act="audit-cat">
+        <option value="">全部分类</option>${Object.keys(CAT_COLOR).map(c=>`<option value="${c}" ${c===S.auditCat?"selected":""}>${c}</option>`).join("")}</select>
+      <select class="input" style="width:130px;height:30px;font-size:12.5px" aria-label="动作"><option>全部动作</option></select>
+      <input class="input" style="width:170px;height:30px;font-size:12.5px" placeholder="操作者 / 对象名关键词">
+      <input class="input mono" style="width:180px;height:30px;font-size:12.5px" placeholder="2026-09-02 → 09-09">
+      <span class="hint" style="margin-left:auto">共 2,341 条 · 检索 P95 118ms</span>
+    </div>
+    <table class="tbl">
+      <thead><tr><th style="width:130px">时间</th><th>事件</th><th>操作者</th><th>对象</th><th style="width:110px">IP</th></tr></thead>
+      <tbody>
+      ${rows.map((e,i)=>`<tr style="cursor:pointer" data-act="audit-detail" data-i="${AUDIT.indexOf(e)}">
+        <td class="mono hint" style="font-size:12px">${e.t}</td>
+        <td><span class="cat-dot" style="background:${CAT_COLOR[e.cat]}"></span><span class="hint mono" style="font-size:11px">${e.cat}</span> <span style="font-size:12.5px">${e.act}</span></td>
+        <td style="font-size:12.5px">${esc(e.who)}</td><td class="hint" style="font-size:12.5px">${esc(e.obj)}</td>
+        <td class="mono hint" style="font-size:11.5px">${e.ip}</td></tr>`).join("")}
+      </tbody>
+    </table>
+    <div style="display:flex;align-items:center;padding:10px 14px"><span class="hint">第 1 页 · 每页 50</span>
+      <div style="margin-left:auto;display:flex;gap:6px"><button class="btn btn-ghost btn-sm" disabled>上一页</button><button class="btn btn-ghost btn-sm" data-act="noop">下一页</button></div></div>
+  </div>
+ </div>
+  ${S.auditDetail!=null?auditDetailDrawer():""}
+  ${S.auditExport?exportModal():""}
+`;
+}
+function auditDetailDrawer(){
+ const e=AUDIT[S.auditDetail];
+ return `<aside class="audit-detail" role="dialog" aria-label="事件详情">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+    <b style="font-size:14px"><span class="cat-dot" style="background:${CAT_COLOR[e.cat]}"></span>${e.act}</b>
+    <button class="icon-btn" data-act="audit-detail-close">✕</button></div>
+  <dl class="kv">
+    <dt>时间</dt><dd class="mono">${e.t}</dd>
+    <dt>操作者</dt><dd>${esc(e.who)}</dd>
+    <dt>对象</dt><dd>${esc(e.obj)}</dd>
+    <dt>IP</dt><dd class="mono">${e.ip}</dd>
+    <dt>event_key</dt><dd class="mono" style="font-size:11px;color:var(--ink-3)">b3f1c8d2e5a7…</dd>
+    <dt>哈希链</dt><dd style="color:var(--ok)">✓ prev 可回溯（链完整）</dd>
+    <dt style="align-self:start">detail</dt>
+    <dd><pre class="mono" style="background:var(--surface-2);border-radius:8px;padding:10px;font-size:11.5px;overflow:auto">${esc(JSON.stringify(e.detail,null,2))}</pre><div class="hint" style="margin-top:4px">敏感键（password/token/…）已双侧过滤</div></dd>
+  </dl>
+ </aside>`;
+}
+function exportModal(){
+ return `<div class="overlay"><div class="modal w400" role="dialog" aria-label="导出审计 CSV">
+  <div class="modal-head"><div class="modal-title">导出审计 CSV</div><button class="icon-btn" data-act="modal-close">✕</button></div>
+  <div class="hint" style="margin-bottom:12px">按当前筛选导出（上限 50 万行）；<b>本导出动作将写入审计</b>。请输入密码二次确认。</div>
+  <input class="input" type="password" placeholder="登录密码" aria-label="密码二次确认">
+  <div class="modal-foot"><button class="btn btn-ghost" data-act="modal-close">取消</button><button class="btn btn-primary" disabled data-act="noop">确认导出</button></div>
+ </div></div>`;
+}
+
+/* ═════════════════════════════ V-BOARD 看板治理增强 ═════════════════════════════ */
+function vBoard(){
+ const view=S.boardView;
+ const views=[
+  {k:"all",n:"全部",icons:""},
+  {k:"triage",n:"缺陷分诊",icons:"👤"},
+  {k:"locked",n:"迭代评审",icons:"🔒★"},
+  {k:"mine",n:"我的高优",icons:""},
+ ];
+ const cur=views.find(v=>v.k===view)||views[0];
+ const renderSwim=S.swimlane&&!S.degraded;
+ return `<div>
+ <div class="viewbar" role="tablist">
+  ${views.map(v=>`<button class="vtab ${v.k===view?"active":""}" role="tab" aria-selected="${v.k===view}" data-act="board-view" data-k="${v.k}">${esc(v.n)}${v.icons?`<span style="font-size:11px">${v.icons}</span>`:""}</button>`).join("")}
+  <button class="icon-btn" data-act="board-view-menu" data-tip="视图 ⋯（共享 / 锁定 / 默认 / 订阅 / 副本）" style="margin-left:2px">⋯</button>
+  <div style="margin-left:auto;display:flex;gap:8px;align-items:center;padding-left:12px">
+    <select class="input" style="width:150px;height:30px;font-size:12.5px" aria-label="行分组（泳道）" data-act="swim-toggle">
+      <option value="">泳道：无</option><option value="assignee_id" ${S.swimlane?"selected":""}>泳道：负责人</option><option value="priority">泳道：优先级</option><option value="label_id">泳道：标签</option>
+    </select>
+  </div>
+ </div>
+ <div style="padding:0 26px 26px;max-width:1240px;margin:0 auto">
+  ${view==="locked"?`<div class="locked-banner">🔒 组织标准视图，只读（王五 · 09-08 17:20 锁定）
+    <button class="btn btn-ghost btn-sm" style="background:#fff" data-act="board-fork">另存为副本</button>
+    <span style="margin-left:auto">★ 项目默认 · 新成员自动订阅 · 14 人订阅</span></div>`:""}
+  ${S.degraded?`<div role="status" style="background:var(--amber-bg);border:1px solid var(--amber-line);color:var(--amber-ink);border-radius:8px;padding:8px 14px;font-size:12.5px;margin:10px 0">⚠ 二维统计暂不可用，已切换单列分组（聚合超时 5s 降级）</div>`:""}
+  ${renderSwim?swimMatrix():kanbanCols()}
+ </div></div>`;
+}
+function kanbanCols(){
+ return `<div style="display:flex;gap:14px;overflow-x:auto;padding-top:10px">
+ ${STATES.map(st=>{
+   const iss=BOARD_ISSUES.filter(i=>i.st===st.k);
+   return `<div style="width:252px;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:7px;padding:4px 8px 10px"><span class="cat-dot" style="background:${st.c}"></span><b style="font-size:13px">${st.n}</b><span class="hint">${iss.length}</span></div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+    ${iss.map(i=>`<div class="card" style="padding:10px 12px">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px"><span class="badge-id">${i.id}</span>${i.st==="s4"?"":'<span style="font-size:10px">审</span>'}</div>
+      <div style="font-size:13px">${esc(i.t)}</div>
+      <div style="display:flex;margin-top:8px">${i.who?ava(i.who,1):'<span class="avatar avatar-sm" style="background:var(--surface-3);color:var(--ink-4)">?</span>'}</div>
+    </div>`).join("")}
+    ${!iss.length?`<div class="cell-empty">拖拽任务到此</div>`:""}
+    </div></div>`}).join("")}
+ </div>`;
+}
+function swimMatrix(){
+ const rowsM=[{k:"zs",n:"张三"},{k:"ls",n:"李四"},{k:"ww",n:"王五"},{k:"none",n:"未分配"}];
+ const cell=(c,r)=>{
+  const whoMap={zs:["张三"],ls:["李四"],ww:["王五"],none:[null]};
+  const iss=BOARD_ISSUES.filter(i=>i.st===c.k&&whoMap[r.k].includes(i.who));
+  if(!iss.length)return `<td><div class="cell-empty">拖拽任务到此</div></td>`;
+  return `<td><span class="cell-count">${iss.length>99?"99+":iss.length}</span>${iss.slice(0,8).map(i=>`<span class="cell-sample" data-tip="${esc(i.t)}">${i.id.slice(-3)}</span>`).join("")}</td>`;
+ };
+ const sum=BOARD_ISSUES.length;
+ return `<div style="padding-top:10px">
+  <div class="hint" style="margin-bottom:8px">状态 × 负责人 · 共 ${sum} 项（Σ格计数与任务总数实时对账）</div>
+  <div style="overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface)">
+  <table class="matrix-tbl">
+   <thead><tr><th style="z-index:6">状态＼负责人</th>${STATES.map(c=>`<th><span class="cat-dot" style="background:${c.c}"></span>${c.n}</th>`).join("")}</tr></thead>
+   <tbody>${rowsM.map(r=>`<tr><th>${r.k==="none"?r.n:ava(r.n,1)+" "+r.n}</th>${STATES.map(c=>cell(c,r)).join("")}</tr>`).join("")}</tbody>
+  </table></div>
+  <div class="hint" style="margin-top:8px">格内计数服务端聚合（99+ 截断）；样例短卡悬浮显任务名；点击格子 → 带双维过滤的一维看板</div>
+ </div>`;
+}
+
+/* ═════════════════════════════ V-LOGIN 登录路由 + 认领 ═════════════════════════════ */
+function vLogin(){
+ if(S.claim)return vClaim();
+ return `<div class="login-wrap"><div class="login-card">
+  <div style="display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:20px">
+    <span style="font-size:30px">🐇</span>
+    <div style="font-size:20px;font-weight:600">登录 RabbitProjects</div>
+  </div>
+  ${S.ssoRouted?`<div class="sso-route-tip" role="status">🔗 该邮箱属于已启用 SSO 的组织
+    <a href="javascript:void 0" style="margin-left:auto;font-weight:500" data-act="noop">前往 SSO 登录 →</a></div>`:""}
+  <label class="label" for="em">邮箱</label>
+  <input id="em" class="input" type="email" placeholder="you@company.com" value="${esc(S.loginEmail)}" data-act="login-email" style="margin-bottom:14px">
+  <label class="label" for="pw">密码</label>
+  <input id="pw" class="input" type="password" placeholder="••••••••" style="margin-bottom:16px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <label style="display:flex;gap:7px;font-size:13px;color:var(--ink-2)"><input type="checkbox">记住我（30 天）</label>
+    <span class="hint" style="cursor:not-allowed">忘记密码？</span></div>
+  <button class="btn btn-primary" style="width:100%" data-act="login-signin">登录</button>
+  <div class="hint" style="text-align:center;margin-top:14px">邮箱失焦即识别登录方式（SSO 组织直达 IdP）</div>
+ </div></div>`;
+}
+function vClaim(){
+ return `<div class="login-wrap"><div class="login-card">
+  <div style="margin-bottom:6px;font-size:18px;font-weight:600">完成账号关联</div>
+  <div class="hint" style="margin-bottom:18px">你的 SSO 身份对应一个已存在的本地账号。输入该账号的密码完成绑定（仅需一次，此后直接 SSO 登录）。</div>
+  <input class="input" type="password" placeholder="本地账号密码" aria-label="本地账号密码" style="margin-bottom:12px">
+  <button class="btn btn-primary" style="width:100%" data-act="claim-ok">验证并绑定</button>
+  <div class="hint" style="text-align:center;margin-top:12px">事务 10 分钟内有效 · 超时请从 IdP 重新发起</div>
+ </div></div>`;
+}
+
+/* ═════════════════════════════ 演示 dock ═════════════════════════════ */
+function renderDock(){
+ if(!S.dock){$("#dock-root").innerHTML="";return}
+ const cur=VIEWS[S.route]||"org";
+ $("#dock-root").innerHTML=`<div class="dock" role="region" aria-label="演示面板">
+  <h4>页面直达（六表面）</h4>
+  ${[["#/org","🏢 组织管理","org"],["#/p/rbt/roles","🛡 角色矩阵","roles"],["#/settings/sso","🔐 SSO 配置","sso"],["#/audit-logs","📜 审计日志","audit"],["#/p/rbt/board","▦ 看板治理+泳道","board"],["#/login","🔑 登录路由","login"]].map(([h,l,k])=>`<button class="dock-btn ${k===cur?"on":""}" data-act="nav" data-h="${h}">${l}</button>`).join("")}
+  <div class="dock-sep"></div>
+  <h4>治理演出</h4>
+  <button class="dock-btn" data-act="board-view-menu">▸ 视图 ⋯ 治理菜单（共享/锁定/默认）</button>
+  <button class="dock-btn" data-act="swim-degrade">▸ 泳道聚合超时 → 降级一维</button>
+  <button class="dock-btn" data-act="swim-restore">▸ 恢复二维矩阵</button>
+  <div class="dock-sep"></div>
+  <h4>SSO 演出</h4>
+  <button class="dock-btn" data-act="login-route-demo">▸ 输入企业邮箱 → SSO 路由蓝条</button>
+  <button class="dock-btn" data-act="claim-demo">▸ 认领页（密码一次绑定）</button>
+  <button class="dock-btn" data-act="sso-enforce-demo">▸ 强制 SSO 开关（顶栏徽标联动）</button>
+  <div class="dock-sep"></div>
+  <h4>权限演出</h4>
+  <button class="dock-btn" data-act="org-grant-open">▸ 按部门授权弹窗（预览→执行）</button>
+  <button class="dock-btn" data-act="role-edit">▸ 权限矩阵编辑（勾选即时计数）</button>
+  <div class="dock-sep"></div>
+  <div class="hint" style="padding:0 2px">评审稿 DRAFT——冻结前任何视觉细节可改</div>
+ </div>`;
+}
+
+/* ═════════════════════════════ 渲染 / 路由 / 动作 ═════════════════════════════ */
+let MODAL=null;
+function render(){
+ const v=VIEWS[S.route]||"org";
+ const inner=v==="org"?vOrg():v==="roles"?vRoles():v==="sso"?vSSO():v==="audit"?vAudit():v==="board"?vBoard():vLogin();
+ $("#root").innerHTML=(v==="login")?inner:appShell(v==="roles"||v==="board"?"board":v,inner);
+ $("#overlay-root").innerHTML=MODAL||"";
+ renderDock();
+}
+window.addEventListener("hashchange",()=>{S.route=location.hash;S.auditDetail=null;MODAL=null;render()});
+document.addEventListener("click",e=>{
+ const el=e.target.closest("[data-act]");if(!el)return;
+ const a=el.dataset.act;
+ const nav=h=>{location.hash=h;if(S.route===h){S.route=h;render()}};
+ switch(a){
+  case "noop":break;
+  case "nav":nav(el.dataset.h);break;
+  case "dock-toggle":S.dock=!S.dock;render();break;
+  /* 组织 */
+  case "org-sel":S.orgSel=el.dataset.id;render();break;
+  case "org-create":toast("演示：部门已创建（同名/超 6 层将结构化报错）","ok");break;
+  case "org-grant-open":if(!DEPTS.find(d=>d.id===S.orgSel)){toast("请先选中一个部门","warn");break}MODAL=grantModal();render();break;
+  case "org-grant-exec":MODAL=null;toast("授权完成：新增 14 · 调角色 2 · 跳过 1（访客上限）","ok");render();break;
+  case "modal-close":MODAL=null;S.auditExport=false;render();break;
+  /* 角色 */
+  case "role-sel":S.rolesSel=el.dataset.id;S.editing=false;S.draft=new Set(ROLES.find(r=>r.id===el.dataset.id).perms);render();break;
+  case "role-edit":S.editing=true;render();break;
+  case "role-edit-cancel":S.editing=false;S.draft=new Set(ROLES.find(r=>r.id===S.rolesSel).perms);render();break;
+  case "role-save":S.editing=false;ROLES.find(r=>r.id===S.rolesSel).perms=[...S.draft];toast("权限码已保存 · 6 名挂接者即时生效","ok");render();break;
+  case "perm-toggle":if(!S.editing){toast("先点「编辑权限」","warn");break}
+   {const c=el.dataset.code;S.draft.has(c)?S.draft.delete(c):S.draft.add(c);render()}break;
+  case "domain-all":if(!S.editing)break;
+   {const dom=CATALOG.find(d=>d.domain===el.dataset.dom);const all=dom.codes.every(c=>S.draft.has(c));
+    dom.codes.forEach(c=>all?S.draft.delete(c):S.draft.add(c));render()}break;
+  case "role-assign":toast("演示：GUEST 成员挂「测试工程师」将被 409 拒绝（越界码：issue.create …）","err",3600);break;
+  case "role-unassign":toast("已卸除","ok");break;
+  case "role-new":toast("演示：新建空白角色");break;
+  case "role-tpl":toast("演示：模板角色已创建，可调整权限码","ok");break;
+  case "role-menu":menuAt(el,[
+    {label:"重命名"},{label:"删除（有挂接将 409）",danger:true},{sep:1},{label:"复制角色"}]);break;
+  /* 审计 */
+  case "audit-cat":S.auditCat=el.value;render();break;
+  case "audit-detail":S.auditDetail=+el.dataset.i;render();break;
+  case "audit-detail-close":S.auditDetail=null;render();break;
+  case "audit-export":S.auditExport=true;render();break;
+  /* 看板 */
+  case "board-view":S.boardView=el.dataset.k;if(S.boardView!=="locked")toast("演示：切视图");render();break;
+  case "board-fork":toast("已另存为个人副本「迭代评审（副本）」","ok");break;
+  case "swim-toggle":S.swimlane=!!el.value;S.degraded=false;render();break;
+  case "swim-degrade":S.swimlane=true;S.degraded=true;render();toast("聚合超时（>5s）→ 降级一维 + meta.degraded","warn");break;
+  case "swim-restore":S.degraded=false;render();break;
+  case "board-view-menu":menuAt(el,[
+    {cap:"当前视图 · 迭代评审 🔒★"},{label:"共享给全员 / 收回共享"},{label:"锁定为组织标准",disabled:true},{label:"设为项目默认（新成员订阅）",disabled:true},
+    {sep:1},{label:"订阅到侧栏"},{label:"另存为我的副本"},{sep:1},{label:"删除（锁定视图不可删）",danger:true,disabled:true}]);break;
+  /* SSO */
+  case "sso-check":toast("干跑中：验签 + 取 claims…","info",1400);setTimeout(()=>{S.ssoPassed=true;toast("✓ 测试连接通过（issuer 匹配 · RS256 验签 OK）","ok");render()},1400);break;
+  case "sso-toggle":S.ssoEnabled=el.checked;if(!S.ssoEnabled)S.enforced=false;render();break;
+  case "sso-enforce":S.enforced=!S.enforced;toast(S.enforced?"已开启强制 SSO（全员 403 密码登录，逃生名单除外）":"已关闭强制 SSO",S.enforced?"warn":"ok");render();break;
+  case "sso-enforce-demo":nav("#/settings/sso");S.enforced=!S.enforced;S.ssoPassed=true;S.ssoEnabled=true;render();toast(S.enforced?"强制 SSO 已开启（看顶栏徽标）":"已恢复","warn");break;
+  /* 登录 */
+  case "login-email":S.loginEmail=el.value;break;
+  case "login-route-demo":nav("#/login");S.loginEmail="li4@acme.com";S.ssoRouted=true;render();toast("route 发现：该邮箱属强制 SSO 组织 → 蓝条直达","info");break;
+  case "claim-demo":nav("#/login");S.claim=true;render();break;
+  case "claim-ok":S.claim=false;toast("绑定完成，欢迎回来（sso_txn 已消费，不可重放）","ok");render();break;
+  case "login-signin":toast("演示：普通密码登录");break;
+ }
+});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){MODAL=null;S.auditDetail=null;S.auditExport=false;render()}});
+/* 菜单（基线同款） */
+function menuAt(el,items){
+ document.querySelectorAll(".menu").forEach(m=>m.remove());
+ const r=el.getBoundingClientRect();
+ const m=document.createElement("div");m.className="menu";
+ m.style.left=Math.min(r.left,innerWidth-210)+"px";m.style.top=r.bottom+4+"px";
+ m.innerHTML=items.map((it,i)=>it.sep?"<div class='menu-sep'></div>":it.cap?`<div class='menu-cap' style="font-size:11px;color:var(--ink-4);padding:5px 10px 3px">${esc(it.cap)}</div>`:
+  `<button class="menu-item${it.danger?" danger":""}${it.disabled?" disabled":""}" ${it.disabled?"aria-disabled='true'":""}>${esc(it.label)}</button>`).join("");
+ document.body.appendChild(m);
+ setTimeout(()=>document.addEventListener("mousedown",function h(ev){if(!m.contains(ev.target)){m.remove();document.removeEventListener("mousedown",h)}}),0);
+}
+render();
+</script>
+</body>
+</html>

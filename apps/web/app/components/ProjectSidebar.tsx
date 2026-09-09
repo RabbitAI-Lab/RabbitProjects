@@ -71,6 +71,11 @@ export function ProjectSidebar({ projectName, identifier }: { projectName: strin
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="5" x="3" y="3" rx="1"/><rect width="8" height="5" x="3" y="16" rx="1"/><path d="M7 8v4M12 5.5v3.5a3 3 0 0 0 3 3h3"/><path d="M18 11v2"/></svg>
         工作流
       </NavLink>
+      {/* Sprint-8（AUTH-008 §3.1 / C.151）：自定义角色与权限矩阵 */}
+      <NavLink to={`${base}/roles`} end className={({ isActive }) => item(isActive)} data-sb-scope="nav-roles">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m16 11 2 2 4-4"/></svg>
+        角色
+      </NavLink>
       {/* Sprint-7（WF-006 §3 / C.148）：审批留痕审计 */}
       <NavLink to={`${base}/audit`} end className={({ isActive }) => item(isActive)}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-3.5 8-10V5l-8-3-8 3v7c0 6.5 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>

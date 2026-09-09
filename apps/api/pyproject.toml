@@ -21,6 +21,7 @@ dependencies = [
     "cryptography>=43",
     "requests>=2.34.2",
     "django-redis>=5.4",
+    "python3-saml>=1.16,<2",
 ]
 
 [dependency-groups]

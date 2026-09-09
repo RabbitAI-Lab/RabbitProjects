@@ -100,6 +100,11 @@ PG schema 准备（Django migrate 在 PG 上有已知问题，见下面"坑"）�
   - ADR-0017（Sprint-3 上游服务共享 epoch 签名扩展）｜ADR-0018（用户偏好存储 `users/me/settings/` 补建）｜ADR-0019（Sprint-3 COLLAB-002 实现偏差）｜ADR-0020（Sprint-3 偏差汇总收口 + 门禁口径）
 - `docs/design/sprint-0-hifi-prototype.html`：Sprint 0 冻结原型
 - `docs/design/sprint-1-hifi-prototype.html`：**Sprint 1 冻结原型（FROZEN 2026-09-04）**，前端实现的视觉/交互验收基准；头部含冻结记录（审计范围 / 误报复核 / 实补 8 项缺口）
+- `docs/design/sprint-2-hifi-prototype.html`：**Sprint 2 冻结原型（FROZEN 2026-09-05）**
+- `docs/design/sprint-3-hifi-prototype.html`：**Sprint 3 冻结原型（FROZEN 2026-09-06）**
+- `docs/design/sprint-4-hifi-prototype.html`：**Sprint 4 冻结原型（FROZEN 2026-09-06）**
+- `docs/design/sprint-8-hifi-prototype.html`：**Sprint 8 评审稿（DRAFT）**——2026-09-09 流程补做件（S5~8 四迭代曾跳过原型环节，见 sprint-8 known-tech-debt #9）；冻结后为六表面整改基准
+- **硬门槛（2026-09-09 用户裁定）**：Sprint-5 起每个有 UI 交互的迭代，开工前必须先出高保真原型并经用户评审冻结——**无冻结原型不得写 UI 代码**；计划里没有 hifi 环节 = 计划不合格，应拒绝执行
 - `docs/plan/文档质量评审状态.md`：文档评审 master 记录
 - 文档质量门槛：5 维度（完整性/一致性/可实施性/可测性/清晰度）全部 ≥9.5
 

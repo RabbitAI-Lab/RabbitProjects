@@ -119,9 +119,31 @@ class IssueViewDetailView(RetrieveUpdateDestroyAPIView):
 
     def update(self, request, *args, **kwargs):
         view = self._get_view(for_write=True)
+        # BOARD-005 BR-02：锁定态拦截优先于权限码判定（含 access 收回——
+        # 锁定视图仅 board.lock 可动；UI 引导副本路径）
+        if view.is_locked:
+            locker = view.locked_by.display_name if view.locked_by else "管理员"
+            raise AppException(
+                "RESOURCE_LOCKED",
+                message=f"此视图已被管理员锁定（{locker} · "
+                        f"{view.locked_at:%Y-%m-%d %H:%M}），请另存为副本",
+                details=[{"field": "view", "code": "LOCKED",
+                          "message": f"locked_by={locker}, locked_at={view.locked_at}"}],
+            )
         s = IssueViewWriteSerializer(data=request.data, partial=True)
         s.is_valid(raise_exception=True)
         payload = {k: v for k, v in s.validated_data.items() if k in request.data}
+        if view.is_system and "access" in payload and \
+                payload["access"] != view.access:  # BR-14
+            raise AppException("PERM_DENIED", message="内置视图不可共享")
+        if "access" in payload and payload["access"] != view.access:
+            # BOARD-005 §2.1：共享/收回走治理服务（收回级联软删订阅）
+            from plane.db.services import view_governance as vg
+            view = vg.share_view(actor=request.user, view=view,
+                                 access=payload["access"])
+            payload.pop("access")
+            if not payload:
+                return success_response(IssueViewSerializer(view).data)
         if view.is_system and "filters" in payload:
             # BR-03：内置视图 filters 锁定（display_props 可保存）
             raise AppException(
@@ -148,5 +170,12 @@ class IssueViewDetailView(RetrieveUpdateDestroyAPIView):
         view = self._get_view(for_write=True)
         if view.is_system:
             raise AppException("PERM_DENIED", message="内置视图不可删除")
+        if view.is_locked:  # BR-03：锁定视图不可删（先解锁）
+            raise AppException("RESOURCE_LOCKED", message="锁定视图不可删除，请先解锁")
+        from plane.db.models import UserViewPreference
+        UserViewPreference.objects.filter(
+            view=view, deleted_at__isnull=True).delete()  # BR-16 −1③ 级联软删
+        view.is_project_default = False  # 删除事务内清默认（§2.5）
+        view.save(update_fields=["is_project_default"])
         view.soft_delete(actor_id=request.user.id)
         return Response(status=status.HTTP_204_NO_CONTENT)

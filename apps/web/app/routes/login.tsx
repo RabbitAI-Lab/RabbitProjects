@@ -14,7 +14,22 @@ export default function Login() {
   const [show, setShow] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  /** AUTH-009 §3.2：邮箱路由发现（sso/password 分流，§2.4 前置） */
+  const [route, setRoute] = useState<{ mode: "sso" | "password"; sso_login_url?: string } | null>(null);
+  const [routeBusy, setRouteBusy] = useState(false);
   const next = params.get("next");
+
+  async function discoverRoute(v?: string) {
+    const em = v ?? email;
+    if (!em.includes("@")) return;
+    setRouteBusy(true);
+    try {
+      const { SSOAPI } = await import("../services/api");
+      const r = await SSOAPI.route(em);
+      setRoute((r as { data?: { mode: "sso" | "password"; sso_login_url?: string } }).data ?? null);
+    } catch { setRoute(null); }  // 发现失败不打扰——默认密码路径
+    finally { setRouteBusy(false); }
+  }
   // 账号被禁用（AUTH-002 §3.3）：常驻 Alert，改邮箱前禁用提交
   const disabledAlert = params.get("disabled") === "1";
   const [disabledOk, setDisabledOk] = useState(!disabledAlert);
@@ -46,10 +61,18 @@ export default function Login() {
         </div>
       )}
       {err && <div className={`mb-3.5 flex items-center gap-2 text-[13px] px-3 py-2 rounded-md ${err.includes("已被禁用") ? "bg-red-500 text-white" : "bg-red-50 text-red-700"}`}>{err}</div>}
+      {route?.mode === "sso" && (
+        <div className="mb-3.5 flex items-center gap-2 text-[13px] px-3 py-2 rounded-md bg-blue-50 text-blue-700 border border-blue-200" role="status" data-sb-scope="login-sso-route">
+          🔗 该邮箱属于已启用 SSO 的组织
+          <button type="button" onClick={() => { window.location.href = route.sso_login_url ?? "/login"; }}
+                  className="ml-auto underline underline-offset-2" data-sb-scope="login-sso-jump">前往 SSO 登录</button>
+        </div>
+      )}
+      {routeBusy && <div className="mb-2 text-xs text-neutral-400">检查登录方式…</div>}
       <form onSubmit={submit}>
         <div className="mb-4">
           <label className="block text-[13px] font-medium text-neutral-700 mb-1.5" htmlFor="email">邮箱</label>
-          <input id="email" className="w-full h-9 border border-neutral-300 rounded-md px-2.5 bg-white focus:outline-none focus:border-brand-500 focus:ring-[3px] focus:ring-brand-50" type="email" autoFocus autoComplete="email" placeholder="you@company.com" value={email} onChange={(e) => { setEmail(e.target.value); if (disabledAlert) setDisabledOk(true); }} />
+          <input id="email" className="w-full h-9 border border-neutral-300 rounded-md px-2.5 bg-white focus:outline-none focus:border-brand-500 focus:ring-[3px] focus:ring-brand-50" type="email" autoFocus autoComplete="email" placeholder="you@company.com" value={email} onChange={(e) => { setEmail(e.target.value); if (disabledAlert) setDisabledOk(true); setRoute(null); }} onBlur={(e) => discoverRoute(e.target.value)} data-sb-scope="login-email" />
         </div>
         <div className="mb-4">
           <label className="block text-[13px] font-medium text-neutral-700 mb-1.5" htmlFor="pw">密码</label>

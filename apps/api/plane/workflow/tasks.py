@@ -11,7 +11,7 @@ import logging
 from celery import shared_task
 from django.utils import timezone
 
-from plane.db.models import ApprovalInstance, ApprovalRecord, Notification
+from plane.db.models import ApprovalInstance, ApprovalRecord, Notification, WorkspaceMember, WorkspaceRole
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,15 @@ def approval_timeout_scan() -> None:
         ).values_list("approver_id", flat=True))
         stage = "overdue_24h" if overdue_h >= hours + 24 else "overdue"
         if stage == "overdue_24h":
-            receivers.append(inst.initiator_id)  # 加报发起人（管理员提醒 R5 面补）
+            receivers.append(inst.initiator_id)
+            # S7 known-debt A#2（R4 收口）：24h 档加报空间管理员/所有者
+            receivers.extend(
+                WorkspaceMember.objects.filter(
+                    workspace=inst.issue.project.workspace,
+                    role__in=(WorkspaceRole.ADMIN, WorkspaceRole.OWNER),
+                    is_active=True, deleted_at__isnull=True,
+                ).values_list("member_id", flat=True)
+            )
         epoch = f"{inst.id}:{inst.current_level}:{stage}"
         for uid in dict.fromkeys(u for u in receivers if u):
             try:

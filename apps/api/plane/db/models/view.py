@@ -79,6 +79,15 @@ class IssueView(BaseModel):
     )
     is_locked = models.BooleanField(default=False, verbose_name="管理员锁定（P3）")
     sort_order = models.FloatField(default=65535.0, verbose_name="显示排序")
+    # ── BOARD-005（Sprint-8 R5）──
+    is_project_default = models.BooleanField(
+        default=False, verbose_name="项目默认视图（新成员自动订阅）",
+        help_text="每项目至多 1 个（BR-04）；仅锁定视图可设（BR-05）",
+    )
+    locked_by = models.ForeignKey("db.User", null=True, blank=True,
+                                  on_delete=models.SET_NULL,
+                                  related_name="locked_views", verbose_name="锁定人")
+    locked_at = models.DateTimeField(null=True, blank=True, verbose_name="锁定时间")
 
     class Meta(BaseModel.Meta):
         db_table = "issue_views"
@@ -88,6 +97,17 @@ class IssueView(BaseModel):
         indexes = [
             models.Index(fields=["project", "access", "sort_order"], name="idx_view_proj_access"),
             models.Index(fields=["owner", "access"], name="idx_view_owner_access"),
+        ]
+        constraints = [
+            # BR-04：每项目至多 1 个项目默认视图（部分唯一，含软删条件）
+            models.UniqueConstraint(
+                fields=["project"],
+                condition=models.Q(is_project_default=True, deleted_at__isnull=True),
+                name="uq_view_project_default"),
+            # BR-05 DB 护栏：项目默认必须先锁定
+            models.CheckConstraint(
+                check=models.Q(is_project_default=False) | models.Q(is_locked=True),  # type: ignore[call-arg]  # stub 声明过窄
+                name="ck_view_project_default_locked"),
         ]
 
     def __str__(self) -> str:

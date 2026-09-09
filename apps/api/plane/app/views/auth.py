@@ -133,6 +133,10 @@ class SignInView(APIView):
                 "AUTH_ACCOUNT_DISABLED",
                 message="账号已被禁用，请联系管理员",
             )
+        # AUTH-009 §2.4：强制 SSO 门（密码校验通过后、建会话前；逃生名单豁免）
+        from plane.sso.gate import enforce_sso_gate
+
+        enforce_sso_gate(email)
         login(request, user)
         # 记住我：滑动 30 天；否则默认 14 天（Django Session 默认）
         request.session.set_expiry(60 * 60 * 24 * 30 if remember else 0)

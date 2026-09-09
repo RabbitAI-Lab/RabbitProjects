@@ -1,4 +1,5 @@
 import { api } from "./axios";
+import { API_BASE_URL } from "../config";
 import type {
   DeleteSubtreeResult,
   InviteResult,
@@ -1524,6 +1525,81 @@ export const AutomationAPI = {
   runs: (slug: string, projectId: string, params: { rule?: string; status?: string; from?: string; to?: string } = {}) =>
     api.get<Array<Record<string, unknown>>>(
       `workspaces/${slug}/projects/${projectId}/automation-runs/`, { params }),
+};
+
+export const ViewGovernanceAPI = {
+  lock: (slug: string, projectId: string, viewId: string,
+         body: { is_locked: boolean; is_project_default?: boolean | null }) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/views/${viewId}/lock/`, body),
+  duplicate: (slug: string, projectId: string, viewId: string) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/views/${viewId}/duplicate/`),
+  pin: (slug: string, projectId: string, viewId: string) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/views/${viewId}/pin/`),
+  unpin: (slug: string, projectId: string, viewId: string) =>
+    api.delete(`workspaces/${slug}/projects/${projectId}/views/${viewId}/pin/`),
+  setAccess: (slug: string, projectId: string, viewId: string, access: "personal" | "shared") =>
+    api.patch(`workspaces/${slug}/projects/${projectId}/views/${viewId}/`, { access }),
+};
+
+export const DepartmentAPI = {
+  list: (slug: string, include = false) =>
+    api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/departments/`,
+      include ? { params: { include: "member_count" } } : {}),
+  create: (slug: string, body: { name: string; parent_id?: string | null }) =>
+    api.post(`workspaces/${slug}/departments/`, body),
+  patch: (slug: string, id: string, body: Record<string, unknown>) =>
+    api.patch(`workspaces/${slug}/departments/${id}/`, body),
+  delete: (slug: string, id: string) =>
+    api.delete(`workspaces/${slug}/departments/${id}/`),
+  move: (slug: string, id: string, parent_id: string | null) =>
+    api.post(`workspaces/${slug}/departments/${id}/move/`, { parent_id }),
+  bulkMove: (slug: string, id: string, member_ids: string[], department_id: string | null) =>
+    api.post(`workspaces/${slug}/departments/${id}/members/bulk-move/`, { member_ids, department_id }),
+  grantPreview: (slug: string, id: string, body: Record<string, unknown>) =>
+    api.post(`workspaces/${slug}/departments/${id}/grants/preview/`, body),
+  grant: (slug: string, id: string, body: Record<string, unknown>) =>
+    api.post(`workspaces/${slug}/departments/${id}/grants/`, body),
+  stats: (slug: string, id: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/departments/${id}/stats/`),
+};
+
+export const CustomRoleAPI = {
+  list: (slug: string, projectId: string, params: Record<string, unknown> = {}) =>
+    api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/projects/${projectId}/roles/`, { params }),
+  create: (slug: string, projectId: string, body: Record<string, unknown>) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/roles/`, body),
+  patch: (slug: string, projectId: string, roleId: string, body: Record<string, unknown>) =>
+    api.patch(`workspaces/${slug}/projects/${projectId}/roles/${roleId}/`, body),
+  delete: (slug: string, projectId: string, roleId: string) =>
+    api.delete(`workspaces/${slug}/projects/${projectId}/roles/${roleId}/`),
+  catalog: (slug: string, projectId: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/projects/${projectId}/roles/permissions-catalog/`),
+  assign: (slug: string, projectId: string, memberId: string, roleId: string) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/members/${memberId}/role-assignments/`, { role_id: roleId }),
+  revoke: (slug: string, projectId: string, memberId: string, roleId: string) =>
+    api.delete(`workspaces/${slug}/projects/${projectId}/members/${memberId}/role-assignments/${roleId}/`),
+  assignments: (slug: string, projectId: string, memberId: string) =>
+    api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/projects/${projectId}/members/${memberId}/role-assignments/`),
+  effective: (slug: string, projectId: string, memberId: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/projects/${projectId}/members/${memberId}/effective-permissions/`),
+  bulkAssign: (slug: string, projectId: string, roleId: string, body: Record<string, unknown>) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/roles/${roleId}/assignments/bulk/`, body),
+};
+
+export const SSOAPI = {
+  route: (email: string) => api.post("auth/sso/route/", { email }),
+  signInUrl: (slug: string, next = "/") =>
+    `${API_BASE_URL}/auth/sso/${slug}/sign-in/?next=${encodeURIComponent(next)}`,
+  claim: (password: string) => api.post("auth/sso/claim/", { password }),
+};
+
+export const SiteAuditAPI = {
+  list: (slug: string, params: Record<string, unknown> = {}) =>
+    api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/audit-logs/`, { params }),
+  catalog: (slug: string) =>
+    api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/audit-logs/catalog/`),
+  exportCsv: (slug: string, password: string) =>
+    api.post(`workspaces/${slug}/audit-logs/exports/`, { password }, { responseType: "blob" }),
 };
 
 export const AuditAPI = {

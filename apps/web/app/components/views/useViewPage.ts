@@ -437,6 +437,7 @@ export function useViewPage(opts: { workspaceSlug?: string | undefined; projectI
 
   return {
     // 数据
+    workspaceSlug, projectId,
     views, currentView, effDisplay, dirty, viewIdParam, filtersParam,
     states, members, labels, cfDefs, meName,
     degraded, viewGone, defaultViewIdOf,
@@ -451,4 +452,22 @@ export function useViewPage(opts: { workspaceSlug?: string | undefined; projectI
 }
 
 export type ViewPage = ReturnType<typeof useViewPage>;
+
+/** BOARD-005：治理动作后重载视图清单（ctx 菜单共享/锁定/副本消费）。 */
+export function reloadViewsFor(vp: ViewPage) {
+  const ws = vp.workspaceSlug;
+  const pid = vp.projectId;
+  if (!ws || !pid) return;
+  void (async () => {
+    try {
+      const api = await import("../../services/api");
+      const r = await api.ViewAPI.list(ws, pid).catch(() => null);
+      if (!r) return;
+      const views = api.unwrap<Record<string, unknown>[]>(r) ?? [];
+      const mod = await import("@rp/shared-state");
+      (mod.default as unknown as { stores: { views: {
+        hydrate: (p: string, v: unknown[]) => void } } }).stores.views.hydrate(pid, views);
+    } catch { /* 刷新失败静默——下次进页重载 */ }
+  })();
+}
 export type { FilterCondition, FilterLogicNode, IssueViewData };

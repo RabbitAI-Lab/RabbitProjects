@@ -225,6 +225,10 @@ def require_permission(permission_key: str, scope: str = "project"):
 
     矩阵取所需角色 → 重新推导实际角色 → 比较。KeyError = 未登记权限点，
     在测试期即暴露（BR-06）——这是「矩阵是唯一数据源」的运行时防线。
+
+    AUTH-008（Sprint-8 R2）并集分支：threshold 不过时，若该码在用户的
+    自定义角色挂接并集内（只加不减，BR-01）则放行——custom_codes=[] 时
+    恒 False，与标准版行为零差异（§7.2.2 零差异门禁）。
     """
     def decorator(func):
         @wraps(func)
@@ -233,12 +237,28 @@ def require_permission(permission_key: str, scope: str = "project"):
             required = PERMISSION_MATRIX[scope][permission_key]
             actual = _resolve_role_for_scope(request, self, scope)
             if actual is None or actual < required:
+                if scope == "project" and _custom_role_grants(
+                        request, self, permission_key):
+                    return func(self, request, *args, **kwargs)
                 raise PermissionDeniedWithCode(
                     f"缺少权限：{permission_key}（需要角色等级 ≥ {required}）"
                 )
             return func(self, request, *args, **kwargs)
         return wrapper
     return decorator
+
+
+def _custom_role_grants(request, view, permission_key: str) -> bool:
+    """自定义角色挂接并集判定（AUTH-008 提升分支的唯一数据源）。
+
+    project 级码专用；视图 kwargs 无 project_id 时（不可能挂接）恒 False。
+    """
+    project_id = view.kwargs.get("project_id") or view.kwargs.get("pk")
+    if not project_id or not getattr(request.user, "is_authenticated", False):
+        return False
+    from plane.app.effective_perms import has_custom_code
+
+    return has_custom_code(request.user.id, project_id, permission_key)
 
 
 # ── L0：账号已认证且未禁用 ──────────────────────────────────────

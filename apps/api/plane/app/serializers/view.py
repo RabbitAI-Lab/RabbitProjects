@@ -20,6 +20,13 @@ class IssueViewSerializer(serializers.ModelSerializer):
     project_id = serializers.UUIDField(read_only=True)
     workspace_id = serializers.UUIDField(read_only=True)
     owner_id = serializers.UUIDField(read_only=True)
+    subscriber_count = serializers.SerializerMethodField()
+
+    def get_subscriber_count(self, obj) -> int:
+        """BR-16 唯一口径（annotate 已有则直读，查询面单查询纪律）。"""
+        if hasattr(obj, "_subscriber_count"):
+            return obj._subscriber_count
+        return obj.preferences.filter(pinned=True, deleted_at__isnull=True).count()
 
     class Meta:
         model = IssueView
@@ -34,6 +41,10 @@ class IssueViewSerializer(serializers.ModelSerializer):
             "owner_id",
             "is_system",
             "is_locked",
+            "is_project_default",
+            "locked_by_id",
+            "locked_at",
+            "subscriber_count",
             "filters",
             "display_props",
             "sort_order",

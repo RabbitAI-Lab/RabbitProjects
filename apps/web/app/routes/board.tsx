@@ -11,6 +11,7 @@ import { useStores } from "../stores";
 import { ViewSwitchBar } from "../components/views/ViewSwitchBar";
 import { FilterOpenButton, ViewChipsRow } from "../components/views/ViewFilterBar";
 import { GroupedBoard } from "../components/views/GroupedBoard";
+import { SwimlaneMatrix } from "../components/views/SwimlaneMatrix";
 import { useViewPage } from "../components/views/useViewPage";
 import { BulkOperations, TruncationStrip, useBulkSelection, useMarquee } from "../components/views/BulkOperations";
 
@@ -20,6 +21,9 @@ import { BulkOperations, TruncationStrip, useBulkSelection, useMarquee } from ".
 export default function Board() {
   const { workspaceSlug, projectId } = useParams<{ workspaceSlug: string; projectId: string }>();
   const vp = useViewPage({ workspaceSlug, projectId, layout: "kanban" });
+  // BOARD-005（C.154）：?sub_group_by= 二维泳道（行分组维度；清空回一维）
+  const [spParams] = useSearchParams();
+  const subGroupBy = spParams.get("sub_group_by") ?? "";
   const { peek, close: closeHoverPeek } = usePeekHover();
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [projName, setProjName] = useState("…");
@@ -144,15 +148,20 @@ export default function Board() {
           <div className="px-4 pt-2"><TruncationStrip /></div>
           {/* 分组看板（五维泛化 C.66/C.67）+ 多选接线（C.77） */}
           <div ref={boardWrapRef} className="flex-1 flex flex-col min-h-0">
-            <GroupedBoard vp={vp} workspaceSlug={workspaceSlug} projectId={projectId} canEdit={canEdit} blockedIds={blockedIds} blockedTipOf={(id) => blockedTip[id] ?? "被未完成前置任务阻塞"} onLoadBlockedTip={(id) => void loadBlockedTip(id)}
-              onOpenIssue={openPeek} search={search} reloadKey={reloadKey} onCardsLoaded={onCardsLoaded}
-              bulk={{
-                isSelected: bulkSel.isSelected,
-                anySelected: bulkSel.anySelected,
-                onCheck: bulkSel.onCheckboxClick,
-                // ⌘/Shift 作用域 = 当前看板可见卡片（列内 100 上限内的已载入集）
-                onModifierClick: (id, ev) => bulkSel.onModifierClick(id, ev, boardIdsRef.current),
-              }} />
+            {subGroupBy ? (
+              <SwimlaneMatrix vp={vp} workspaceSlug={workspaceSlug} projectId={projectId}
+                subGroupBy={subGroupBy} reloadKey={reloadKey} onCount={setTotalCount} />
+            ) : (
+              <GroupedBoard vp={vp} workspaceSlug={workspaceSlug} projectId={projectId} canEdit={canEdit} blockedIds={blockedIds} blockedTipOf={(id) => blockedTip[id] ?? "被未完成前置任务阻塞"} onLoadBlockedTip={(id) => void loadBlockedTip(id)}
+                onOpenIssue={openPeek} search={search} reloadKey={reloadKey} onCardsLoaded={onCardsLoaded}
+                bulk={{
+                  isSelected: bulkSel.isSelected,
+                  anySelected: bulkSel.anySelected,
+                  onCheck: bulkSel.onCheckboxClick,
+                  // ⌘/Shift 作用域 = 当前看板可见卡片（列内 100 上限内的已载入集）
+                  onModifierClick: (id, ev) => bulkSel.onModifierClick(id, ev, boardIdsRef.current),
+                }} />
+            )}
           </div>
           {/* 批量工具条 + 浮层/确认/失败定位（C.80~C.83） */}
           <BulkOperations workspaceSlug={workspaceSlug} projectId={projectId} canEdit={canEdit}

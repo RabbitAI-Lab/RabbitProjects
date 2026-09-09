@@ -29,6 +29,14 @@ PERMISSION_MATRIX: dict[str, dict[str, int]] = {
         "project.create": WorkspaceRole.MEMBER,           # R5 可配置（默认开）
         # ── Sprint-5 INTG-001（rbac §8.1 已登记：WS 级安装/回调）──
         "integration.manage": WorkspaceRole.ADMIN,
+        # ── Sprint-8 AUTH-007（rbac §8.1 Department（P3）行落地，非新增码）──
+        "department.manage": WorkspaceRole.ADMIN,
+        # ── Sprint-8 AUTH-008（rbac §8.1 已注册 WS 级，BR-08）──
+        "role.manage": WorkspaceRole.ADMIN,
+        # ── Sprint-8 AUTH-009（附录 B 唯一新增码：WS_OWNER 级）──
+        "workspace.sso.manage": WorkspaceRole.OWNER,
+        # ── Sprint-8 AUTH-010（rbac §8.1 Audit 行落地，BR-04）──
+        "audit.read": WorkspaceRole.ADMIN,
     },
     "project": {  # AUTH-005 §2.4.2（P1 子集）
         "project.read": ProjectRole.VIEWER,
@@ -75,6 +83,12 @@ PERMISSION_MATRIX: dict[str, dict[str, int]] = {
         "automation.manage": ProjectRole.ADMIN,
         "approval.act": ProjectRole.COMMENTER,
         "approval.withdraw": ProjectRole.CONTRIBUTOR,
+        # ── Sprint-8 BOARD-005（rbac §8.2 既有注册码落地）──
+        "board.read": ProjectRole.VIEWER,
+        "view.create.own": ProjectRole.VIEWER,
+        "view.create.shared": ProjectRole.CONTRIBUTOR,
+        "view.manage": ProjectRole.ADMIN,
+        "board.lock": ProjectRole.ADMIN,
     },
 }
 
@@ -90,6 +104,10 @@ PERMISSION_LABELS: dict[str, str] = {
     "workspace.member.manage": "管理成员角色",
     "team.stats.read": "查看团队成员活跃度",
     "integration.manage": "管理集成安装",
+    "department.manage": "管理部门与组织架构",
+    "role.manage": "管理自定义角色组",
+    "workspace.sso.manage": "管理 SSO 单点登录",
+    "audit.read": "查看审计日志",
     "integration.config": "配置项目集成",
     "integration.link": "关联外部对象",
     "workspace.member.remove": "移除成员",
@@ -125,6 +143,11 @@ PERMISSION_LABELS: dict[str, str] = {
     "automation.manage": "管理自动化规则",
     "approval.act": "审批操作",
     "approval.withdraw": "撤回审批",
+    "board.read": "查看看板",
+    "view.create.own": "创建个人视图",
+    "view.create.shared": "创建共享视图",
+    "view.manage": "管理他人共享视图",
+    "board.lock": "锁定组织标准视图",
 }
 
 

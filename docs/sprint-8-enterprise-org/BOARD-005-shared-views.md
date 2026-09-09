@@ -6,7 +6,7 @@
 | 所属迭代 | Sprint 8 — 企业组织权限治理（第 11 周） |
 | 优先级 | P3（企业版核心级） |
 | 所属模块 | M5-BOARD｜看板视图（模块码以 dependency-graph §2 为准） |
-| 文档状态 | 待评审（Draft） |
+| 文档状态 | 已实现（Sprint-8 R1~R6 后端全量 + 前端六表面，2026-09-09） |
 | 最后更新日期 | 2026-09-05（R1 修复 10 项：信封重写、UserViewPreference 本迭代建表（§4.1.2）、board.lock / view.create.shared 对齐 rbac §8.2、端点补 workspaces 层、is_project_default 改名 + 三概念调和表、M5-BOARD + 引用更正、P3/P4 边界声明、pin/ 契约 + subscriber_count 口径（BR-16）、ArraySubquery 替代 ArrayAgg 切片 + 方法语义统一、§5.4 四主体矩阵 + BR-15 用例 + P95 断言；R2 复评 PASS 9.5/9.5/10/9.5/9.5 一次过） |
 | 上游依赖 | `BOARD-004`（直接前置——dependency-graph §4.7：视图保存 / 批量操作管线）、`BOARD-003`（传递前置：`IssueView` 模型——`access`/`is_locked`/`sub_group_by` 三列 P2 已建未开放、视图 CRUD / 拖拽 / 分组端点）、`TASK-011`（filters DSL 全集）、`AUTH-008`（自定义角色挂接权限码——dependency-graph §4.7）；权限码均取自 [`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §8.2 既有注册表，本文零新增码 |
 | 下游消费 | P4 跨项目全局视图（需求文档 §8.2 看板视图 P4 列「跨项目全局看板」，另立文档）；`RPT-002`（标准视图作为统计切片口径） |

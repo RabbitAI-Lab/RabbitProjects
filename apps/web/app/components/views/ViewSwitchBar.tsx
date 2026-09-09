@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { ViewLayout } from "@rp/shared-state";
+
+import { ViewGovernanceAPI } from "../../services/api";
+import { reloadViewsFor } from "./useViewPage";
 import { toast } from "../Toast";
 import { DegradedBanner, PresenceBar } from "../../realtime/PresenceBar";
 import type { ViewPage } from "./useViewPage";
@@ -98,7 +101,39 @@ export function ViewSwitchBar({ vp }: { vp: ViewPage }) {
   const [leaveAsk, setLeaveAsk] = useState<null | (() => void)>(null);
   /** Tab 折叠：全部 + 前 5 个视图内联，其余入 ＋ ▾（§3.1「超出 6 个折叠」）。 */
   const INLINE_MAX = 6;
-  const tabs = [{ id: null as string | null, name: "全部", icon: "", isSystem: true, fixed: true }, ...views.map((v) => ({ id: v.id, name: v.name, icon: (v.display_props?.icon ?? "") as string, isSystem: v.is_system, fixed: false }))];
+  const tabs = [{ id: null as string | null, name: "全部", icon: "", isSystem: true, fixed: true }, ...views.map((v) => ({ id: v.id, name: v.name + (v.is_locked ? " 🔒" : "") + (v.is_project_default ? "★" : "") + (v.access === "shared" && !v.is_locked ? " 👤" : ""), icon: (v.display_props?.icon ?? "") as string, isSystem: v.is_system, fixed: false }))];
+
+  /** BOARD-005 治理动作（C.153：共享/锁定/项目默认/订阅/副本） */
+  const gov = {
+    toggleShare: async (viewId: string, toShared: boolean) => {
+      try {
+        await ViewGovernanceAPI.setAccess(vp.workspaceSlug!, vp.projectId!, viewId, toShared ? "shared" : "personal");
+        toast(toShared ? "已共享（全员可见）" : "已收回共享（订阅一并清除）");
+        void reloadViewsFor(vp);
+      } catch (e) { toast((e as { message?: string })?.message ?? "操作失败", "error"); }
+    },
+    lock: async (viewId: string, isLocked: boolean, setDefault?: boolean) => {
+      try {
+        await ViewGovernanceAPI.lock(vp.workspaceSlug!, vp.projectId!, viewId,
+          { is_locked: isLocked, ...(setDefault !== undefined ? { is_project_default: setDefault } : {}) });
+        toast(isLocked ? (setDefault ? "已锁定并设为项目默认（存量成员已订阅）" : "已锁定（仅管理员可改）") : "已解锁");
+        void reloadViewsFor(vp);
+      } catch (e) { toast((e as { message?: string })?.message ?? "操作失败（先取消默认再解锁）", "error"); }
+    },
+    pin: async (viewId: string) => {
+      try {
+        await ViewGovernanceAPI.pin(vp.workspaceSlug!, vp.projectId!, viewId);
+        toast("已订阅（侧栏可见）");
+      } catch (e) { toast((e as { message?: string })?.message ?? "仅共享视图支持订阅", "error"); }
+    },
+    duplicate: async (viewId: string) => {
+      try {
+        await ViewGovernanceAPI.duplicate(vp.workspaceSlug!, vp.projectId!, viewId);
+        toast("已另存为个人副本");
+        void reloadViewsFor(vp);
+      } catch (e) { toast((e as { message?: string })?.message ?? "复制失败", "error"); }
+    },
+  };
   const inlineTabs = tabs.slice(0, INLINE_MAX);
   const overflowTabs = tabs.slice(INLINE_MAX);
 
@@ -233,7 +268,23 @@ export function ViewSwitchBar({ vp }: { vp: ViewPage }) {
         <PresenceBar projectId={projectId} members={vp.members} />
         {vp.layout === "kanban" && (
           <span className="relative" data-sb-scope="view-group-dd">
-            <button type="button" aria-haspopup="menu" aria-expanded={groupOpen} aria-label="分组维度" data-sb-scope="view-group-btn"
+            {/* BOARD-005（C.154）：行分组（泳道）——同集维度，清空回一维 */}
+            <select aria-label="泳道维度" data-sb-scope="view-subgroup-select"
+              value={new URLSearchParams(window.location.search).get("sub_group_by") ?? ""}
+              onChange={(e) => {
+                const n = new URLSearchParams(window.location.search);
+                if (e.target.value) n.set("sub_group_by", e.target.value);
+                else n.delete("sub_group_by");
+                window.history.replaceState(null, "", `?${n}${location.hash}`);
+                window.location.reload();  // 矩阵/一维切换走整页换形态（保 SWR key 干净）
+              }}
+              className="h-8 px-2 border border-neutral-300 rounded-md text-[13px] bg-white">
+              <option value="">泳道：无</option>
+              {vp.groupCandidates
+                .filter((d) => d.key !== vp.groupBy)
+                .map((d) => <option key={d.key} value={d.key}>泳道：{d.name}</option>)}
+            </select>
+                        <button type="button" aria-haspopup="menu" aria-expanded={groupOpen} aria-label="分组维度" data-sb-scope="view-group-btn"
               onClick={() => setGroupOpen((v) => !v)}
               className="h-8 px-2.5 inline-flex items-center gap-1.5 border border-neutral-300 rounded-md text-[13px] text-neutral-700 hover:bg-neutral-50">
               分组：{groupDisplayName(vp.groupBy, vp.cfDefs.find((d) => d.key === vp.groupBy)?.name)} ▾
@@ -272,6 +323,17 @@ export function ViewSwitchBar({ vp }: { vp: ViewPage }) {
         <div role="status" data-sb-scope="view-gone-bar"
           className="flex items-center gap-2.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg px-3 py-1.5 text-[12.5px] w-full">
           ⚠ 视图不存在或不可见（已切换默认视图）
+        </div>
+      )}
+      {/* BOARD-005（C.153）：锁定横幅——组织标准视图只读 + 副本引导 */}
+      {currentView?.is_locked && (
+        <div data-sb-scope="view-locked-bar"
+          className="flex items-center gap-2.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-lg px-3 py-1.5 text-[12.5px] w-full">
+          🔒 组织标准视图，只读（{currentView.locked_by_id ? `管理员 · ${new Date(currentView.locked_at ?? "").toLocaleDateString("zh-CN")} 锁定` : ""}）
+          <button type="button" data-sb-scope="view-locked-fork"
+            onClick={() => void gov.duplicate(currentView.id)}
+            className="h-[26px] px-2.5 bg-white border border-blue-200 text-blue-600 rounded-md text-[12.5px] hover:bg-blue-50">另存为副本</button>
+          {currentView.is_project_default && <span>★ 项目默认（新成员自动订阅）</span>}
         </div>
       )}
       {/* 视图已修改黄条（§3.1） */}
@@ -319,8 +381,26 @@ export function ViewSwitchBar({ vp }: { vp: ViewPage }) {
             )}
             <MenuItem label="编辑条件（打开筛选面板）" onClick={() => { setCtxMenu(null); window.dispatchEvent(new CustomEvent("rp:open-filter-panel")); }} />
             <MenuItem label="复制视图" onClick={() => { setCtxMenu(null); setShowSaveAs(true); }} />
-            <MenuItem label="设为默认视图" onClick={() => { setCtxMenu(null); void vp.setDefaultView(v.id); }} />
+            <MenuItem label="设为默认视图（用户级）" onClick={() => { setCtxMenu(null); void vp.setDefaultView(v.id); }} />
+            {/* BOARD-005（C.153）：治理菜单 */}
+            <div className="my-1 border-t border-neutral-100" />
+            {!v.is_system && !v.is_locked && (
+              <MenuItem label={v.access === "shared" ? "收回共享" : "共享给全员"}
+                onClick={() => { setCtxMenu(null); void gov.toggleShare(v.id, v.access !== "shared"); }} />
+            )}
             {!v.is_system && (
+              <MenuItem label={v.is_locked ? "解锁（先取消项目默认）" : "锁定为组织标准"}
+                onClick={() => { setCtxMenu(null); void gov.lock(v.id, !v.is_locked); }} />
+            )}
+            {v.is_locked && (
+              <MenuItem label={v.is_project_default ? "取消项目默认" : "设为项目默认（新成员订阅）"}
+                onClick={() => { setCtxMenu(null); void gov.lock(v.id, true, !v.is_project_default); }} />
+            )}
+            {v.access === "shared" && (
+              <MenuItem label="订阅到侧栏" onClick={() => { setCtxMenu(null); void gov.pin(v.id); }} />
+            )}
+            <MenuItem label="另存为我的副本" onClick={() => { setCtxMenu(null); void gov.duplicate(v.id); }} />
+            {!v.is_system && !v.is_locked && (
               <MenuItem label="删除" danger onClick={() => {
                 setCtxMenu(null);
                 void vp.deleteView(v.id);

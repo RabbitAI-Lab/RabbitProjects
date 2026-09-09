@@ -2,11 +2,14 @@ from .account import PasswordResetToken
 from .approval import ApprovalFlow, ApprovalInstance, ApprovalNode, ApprovalRecord
 from .approval_audit import ApprovalAuditEvent
 from .asset import FileAsset
+from .audit import AuditLog
 from .automation import AutomationRule, AutomationRun, AutomationSetting
 from .backup import BackupRun
 from .base import BaseModel, SoftDeleteManager, SoftDeleteQuerySet
 from .comment import CommentReaction, IssueComment
 from .custom_field import CustomFieldDefinition
+from .custom_role import CustomRole, ProjectRoleAssignment
+from .department import Department, DepartmentGrantBatch
 from .file import FileFolder, FileVersion, UploadSession
 from .file_share import FileShareAccess, FileShareLink
 from .integration import IntegrationInstallation, SyncConflictLog
@@ -17,9 +20,11 @@ from .notification import Notification
 from .project import Project, ProjectFavorite, ProjectMember, ProjectStatusLog, ProjectTemplate, SystemAdmin
 from .release import ReleaseGate, ReleaseGateEvent
 from .roles import ProjectRole, WorkspaceRole
+from .sso import IdentityProvider, SSOAccount
 from .state import State
 from .user import User
 from .view import IssueView
+from .view_preference import UserViewPreference
 from .webhook import WebhookDelivery, WebhookEndpoint
 from .workflow import (
     TemplateDistribution,
@@ -34,6 +39,14 @@ from .worklog_approval import ProjectWorklogConfig, WorkLogApproval, WorkLogSumm
 from .workspace import Workspace, WorkspaceLabel, WorkspaceLoginDailyAggregate, WorkspaceMember, WorkspaceMemberInvite
 
 __all__ = [
+    "AuditLog",
+    "UserViewPreference",
+    "IdentityProvider",
+    "SSOAccount",
+    "CustomRole",
+    "ProjectRoleAssignment",
+    "Department",
+    "DepartmentGrantBatch",
     "BaseModel",
     "SoftDeleteManager",
     "SoftDeleteQuerySet",

@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RabbitProjects · Sprint 9 高保真原型 · 企业项目/报表/Wiki</title>
+<!--
+════════════════════════════════════════════════════════════════════════════════
+RabbitProjects · Sprint 9 高保真可交互原型（企业项目/报表/Wiki · 企业版 V1.0 收官）
+════════════════════════════════════════════════════════════════════════════════
+状态：DRAFT（评审稿，2026-09-09）——用户评审通过后改标 FROZEN + 日期，成为
+      Sprint-9 前端实现的视觉/交互验收基准（CLAUDE.md 硬门槛：无冻结原型
+      不得写 UI 代码）。
+
+基线与依据
+  · 视觉语言基线：docs/design/sprint-8-hifi-prototype.html（FROZEN 2026-09-09）
+    与 sprint-0~4 冻结 token / 控件 / 外壳 / dock 模式全部延续，零漂移。
+  · 表面定义：5 份规格 §3（PROJ-004 / RPT-003 / RPT-004 / FILE-005 / GANTT-003）。
+  · 数值自洽：三卡 65%=(71×128+48×86+80×45)/259（PROJ-004 §3.1 权重口径）；
+    健康度四维 86/56/85/73 → 总评 75.0（RPT-004 §3.1 数值链逐格可复算）。
+
+原型自定开放点（规格未规定视觉细节，原型先行定义，评审时可改）
+  O1 项目集三卡：等宽横排（进度/资源/风险），进度卡注脚常显权重口径
+     （未取消任务数），资源卡人×项目行式矩阵（非格子）。
+  O2 依赖图布局：按项目分列的分层布局（非力导向）——跨项目边一律虚线 +
+     「外部」徽标；列头项目色标与项目列表同色。
+  O3 燃尽 scope 事件标注：理想线/实际线双线 + scope 事件▲▼角标（悬停出
+     清单 tooltip）；今日点脉冲动画。
+  O4 CFD 五组色序（底→顶）：backlog 灰 / unstarted 浅灰蓝 / started 蓝 /
+     completed 绿 / cancelled 深灰——与状态色 token 对齐；洞察条 amber。
+  O5 健康度四维卡：紧凑卡（分数大号 + 色点 + 口径两行 + 下钻角标行），
+     色档 绿≥80 / 黄60-79 / 红<60；下钻角标为快照计数、抽屉标题为实时计数。
+  O6 负载热力四档：🟩<60% / 🟦60-90% / 🟧90-100% / 🟥>100%，格内百分比数字；
+     连续 3 周 >90% 触发底部 amber 预警条。
+  O7 Wiki 三栏：左树 240px / 右内容自适应；无第三栏——评论为 P4 占位条
+     （浅灰虚线框，明确标注不交付）；版本胶囊（vN ▾）在页头行内。
+  O8 甘特关键路径：关键条红描边（填充不变色，避免与状态色冲突）+ 关键链
+     边加粗红；浮动余量条为浅灰纹理段；外部约束锚标 ⚓（不进 CPM）单列图例。
+
+视图 / 弹窗 ID → 表面覆盖映射（17 表面，规格 §3 逐条）
+  V-PORT    #/portfolios        项目集汇总面板（PROJ-004 §3.1 三卡+项目列表）
+  V-MS      #/portfolios/ms     里程碑视图（PROJ-004 §3.2 进度/贡献项/三态）
+  V-GRAPH   #/portfolios/graph  依赖关系图（PROJ-004 §3.3 分列布局+跨项目边）
+  V-EXTD    任务详情弹层         外部依赖分组+守卫 toast（PROJ-004 §3.4，dock 演出）
+  V-CYCLE   #/p/rbt/cycles      迭代管理页+燃尽图（RPT-003 §3.1 内嵌+scope 事件）
+  V-VELO    #/p/rbt/velocity    迭代速率页（RPT-003 §3.2 柱图+均值线+结论卡）
+  V-CFD     #/p/rbt/cfd         累积流图（RPT-003 §3.3 堆叠+滑杆+洞察条）
+  M-CLOSE   结束迭代对话框       未完成勾选→结转/移回（RPT-003 §3.4，dock 演出）
+  V-HEALTH  #/p/rbt/health      健康度评分卡（RPT-004 §3.1 总评+四维+趋势）
+  D-DRILL   下钻抽屉             维度构成任务实时表（RPT-004 §3.2，dock 演出）
+  V-LOAD    #/p/rbt/load        团队负载热力图（RPT-004 §3.3 人×周+预警）
+  V-WIKI    #/p/rbt/wiki        Wiki 主界面（FILE-005 §3.1 三栏+权限入口）
+  V-WIKIH   #/p/rbt/wiki/history 版本历史与对比（FILE-005 §3.2 diff 视图）
+  M-CONF    发布冲突对话框       409 对比合并/强制覆盖（FILE-005 §3.4，dock 演出）
+  V-SEARCH  #/search/wiki       全局知识检索（FILE-005 §3.3 高亮片段+过滤）
+  V-GANTT   #/p/rbt/gantt       甘特关键路径高亮（GANTT-003 §3.1 开关+图例）
+  V-CPMC    #/p/rbt/gantt/cpm   浮动时间卡+预警配置（GANTT-003 §3.2/§3.3）
+  DOCK      演示面板             页面直达 · 六组演出（挂载/结束迭代/下钻/
+                              409 冲突/回滚/浮动耗尽转关键）
+════════════════════════════════════════════════════════════════════════════════
+-->
+<style>
+/* ═════════ 设计 token · 与 sprint-0~4/8 冻结基线一致 ═════════ */
+:root{
+  --brand-50:#eef4ff;--brand-100:#dbe7fe;--brand-500:#3f76ff;--brand-600:#2f5fe0;
+  --state-unstarted:#9ca3af;--state-started:#3b82f6;--state-completed:#10b981;--state-cancelled:#6b7280;
+  --danger:#ef4444;--danger-bg:#fef2f2;--danger-line:#fecaca;--ok:#059669;--ok-bg:#ecfdf5;
+  --warn:#f59e0b;--amber-bg:#fffbeb;--amber-line:#fde68a;--amber-ink:#b45309;
+  --info-bg:#eff6ff;--info-line:#bfdbfe;--info-ink:#1d4ed8;
+  --bg:#fafafa;--surface:#ffffff;--surface-2:#f5f5f5;--surface-3:#ececec;
+  --line:#e5e5e5;--line-strong:#d4d4d4;
+  --ink:#262626;--ink-2:#525252;--ink-3:#8c8c8c;--ink-4:#a3a3a3;
+  --radius-card:.5rem;--radius-md:6px;--radius-lg:8px;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.05);--shadow-md:0 4px 12px rgba(0,0,0,.08);--shadow-lg:0 12px 32px rgba(0,0,0,.14);
+  --font-ui:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --header-h:48px;--ease-spring:cubic-bezier(.2,.9,.3,1.1);
+  --proj-app:#3f76ff;--proj-gw:#8b5cf6;--proj-dm:#f59e0b;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--font-ui);background:var(--bg);color:var(--ink);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,textarea,select{font:inherit;color:inherit}
+svg{flex-shrink:0}
+:focus-visible{outline:2px solid var(--brand-500);outline-offset:1px;border-radius:4px}
+[hidden]{display:none!important}
+.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+
+/* ═════════ 基础控件（基线沿用） ═════════ */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 14px;border-radius:var(--radius-md);font-weight:500;font-size:13px;transition:background .12s,border-color .12s,opacity .12s;white-space:nowrap}
+.btn-primary{background:var(--brand-500);color:#fff}
+.btn-primary:hover{background:var(--brand-600)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-ghost{background:var(--surface);border:1px solid var(--line-strong);color:var(--ink-2)}
+.btn-ghost:hover{background:var(--surface-2)}
+.btn-ghost:disabled{opacity:.5;cursor:not-allowed}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-danger:hover{background:#dc2626}
+.btn-sm{height:28px;padding:0 10px;font-size:12px}
+.icon-btn{width:30px;height:30px;border-radius:var(--radius-md);display:inline-flex;align-items:center;justify-content:center;color:var(--ink-3)}
+.icon-btn:hover{background:var(--surface-2);color:var(--ink)}
+.input{width:100%;height:36px;border:1px solid var(--line-strong);border-radius:var(--radius-md);padding:0 10px;background:var(--surface);transition:border-color .12s,box-shadow .12s}
+.input:focus{outline:none;border-color:var(--brand-500);box-shadow:0 0 0 3px var(--brand-50)}
+textarea.input{height:auto;padding:8px 10px;resize:vertical;line-height:1.6}
+.label{display:block;font-size:13px;font-weight:500;color:var(--ink-2);margin-bottom:6px}
+.hint{font-size:12px;color:var(--ink-3)}
+.badge-id{font-family:var(--font-mono);font-size:11px;padding:1px 6px;background:var(--surface-2);border-radius:4px;color:var(--ink-2);white-space:nowrap}
+.avatar{width:28px;height:28px;border-radius:50%;color:#fff;font-size:12px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.avatar-sm{width:20px;height:20px;font-size:10px}
+a{color:var(--brand-600);text-decoration:none}
+a:hover{text-decoration:underline}
+[data-tip]{position:relative}
+[data-tip]:hover::after,[data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#262626;color:#fff;font-size:12px;font-weight:400;padding:4px 9px;border-radius:6px;white-space:nowrap;z-index:300;pointer-events:none;text-decoration:none}
+
+/* ═════════ 弹层 / 下拉 / Toast / 菜单（基线沿用） ═════════ */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.32);backdrop-filter:blur(2px);z-index:90;display:flex;align-items:center;justify-content:center;padding:16px;animation:fade .15s ease}
+.modal{background:var(--surface);border-radius:12px;box-shadow:var(--shadow-lg);width:480px;max-width:100%;max-height:88vh;overflow:auto;padding:24px;animation:pop .18s var(--ease-spring)}
+.modal.w400{width:400px}.modal.w520{width:520px}.modal.w640{width:640px}
+.modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.modal-title{font-size:16px;font-weight:600}
+.modal-foot{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}
+.menu{position:fixed;z-index:200;min-width:180px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-lg);padding:5px;animation:pop .14s var(--ease-spring)}
+.menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;border-radius:6px;font-size:13px;color:var(--ink-2);text-align:left}
+.menu-item:hover{background:var(--surface-2)}
+.menu-item.danger{color:var(--danger)}
+.menu-sep{height:1px;background:var(--line);margin:5px 8px}
+.toast-wrap{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:400;display:flex;flex-direction:column;gap:8px;align-items:center}
+.toast{background:#262626;color:#fff;font-size:13px;padding:9px 16px;border-radius:8px;box-shadow:var(--shadow-md);animation:pop .18s var(--ease-spring)}
+.toast-ok{background:var(--ok)}
+.toast-err{background:var(--danger)}
+.toast-warn{background:var(--amber-ink)}
+
+/* ═════════ 应用壳（基线沿用） ═════════ */
+.app{height:100vh;display:flex;flex-direction:column}
+.topbar{height:var(--header-h);background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 16px;flex-shrink:0}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.shell{flex:1;display:flex;min-height:0}
+.psidebar{width:220px;border-right:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:2px;padding:12px;flex-shrink:0;overflow:auto}
+.p-id{display:flex;gap:10px;align-items:center;padding:6px 8px 12px}
+.p-id .nm{font-size:13.5px;font-weight:600}
+.side-item{display:flex;align-items:center;gap:9px;height:34px;padding:0 10px;border-radius:var(--radius-md);font-size:13.5px;color:var(--ink-2);text-align:left}
+.side-item:hover{background:var(--surface-2)}
+.side-item.active{background:var(--brand-50);color:var(--brand-600);font-weight:500}
+.side-label{font-size:11px;color:var(--ink-4);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 4px 8px}
+.pmain{flex:1;overflow:auto;min-width:0}
+.page{padding:22px 26px;max-width:1280px;margin:0 auto}
+.page-head{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.page-title{font-size:17px;font-weight:600}
+.page-sub{font-size:12.5px;color:var(--ink-3)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-card);box-shadow:var(--shadow-sm)}
+.seg{display:inline-flex;background:var(--surface-2);border-radius:8px;padding:3px;gap:2px}
+.seg-btn{height:28px;padding:0 12px;border-radius:6px;font-size:12.5px;color:var(--ink-2)}
+.seg-btn.active{background:var(--surface);color:var(--ink);font-weight:500;box-shadow:var(--shadow-sm)}
+
+/* ═════════ 表格（基线沿用） ═════════ */
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{font-size:12px;font-weight:500;color:var(--ink-3);text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+.tbl td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tbody tr:hover{background:var(--surface-2)}
+
+/* ═════════ Sprint-9 图表组件（O1~O8 定义） ═════════ */
+.tri-cards{display:grid;grid-template-columns:1.25fr 1fr 1fr;gap:14px;margin-bottom:16px}
+.tri-card{padding:14px 16px}
+.tri-card h4{font-size:12.5px;font-weight:500;color:var(--ink-2);margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.tri-card h4 .cnt{margin-left:auto;font-size:11px;color:var(--ink-3)}
+.prog-row{display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:7px}
+.prog-row .nm{width:76px;color:var(--ink-2);display:flex;align-items:center;gap:6px;white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.bar{flex:1;height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden}
+.bar>i{display:block;height:100%;border-radius:4px;background:var(--brand-500)}
+.bar>i.g{background:var(--state-completed)}.bar>i.v{background:var(--proj-gw)}.bar>i.a{background:var(--proj-dm)}
+.bar-lg{height:12px}
+.pct{width:44px;text-align:right;font-family:var(--font-mono);font-size:12px;color:var(--ink-2)}
+.res-row{display:flex;align-items:baseline;gap:8px;font-size:12.5px;margin-bottom:7px}
+.res-row .who{width:52px;font-weight:500}
+.res-row .pj{font-size:11.5px;color:var(--ink-3)}
+.res-row .hrs{margin-left:auto;font-family:var(--font-mono);color:var(--ink-2)}
+.risk-item{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;padding:6px 8px;border-radius:6px}
+.risk-item:hover{background:var(--surface-2)}
+.risk-item .ic{color:var(--warn);flex-shrink:0;margin-top:1px}
+.risk-item .ic.red{color:var(--danger)}
+.footnote{font-size:11.5px;color:var(--ink-4);margin-top:8px}
+
+/* 里程碑（V-MS） */
+.ms-row{padding:14px 16px;border-bottom:1px solid var(--line)}
+.ms-row:last-child{border-bottom:none}
+.ms-head{display:flex;align-items:center;gap:10px}
+.ms-state{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.ms-date{font-family:var(--font-mono);font-size:12.5px;color:var(--ink-2);width:48px}
+.ms-name{font-weight:600;font-size:13.5px}
+.ms-meta{font-size:12px;color:var(--ink-3)}
+.ms-items{margin:10px 0 0 22px;display:flex;flex-direction:column;gap:6px}
+.ms-item{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2)}
+.st-pill{font-size:11px;padding:1px 8px;border-radius:99px;white-space:nowrap}
+.st-doing{background:var(--info-bg);color:var(--info-ink)}
+.st-late{background:var(--danger-bg);color:var(--danger)}
+.st-done{background:var(--ok-bg);color:var(--ok)}
+.st-plan{background:var(--surface-2);color:var(--ink-3)}
+
+/* 依赖图（V-GRAPH · O2） */
+.graph-wrap{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-card);overflow:auto}
+.graph-col-head{display:grid;grid-template-columns:250px 250px 250px;gap:40px;padding:12px 16px 4px}
+.graph-col{display:flex;flex-direction:column;gap:12px;padding:10px 16px 20px}
+.gnode{border:1px solid var(--line-strong);border-radius:8px;background:var(--surface);padding:8px 10px;box-shadow:var(--shadow-sm);position:relative}
+.gnode .id{font-family:var(--font-mono);font-size:11px}
+.gnode .ttl{font-size:12.5px;margin-top:1px}
+.gnode .proj-tag{position:absolute;top:-9px;right:8px;font-size:10.5px;padding:0 7px;border-radius:99px;color:#fff}
+.ext-badge{font-size:10.5px;background:var(--amber-bg);border:1px solid var(--amber-line);color:var(--amber-ink);padding:0 6px;border-radius:4px}
+.graph-legend{display:flex;gap:16px;font-size:12px;color:var(--ink-3);padding:10px 16px;border-top:1px solid var(--line);flex-wrap:wrap;align-items:center}
+
+/* 迭代行（V-CYCLE） */
+.cy-row{display:flex;align-items:center;gap:14px;padding:13px 16px;border-bottom:1px solid var(--line)}
+.cy-row:last-child{border-bottom:none}
+.cy-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.cy-name{font-weight:600;width:96px}
+.cy-range{font-family:var(--font-mono);font-size:12px;color:var(--ink-3);width:150px}
+.cy-acts{margin-left:auto;display:flex;gap:8px}
+.chart-card{padding:18px 20px;margin-top:16px}
+.chart-title{display:flex;align-items:center;gap:10px;font-size:13.5px;font-weight:600;margin-bottom:4px}
+.chart-title .rt{margin-left:auto;font-weight:400}
+.chart-sub{font-size:11.5px;color:var(--ink-3);margin-bottom:14px}
+
+/* 燃尽/速率/CFD SVG 通用 */
+.axis-lbl{font-size:10px;fill:var(--ink-4);font-family:var(--font-mono)}
+.scope-mark{cursor:pointer}
+.pulse{animation:pulse 1.6s ease infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.vel-legend{display:flex;gap:18px;font-size:12px;color:var(--ink-3);align-items:center;margin-top:8px}
+.sw{width:14px;height:9px;border-radius:2px;display:inline-block;margin-right:5px;vertical-align:-1px}
+.concl-card{margin-top:14px;padding:12px 14px;background:var(--info-bg);border:1px solid var(--info-line);border-radius:8px;font-size:13px;color:var(--info-ink)}
+.slider-row{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--ink-3);margin-top:10px}
+input[type=range]{accent-color:var(--brand-500)}
+
+/* 健康度（V-HEALTH · O5） */
+.score-hero{padding:20px 24px;display:flex;align-items:center;gap:28px;margin-bottom:14px}
+.score-big{font-size:44px;font-weight:700;font-family:var(--font-mono);line-height:1}
+.score-band{font-size:13px;font-weight:600}
+.dim-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.dim-card{padding:14px 16px}
+.dim-card .sc{font-size:26px;font-weight:700;font-family:var(--font-mono)}
+.dim-card .nm{font-size:13px;font-weight:600;margin-bottom:2px}
+.dim-card .desc{font-size:12px;color:var(--ink-3);line-height:1.5;min-height:36px}
+.dim-card .thr{font-size:11.5px;color:var(--ink-4)}
+.dim-card .drill{margin-top:8px}
+.trend-row{display:flex;align-items:center;gap:12px;font-size:12.5px;color:var(--ink-3);margin-top:14px}
+.trend-spark{display:flex;align-items:flex-end;gap:3px}
+.trend-spark i{width:9px;background:var(--brand-100);border-radius:2px 2px 0 0}
+.trend-spark i:last-child{background:var(--brand-500)}
+.a11{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* 下钻抽屉（D-DRILL） */
+.drawer{position:fixed;top:0;right:0;bottom:0;width:440px;max-width:92vw;background:var(--surface);border-left:1px solid var(--line);box-shadow:-8px 0 28px rgba(0,0,0,.10);z-index:95;display:flex;flex-direction:column;animation:slideIn .2s var(--ease-spring)}
+.drawer-head{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--line)}
+.drawer-body{flex:1;overflow:auto;padding:0 0 16px}
+
+/* 负载热力（V-LOAD · O6） */
+.heat-tbl{border-collapse:separate;border-spacing:4px;width:100%}
+.heat-tbl th{font-size:11.5px;color:var(--ink-3);font-weight:500;padding:2px 0;text-align:center}
+.heat-tbl th:first-child{text-align:left;padding-left:16px}
+.heat-tbl td{padding:0}
+.heat-cell{width:64px;height:40px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:12px;cursor:default;transition:transform .1s}
+.heat-cell:hover{transform:scale(1.08);box-shadow:var(--shadow-md)}
+.hc-1{background:#dcfce7;color:#166534}
+.hc-2{background:#dbe7fe;color:#1d4ed8}
+.hc-3{background:#fef3c7;color:#b45309}
+.hc-4{background:#fee2e2;color:#b91c1c}
+.heat-legend{display:flex;gap:14px;align-items:center;font-size:12px;color:var(--ink-3);padding:10px 16px}
+.heat-warn{margin:8px 16px 14px;padding:10px 12px;background:var(--amber-bg);border:1px solid var(--amber-line);border-radius:8px;font-size:12.5px;color:var(--amber-ink)}
+
+/* Wiki（V-WIKI · O7） */
+.wiki-shell{display:flex;height:calc(100vh - var(--header-h) - 60px);min-height:460px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-card);overflow:hidden}
+.wiki-tree{width:240px;border-right:1px solid var(--line);padding:12px 10px;flex-shrink:0;overflow:auto}
+.wt-item{display:flex;align-items:center;gap:7px;height:32px;padding:0 8px;border-radius:6px;font-size:13px;color:var(--ink-2);cursor:pointer}
+.wt-item:hover{background:var(--surface-2)}
+.wt-item.cur{background:var(--brand-50);color:var(--brand-600);font-weight:500}
+.wt-item .caret{color:var(--ink-4);font-size:10px;width:12px}
+.wiki-main{flex:1;display:flex;flex-direction:column;min-width:0}
+.wiki-doc-head{padding:14px 24px 10px;border-bottom:1px solid var(--line)}
+.wiki-doc-title{font-size:17px;font-weight:600;display:flex;align-items:center;gap:10px}
+.wiki-meta{font-size:12px;color:var(--ink-3);margin-top:2px}
+.wiki-body{flex:1;overflow:auto;padding:18px 24px}
+.wiki-body h3{font-size:14.5px;margin:14px 0 8px}
+.wiki-body p{font-size:13.5px;color:var(--ink-2);margin-bottom:10px;max-width:70ch}
+.wiki-doc-foot{display:flex;gap:8px;align-items:center;padding:10px 24px;border-top:1px solid var(--line)}
+.p4-note{border:1px dashed var(--line-strong);background:var(--surface-2);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--ink-3);margin:12px 0}
+.ver-pill{display:inline-flex;align-items:center;gap:4px;font-family:var(--font-mono);font-size:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:99px;padding:2px 10px;color:var(--ink-2);cursor:pointer}
+.ver-pill:hover{border-color:var(--brand-500);color:var(--brand-600)}
+.save-state{font-size:11.5px;color:var(--ok);margin-left:auto;display:flex;align-items:center;gap:5px}
+
+/* 版本历史（V-WIKIH） */
+.ver-row{display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line);font-size:13px}
+.ver-row:last-child{border-bottom:none}
+.ver-n{font-family:var(--font-mono);font-weight:600;width:36px}
+.diff-card{margin:14px 16px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.diff-line{padding:6px 14px;font-size:12.5px;font-family:var(--font-mono);line-height:1.7}
+.diff-add{background:var(--ok-bg);color:#065f46}
+.diff-del{background:var(--danger-bg);color:#991b1b;text-decoration:line-through}
+.diff-ctx{color:var(--ink-2);background:var(--surface)}
+
+/* 检索（V-SEARCH） */
+.search-bar{display:flex;gap:10px;align-items:center;margin-bottom:16px}
+.result-card{padding:13px 16px;border-bottom:1px solid var(--line)}
+.result-card:last-child{border-bottom:none}
+.result-path{font-size:12px;color:var(--ink-3);margin-top:3px}
+.result-snip{font-size:13px;color:var(--ink-2);margin-top:5px}
+.result-snip em{font-style:normal;background:#fde68a;border-radius:3px;padding:0 2px}
+
+/* 甘特（V-GANTT · O8） */
+.gantt-wrap{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-card);overflow:hidden}
+.gantt-head{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.chk{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--ink-2);cursor:pointer}
+.chk input{accent-color:var(--brand-500);width:15px;height:15px}
+.gantt-grid{display:grid;grid-template-columns:210px 1fr;font-size:12.5px}
+.g-name{padding:0 16px;display:flex;align-items:center;gap:8px;height:46px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)}
+.g-track{position:relative;height:46px;border-bottom:1px solid var(--line);background:repeating-linear-gradient(90deg,transparent 0,transparent calc(12.5% - 1px),var(--surface-2) calc(12.5% - 1px),var(--surface-2) 12.5%)}
+.g-bar{position:absolute;top:13px;height:20px;border-radius:5px;background:var(--surface-3);border:1px solid var(--line-strong)}
+.g-bar.crit{border:2px solid var(--danger);background:#fee2e2}
+.g-float{position:absolute;top:19px;height:8px;border-radius:4px;background:repeating-linear-gradient(45deg,#e5e7eb 0 5px,#f3f4f6 5px 10px);border:1px solid var(--line)}
+.g-flag{position:absolute;top:6px;font-size:11px}
+.gantt-legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--ink-3);padding:10px 16px;border-top:1px solid var(--line);align-items:center}
+.cpm-card{width:340px;padding:16px 18px}
+.cpm-row{display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink-2);margin-bottom:8px}
+.cpm-row b{font-family:var(--font-mono);font-weight:600}
+.switch-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);font-size:13px}
+.switch{width:36px;height:20px;border-radius:99px;background:var(--surface-3);position:relative;transition:background .15s;flex-shrink:0;cursor:pointer}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:var(--shadow-sm);transition:left .15s}
+.switch.on{background:var(--ok)}
+.switch.on::after{left:18px}
+
+/* ═════════ 演示 DOCK（基线沿用） ═════════ */
+.dock{position:fixed;right:18px;bottom:18px;width:238px;background:var(--surface);border:1px solid var(--line-strong);border-radius:12px;box-shadow:var(--shadow-lg);z-index:80;overflow:hidden}
+.dock-head{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--surface-2);font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer;user-select:none}
+.dock-body{max-height:420px;overflow:auto;padding:8px;display:none}
+.dock.open .dock-body{display:block}
+.dock-sec{font-size:11px;color:var(--ink-4);margin:8px 6px 4px;text-transform:uppercase;letter-spacing:.05em}
+.dock-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border-radius:7px;font-size:12.5px;color:var(--ink-2);text-align:left}
+.dock-item:hover{background:var(--brand-50);color:var(--brand-600)}
+.dock-play{display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border-radius:7px;font-size:12.5px;color:var(--ink);text-align:left;background:var(--surface-2);margin-bottom:4px}
+.dock-play:hover{background:var(--brand-50);color:var(--brand-600)}
+.dock-play .pf{font-size:10px;color:var(--ink-4)}
+@keyframes fade{from{opacity:0}}
+@keyframes pop{from{opacity:0;transform:scale(.94)}}
+@keyframes slideIn{from{transform:translateX(40px);opacity:0}}
+</style>
+</head>
+<body>
+<div class="toast-wrap" id="toasts"></div>
+
+<div class="app">
+  <!-- ═══ 顶栏（基线沿用） ═══ -->
+  <header class="topbar">
+    <span style="font-weight:700;font-size:14.5px">🐰 RabbitProjects</span>
+    <span style="font-size:12px;color:var(--ink-3)">电商重构工作空间 ▾</span>
+    <div class="topbar-right">
+      <button class="btn btn-ghost btn-sm" onclick="go('#/search/wiki')">🔍 知识检索</button>
+      <span class="avatar" style="background:var(--proj-app)">张</span>
+    </div>
+  </header>
+
+  <div class="shell">
+    <!-- ═══ 侧栏 ═══ -->
+    <nav class="psidebar">
+      <div class="p-id"><span class="avatar" style="background:var(--proj-gw)">R</span><div><div class="nm">电商重构</div></div></div>
+      <div class="side-label">空间级</div>
+      <button class="side-item" data-nav="/portfolios">◈ 项目集</button>
+      <div class="side-label">项目 · 规划</div>
+      <button class="side-item" data-nav="/p/rbt/cycles">迭代</button>
+      <button class="side-item" data-nav="/p/rbt/gantt">甘特图</button>
+      <div class="side-label">项目 · 报表</div>
+      <button class="side-item" data-nav="/p/rbt/velocity">迭代速率</button>
+      <button class="side-item" data-nav="/p/rbt/cfd">累积流</button>
+      <button class="side-item" data-nav="/p/rbt/health">项目健康度</button>
+      <button class="side-item" data-nav="/p/rbt/load">团队负载</button>
+      <div class="side-label">项目 · 知识</div>
+      <button class="side-item" data-nav="/p/rbt/wiki">Wiki</button>
+    </nav>
+
+    <main class="pmain">
+
+    <!-- ═════════════ V-PORT 项目集汇总面板（PROJ-004 §3.1 · O1） ═════════════ -->
+    <section class="page" id="v-port">
+      <div class="page-head">
+        <div><div class="page-title">◈ 电商平台 2.0 · 项目集</div><div class="page-sub">3 项目 · 2 里程碑 · 组合树深 2/3</div></div>
+        <div style="margin-left:auto;display:flex;gap:8px">
+          <button class="btn btn-ghost btn-sm" onclick="go('#/portfolios/ms')">里程碑</button>
+          <button class="btn btn-ghost btn-sm" onclick="go('#/portfolios/graph')">依赖图</button>
+          <button class="btn btn-ghost btn-sm">成员</button>
+          <button class="btn btn-ghost btn-sm">设置</button>
+        </div>
+      </div>
+      <div class="tri-cards">
+        <div class="card tri-card">
+          <h4>整体进度 <span class="cnt">65%</span></h4>
+          <div class="prog-row"><span class="pct" style="font-weight:600">65%</span><div class="bar bar-lg" style="flex:1"><i style="width:65%"></i></div></div>
+          <div class="prog-row"><span class="nm"><i class="dot" style="background:var(--proj-app)"></i>App 重构</span><div class="bar"><i style="width:71%"></i></div><span class="pct">71%</span></div>
+          <div class="prog-row"><span class="nm"><i class="dot" style="background:var(--proj-gw)"></i>中台网关</span><div class="bar"><i class="v" style="width:48%"></i></div><span class="pct">48%</span></div>
+          <div class="prog-row"><span class="nm"><i class="dot" style="background:var(--proj-dm)"></i>数据迁移</span><div class="bar"><i class="a" style="width:80%"></i></div><span class="pct">80%</span></div>
+          <div class="footnote">权重 = 未取消任务数（BR-13）：65% = (71%×128 + 48%×86 + 80%×45) / 259</div>
+        </div>
+        <div class="card tri-card">
+          <h4>资源 <span class="cnt">近 4 周</span></h4>
+          <div class="res-row"><span class="who">李骁</span><span class="pj">App 30h · 网关 12h</span><span class="hrs">42h</span></div>
+          <div class="res-row"><span class="who">王思远</span><span class="pj">网关 26h</span><span class="hrs">26h</span></div>
+          <div class="res-row"><span class="who">陈默</span><span class="pj">迁移 22h</span><span class="hrs">22h</span></div>
+          <div class="footnote">人×项目工时矩阵（WorkLogSummary 快照）</div>
+        </div>
+        <div class="card tri-card">
+          <h4>风险 <span class="cnt" style="color:var(--danger)">3</span></h4>
+          <div class="risk-item"><span class="ic red">⚠</span><span>GW-41 逾期 3 天（关键路径）</span></div>
+          <div class="risk-item"><span class="ic">⚠</span><span>里程碑「全量联调」完成度 55%，剩 7 天</span></div>
+          <div class="risk-item"><span class="ic">⚠</span><span>APP-102 被 2 个外部依赖阻塞</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div style="display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)">
+          <b style="font-size:13.5px">项目列表</b>
+          <span class="hint" style="margin-left:10px">按操作者可见项目聚合（BR-14）</span>
+          <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="openModal('m-mount')">+ 挂载项目</button>
+        </div>
+        <table class="tbl">
+          <thead><tr><th>项目</th><th>状态</th><th>进度</th><th>任务</th><th>逾期</th><th>负责人</th><th>最近动态</th></tr></thead>
+          <tbody>
+            <tr><td><b style="color:var(--proj-app)">●</b> App 重构</td><td>● 活跃</td><td><div class="prog-row" style="margin:0"><div class="bar" style="width:90px"><i style="width:71%"></i></div><span class="pct">71%</span></div></td><td class="mono">128</td><td class="mono">3</td><td>张妍</td><td class="hint">2 分钟前 · 迭代规划</td></tr>
+            <tr><td><b style="color:var(--proj-gw)">●</b> 中台网关</td><td>● 活跃</td><td><div class="prog-row" style="margin:0"><div class="bar" style="width:90px"><i class="v" style="width:48%"></i></div><span class="pct">48%</span></div></td><td class="mono">86</td><td class="mono" style="color:var(--danger)">7</td><td>李骁</td><td class="hint">1 小时前 · 网关验收</td></tr>
+            <tr><td><b style="color:var(--proj-dm)">●</b> 数据迁移</td><td>● 活跃</td><td><div class="prog-row" style="margin:0"><div class="bar" style="width:90px"><i class="a" style="width:80%"></i></div><span class="pct">80%</span></div></td><td class="mono">45</td><td class="mono">0</td><td>陈默</td><td class="hint">昨天 · 双写验证</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ═════════════ V-MS 里程碑视图（PROJ-004 §3.2） ═════════════ -->
+    <section class="page" id="v-ms" hidden>
+      <div class="page-head">
+        <div><div class="page-title">里程碑 · 电商平台 2.0</div><div class="page-sub">贡献项跨项目归集 · 完成度 = 完成贡献项/全部（软口径）</div></div>
+        <button class="btn btn-primary" style="margin-left:auto" onclick="openModal('m-ms')">+ 新建里程碑</button>
+      </div>
+      <div class="card">
+        <div class="ms-row">
+          <div class="ms-head">
+            <span class="ms-state" style="background:var(--state-started)"></span>
+            <span class="ms-date">9-30</span><span class="ms-name">全量联调</span>
+            <div class="bar" style="width:130px"><i style="width:55%"></i></div><span class="ms-meta">55%</span>
+            <span class="ms-meta" style="color:var(--amber-ink)">剩 7 天</span>
+            <span class="ms-meta">贡献项 11（完成 6）</span>
+          </div>
+          <div class="ms-items">
+            <div class="ms-item"><span class="badge-id">APP-88</span> 联调用例通过 <span class="st-pill st-doing">进行中</span><span class="hint">App 重构 · 王思远</span></div>
+            <div class="ms-item"><span class="badge-id">GW-41</span> 网关验收 <span class="st-pill st-late">逾期 3 天</span><span class="hint">中台网关 · 李骁</span></div>
+            <div class="ms-item"><span class="badge-id">DM-17</span> 双写校验报告 <span class="st-pill st-done">已完成</span><span class="hint">数据迁移 · 陈默</span></div>
+          </div>
+        </div>
+        <div class="ms-row">
+          <div class="ms-head">
+            <span class="ms-state" style="background:var(--state-unstarted)"></span>
+            <span class="ms-date">11-15</span><span class="ms-name">灰度上线</span>
+            <div class="bar" style="width:130px"><i style="width:0"></i></div><span class="ms-meta">0%</span>
+            <span class="ms-meta">剩 53 天</span><span class="ms-meta">贡献项 8（完成 0）</span>
+          </div>
+        </div>
+        <div class="ms-row">
+          <div class="ms-head">
+            <span class="ms-state" style="background:var(--state-completed)"></span>
+            <span class="ms-date">8-31</span><span class="ms-name">接口冻结</span>
+            <div class="bar" style="width:130px"><i class="g" style="width:100%"></i></div><span class="ms-meta">100%</span>
+            <span class="ms-meta" style="color:var(--ok)">已完成 09-01</span><span class="ms-meta">贡献项 9（完成 9）</span>
+          </div>
+        </div>
+      </div>
+      <div class="heat-warn" style="margin:14px 0 0">⚠ 里程碑「全量联调」按当前速率预计延期——完成度 55% / 剩 7 天，预警已通知项目经理（每日 beat 扫描，§4.5）</div>
+    </section>
+
+    <!-- ═════════════ V-GRAPH 依赖关系图（PROJ-004 §3.3 · O2） ═════════════ -->
+    <section class="page" id="v-graph" hidden>
+      <div class="page-head">
+        <div><div class="page-title">依赖关系图 · 电商平台 2.0</div><div class="page-sub">仅跨项目边 + 关键同项目边 · 子图 38 节点 / 54 边（门禁 ≤100/500）</div></div>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <select class="input" style="width:170px;height:32px"><option>全部项目（3）</option><option>App 重构</option><option>中台网关</option><option>数据迁移</option></select>
+          <button class="btn btn-ghost btn-sm">仅看跨项目边</button>
+        </div>
+      </div>
+      <div class="graph-wrap">
+        <div class="graph-col-head">
+          <div style="font-size:12.5px;font-weight:600"><i class="dot" style="background:var(--proj-app);display:inline-block"></i> App 重构</div>
+          <div style="font-size:12.5px;font-weight:600"><i class="dot" style="background:var(--proj-gw);display:inline-block"></i> 中台网关</div>
+          <div style="font-size:12.5px;font-weight:600"><i class="dot" style="background:var(--proj-dm);display:inline-block"></i> 数据迁移</div>
+        </div>
+        <div class="graph-col" style="grid-template-columns:250px 250px 250px;display:grid;gap:40px">
+          <div style="display:flex;flex-direction:column;gap:18px">
+            <div class="gnode"><span class="proj-tag" style="background:var(--proj-app)">App</span><div class="id">APP-102</div><div class="ttl">订单中心重构</div></div>
+            <div class="gnode" style="margin-top:26px"><span class="proj-tag" style="background:var(--proj-app)">App</span><div class="id">APP-88</div><div class="ttl">联调用例通过</div></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:18px">
+            <div class="gnode"><span class="proj-tag" style="background:var(--proj-gw)">网关</span><div class="id">GW-41</div><div class="ttl">网关验收</div></div>
+            <div class="gnode"><span class="proj-tag" style="background:var(--proj-gw)">网关</span><div class="id">GW-44</div><div class="ttl">限流配置</div></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:18px">
+            <div class="gnode"><span class="proj-tag" style="background:var(--proj-dm)">迁移</span><div class="id">DM-17</div><div class="ttl">双写校验报告</div></div>
+            <div class="gnode" style="margin-top:26px"><span class="proj-tag" style="background:var(--proj-dm)">迁移</span><div class="id">DM-22</div><div class="ttl">存量数据切流</div></div>
+          </div>
+        </div>
+        <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none" viewBox="0 0 790 300" preserveAspectRatio="none">
+          <defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8c8c8c"/></marker>
+          <marker id="arrx" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b45309"/></marker></defs>
+          <!-- 跨项目边：虚线 amber（外部） -->
+          <path d="M258,58 C330,58 330,120 392,120" fill="none" stroke="#b45309" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrx)"/>
+          <path d="M258,148 C340,148 330,66 392,66" fill="none" stroke="#b45309" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrx)"/>
+          <path d="M522,120 C600,120 600,60 662,60" fill="none" stroke="#b45309" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrx)"/>
+          <!-- 同项目关键边：实线灰 -->
+          <path d="M392,148 C392,190 392,190 392,196" fill="none" stroke="#8c8c8c" stroke-width="1.4" marker-end="url(#arr)"/>
+        </svg>
+        <div class="graph-legend">
+          <span><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="#b45309" stroke-width="1.6" stroke-dasharray="6 4"/></svg> 跨项目边（虚线 + <span class="ext-badge">外部</span>）</span>
+          <span><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="#8c8c8c" stroke-width="1.4"/></svg> 同项目边</span>
+          <span class="hint">点击节点跳转任务详情；跨项目边不拦截完成（BR-07 软策略）</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═════════════ V-CYCLE 迭代管理页 + 燃尽图（RPT-003 §3.1 · O3） ═════════════ -->
+    <section class="page" id="v-cycle" hidden>
+      <div class="page-head">
+        <div><div class="page-title">迭代 · 电商重构</div><div class="page-sub">度量：预估工时 ▾（项目级配置 BR-07，三图统一）</div></div>
+        <button class="btn btn-primary" style="margin-left:auto">+ 新建迭代</button>
+      </div>
+      <div class="card">
+        <div class="cy-row">
+          <span class="cy-dot" style="background:var(--state-started)"></span>
+          <span class="cy-name">Sprint 24</span><span class="cy-range">08-24 ~ 09-06</span>
+          <div class="bar" style="width:150px"><i style="width:68%"></i></div><span class="pct">68%</span>
+          <span class="hint">任务 32 · 剩余 24.5h</span>
+          <div class="cy-acts"><button class="btn btn-ghost btn-sm" onclick="toggle('burn-card')">燃尽图</button><button class="btn btn-ghost btn-sm">看板</button><button class="btn btn-primary btn-sm" onclick="openModal('m-close')">结束迭代 ▸</button></div>
+        </div>
+        <div class="cy-row">
+          <span class="cy-dot" style="background:var(--state-unstarted)"></span>
+          <span class="cy-name">Sprint 25</span><span class="cy-range">09-07 ~ 09-20</span>
+          <span class="st-pill st-plan">规划中</span><span class="hint">任务 12（规划中可随时调整）</span>
+          <div class="cy-acts"><button class="btn btn-ghost btn-sm">开始迭代</button></div>
+        </div>
+        <div class="cy-row">
+          <span class="cy-dot" style="background:var(--state-completed)"></span>
+          <span class="cy-name">Sprint 23</span><span class="cy-range">08-10 ~ 08-23</span>
+          <span class="st-pill st-done">已完成</span><span class="hint">完成 96.0h / 计划 104h</span>
+          <div class="cy-acts"><a href="#/p/rbt/velocity" style="font-size:12.5px">速率 →</a></div>
+        </div>
+      </div>
+      <div class="card chart-card" id="burn-card">
+        <div class="chart-title">Sprint 24 燃尽图 <span class="rt"><select class="input" style="height:30px;width:130px"><option>预估工时</option><option>故事点</option><option>任务数</option></select></span></div>
+        <div class="chart-sub">理想线 vs 实际 · scope 事件悬停可见（BR-09）</div>
+        <svg viewBox="0 0 640 240" style="width:100%;max-width:720px">
+          <!-- 网格与轴 -->
+          <g><line x1="44" y1="10" x2="44" y2="196" stroke="#e5e5e5"/><line x1="44" y1="196" x2="620" y2="196" stroke="#d4d4d4"/>
+          <text class="axis-lbl" x="16" y="18">120h</text><text class="axis-lbl" x="16" y="72">90h</text><text class="axis-lbl" x="16" y="126">60h</text><text class="axis-lbl" x="16" y="180">30h</text><text class="axis-lbl" x="36" y="214">0h</text>
+          <text class="axis-lbl" x="44" y="214">8/24</text><text class="axis-lbl" x="112" y="214">26</text><text class="axis-lbl" x="180" y="214">28</text><text class="axis-lbl" x="248" y="214">30</text><text class="axis-lbl" x="316" y="214">9/1</text><text class="axis-lbl" x="384" y="214">3</text><text class="axis-lbl" x="452" y="214">5</text><text class="axis-lbl" x="520" y="214">6</text>
+          <line x1="44" y1="10" x2="620" y2="196" stroke="#a3a3a3" stroke-dasharray="4 4" stroke-width="1.2"/>
+          <!-- 实际线 -->
+          <path d="M44,14 L112,44 L180,50 L248,92 L316,110 L384,116 L452,142 L520,150 L560,158" fill="none" stroke="#3f76ff" stroke-width="2.4"/>
+          <circle cx="560" cy="158" r="5" fill="#3f76ff" class="pulse"/>
+          <!-- scope 事件角标（O3） -->
+          <g class="scope-mark" data-tip="09-01 scope +3 任务（+8h）"><path d="M316,110 l-6,-11 h12 z" fill="#10b981"/></g>
+          <g class="scope-mark" data-tip="09-03 移出 1 任务（-4h）"><path d="M384,116 l-6,11 h12 z" fill="#ef4444"/></g>
+          <circle class="scope-mark" cx="112" cy="44" r="3.5" fill="#fff" stroke="#3f76ff" stroke-width="1.6" data-tip="08-26 净完成 +12h"/>
+          <circle class="scope-mark" cx="248" cy="92" r="3.5" fill="#fff" stroke="#3f76ff" stroke-width="1.6" data-tip="08-30 净完成 +9h"/>
+          </g>
+        </svg>
+        <div class="vel-legend">
+          <span><span class="sw" style="background:#a3a3a3;height:2px;border-radius:0"></span>理想线</span>
+          <span><span class="sw" style="background:#3f76ff;height:2px;border-radius:0"></span>实际剩余</span>
+          <span><span style="color:#10b981">▲</span> scope 增加</span><span><span style="color:#ef4444">▼</span> scope 移出</span>
+          <span class="hint">悬停日期点：剩余量 + 当日净完成（重开日为负）+ scope 事件清单</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═════════════ V-VELO 迭代速率页（RPT-003 §3.2） ═════════════ -->
+    <section class="page" id="v-velo" hidden>
+      <div class="page-head">
+        <div><div class="page-title">迭代速率 · 近 5 个已完成迭代</div><div class="page-sub">limit=6 含当前进行中占位（不计柱） · 度量：预估工时</div></div>
+      </div>
+      <div class="card chart-card">
+        <svg viewBox="0 0 640 220" style="width:100%;max-width:720px">
+          <text class="axis-lbl" x="14" y="24">110h</text><text class="axis-lbl" x="14" y="64">90h</text><text class="axis-lbl" x="14" y="104">70h</text><text class="axis-lbl" x="14" y="144">50h</text>
+          <line x1="44" y1="150" x2="620" y2="150" stroke="#d4d4d4"/>
+          <!-- 移动均值虚线 82h -->
+          <line x1="120" y1="66" x2="500" y2="66" stroke="#f59e0b" stroke-dasharray="5 5" stroke-width="1.8"/>
+          <text class="axis-lbl" x="505" y="62" fill="#b45309">均值 82h</text>
+          <!-- 柱组：完成(实) + 计划(浅) -->
+          <g>
+            <rect x="120" y="38" width="30" height="112" rx="3" fill="#3f76ff"/><rect x="152" y="30" width="12" height="120" rx="3" fill="#dbe7fe"/>
+            <rect x="220" y="70" width="30" height="80" rx="3" fill="#3f76ff"/><rect x="252" y="58" width="12" height="92" rx="3" fill="#dbe7fe"/>
+            <rect x="320" y="78" width="30" height="72" rx="3" fill="#3f76ff"/><rect x="352" y="66" width="12" height="84" rx="3" fill="#dbe7fe"/>
+            <rect x="420" y="62" width="30" height="88" rx="3" fill="#3f76ff"/><rect x="452" y="50" width="12" height="100" rx="3" fill="#dbe7fe"/>
+            <rect x="520" y="46" width="30" height="104" rx="3" fill="#3f76ff"/><rect x="552" y="38" width="12" height="112" rx="3" fill="#dbe7fe"/>
+          </g>
+          <g>
+            <text class="axis-lbl" x="122" y="166">S19</text><text class="axis-lbl" x="222" y="166">S20</text><text class="axis-lbl" x="322" y="166">S21</text><text class="axis-lbl" x="422" y="166">S22</text><text class="axis-lbl" x="522" y="166">S23</text>
+          </g>
+          <text class="axis-lbl" x="44" y="190" fill="#8c8c8c">S24（进行中，不计柱）</text>
+        </svg>
+        <div class="vel-legend">
+          <span><span class="sw" style="background:#3f76ff"></span>完成工时</span>
+          <span><span class="sw" style="background:#dbe7fe"></span>计划工时</span>
+          <span><span class="sw" style="background:#f59e0b;height:2px;border-radius:0"></span>移动均值(5)</span>
+        </div>
+        <div class="concl-card">结论卡：团队稳定产能 ≈ 82h/双周 · 建议 Sprint 25 计划 ≤ 82h</div>
+      </div>
+    </section>
+
+    <!-- ═════════════ V-CFD 累积流图（RPT-003 §3.3 · O4） ═════════════ -->
+    <section class="page" id="v-cfd" hidden>
+      <div class="page-head">
+        <div><div class="page-title">累积流 · 电商重构项目</div><div class="page-sub">每日五组快照（00:10 落盘）· 已结束迭代只读快照直查，历史修改零影响</div></div>
+        <div style="margin-left:auto" class="seg"><button class="seg-btn">近 14 天</button><button class="seg-btn active">近 30 天</button><button class="seg-btn">近 90 天</button></div>
+      </div>
+      <div class="card chart-card">
+        <svg viewBox="0 0 640 230" style="width:100%;max-width:720px">
+          <text class="axis-lbl" x="14" y="20">180</text><text class="axis-lbl" x="14" y="56">150</text><text class="axis-lbl" x="14" y="92">120</text><text class="axis-lbl" x="14" y="128">90</text><text class="axis-lbl" x="14" y="164">60</text><text class="axis-lbl" x="14" y="198">30</text><text class="axis-lbl" x="36" y="222">0</text>
+          <line x1="44" y1="204" x2="620" y2="204" stroke="#d4d4d4"/>
+          <!-- 五组堆叠（底→顶 O4 色序）：backlog/unstarted/started/completed/cancelled -->
+          <path d="M44,204 L44,168 C140,164 220,158 300,150 C400,142 520,136 620,132 L620,204 Z" fill="#9ca3af" opacity=".55"/>
+          <path d="M44,168 C140,162 220,152 300,138 C400,126 520,114 620,104 L620,132 C520,136 400,142 300,150 C220,158 140,164 44,168 Z" fill="#c7d2fe" opacity=".7"/>
+          <path d="M44,168 C140,158 220,140 300,116 C400,92 520,72 620,52 L620,104 C520,114 400,126 300,138 C220,152 140,162 44,168 Z" fill="#3b82f6" opacity=".45"/>
+          <path d="M44,168 C140,148 220,118 300,84 C400,44 520,22 620,8 L620,52 C520,72 400,92 300,116 C220,140 140,158 44,168 Z" fill="#10b981" opacity=".4"/>
+          <path d="M44,204 L44,190 C160,186 300,180 440,172 C520,167 580,164 620,160 L620,204 Z" fill="#4b5563" opacity=".8"/>
+          <text class="axis-lbl" x="48" y="182">backlog</text><text class="axis-lbl" x="300" y="146">unstarted</text><text class="axis-lbl" x="470" y="96">started</text><text class="axis-lbl" x="500" y="40" fill="#065f46">completed 持续增厚 = 交付健康</text><text class="axis-lbl" x="540" y="196" fill="#f3f4f6">cancelled</text>
+          <text class="axis-lbl" x="44" y="222">8/05</text><text class="axis-lbl" x="230" y="222">8/15</text><text class="axis-lbl" x="416" y="222">8/25</text><text class="axis-lbl" x="592" y="222">9/04</text>
+        </svg>
+        <div class="slider-row"><span>8/05</span><input type="range" min="0" max="100" value="0" style="flex:1"><input type="range" min="0" max="100" value="100" style="flex:1;margin-left:-8px"><span>9/04</span><span class="hint" style="margin-left:8px">双端滑杆缩放，最小粒度 7 天</span></div>
+        <div class="heat-warn" style="margin:12px 0 0">⚠ 8/20 起 started 段持续增厚（+15）——进行中积压，建议控制 WIP</div>
+      </div>
+    </section>
+
+    <!-- ═════════════ V-HEALTH 项目健康度评分卡（RPT-004 §3.1 · O5） ═════════════ -->
+    <section class="page" id="v-health" hidden>
+      <div class="page-head">
+        <div><div class="page-title">项目健康度 · 电商重构项目</div><div class="page-sub mono">2026-08-31 快照（每日 00:10 · RPT-004 §2.3）</div></div>
+        <div style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-ghost btn-sm">配置阈值</button><button class="btn btn-ghost btn-sm">导出 PNG</button></div>
+      </div>
+      <div class="card score-hero">
+        <div><div class="hint">总评</div><div class="score-big">75.0</div><div class="score-band" style="color:var(--amber-ink)">🟡 ↓ vs 7 日前 77.0</div></div>
+        <div style="flex:1"><div class="bar" style="height:14px"><i style="width:75%"></i></div><div class="footnote">0–100 · 四维等权（BR-01）：(86+56+85+73)×0.25</div></div>
+        <div class="trend-row" style="margin:0"><span>近 30 天</span><div class="trend-spark"><i style="height:18px"></i><i style="height:24px"></i><i style="height:34px"></i><i style="height:28px"></i><i style="height:40px"></i><i style="height:36px"></i></div><span class="mono">71→73→76→74→77→75.0</span></div>
+      </div>
+      <div class="dim-cards">
+        <div class="card dim-card">
+          <div class="nm">进度偏差</div><div class="sc" style="color:var(--ok)">86 <small style="font-size:13px">🟢 ↓</small></div>
+          <div class="desc">完成 48% vs 时间进度 55%<br>偏差 −0.07 → 100−0.07×200</div>
+          <div class="thr">参考线：时间进度</div>
+          <button class="btn btn-ghost btn-sm drill" onclick="openDrawer('drill-sched')">下钻 38 任务 ▸</button>
+        </div>
+        <div class="card dim-card">
+          <div class="nm">逾期率</div><div class="sc" style="color:var(--danger)">56 <small style="font-size:13px">🔴 ↑</small></div>
+          <div class="desc">逾期 11/50 (22%)<br>100−0.22×200</div>
+          <div class="thr">阈值 ≤10%（超标角标）</div>
+          <button class="btn btn-ghost btn-sm drill" onclick="openDrawer('drill-overdue')">下钻 11 任务 ▸</button>
+        </div>
+        <div class="card dim-card">
+          <div class="nm">工时偏差</div><div class="sc" style="color:var(--ok)">85 <small style="font-size:13px">🟢 →</small></div>
+          <div class="desc">spent/est = 1.15<br>100−|1−1.15|×100</div>
+          <div class="thr">阈值 0.8~1.2</div>
+          <button class="btn btn-ghost btn-sm drill" onclick="openDrawer('drill-hours')">下钻 34 任务 ▸</button>
+        </div>
+        <div class="card dim-card">
+          <div class="nm">阻塞率</div><div class="sc" style="color:var(--amber-ink)">73 <small style="font-size:13px">🟡 ↓</small></div>
+          <div class="desc">阻塞 6/67 (9%)<br>100−0.09×300</div>
+          <div class="thr">阈值 ≤5%（含跨项目边镜像）</div>
+          <button class="btn btn-ghost btn-sm drill" onclick="openDrawer('drill-blocked')">下钻 6 ▸</button>
+        </div>
+      </div>
+      <div class="footnote" style="margin-top:12px">下钻角标 = 快照时点 drilldown_count；抽屉标题 = 实时计数（BR-04②，两者允许时点差）</div>
+    </section>
+
+    <!-- ═════════════ V-LOAD 团队负载热力图（RPT-004 §3.3 · O6） ═════════════ -->
+    <section class="page" id="v-load" hidden>
+      <div class="page-head">
+        <div><div class="page-title">团队负载 · 电商重构项目</div><div class="page-sub">周工时/标准工时（WorkLogSummary 快照 · TASK-013 台账同源）</div></div>
+        <div style="margin-left:auto;display:flex;gap:8px"><select class="input" style="height:32px;width:140px"><option>电商重构</option></select><button class="btn btn-ghost btn-sm">导出 CSV</button></div>
+      </div>
+      <div class="card" style="padding:14px 0 4px">
+        <table class="heat-tbl">
+          <thead><tr><th></th><th>W29</th><th>W30</th><th>W31</th><th>W32</th><th>W33</th><th>W34</th><th>W35</th><th>W36</th></tr></thead>
+          <tbody>
+            <tr><th style="padding-left:16px">李骁</th><td><div class="heat-cell hc-2" data-tip="App 28h · 网关 8h">75%</div></td><td><div class="heat-cell hc-2" data-tip="App 26h · 网关 10h">80%</div></td><td><div class="heat-cell hc-3">92%</div></td><td><div class="heat-cell hc-4">108%</div></td><td><div class="heat-cell hc-4">105%</div></td><td><div class="heat-cell hc-3">95%</div></td><td><div class="heat-cell hc-2">88%</div></td><td><div class="heat-cell hc-2">75%</div></td></tr>
+            <tr><th style="padding-left:16px">王思远</th><td><div class="heat-cell hc-2">65%</div></td><td><div class="heat-cell hc-2">70%</div></td><td><div class="heat-cell hc-2">72%</div></td><td><div class="heat-cell hc-3">91%</div></td><td><div class="heat-cell hc-4">102%</div></td><td><div class="heat-cell hc-4">106%</div></td><td><div class="heat-cell hc-3">98%</div></td><td><div class="heat-cell hc-2">66%</div></td></tr>
+            <tr><th style="padding-left:16px">陈默</th><td><div class="heat-cell hc-1">55%</div></td><td><div class="heat-cell hc-1">58%</div></td><td><div class="heat-cell hc-2">62%</div></td><td><div class="heat-cell hc-2">70%</div></td><td><div class="heat-cell hc-2">75%</div></td><td><div class="heat-cell hc-2">80%</div></td><td><div class="heat-cell hc-2">82%</div></td><td><div class="heat-cell hc-1">55%</div></td></tr>
+          </tbody>
+        </table>
+        <div class="heat-legend"><span><span class="sw" style="background:#dcfce7"></span>&lt;60%</span><span><span class="sw" style="background:#dbe7fe"></span>60-90%</span><span><span class="sw" style="background:#fef3c7"></span>90-100%</span><span><span class="sw" style="background:#fee2e2"></span>&gt;100%</span><span class="hint">悬停格：周工时明细（跳 TASK-013 台账）</span></div>
+        <div class="heat-warn">⚠ 李骁/王思远 连续 3 周 &gt;90%——建议调整 Sprint 25 任务分配</div>
+      </div>
+    </section>
+
+    <!-- ═════════════ V-WIKI Wiki 主界面（FILE-005 §3.1 · O7） ═════════════ -->
+    <section class="page" id="v-wiki" hidden>
+      <div class="page-head">
+        <div><div class="page-title">Wiki · 电商重构项目</div></div>
+        <div style="margin-left:auto;display:flex;gap:8px">
+          <select class="input" style="height:32px;width:150px"><option>研发规范</option><option>运维手册</option></select>
+          <button class="btn btn-primary btn-sm">+ 新建空间</button>
+          <button class="btn btn-ghost btn-sm">⚙ 权限</button>
+        </div>
+      </div>
+      <div class="wiki-shell">
+        <div class="wiki-tree">
+          <div class="wt-item"><span class="caret">▾</span>编码规范</div>
+          <div class="wt-item" style="padding-left:26px"><span class="caret">▾</span>后端规范</div>
+          <div class="wt-item cur" style="padding-left:44px"><span class="caret">▸</span>API 设计</div>
+          <div class="wt-item" style="padding-left:44px"><span class="caret">▸</span>数据库约定</div>
+          <div class="wt-item" style="padding-left:26px"><span class="caret">▸</span>前端规范</div>
+          <div style="border-top:1px solid var(--line);margin:10px 6px"></div>
+          <button class="btn btn-ghost btn-sm" style="width:100%">+ 新建页面</button>
+        </div>
+        <div class="wiki-main">
+          <div class="wiki-doc-head">
+            <div class="wiki-doc-title">API 设计规范 <button class="ver-pill" onclick="go('#/p/rbt/wiki/history')">v8 ▾</button></div>
+            <div class="wiki-meta">张妍 编辑 · 最近发布 2026-08-30 14:22 · 阅读限：空间成员（写：管理员）</div>
+          </div>
+          <div class="wiki-body">
+            <h3>## 3. 错误码约定</h3>
+            <p>所有接口错误码必须从注册表选取，禁止自创。完整注册表见 <a href="#">#RBT-152</a>，新增错误码需经架构评审并登记 ADR。</p>
+            <p>信封结构（status/data/meta）与错误码键名以 <span class="badge-id">tests/jmeter/_contract.py</span> 为唯一事实来源。</p>
+            <div class="p4-note">💬 页面评论：P4（锚定协议未定义，本迭代不交付，见 FILE-005 §1.3）</div>
+          </div>
+          <div class="wiki-doc-foot">
+            <button class="btn btn-primary btn-sm">编辑</button>
+            <button class="btn btn-ghost btn-sm" onclick="go('#/p/rbt/wiki/history')">历史 v8 ▾</button>
+            <button class="btn btn-ghost btn-sm">··· 移动/删除</button>
+            <span class="save-state" id="wiki-save">● 草稿已保存 14:22:31</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═════════════ V-WIKIH 版本历史与对比（FILE-005 §3.2） ═════════════ -->
+    <section class="page" id="v-wikih" hidden>
+      <div class="page-head">
+        <div><div class="page-title">版本历史 · API 设计规范</div><div class="page-sub">版本不可变 · 回滚生成新版本（BR-08）</div></div>
+        <div style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-ghost btn-sm">对比模式</button><button class="btn btn-ghost btn-sm" onclick="go('#/p/rbt/wiki')">返回</button></div>
+      </div>
+      <div class="card">
+        <div class="ver-row"><span class="ver-n">v8</span><span style="width:90px">张妍</span><span class="mono hint" style="width:130px">08-30 14:22</span><span style="color:var(--ink-2)">补充错误码注册表链接</span><button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="openModal('m-rollback')">回滚到此版</button></div>
+        <div class="ver-row"><span class="ver-n">v7</span><span style="width:90px">李骁</span><span class="mono hint" style="width:130px">08-22 09:15</span><span style="color:var(--ink-2)">重写限流章节</span><button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="openModal('m-rollback')">回滚到此版</button></div>
+        <div class="ver-row"><span class="ver-n">v6</span><span style="width:90px">李骁</span><span class="mono hint" style="width:130px">08-15 18:40</span><span class="hint">（回滚自 v4）</span><button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="openModal('m-rollback')">回滚到此版</button></div>
+        <div style="padding:12px 16px 4px;font-size:13px;font-weight:600">▼ 对比 v7 → v8（HTML diff）</div>
+        <div class="diff-card" style="margin-bottom:16px">
+          <div class="diff-line diff-ctx">所有接口错误码必须从注册表选取，禁止自创。</div>
+          <div class="diff-line diff-add">[+] 完整注册表见 #RBT-152。</div>
+          <div class="diff-line diff-del">[-] 错误码由后端定义。</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═════════════ V-SEARCH 全局知识检索（FILE-005 §3.3） ═════════════ -->
+    <section class="page" id="v-search" hidden>
+      <div class="page-head">
+        <div><div class="page-title">知识检索</div><div class="page-sub">仅 Wiki 页面命中（独立入口 · 不与 ⌘K 全局搜索混排，见 §3.3 口径说明）</div></div>
+      </div>
+      <div class="search-bar">
+        <input class="input" style="max-width:380px" value="错误码" aria-label="搜索">
+        <select class="input" style="width:150px"><option>全部空间</option><option>研发规范</option></select>
+        <select class="input" style="width:150px"><option>全部项目</option><option>电商重构</option></select>
+        <span class="hint">12 条结果 · P95 &lt; 300ms（IT-08）</span>
+      </div>
+      <div class="card">
+        <div class="result-card">
+          <div style="font-size:13.5px;font-weight:600">📄 API 设计规范</div>
+          <div class="result-path">研发规范 / 编码规范 / 后端 · 电商重构 · 更新 08-30</div>
+          <div class="result-snip">…所有接口<em>错误码</em>必须从注册表选取，禁止自创。完整注册表见…</div>
+        </div>
+        <div class="result-card">
+          <div style="font-size:13.5px;font-weight:600">📄 上线 checklist</div>
+          <div class="result-path">运维手册 / 电商重构 · 更新 08-28</div>
+          <div class="result-snip">…确认<em>错误码</em>监控面板无异常峰值后方可放量…</div>
+        </div>
+      </div>
+      <div class="footnote" style="margin-top:10px">排序：标题命中 3x 权重 + 正文 trgm 相似度；片段 ≤160 字（ts_headline simple）</div>
+    </section>
+
+    <!-- ═════════════ V-GANTT 甘特关键路径高亮（GANTT-003 §3.1 · O8） ═════════════ -->
+    <section class="page" id="v-gantt" hidden>
+      <div class="page-head">
+        <div><div class="page-title">甘特图 · 电商重构项目</div><div class="page-sub">CPM 09-01 09:00 计算 · 缓存命中（input_hash）· 34 节点</div></div>
+      </div>
+      <div class="gantt-wrap">
+        <div class="gantt-head">
+          <label class="chk"><input type="checkbox" checked id="ck-crit" onchange="tg()"> 关键路径</label>
+          <label class="chk"><input type="checkbox" id="ck-float" onchange="tg()"> 浮动余量</label>
+          <span class="hint">图例 ▾</span>
+          <span class="st-pill st-late" style="margin-left:auto">外部约束 2</span>
+          <button class="btn btn-ghost btn-sm" onclick="go('#/p/rbt/gantt/cpm')">预警配置</button>
+        </div>
+        <div class="gantt-grid" id="g-grid">
+          <div class="g-name mono">RBT-141 网关</div><div class="g-track"><div class="g-bar crit" id="b1" style="left:0%;width:25%"></div><span class="g-flag" style="left:26%;color:var(--danger)" data-tip="浮动 0 · 最早=最晚">🔴 float=0</span></div>
+          <div class="g-name mono">RBT-150 压测</div><div class="g-track"><div class="g-bar" id="b2" style="left:12.5%;width:18%"></div><div class="g-float" id="f2" hidden style="left:30.5%;width:9%"></div><span class="g-flag" style="left:41%;color:var(--ink-3)">float=3</span></div>
+          <div class="g-name mono">RBT-155 联调</div><div class="g-track"><div class="g-bar crit" style="left:25%;width:31%"></div><span class="g-flag" style="left:57%;color:var(--danger)">🔴 float=-3</span><span class="g-flag" style="left:57%;top:24px">⚓ GW-41</span></div>
+          <div class="g-name mono">RBT-160 上线</div><div class="g-track"><div class="g-bar crit" style="left:62.5%;width:18.5%"></div><span class="g-flag" style="left:82%;color:var(--danger)">🔴 float=0</span></div>
+        </div>
+        <div class="gantt-legend">
+          <span><span class="sw" style="background:#fee2e2;border:2px solid var(--danger)"></span>关键任务（红描边 O8）</span>
+          <span><span class="sw" style="background:var(--surface-3);border:1px solid var(--line-strong)"></span>普通任务</span>
+          <span><span class="sw" style="background:repeating-linear-gradient(45deg,#e5e7eb 0 4px,#f3f4f6 4px 8px)"></span>浮动余量</span>
+          <span>⚓ 有外部前置（不进 CPM）</span>
+          <span class="hint">关键链依赖边加粗红 · 悬停条出浮动时间卡</span>
+        </div>
+      </div>
+      <div class="heat-warn" style="margin-top:14px">⚠ RBT-155 float=-3（逾期 3 天）——关键任务逾期预警已发负责人+项目经理（BR-08）</div>
+    </section>
+
+    <!-- ═════════════ V-CPMC 浮动时间卡 + 预警配置（GANTT-003 §3.2/§3.3） ═════════════ -->
+    <section class="page" id="v-cpmc" hidden>
+      <div class="page-head">
+        <div><div class="page-title">计划分析 · RBT-150 压测</div><div class="page-sub">预警配置持久化 CPMAlertConfig（BR-14）· 写权限 project.setting.manage（BR-13）</div></div>
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="go('#/p/rbt/gantt')">返回甘特</button>
+      </div>
+      <div style="display:grid;grid-template-columns:340px 1fr;gap:16px;align-items:start">
+        <div class="card cpm-card">
+          <div style="font-size:13.5px;font-weight:600;margin-bottom:12px">计划分析（CPM · 09-01 09:00 计算）</div>
+          <div class="cpm-row"><span>最早开始 → 完成</span><b>09-03 → 09-08</b></div>
+          <div class="cpm-row"><span>最晚开始 → 完成</span><b>09-06 → 09-11</b></div>
+          <div class="cpm-row"><span>浮动时间</span><b style="color:var(--ink)">3 天</b></div>
+          <div class="cpm-row"><span>状态</span><span style="color:var(--ok)">非关键（浮动耗尽时将转为关键并预警）</span></div>
+          <div class="cpm-row" style="margin-bottom:0"><span>外部约束</span><span>⚓ GW-41（中台网关，09-05）</span></div>
+        </div>
+        <div class="card" style="padding:16px 20px">
+          <div style="font-size:13.5px;font-weight:600;margin-bottom:6px">预警配置（项目设置）</div>
+          <div class="switch-row"><div><b style="font-size:13px">关键任务逾期预警</b><div class="hint">每日一条至负责人 + 项目经理（BR-08）</div></div><span class="switch on" style="margin-left:auto" onclick="this.classList.toggle('on')"></span></div>
+          <div class="switch-row"><div><b style="font-size:13px">浮动耗尽预警</b><div class="hint">转关键即时一条（BR-09）</div></div><span class="switch on" style="margin-left:auto" onclick="this.classList.toggle('on')"></span></div>
+          <div class="switch-row" style="border-bottom:none"><div><b style="font-size:13px">项目目标完工日</b><div class="hint">逆推锚点（BR-06），影响最晚开始计算</div></div><input type="date" class="input" style="width:170px;margin-left:auto" value="2026-11-15"></div>
+        </div>
+      </div>
+    </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- ═════════ 弹窗集（基线沿用样式） ═════════ -->
+<div class="overlay" id="m-mount" hidden onclick="if(event.target===this)closeModal('m-mount')">
+  <div class="modal w480" style="width:480px">
+    <div class="modal-head"><div class="modal-title">挂载项目到「电商平台 2.0」</div><button class="icon-btn" onclick="closeModal('m-mount')">✕</button></div>
+    <label class="label">项目</label>
+    <select class="input"><option>App 重构</option><option>中台网关</option><option>数据迁移</option><option>营销中台（未挂载）</option></select>
+    <div class="hint" style="margin-top:10px">BR-02：一个项目仅可挂载一个叶子节点；双端权限校验（WS_ADMIN+ 或项目集 manager）</div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal('m-mount')">取消</button><button class="btn btn-primary" onclick="closeModal('m-mount');toast('已挂载 · 营销中台加入组合（BR-02 校验通过）','ok')">挂载</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="m-ms" hidden onclick="if(event.target===this)closeModal('m-ms')">
+  <div class="modal" style="width:480px">
+    <div class="modal-head"><div class="modal-title">新建里程碑</div><button class="icon-btn" onclick="closeModal('m-ms')">✕</button></div>
+    <label class="label">名称</label><input class="input" placeholder="如：全量联调">
+    <label class="label" style="margin-top:12px">目标日期</label><input type="date" class="input" value="2026-10-31">
+    <div class="hint" style="margin-top:10px">创建后可在详情页增删贡献项（跨项目 issue，BR-04）</div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal('m-ms')">取消</button><button class="btn btn-primary" onclick="closeModal('m-ms');toast('里程碑已创建','ok')">创建</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="m-close" hidden onclick="if(event.target===this)closeModal('m-close')">
+  <div class="modal" style="width:560px">
+    <div class="modal-head"><div class="modal-title">结束迭代 · Sprint 24</div><button class="icon-btn" onclick="closeModal('m-close')">✕</button></div>
+    <div style="font-size:13px;color:var(--ink-2);margin-bottom:8px">未完成任务 <b>5</b> 个——勾选结转对象：</div>
+    <div class="card" style="max-height:220px;overflow:auto">
+      <label class="chk" style="padding:8px 12px;border-bottom:1px solid var(--line)"><input type="checkbox" checked><span class="badge-id">RBT-161</span> 支付回调重试 <span class="hint">王思远</span></label>
+      <label class="chk" style="padding:8px 12px;border-bottom:1px solid var(--line)"><input type="checkbox" checked><span class="badge-id">RBT-164</span> 限流配置文档 <span class="hint">陈默</span></label>
+      <label class="chk" style="padding:8px 12px"><input type="checkbox"><span class="badge-id">RBT-170</span> 压测报告初稿 <span class="hint">李骁</span></label>
+    </div>
+    <div class="hint" style="margin-top:10px">勾选项结转 Sprint 25，未勾选移回待规划（BR-04）；结束即落终版快照（is_final）——此后历史修改不改变已归档报表</div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal('m-close')">取消</button><button class="btn btn-primary" onclick="closeModal('m-close');toast('Sprint 24 已归档 · 终版快照 is_final 已落盘（2 结转 / 3 移回）','ok')">结束迭代</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="m-conf" hidden onclick="if(event.target===this)closeModal('m-conf')">
+  <div class="modal" style="width:520px">
+    <div class="modal-head"><div class="modal-title" style="color:var(--danger)">发布冲突（409）</div><button class="icon-btn" onclick="closeModal('m-conf')">✕</button></div>
+    <div style="font-size:13.5px;color:var(--ink-2)">他人已发布 <b>v8</b>（张妍 · 08-30 14:22）——你的草稿基于 v7。</div>
+    <div class="hint" style="margin:10px 0 4px">选择处理方式：</div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-ghost" style="flex:1;height:auto;padding:12px;flex-direction:column;align-items:flex-start" onclick="closeModal('m-conf');go('#/p/rbt/wiki/history');toast('已打开 diff 视图：对比你的草稿 vs v8','ok')"><b>对比并合并</b><span class="hint">开 diff 视图逐段取舍</span></button>
+      <button class="btn btn-ghost" style="flex:1;height:auto;padding:12px;flex-direction:column;align-items:flex-start" onclick="closeModal('m-conf');toast('已生成 v9（强制覆盖）· Activity 记录发布','warn')"><b style="color:var(--danger)">强制覆盖</b><span class="hint">以草稿生成 v9</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="m-rollback" hidden onclick="if(event.target===this)closeModal('m-rollback')">
+  <div class="modal" style="width:440px">
+    <div class="modal-head"><div class="modal-title">回滚到 v7</div><button class="icon-btn" onclick="closeModal('m-rollback')">✕</button></div>
+    <div style="font-size:13.5px;color:var(--ink-2)">目标版本摘要：<b>「重写限流章节」</b>（李骁 · 08-22 09:15）</div>
+    <div class="hint" style="margin-top:10px">回滚不覆盖历史——生成新版本 v9，Activity 记「回滚自 v7」（BR-08）</div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal('m-rollback')">取消</button><button class="btn btn-primary" onclick="closeModal('m-rollback');toast('已生成 v9（回滚自 v7）','ok')">确认回滚</button></div>
+  </div>
+</div>
+
+<!-- 下钻抽屉（D-DRILL · RPT-004 §3.2） -->
+<div class="drawer" id="d-drill" hidden>
+  <div class="drawer-head">
+    <button class="icon-btn" onclick="closeDrawer()">✕</button>
+    <b id="drill-title" style="font-size:14px">逾期率 · 构成任务（11 实时）</b>
+    <span class="hint" style="margin-left:auto">实时时点（BR-04②）· meta.as_of=realtime</span>
+  </div>
+  <div class="drawer-body">
+    <table class="tbl">
+      <thead><tr><th>任务</th><th>标题</th><th>截止</th><th>逾期</th><th>负责人</th></tr></thead>
+      <tbody>
+        <tr><td class="badge-id">RBT-141</td><td>网关验收</td><td class="mono">08-29</td><td style="color:var(--danger)">3 天</td><td>李骁</td></tr>
+        <tr><td class="badge-id">RBT-150</td><td>压力测试报告</td><td class="mono">08-30</td><td style="color:var(--danger)">2 天</td><td>王思远</td></tr>
+        <tr><td class="badge-id">RBT-152</td><td>限流配置文档</td><td class="mono">08-31</td><td style="color:var(--danger)">1 天</td><td>陈默</td></tr>
+      </tbody>
+    </table>
+    <div class="hint" style="padding:10px 16px">…（游标分页 · 点击行跳转任务详情）</div>
+  </div>
+</div>
+
+<!-- ═════════ 演示 DOCK（基线沿用） ═════════ -->
+<aside class="dock open" id="dock">
+  <div class="dock-head" onclick="document.getElementById('dock').classList.toggle('open')">▶ Sprint-9 原型演示 <span style="margin-left:auto;font-size:11px;color:var(--ink-4)">17 表面 · O1~O8</span></div>
+  <div class="dock-body">
+    <div class="dock-sec">页面直达</div>
+    <button class="dock-item" onclick="go('#/portfolios')">◈ 项目集汇总</button>
+    <button class="dock-item" onclick="go('#/portfolios/ms')">◆ 里程碑视图</button>
+    <button class="dock-item" onclick="go('#/portfolios/graph')">◆ 依赖关系图</button>
+    <button class="dock-item" onclick="go('#/p/rbt/cycles')">◉ 迭代 + 燃尽图</button>
+    <button class="dock-item" onclick="go('#/p/rbt/velocity')">◉ 迭代速率</button>
+    <button class="dock-item" onclick="go('#/p/rbt/cfd')">◉ 累积流 CFD</button>
+    <button class="dock-item" onclick="go('#/p/rbt/health')">♥ 健康度评分卡</button>
+    <button class="dock-item" onclick="go('#/p/rbt/load')">♥ 团队负载热力</button>
+    <button class="dock-item" onclick="go('#/p/rbt/wiki')">✎ Wiki 主界面</button>
+    <button class="dock-item" onclick="go('#/p/rbt/wiki/history')">✎ 版本历史</button>
+    <button class="dock-item" onclick="go('#/search/wiki')">🔍 知识检索</button>
+    <button class="dock-item" onclick="go('#/p/rbt/gantt')">▤ 甘特关键路径</button>
+    <button class="dock-item" onclick="go('#/p/rbt/gantt/cpm')">▤ 浮动时间卡+预警配置</button>
+    <div class="dock-sec">演出（PROJ-004 §3.4 等）</div>
+    <button class="dock-play" onclick="playExt()">▶ 外部依赖分组 + 守卫 toast<span class="pf">PROJ §3.4</span></button>
+    <button class="dock-play" onclick="playClose()">▶ 结束迭代（结转/移回）<span class="pf">RPT-003</span></button>
+    <button class="dock-play" onclick="openDrawer('drill-overdue')">▶ 健康度下钻抽屉<span class="pf">RPT-004</span></button>
+    <button class="dock-play" onclick="playConflict()">▶ Wiki 发布冲突 409<span class="pf">FILE-005</span></button>
+    <button class="dock-play" onclick="playFloat()">▶ 浮动耗尽转关键预警<span class="pf">GANTT-003</span></button>
+  </div>
+</aside>
+
+<a href="#" class="a11" id="top">回到顶部</a>
+
+<script>
+/* ═══ hash 路由（基线沿用） ═══ */
+const VIEWS = [
+  ['#/portfolios','v-port'],['#/portfolios/ms','v-ms'],['#/portfolios/graph','v-graph'],
+  ['#/p/rbt/cycles','v-cycle'],['#/p/rbt/velocity','v-velo'],['#/p/rbt/cfd','v-cfd'],
+  ['#/p/rbt/health','v-health'],['#/p/rbt/load','v-load'],
+  ['#/p/rbt/wiki/history','v-wikih'],['#/p/rbt/wiki','v-wiki'],['#/search/wiki','v-search'],
+  ['#/p/rbt/gantt/cpm','v-cpmc'],['#/p/rbt/gantt','v-gantt'],
+];
+function go(h){ location.hash = h; }
+function route(){
+  const h = location.hash || '#/portfolios';
+  let hit = null;
+  for(const [hash,id] of VIEWS){ if(h===hash||h.startsWith(hash+'/')){ hit=[hash,id]; if(h===hash)break; } }
+  const id = hit?hit[1]:'v-port';
+  document.querySelectorAll('.pmain section.page').forEach(s=>s.hidden = s.id!==id);
+  const prefix = h.split('/').slice(0,4).join('/');
+  document.querySelectorAll('.side-item').forEach(b=>{
+    b.classList.toggle('active', b.dataset.nav && (h.startsWith(b.dataset.nav) || prefix.startsWith(b.dataset.nav)));
+  });
+  document.querySelector('.pmain').scrollTop = 0;
+}
+addEventListener('hashchange', route);
+
+/* ═══ toast / 弹窗 / 抽屉（基线沿用） ═══ */
+function toast(msg,type){
+  const t=document.createElement('div'); t.className='toast'+(type?' toast-'+type:''); t.textContent=msg;
+  document.getElementById('toasts').appendChild(t); setTimeout(()=>t.remove(),3600);
+}
+function openModal(id){ document.getElementById(id).hidden=false; }
+function closeModal(id){ document.getElementById(id).hidden=true; }
+function openDrawer(kind){
+  const titles={ 'drill-overdue':'逾期率 · 构成任务（11 实时）','drill-sched':'进度偏差 · 构成任务（38 实时）','drill-hours':'工时偏差 · 构成任务（34 实时）','drill-blocked':'阻塞率 · 构成任务（6 实时）' };
+  document.getElementById('drill-title').textContent=titles[kind]||titles['drill-overdue'];
+  document.getElementById('d-drill').hidden=false;
+}
+function closeDrawer(){ document.getElementById('d-drill').hidden=true; }
+function toggle(id){ const el=document.getElementById(id); el.hidden=!el.hidden; }
+function tg(){ /* 甘特开关联动演示 */ const c=document.getElementById('ck-crit'),f=document.getElementById('ck-float');
+  document.querySelectorAll('.g-bar.crit').forEach(b=>b.style.opacity=c.checked?1:.35);
+  const ff=document.getElementById('f2'); if(ff) ff.hidden=!f.checked;
+}
+
+/* ═══ 演出脚本 ═══ */
+function playExt(){ /* PROJ-004 §3.4 外部依赖分组 + BR-07 守卫 toast */
+  openModal('m-ext');
+}
+function playClose(){ openModal('m-close'); }
+function playConflict(){ openModal('m-conf'); }
+function playFloat(){ /* GANTT-003 BR-09 浮动耗尽转关键 */
+  const f2=document.getElementById('f2');
+  go('#/p/rbt/gantt');
+  setTimeout(()=>{ toast('RBT-150 浮动余量耗尽（3 天 → 0）· 转为关键任务','warn'); },400);
+  setTimeout(()=>{
+    const bar=document.querySelector('#v-gantt .g-bar:not(.crit)');
+    if(bar){ bar.classList.add('crit'); bar.style.borderColor='var(--danger)'; bar.style.background='#fee2e2'; }
+    if(f2) f2.hidden=true;
+    toast('CPM 增量重算完成（60s debounce 命中）· 关键链已更新','ok');
+  },1400);
+}
+/* m-ext 动态注入（避免静态重复，同时演示 BR-07 软策略） */
+const mExt=document.createElement('div'); mExt.className='overlay'; mExt.id='m-ext'; mExt.hidden=true;
+mExt.onclick=function(e){ if(e.target===this)closeModal('m-ext'); };
+mExt.innerHTML=`<div class="modal" style="width:520px">
+  <div class="modal-head"><div class="modal-title">RBT-160 · 上线准备 —— 关联</div><button class="icon-btn" onclick="closeModal('m-ext')">✕</button></div>
+  <div style="font-size:12px;color:var(--ink-3);font-weight:600;margin-bottom:6px">本项目关联</div>
+  <div class="card" style="padding:9px 12px;margin-bottom:14px;font-size:13px"><span class="badge-id">RBT-155</span> 联调验收 <span class="hint">blocks</span></div>
+  <div style="font-size:12px;color:var(--ink-3);font-weight:600;margin-bottom:6px">外部依赖 <span class="ext-badge">外部</span></div>
+  <div class="card" style="padding:9px 12px;margin-bottom:6px;font-size:13px"><span class="badge-id">GW-44</span> 限流配置 <b style="color:var(--proj-gw)">中台网关</b></div>
+  <div class="card" style="padding:9px 12px;font-size:13px"><span class="badge-id">DM-22</span> 存量数据切流 <b style="color:var(--proj-dm)">数据迁移</b></div>
+  <div class="hint" style="margin-top:12px">尝试完成 RBT-160：</div>
+  <div class="modal-foot" style="justify-content:flex-start">
+    <button class="btn btn-primary" onclick="closeModal('m-ext');toast('外部依赖不阻止完成，请自行确认（BR-07 · 首次提示）','warn')">标记完成</button>
+  </div>
+</div>`;
+document.body.appendChild(mExt);
+route();
+</script>
+</body>
+</html>

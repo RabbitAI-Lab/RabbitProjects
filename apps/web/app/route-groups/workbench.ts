@@ -23,4 +23,6 @@ export const workbenchRoutes: RouteConfigEntry[] = [
   route(":workspaceSlug/audit-logs", "routes/audit-logs.tsx"),
   // AUTH-008 §3.1/§3.2（C.151，Sprint-8 R6）：自定义角色与权限矩阵编辑器
   route(":workspaceSlug/projects/:projectId/roles", "routes/roles-admin.tsx"),
+  // AUTH-009 §3.1（C.155，Sprint-8 R6）：SSO 配置（WS_OWNER 面）
+  route(":workspaceSlug/settings/sso", "routes/sso-config.tsx"),
 ];

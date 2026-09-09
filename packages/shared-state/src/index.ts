@@ -118,6 +118,10 @@ export interface IssueViewData {
   owner_id: string;
   is_system: boolean;
   is_locked?: boolean;
+  is_project_default?: boolean;
+  locked_by_id?: string | null;
+  locked_at?: string | null;
+  subscriber_count?: number;
   filters: Partial<FilterLogicNode> | Record<string, never>;
   display_props: ViewDisplayProps;
   sort_order: number;

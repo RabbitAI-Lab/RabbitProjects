@@ -13,6 +13,7 @@ export default [
   layout("layouts/public.tsx", [
     index("routes/home.tsx"),
     route("login", "routes/login.tsx"),
+    route("sso/claim", "routes/sso-claim.tsx"),  // AUTH-009 认领页（公开）
     route("register", "routes/register.tsx"),
     // C.26 标签管理面板的调试入口（生产由列表 / 看板筛选条「标签」下拉尾部触发）
     route("labels-admin", "routes/labels-admin.tsx"),

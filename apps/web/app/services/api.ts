@@ -1526,6 +1526,20 @@ export const AutomationAPI = {
       `workspaces/${slug}/projects/${projectId}/automation-runs/`, { params }),
 };
 
+export const ViewGovernanceAPI = {
+  lock: (slug: string, projectId: string, viewId: string,
+         body: { is_locked: boolean; is_project_default?: boolean | null }) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/views/${viewId}/lock/`, body),
+  duplicate: (slug: string, projectId: string, viewId: string) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/views/${viewId}/duplicate/`),
+  pin: (slug: string, projectId: string, viewId: string) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/views/${viewId}/pin/`),
+  unpin: (slug: string, projectId: string, viewId: string) =>
+    api.delete(`workspaces/${slug}/projects/${projectId}/views/${viewId}/pin/`),
+  setAccess: (slug: string, projectId: string, viewId: string, access: "personal" | "shared") =>
+    api.patch(`workspaces/${slug}/projects/${projectId}/views/${viewId}/`, { access }),
+};
+
 export const DepartmentAPI = {
   list: (slug: string, include = false) =>
     api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/departments/`,

@@ -16,6 +16,8 @@ const items = [
   { to: "my-tasks", label: "我的任务", enabled: false, hint: "RPT-001 交付" },
   // ADR-0011 #18：工作区侧栏「团队设置」由置灰点亮为成员管理入口（TEAM-002 §3.1 / C.15）
   { to: "settings/members", label: "团队设置", enabled: true },
+  // AUTH-009 §3.1（C.155，Sprint-8 R6）：SSO 配置（WS_OWNER）
+  { to: "settings/sso", label: "SSO 登录", enabled: true },
 ];
 
 export function Sidebar({ workspaceSlug }: { workspaceSlug: string }) {

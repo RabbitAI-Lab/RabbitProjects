@@ -162,3 +162,54 @@ test.describe("S8E2E · 组织/角色/审计 parity", () => {
     expect(guards.report() ?? []).toEqual([]);
   });
 });
+
+test.describe("S8E2E · 视图治理与 SSO 表面", () => {
+  test("C.153/C.154 视图治理 + 二维泳道（BOARD-005 §3.1/§3.3）", async ({ page }) => {
+    const guards = attachGuards(page);
+    await loginDemo(page);
+    const suffix = Math.random().toString(36).slice(2, 7).toUpperCase();
+    const pid = (await apiCall(page, "POST", `/api/v1/workspaces/${WS}/projects/`,
+      { name: `S8E2E 治理 ${suffix}`, identifier: suffix })).body!.data.id as string;
+    // 造共享+锁定+默认视图（API 直接进入目标态）
+    const v = (await apiCall(page, "POST", `/api/v1/workspaces/${WS}/projects/${pid}/views/`,
+      { name: "组织标准视图" })).body!.data.id as string;
+    await apiCall(page, "PATCH", `/api/v1/workspaces/${WS}/projects/${pid}/views/${v}/`,
+      { access: "shared" });
+    await apiCall(page, "POST", `/api/v1/workspaces/${WS}/projects/${pid}/views/${v}/lock/`,
+      { is_locked: true, is_project_default: true });
+    // 造 3 任务两状态
+    for (let i = 1; i <= 3; i++) {
+      await apiCall(page, "POST", `/api/v1/workspaces/${WS}/projects/${pid}/issues/`,
+        { name: `泳道任务${i}`, priority: "none", sequence_id: i, sort_order: i * 100 });
+    }
+
+    // 用户入口：项目 → 看板 → 锁定视图（登录态 + 真实资源深链 ?view_id——
+    // 铁律允许形态；Tab 文本点击时锁名后缀 🔒★ 使 hasText 匹配不稳）
+    await page.goto(`/${WS}/projects/${pid}/board?view_id=${v}`);
+    // 锁定横幅（C.153）
+    await expect(page.locator('[data-sb-scope="view-locked-bar"]')).toBeVisible();
+    await expect(page.locator('[data-sb-scope="view-locked-fork"]')).toBeVisible();
+    // 二维泳道（C.154）：选泳道维度 → 矩阵渲染 + 计数对账
+    await page.locator('[data-sb-scope="view-subgroup-select"]').selectOption("assignee_id");
+    await page.waitForSelector('[data-sb-scope="swimlane-matrix"]', { timeout: 15000 });
+    const counts = await page.locator('[data-sb-scope="matrix-cell-count"]').allTextContents();
+    const total = counts.reduce((n, c) => n + (parseInt(c, 10) || 0), 0);
+    expect(total).toBe(3);  // Σ格计数 = 任务总数（§7.2 对账恒等式）
+    // 空格虚线框（C.154 空态）
+    await expect(page.locator('[data-sb-scope="matrix-cell"] .border-dashed').first()).toBeVisible();
+    expect(guards.report() ?? []).toEqual([]);
+  });
+
+  test("C.155 登录邮箱路由：普通邮箱 → 密码模式无蓝条（AUTH-009 §3.2）", async ({ page }) => {
+    const guards = attachGuards(page);
+    guards.allow({ method: "POST", url: "/auth/sso/route/", status: 404 });
+    await page.context().clearCookies();
+    await page.goto("/login");
+    await page.locator('[data-sb-scope="login-email"]').fill("zhangsan@rabbit.dev");
+    await page.locator('[data-sb-scope="login-email"]').blur();
+    await page.waitForTimeout(600);
+    // 演示空间未启用强制 SSO → password 模式（无蓝条跳转）
+    await expect(page.locator('[data-sb-scope="login-sso-route"]')).toHaveCount(0);
+    expect(guards.report() ?? []).toEqual([]);
+  });
+});

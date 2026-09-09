@@ -146,6 +146,27 @@
 - R6 入口：前端六表面（组织/角色矩阵/SSO 配置/审计页/共享锁定/二维
   分组）+ parity spec + Keycloak 联调 + 验收视频 + 文档收口
 
+## R6 前端 + Keycloak 收口轮完成
+
+- 六表面全交付：组织（C.150）/角色矩阵（C.151）/审计（C.152）三新页
+  （R6-A）+ 视图治理菜单与锁定横幅（C.153）/二维泳道矩阵（C.154）/
+  SSO 配置页 + 登录邮箱路由 + 认领页（C.155）（R6-B）
+- ViewSwitchBar：治理 ctx 菜单（共享/收回、锁定/解锁、项目默认、订阅、
+  副本、锁定态禁删）+ Tab 标识（🔒★👤）+ 锁定横幅副本引导；serializer
+  增 is_project_default/locked_by_id/locked_at/subscriber_count
+- SwimlaneMatrix：服务端聚合矩阵（格计数 99+ 截断 + ≤8 样例 + 空格
+  虚线框 + 降级黄条）；泳道维度选择器（排除当前列维度）
+- Keycloak 26 真容器联调 ✓：realm rabbit + client rabbit-projects +
+  direct grant 用户；connection-check 用 KC 真实 RS256 id_token 过干跑
+  → IdP 启用 → 浏览器 OIDC 全链（sign-in→IdP 表单→回调→token→验签→
+  JIT 建号+入空间+绑定→会话→302 next）
+- 5 份规格标「已实现」；known-tech-debt.md 交接（A 组 8 项顺延登记）
+- 门禁终态：pytest 896 / e2e 171（parity-sprint8 5/5）/ 四静态零错
+- 坑：pkill "react-router/dev" 会连带杀 admin 3002 与主 web（全栈重启
+  口径）；KC 26 direct grant 默认关且不带 id_token（需开
+  directAccessGrantsEnabled + scope=openid）；runserver 与 worker 改
+  SSO 桥后必须双进程重启
+
 ## R3 入口原文（已收编）
 
 原「R2 入口」段落如下（已由上方实录收编）：

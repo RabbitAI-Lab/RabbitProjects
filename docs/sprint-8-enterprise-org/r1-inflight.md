@@ -111,6 +111,25 @@
 - 待办：Keycloak 真容器联调 + SAML 认领向导 + 前端配置页（R6 验收轮）；
   api-conventions §8.2 AUTH_SSO_REQUIRED 行待回改（补 Workspace 级分流注）
 
+## R4 审计轮完成（b63ec25）
+
+- audit_log 月分区表（0029 RunSQL：分区键主键 + DEFAULT 兜底 + trgm）；
+  write_chained_row 链串行化（pg_advisory_xact_lock per-workspace，
+  sha256(prev|canonical)）；audit_record worker 三层去重 + 4^n 退避 +
+  audit.dlq（celery 队列/DLX/beat 每日维护全配置）
+- record_audit 兼容桥改 shared_task——R1~R3 全部埋点（department/role/
+  sso 域）零改动接入真管道；bgtasks/audit.py 变转发模块
+- 端点 5 个：检索（audit.read + 空间强制过滤 + 筛选白名单 + 游标九字段
+  meta）/ catalog / CSV 导出（密码双授权 + audit.exported 自审计 + 断链
+  冻结；202 两段式偏差随 S9 与 A#1 统一）/ 实例级（SystemAdmin +
+  BR-16 自审计，order_by 起步避开 AC-02——AuditLog 非 accessible 族）
+- S7-A#2 收口：审批超时 24h 档加报 WS_ADMIN/OWNER
+- 测试 19 项（重放单行/裸 SQL 篡改检出/黑名单/空间隔离/冻结/留存 drop/
+  P95<300ms）+ 突变 2/2；全量 877 过；lint_access AC-01~05 过
+- 坑：LocMem cache 跨测试残留（断链标记污染后续导出测试——teardown 清）；
+  event_key 80 字符上限（拼接超长改 sha256 截断）；DRF 视图 on_commit
+  在测试事务内（capture + delay 同步化双管齐下）
+
 ## R3 入口原文（已收编）
 
 原「R2 入口」段落如下（已由上方实录收编）：

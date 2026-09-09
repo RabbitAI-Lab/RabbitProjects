@@ -62,6 +62,14 @@ export const PERMISSION_MATRIX = {
     "issue.delete.own": ProjectRole.CONTRIBUTOR,
     "comment.create": ProjectRole.COMMENTER,
     "file.upload": ProjectRole.CONTRIBUTOR,
+    // Sprint-9（与后端 PERMISSION_MATRIX 同源增补——RPT-003/004、FILE-005）
+    "report.read": ProjectRole.VIEWER,
+    "report.export": ProjectRole.ADMIN,       // rbac §8.2 可配置列按默认
+    "cycle.manage": ProjectRole.ADMIN,
+    "wiki.read": ProjectRole.VIEWER,
+    "wiki.update": ProjectRole.CONTRIBUTOR,
+    "wiki.manage": ProjectRole.ADMIN,
+    "project.setting.manage": ProjectRole.ADMIN,
   },
 } as const;
 
@@ -198,6 +206,13 @@ export class PermissionStore {
     const actual = scope === "workspace"
       ? this.workspaceRole(resourceId, ctx?.workspaceSlug)
       : this.effectiveProjectRole(resourceId, ctx?.workspaceSlug);
-    return actual >= required;                                  // BR-10：-1 < required 恒败
+    if (actual >= required) return true;                        // BR-10：-1 < required 恒败
+    // S8 A#5（Sprint-9）：项目级并集分支——threshold 未过但码在自定义角色挂接并集内
+    // （只加不减，与后端 require_permission 同口径；custom_codes 缺省 [] 零差异）
+    if (scope === "project" && resourceId) {
+      const codes = this.snapshot?.projects[resourceId]?.custom_codes ?? [];
+      return codes.includes(permission as string);
+    }
+    return false;
   }
 }

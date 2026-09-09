@@ -50,10 +50,37 @@ export function ProjectSidebar({ projectName, identifier }: { projectName: strin
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>
         动态
       </NavLink>
+      {/* Sprint-9（RPT-003 §3.1）：迭代管理 + 燃尽图 */}
+      <NavLink to={`${base}/cycles`} className={({ isActive }) => item(isActive)} data-sb-scope="nav-cycles">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v9h-9"/></svg>
+        迭代
+      </NavLink>
+      {/* Sprint-9（FILE-005 §3.1）：Wiki 知识库 */}
+      <NavLink to={`${base}/wiki`} className={({ isActive }) => item(isActive)} data-sb-scope="nav-wiki">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        Wiki
+      </NavLink>
       {/* Sprint-5（RPT-002 §3.1 / C.131）：项目统计 */}
       <NavLink to={`${base}/stats`} className={({ isActive }) => item(isActive)}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3v16a2 2 0 0 0 2 2h16M7 15l3-4 3 3 5-7"/></svg>
         统计
+      </NavLink>
+      {/* Sprint-9（RPT-003 §3.2/3.3 + RPT-004 §3）：报表族（速率/累积流/健康度/负载） */}
+      <NavLink to={`${base}/reports/velocity`} className={({ isActive }) => item(isActive)} data-sb-scope="nav-velocity">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M7 14l3-4 3 2 5-6"/></svg>
+        迭代速率
+      </NavLink>
+      <NavLink to={`${base}/reports/cumulative-flow`} className={({ isActive }) => item(isActive)} data-sb-scope="nav-cfd">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M7 16c2-6 4-9 7-9s5 3 7 9"/></svg>
+        累积流
+      </NavLink>
+      <NavLink to={`${base}/reports/health`} className={({ isActive }) => item(isActive)} data-sb-scope="nav-health">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 14c1.5-1.5 3-3.5 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.8 0-3 .5-4.5 2-1.5-1.5-2.7-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2 1.5 4 3 5.5l7 7z"/></svg>
+        健康度
+      </NavLink>
+      <NavLink to={`${base}/reports/workload`} className={({ isActive }) => item(isActive)} data-sb-scope="nav-workload">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18M3 9h18M3 15h18"/></svg>
+        团队负载
       </NavLink>
       {/* Sprint-7（TASK-013 §3.1 / C.143）：工时周视图/队列/台账——2026-09-09 入口补口 */}
       <NavLink to={`${base}/worklog`} className={({ isActive }) => item(isActive)}>

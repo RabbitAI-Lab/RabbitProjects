@@ -10,6 +10,7 @@ import { useViewPage } from "../components/views/useViewPage";
 import { GanttStore } from "../stores/gantt";
 import { GanttToolbar } from "../components/gantt/GanttToolbar";
 import { OverdueBar } from "../components/gantt/OverdueBar";
+import { CriticalPathBar } from "../components/gantt/CriticalPathBar";
 import { GanttChart } from "../components/gantt/GanttChart";
 import { useGanttLiveSync } from "../components/gantt/useGanttLiveSync";
 import { useStores } from "../stores";
@@ -107,6 +108,9 @@ const GanttPage = observer(function Gantt() {
 
   /** 导出入口桥：工具条 ⋯/⌘E → 图表侧执行（含 >200 行确认与容器引用）。 */
   const exportFnRef = useRef<() => void>(() => {});
+  /** GANTT-003：关键路径高亮集合（CriticalPathBar 开关驱动）。 */
+  const [cpIds, setCpIds] = useState<Set<string>>(new Set());
+  const [cpOn, setCpOn] = useState(false);
 
   return (
     <div className="flex flex-col h-screen">
@@ -118,6 +122,7 @@ const GanttPage = observer(function Gantt() {
           <ViewSwitchBar vp={vp} />
           <GanttToolbar store={store} exportHint="（⌘/Ctrl+E）" onExport={() => exportFnRef.current()} />
           <OverdueBar store={store} memberName={memberName} onJump={onJump} />
+          <CriticalPathBar onCriticalChange={(ids, on2) => { setCpIds(ids); setCpOn(on2); }} />
           <GanttChart
             store={store}
             memberName={memberName}
@@ -128,6 +133,8 @@ const GanttPage = observer(function Gantt() {
             userName={userName}
             canEdit={canEdit}
             exportFnRef={exportFnRef}
+            criticalIds={cpIds}
+            criticalOn={cpOn}
           />
           {peekId && (
             <SharedDrawer issueId={peekId} slug={workspaceSlug!} projectId={projectId!} onClose={closePeek} onChanged={() => {}} />

@@ -13,6 +13,10 @@ const items = [
   { to: "org", label: "组织", enabled: true },
   // AUTH-010 §3.1（C.152，Sprint-8 R6）：全站审计日志一级入口
   { to: "audit-logs", label: "审计", enabled: true },
+  // PROJ-004 §3.1（Sprint-9）：项目集一级入口（组合树 + 汇总/里程碑/依赖图）
+  { to: "portfolios", label: "项目集", enabled: true },
+  // FILE-005 §3.3（Sprint-9）：知识检索（Wiki 专属，独立入口）
+  { to: "wiki-search", label: "知识检索", enabled: true },
   { to: "my-tasks", label: "我的任务", enabled: false, hint: "RPT-001 交付" },
   // ADR-0011 #18：工作区侧栏「团队设置」由置灰点亮为成员管理入口（TEAM-002 §3.1 / C.15）
   { to: "settings/members", label: "团队设置", enabled: true },

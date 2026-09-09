@@ -25,7 +25,7 @@ export interface MeEnvelope {
 export interface PermissionSnapshot {
   is_system_admin: boolean;
   workspaces: Record<string, { slug: string; role: number }>;
-  projects: Record<string, { workspace_id: string; role: number; inherited: boolean }>;
+  projects: Record<string, { workspace_id: string; role: number; inherited: boolean; custom_codes?: string[] }>;
   meta?: { generated_at: string; truncated: boolean } | null;
 }
 
@@ -1612,4 +1612,128 @@ export const AuditAPI = {
   /** CSV 流式导出（WF-006 §2.3）——blob 下载。 */
   exportCsv: (slug: string, projectId: string) =>
     api.get(`workspaces/${slug}/projects/${projectId}/approval-audit/export/`, { responseType: "blob" }),
+};
+
+// ═══ Sprint-9（RPT-003/004、PROJ-004、FILE-005、GANTT-003）═══
+
+/** RPT-003 §4.5：迭代与敏捷报表。 */
+export const CycleAPI = {
+  list: (slug: string, projectId: string, params: Record<string, unknown> = {}) =>
+    api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/projects/${projectId}/cycles/`, { params }),
+  create: (slug: string, projectId: string, body: Record<string, unknown>) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/cycles/`, body),
+  detail: (slug: string, projectId: string, cycleId: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/projects/${projectId}/cycles/${cycleId}/`),
+  patch: (slug: string, projectId: string, cycleId: string, body: Record<string, unknown>) =>
+    api.patch(`workspaces/${slug}/projects/${projectId}/cycles/${cycleId}/`, body),
+  start: (slug: string, projectId: string, cycleId: string) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/cycles/${cycleId}/start/`, {}),
+  complete: (slug: string, projectId: string, cycleId: string, carry_over: "next" | "backlog") =>
+    api.post(`workspaces/${slug}/projects/${projectId}/cycles/${cycleId}/complete/`, { carry_over }),
+  setIssues: (slug: string, projectId: string, cycleId: string, issue_ids: string[]) =>
+    api.put(`workspaces/${slug}/projects/${projectId}/cycles/${cycleId}/issues/`, { issue_ids }),
+  burndown: (slug: string, projectId: string, cycleId: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/projects/${projectId}/cycles/${cycleId}/burndown/`),
+};
+
+/** RPT-003/RPT-004 §4：项目报表（度量配置/速率/CFD/健康度/负载/导出）。 */
+export const ReportAPI = {
+  config: (slug: string, projectId: string) =>
+    api.get<{ report_measure: string }>(`workspaces/${slug}/projects/${projectId}/reports/config/`),
+  patchConfig: (slug: string, projectId: string, report_measure: string) =>
+    api.patch(`workspaces/${slug}/projects/${projectId}/reports/config/`, { report_measure }),
+  velocity: (slug: string, projectId: string, limit = 6) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/projects/${projectId}/reports/velocity/`, { params: { limit } }),
+  cfd: (slug: string, projectId: string, from: string, to: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/projects/${projectId}/reports/cumulative-flow/`, { params: { from, to } }),
+  health: (slug: string, projectId: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/projects/${projectId}/reports/health/`),
+  healthDrilldown: (slug: string, projectId: string, dimension: string) =>
+    api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/projects/${projectId}/reports/health/drilldown/`, { params: { dimension } }),
+  healthTrend: (slug: string, projectId: string, days = 30) =>
+    api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/projects/${projectId}/reports/health/trend/`, { params: { days } }),
+  healthConfig: (slug: string, projectId: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/projects/${projectId}/reports/health/config/`),
+  patchHealthConfig: (slug: string, projectId: string, body: Record<string, unknown>) =>
+    api.patch(`workspaces/${slug}/projects/${projectId}/reports/health/config/`, body),
+  workload: (slug: string, projectId: string, from: string, to: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/projects/${projectId}/reports/workload/`, { params: { from, to } }),
+  workloadExport: (slug: string, projectId: string, from: string, to: string) =>
+    api.get(`workspaces/${slug}/projects/${projectId}/reports/workload/export/`, { params: { from, to }, responseType: "blob" }),
+  exportStatus: (slug: string, taskId: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/exports/${taskId}/`),
+};
+
+/** PROJ-004 §4.6：项目集组合树。 */
+export const PortfolioAPI = {
+  tree: (slug: string) =>
+    api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/portfolios/`),
+  create: (slug: string, body: Record<string, unknown>) =>
+    api.post(`workspaces/${slug}/portfolios/`, body),
+  patch: (slug: string, id: string, body: Record<string, unknown>) =>
+    api.patch(`workspaces/${slug}/portfolios/${id}/`, body),
+  summary: (slug: string, id: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/portfolios/${id}/summary/`),
+  mountProject: (slug: string, id: string, project_id: string) =>
+    api.post(`workspaces/${slug}/portfolios/${id}/projects/`, { project_id }),
+  unmountProject: (slug: string, id: string, project_id: string) =>
+    api.delete(`workspaces/${slug}/portfolios/${id}/projects/${project_id}/`),
+  milestones: (slug: string, id: string, params: Record<string, unknown> = {}) =>
+    api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/portfolios/${id}/milestones/`, { params }),
+  createMilestone: (slug: string, id: string, body: Record<string, unknown>) =>
+    api.post(`workspaces/${slug}/portfolios/${id}/milestones/`, body),
+  patchMilestone: (slug: string, id: string, msId: string, body: Record<string, unknown>) =>
+    api.patch(`workspaces/${slug}/portfolios/${id}/milestones/${msId}/`, body),
+  dependencyGraph: (slug: string, id: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/portfolios/${id}/dependency-graph/`),
+};
+
+/** FILE-005 §4.5：Wiki 知识库。 */
+export const WikiAPI = {
+  spaces: (slug: string, projectId: string) =>
+    api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/wiki/spaces/`, { params: { project_id: projectId } }),
+  createSpace: (slug: string, projectId: string, body: Record<string, unknown>) =>
+    api.post(`workspaces/${slug}/wiki/spaces/`, { ...body, project_id: projectId }),
+  space: (slug: string, spaceId: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/wiki/spaces/${spaceId}/`),
+  patchSpace: (slug: string, spaceId: string, body: Record<string, unknown>) =>
+    api.patch(`workspaces/${slug}/wiki/spaces/${spaceId}/`, body),
+  page: (slug: string, pageId: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/wiki/pages/${pageId}/`),
+  createPage: (slug: string, spaceId: string, body: Record<string, unknown>) =>
+    api.post(`workspaces/${slug}/wiki/pages/`, { ...body, space_id: spaceId }),
+  patchPage: (slug: string, pageId: string, body: Record<string, unknown>) =>
+    api.patch(`workspaces/${slug}/wiki/pages/${pageId}/`, body),
+  saveDraft: (slug: string, pageId: string, content: unknown, base_version_id?: string | null) =>
+    api.patch(`workspaces/${slug}/wiki/pages/${pageId}/draft/`, { content, base_version_id: base_version_id ?? null }),
+  publish: (slug: string, pageId: string, base_version_id: string | null, change_summary?: string) =>
+    api.post(`workspaces/${slug}/wiki/pages/${pageId}/publish/`, { base_version_id, change_summary: change_summary ?? "" }),
+  versions: (slug: string, pageId: string) =>
+    api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/wiki/pages/${pageId}/versions/`),
+  version: (slug: string, pageId: string, versionId: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/wiki/pages/${pageId}/versions/${versionId}/`),
+  rollback: (slug: string, pageId: string, version_id: string) =>
+    api.post(`workspaces/${slug}/wiki/pages/${pageId}/rollback/`, { version_id }),
+  trash: (slug: string, spaceId?: string) =>
+    api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/wiki/pages/trash/`, { params: spaceId ? { space_id: spaceId } : {} }),
+  deletePage: (slug: string, pageId: string) =>
+    api.delete(`workspaces/${slug}/wiki/pages/${pageId}/`),
+  restorePage: (slug: string, pageId: string) =>
+    api.post(`workspaces/${slug}/wiki/pages/${pageId}/restore/`, {}),
+  search: (slug: string, q: string, projectId?: string, spaceId?: string) =>
+    api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/wiki/search/`, { params: { q, ...(projectId ? { project_id: projectId } : {}), ...(spaceId ? { space_id: spaceId } : {}) } }),
+};
+
+/** GANTT-003 §4.4：关键路径。 */
+export const CriticalPathAPI = {
+  rows: (slug: string, projectId: string, viewportStart?: string, viewportEnd?: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/projects/${projectId}/gantt/critical-path/`, {
+      params: { ...(viewportStart ? { viewport_start: viewportStart } : {}), ...(viewportEnd ? { viewport_end: viewportEnd } : {}) },
+    }),
+  recompute: (slug: string, projectId: string) =>
+    api.post(`workspaces/${slug}/projects/${projectId}/gantt/critical-path/recompute/`, {}),
+  config: (slug: string, projectId: string) =>
+    api.get<Record<string, unknown>>(`workspaces/${slug}/projects/${projectId}/gantt/cpm-config/`),
+  patchConfig: (slug: string, projectId: string, body: Record<string, unknown>) =>
+    api.patch(`workspaces/${slug}/projects/${projectId}/gantt/cpm-config/`, body),
 };

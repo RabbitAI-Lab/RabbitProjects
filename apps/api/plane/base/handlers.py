@@ -42,6 +42,18 @@ CONSTRAINT_MAP = {
     "chk_worklog_minutes_range":        ("VALIDATION_ERROR", "minutes"),
     "uniq_global_field_key_per_workspace": ("RESOURCE_ALREADY_EXISTS", "field_key"),  # TASK-008 BR-02
     "uniq_project_field_key":           ("RESOURCE_ALREADY_EXISTS", "field_key"),    # TASK-008 BR-02
+    # ── Sprint-9 新约束兜底映射（服务层预检为主，此处并发兜底）──
+    "uniq_portfolio_name_per_parent":   ("RESOURCE_ALREADY_EXISTS", "name"),          # PROJ-004 同级同名
+    "uniq_project_single_portfolio":    ("RESOURCE_ALREADY_EXISTS", "project_id"),    # PROJ-004 BR-02 重复挂载
+    "uniq_cycle_name_per_project":      ("RESOURCE_ALREADY_EXISTS", "name"),          # RPT-003 同名迭代
+    "uniq_active_cycle_per_project":    ("RESOURCE_STATE_INVALID", "status"),         # RPT-003 BR-03 唯一 active
+    "uniq_cycle_final_snapshot":        ("RESOURCE_CONFLICT", "is_final"),            # RPT-003 BR-04 终版锚
+    "uniq_cycle_snapshot_day":          ("RESOURCE_CONFLICT", "snapshot_date"),       # RPT-003 同日快照
+    "uniq_wiki_space_name":             ("RESOURCE_ALREADY_EXISTS", "name"),          # FILE-005 同名空间
+    "uniq_wiki_page_title_per_parent":  ("RESOURCE_ALREADY_EXISTS", "title"),         # FILE-005 BR-02 同级同名
+    "uniq_wiki_page_version_no":        ("RESOURCE_CONFLICT", "version_no"),          # FILE-005 版本号
+    "uniq_milestone_issue":             ("RESOURCE_ALREADY_EXISTS", "issue_id"),      # PROJ-004 贡献项重复
+    "uniq_health_snapshot_day":         ("RESOURCE_CONFLICT", "snapshot_date"),       # RPT-004 同日快照
 }
 
 

@@ -10,7 +10,7 @@ export default defineConfig({
   test: {
     environment: "node",
     // axios 错误路径触 location/document（401 跳转分支）——services 域用 jsdom
-    environmentMatchGlobs: [["app/services/**", "jsdom"]],
+    environmentMatchGlobs: [["app/services/**", "jsdom"], ["app/realtime/**", "jsdom"], ["app/stores/**", "jsdom"]],
     include: ["app/**/*.test.ts", "app/**/*.test.tsx"],
     coverage: {
       provider: "v8",
@@ -31,6 +31,10 @@ export default defineConfig({
     },
   },
   resolve: {
-    alias: { "@rp/types": path.resolve(__dirname, "../types/src/index.ts") },
+    alias: {
+      "@rp/types": path.resolve(__dirname, "../../packages/types/src/index.ts"),
+      // shared-state dist 引 @rp/types 走源码别名（TC-COVER-004 realtime 单测接入）
+      "@rp/shared-state": path.resolve(__dirname, "../../packages/shared-state/src/index.ts"),
+    },
   },
 });

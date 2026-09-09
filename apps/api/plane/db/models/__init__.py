@@ -7,6 +7,7 @@ from .backup import BackupRun
 from .base import BaseModel, SoftDeleteManager, SoftDeleteQuerySet
 from .comment import CommentReaction, IssueComment
 from .custom_field import CustomFieldDefinition
+from .custom_role import CustomRole, ProjectRoleAssignment
 from .department import Department, DepartmentGrantBatch
 from .file import FileFolder, FileVersion, UploadSession
 from .file_share import FileShareAccess, FileShareLink
@@ -35,6 +36,8 @@ from .worklog_approval import ProjectWorklogConfig, WorkLogApproval, WorkLogSumm
 from .workspace import Workspace, WorkspaceLabel, WorkspaceLoginDailyAggregate, WorkspaceMember, WorkspaceMemberInvite
 
 __all__ = [
+    "CustomRole",
+    "ProjectRoleAssignment",
     "Department",
     "DepartmentGrantBatch",
     "BaseModel",

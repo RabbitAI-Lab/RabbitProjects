@@ -200,6 +200,15 @@ class ProjectMemberService:
         purge_member_assignments(
             project_id=project.id, member_id=member.member_id, actor=actor
         )
+        # AUTH-008 BR-11：移出项目 → 自定义角色挂接行级联删除 + 缓存失效
+        from plane.db.models import ProjectRoleAssignment
+        ProjectRoleAssignment.objects.filter(
+            project=project, user_id=member.member_id,
+            deleted_at__isnull=True,
+        ).delete()
+        from plane.app.effective_perms import invalidate
+        transaction.on_commit(
+            lambda: invalidate([member.member_id], project.id))
         _notify(
             member_id_str,
             event="project.member.removed",

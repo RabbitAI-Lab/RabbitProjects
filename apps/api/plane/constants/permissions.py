@@ -31,6 +31,8 @@ PERMISSION_MATRIX: dict[str, dict[str, int]] = {
         "integration.manage": WorkspaceRole.ADMIN,
         # ── Sprint-8 AUTH-007（rbac §8.1 Department（P3）行落地，非新增码）──
         "department.manage": WorkspaceRole.ADMIN,
+        # ── Sprint-8 AUTH-008（rbac §8.1 已注册 WS 级，BR-08）──
+        "role.manage": WorkspaceRole.ADMIN,
     },
     "project": {  # AUTH-005 §2.4.2（P1 子集）
         "project.read": ProjectRole.VIEWER,
@@ -93,6 +95,7 @@ PERMISSION_LABELS: dict[str, str] = {
     "team.stats.read": "查看团队成员活跃度",
     "integration.manage": "管理集成安装",
     "department.manage": "管理部门与组织架构",
+    "role.manage": "管理自定义角色组",
     "integration.config": "配置项目集成",
     "integration.link": "关联外部对象",
     "workspace.member.remove": "移除成员",

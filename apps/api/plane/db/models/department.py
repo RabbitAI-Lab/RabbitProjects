@@ -91,6 +91,12 @@ class DepartmentGrantBatch(BaseModel):
         choices=ProjectRole.choices,
         default=ProjectRole.CONTRIBUTOR,
     )
+    # AUTH-008（R2）：判别列——"project_membership"（既有语义）| "role"
+    # （按部门挂自定义角色，role 整数列不使用）
+    target_type = models.CharField(
+        max_length=24, default="project_membership",
+        choices=[("project_membership", "项目成员"), ("role", "自定义角色")],
+    )
     with_descendants = models.BooleanField(default=True)
     added_count = models.IntegerField(default=0)
     role_changed_count = models.IntegerField(default=0)

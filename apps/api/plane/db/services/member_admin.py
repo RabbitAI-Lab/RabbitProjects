@@ -99,6 +99,10 @@ def bulk_role_workspace(*, workspace: Workspace, actor, user_ids: list, role: in
         # BR-15：WS_MEMBER → WS_GUEST 降级联动（同事务）
         if old_role == WorkspaceRole.MEMBER and role == WorkspaceRole.GUEST:
             _cascade_demote_project_roles(member=row.member, actor=actor)
+            # AUTH-008 BR-16 后半：越界自定义角色挂接同事务级联卸除
+            from plane.db.services.custom_role import RoleService
+            RoleService().cascade_revoke_on_ws_downgrade(
+                workspace=workspace, target_user=row.member)
         def _notify(r: WorkspaceMember = row, o: int = old_role) -> None:
             _notify_role_changed(r, workspace=workspace, actor=actor, old_role=o)
 

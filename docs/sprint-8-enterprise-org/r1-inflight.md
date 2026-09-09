@@ -92,7 +92,26 @@
 - 待 R6：前端角色管理页/权限矩阵编辑器/我的权限面板 + users/me/permissions
   快照契约扩展（AUTH-005 待回改）+ usePermission 并集分支
 
-## R3 入口（AUTH-009 SSO——风险最高轮）
+## R3 SSO 轮完成
+
+- 模型：IdentityProvider（OneToOne WS + Fernet 密钥列）+ SSOAccount（uq 锚），
+  0028 手工灌+fake；settings 增 SSO_BREAK_GLASS_EMAILS / SSO_FERNET_KEY
+- OIDC 自实现（requests+PyJWT；authlib 装后移除——偏差已登记）：PKCE/
+  state/nonce + sso_txn 签名 Cookie（10min，认领分支原地重写 pending_claim，
+  纯 Cookie 事务无服务端表）+ JWKS kid 缓存 + connection-check 干跑
+- SAML：python3-saml strict（双签名/300s 偏移/Audience/拒弃用算法）+
+  SP 元数据 get_sp_metadata；SDK 1.16 API 坑：Settings 无 sp_validation
+  参数、无 get_sp_settings（用 get_sp_metadata 代替 builder）
+- 强制门挂 SignInView（密码校验后建会话前）403 PERM_SSO_REQUIRED；
+  BR-05 防自锁（OWNER 绑定检查）；BR-04 干跑门槛；15 端点全套
+- workspace.sso.manage 落地矩阵（附录 B 唯一新增码）；错误码 +2
+  （PERM_SSO_REQUIRED/SSO_TXN_INVALID，锚定 75→77）
+- 测试 23 项（自造 RSA 自签 JWT mock IdP：JIT/认领/重放/验签失败/
+  nonce/state/逃生/干跑/防自锁/部门映射）+ 突变 2/2；全量 858 过
+- 待办：Keycloak 真容器联调 + SAML 认领向导 + 前端配置页（R6 验收轮）；
+  api-conventions §8.2 AUTH_SSO_REQUIRED 行待回改（补 Workspace 级分流注）
+
+## R3 入口原文（已收编）
 
 原「R2 入口」段落如下（已由上方实录收编）：
 

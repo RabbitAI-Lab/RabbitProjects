@@ -148,6 +148,10 @@ stateDiagram-v2
 | `GET …/gantt/`（平移预取） | < 300ms | 连续平移 10 视窗 | GANTT-001 §5.2（IT-02） |
 | `GET /api/v1/users/me/issues/stats/` | < 100ms | perf-heavy：全库 10 万任务 | RPT-001 §2.4（BR-06） |
 | `GET …/projects/{id}/stats/`（项目进度） | < 200ms | perf-heavy：全库 10 万任务 | RPT-002 §2.4（BR-06） |
+| `GET …/portfolios/{id}/summary/`（项目集三卡） | < 300ms | perf-heavy：3 项目 1 万任务 + 近 4 周工时快照 | PROJ-004 §5.2（IT-07，Sprint-9 补登） |
+| `GET …/portfolios/{id}/dependency-graph/` | < 200ms | perf-heavy：同 WS 1 万任务，子图 ≤100 节点/500 边 | PROJ-004 §5.2（IT-07，Sprint-9 补登） |
+| `GET …/workspaces/{slug}/wiki/search/?q=` | < 300ms | 500 页面（每页 ≥3 版本）× 100 次检索 | FILE-005 §5.2（IT-08，Sprint-9 补登） |
+| CPM `compute()`（服务端引擎） | < 300ms | 1 万节点依赖图 | GANTT-003 §5.1（UT-12，Sprint-9 补登） |
 
 > **收录口径**：仅收录上游文档显式登记的 P95 门禁，逐行标注出处（§节 + 用例号），禁止凭印象汇总——并发模型（VU 数）为本档压测编排自有参数（§4.2），不冒充上游口径。`COLLAB-001` / `FILE-001` / `COLLAB-004` 未定义 P95 门禁（实时通道的验收口径为「双端同步 < 1s」，见 COLLAB-004 §5.2 IT-01），不入本矩阵；后续文档补登 P95 门禁时经 UT-07 一致性守卫同步收录。
 >

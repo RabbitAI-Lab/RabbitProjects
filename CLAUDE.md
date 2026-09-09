@@ -104,7 +104,7 @@ PG schema 准备（Django migrate 在 PG 上有已知问题，见下面"坑"）�
 - `docs/design/sprint-3-hifi-prototype.html`：**Sprint 3 冻结原型（FROZEN 2026-09-06）**
 - `docs/design/sprint-4-hifi-prototype.html`：**Sprint 4 冻结原型（FROZEN 2026-09-06）**
 - `docs/design/sprint-8-hifi-prototype.html`：**Sprint 8 评审稿（FROZEN 2026-09-09）**——2026-09-09 流程补做件（S5~8 四迭代曾跳过原型环节，见 sprint-8 known-tech-debt #9）；六表面已按冻结稿整改
-- `docs/design/sprint-9-hifi-prototype.html`：**Sprint 9 评审稿（DRAFT 2026-09-09）**——项目集/报表/健康度/Wiki/甘特 17 表面 + O1~O8 开放点；冻结后为 Sprint-9 前端验收基准
+- `docs/design/sprint-9-hifi-prototype.html`：**Sprint 9 冻结原型（FROZEN 2026-09-10）**——项目集/报表/健康度/Wiki/甘特 17 表面；六轮交付基准（评审记录：依赖图连线动态布线修复获认可）
 - **硬门槛（2026-09-09 用户裁定）**：Sprint-5 起每个有 UI 交互的迭代，开工前必须先出高保真原型并经用户评审冻结——**无冻结原型不得写 UI 代码**；计划里没有 hifi 环节 = 计划不合格，应拒绝执行
 - `docs/plan/文档质量评审状态.md`：文档评审 master 记录
 - 文档质量门槛：5 维度（完整性/一致性/可实施性/可测性/清晰度）全部 ≥9.5

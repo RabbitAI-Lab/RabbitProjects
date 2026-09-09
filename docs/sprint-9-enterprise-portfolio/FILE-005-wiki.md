@@ -10,7 +10,7 @@
 | 关联架构文档 | [`unified-issue-model.md`](../architecture/unified-issue-model.md)（Issue 描述三格式范式：`description`/`description_html`/`description_stripped`——Wiki 页面内容直接复用）、[`api-conventions.md`](../architecture/api-conventions.md)、[`tech-stack.md`](../architecture/tech-stack.md)（TipTap 自研编辑器包）、[`dependency-graph.md`](../architecture/dependency-graph.md) §4.9、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md) §8.1/§11.4（rbac 待回改：其 §11.4 Wiki 文档编号「FILE-007」应为 FILE-005） |
 | 上游依赖 | `FILE-004`（文件分享链接与权限管控——Wiki 权限委托项目权限）；`AUTH-008`（自定义角色组与细粒度资源权限）；`COLLAB-004`（WebSocket 实时推送——协同编辑依赖实时服务）——三者以 [`dependency-graph.md`](../architecture/dependency-graph.md) §4.9 为准；范式引用：`FILE-002`（回收站与三态单入口）、`FILE-003`（版本台账）、`TASK-010`（Activity 管道） |
 | 下游消费 | P4 全局知识库（跨项目 Wiki——p4 概览待回改登记）、P4 实时协同（Yjs 评估——本文档预留 `collab_doc_id` 列；p4 概览待回改登记）、`AI-001`（知识摘要数据源） |
-| 文档状态 | 待评审（Draft） |
+| 文档状态 | 已实现（Sprint-9，2026-09-10；偏差登记 ADR-0031） |
 | 最后更新日期 | 2026-09-05（R2 修复：MAJOR-1 BR-06 inherit 映射改 VIEWER/COMMENTER→viewer、CONTRIBUTOR→editor、ADMIN→manager——对齐 rbac §11.4「wiki.update ← issue.update」与 rbac §8.2 写入门槛，UT-09/IT-03/BR-07/错误矩阵同步；MAJOR-2 §4.4 检索 SQL 权限过滤补 WS 管理员隐式 PROJ_ADMIN EXISTS 分支（rbac §7.4，对齐 FILE-002 §4.3.1），新增 UT-14/IT-09 主体覆盖用例并同步 §7.1；MINOR-3 COLLAB-002 引用锚点 §1.2→§1.5 两处；MINOR-4 IT-04 删未声明的 `ordering` 断言；MINOR-5 深度超限子码改 `DEPTH`（api-conventions §8.8）；INFO：§1.3 显式排除模板市场/文档模板、BR-09 登记「无手动彻底删除」并消歧措辞、Wiki 插件集清单三处统一、BR-14 强制层补 Service 级联联动、§2.1 检索节点 P4→PAGE_4 消歧、无编辑权限发布改 `PERM_ROLE_INSUFFICIENT`、恢复示例②对齐①锚点、下游 p4 概览与 rbac §11.4 编号漂移登记待回改。R3 复评 PASS（10×5）后随手收口：UT-14/IT-09 非工作空间成员断言明确 403 `PERM_NOT_WORKSPACE_MEMBER`、移动成环子码 `INVALID`→`CYCLE`、三格式字段名对齐 unified-issue-model（description/description_html/description_stripped）、BR-10 补 §11.4 委托口径消歧） |
 
 ---

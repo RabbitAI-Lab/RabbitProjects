@@ -10,7 +10,7 @@
 | 关联架构文档 | [`api-conventions.md`](../architecture/api-conventions.md)、[`rbac-permission-model.md`](../architecture/rbac-permission-model.md)（`report.read` / `report.export` / `project.setting.manage`——均为 §8 既有注册码） |
 | 上游依赖 | `RPT-002`（项目统计口径基座 `issue_stats_base()`）；`RPT-003`（速率/燃尽趋势；**Cycle 时间盒**——进度维度时间锚）；`TASK-013`（`WorkLogSummary` 负载快照——**同源复用，不另建聚合**；`ProjectWorklogConfig.weekly_capacity_minutes` 负载分母唯一配置源；可见性按其 BR-14「报表读/台账管理面分码分工」对齐）；`TASK-005`（阻塞统计）；`WF-002`（审批滞留可计入阻塞维度，可选信号） |
 | 下游消费 | P4 `RPT-005`（大屏数据源）；`PROJ-004`（项目集健康度聚合复用评分卡函数） |
-| 文档状态 | 待评审（Draft） |
+| 文档状态 | 已实现（Sprint-9，2026-09-10；偏差登记 ADR-0031） |
 | 最后更新日期 | 2026-09-05（R2 修复：信封 status 字符串化 + request_id 移出 meta、配置权限码改 `project.setting.manage`、负载分母单源对齐 TASK-013、示例数值按冻结公式全量重算、`_blocked_dim` ORM 方向修正、HealthConfig 模型补全、band 扩容 insufficient、下钻时点锚定声明。R2 复评 PASS 后随手收口：drilldown/trend/workload-export 三端点补 `projects/{id}/` 项目作用域 + export 窗口必填、BR-08 可见性语序消歧（持码=全员/未持码=仅自己）、compute() 同事务取数落为显式 transaction.atomic 要求、SQL #2 补归档过滤与 RPT-002 下沉待回改登记、capacity_minutes 单项目/项目集双形态声明、as_of 字面量与 RPT-002 时间戳区分） |
 
 ---

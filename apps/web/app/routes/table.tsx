@@ -13,12 +13,14 @@ import { TABLE_COL_NAMES } from "../components/views/view-dsl";
 import { renderTableCell } from "../components/views/TableCell";
 import { BulkOperations, TruncationStrip, useBulkSelection, useMarquee } from "../components/views/BulkOperations";
 import { useStores } from "../stores";
+import { usePermissionSync } from "../components/PermissionGate";
 
 /** BOARD-003 §1.2/§3.3 + 原型 O3：表格布局（C.75）——紧凑行高 + 斑马纹 + 列配置全生效。
  *  与列表布局同构（同一 issues 数据源，view_id/filters 三源恒 AND）；列集合 =
  *  display_props.columns（「-」前缀 = 隐藏，C.68 列配置区控制）。 */
 export default function Table() {
   const { workspaceSlug, projectId } = useParams<{ workspaceSlug: string; projectId: string }>();
+  usePermissionSync(); // 权限快照晚到重渲染（fail-closed 竞态，见 PermissionGate.tsx）
   const vp = useViewPage({ workspaceSlug, projectId, layout: "table" });
   const [issues, setIssues] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);

@@ -22,6 +22,11 @@ overrides:
   yjs: "13.6.x"
   y-prosemirror: "1.3.x"
   y-protocols: "1.0.x"
+  # GHSA-37ch-88jc-xwx2：ReDoS，patched 0.1.13（express 链传递依赖，父级钉 0.1.12）
+  path-to-regexp: "0.1.13"
+  # GHSA-p9ff-h696-f583 / GHSA-fx2h-pf6j-xcff：任意文件读/fs.deny 绕过，
+  # patched 6.4.2/6.4.3（storybook 8 builder 链锁定残留 6.3.7，统一到 6.4.x）
+  vite: "6.4.x"
 
 # ── 允许执行构建脚本的包（pnpm 11 用 allowBuilds 对象形式；
 #    文档 §4.2 的 onlyBuiltDependencies 为 pnpm 10 字段，登记为文档待回改项）──

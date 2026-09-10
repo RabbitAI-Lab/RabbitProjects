@@ -38,11 +38,11 @@ export default function ProjectSettings() {
         // 无条件 setName 会把刚改好的项目名悄悄回滚成服务端旧值 ——
         // 结果「保存」提交的是旧名字，删除确认框也永远匹配不上。
         if (dirtyRef.current) return;
-        const p = (r as any).data;
+        const p = (r as { data: { name?: string; identifier?: string; description?: string; status?: typeof status } }).data;
         setName(p.name ?? ""); setIdentifier(p.identifier ?? ""); setDescription(p.description ?? "");
         if (p.status) setStatus(p.status);
         LifecycleAPI.statusLogs(workspaceSlug!, projectId!).then((lr) =>
-          setLogs(((lr as any).data ?? []) as typeof logs)).catch(() => {});
+          setLogs((lr as { data?: typeof logs }).data ?? [])).catch(() => {});
       })
       .catch(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
@@ -113,11 +113,11 @@ export default function ProjectSettings() {
                 onTransition={async (to, force, reason) => {
                   try {
                     const r = await LifecycleAPI.transition(workspaceSlug!, projectId!, { to_status: to, ...(force !== undefined ? { force } : {}), ...(reason !== undefined ? { reason } : {}) });
-                    const d = (r as any).data;
+                    const d = (r as { data: { status: typeof status; affected_issues?: number; idempotent?: boolean } }).data;
                     setStatus(d.status);
                     if (d.affected_issues) toast(`已${CN[to]}——${d.affected_issues} 个开放任务批量取消`, "ok");
                     else if (!d.idempotent) toast(`已${CN[to]}`, "ok");
-                    LifecycleAPI.statusLogs(workspaceSlug!, projectId!).then((lr) => setLogs((lr as any).data ?? []));
+                    LifecycleAPI.statusLogs(workspaceSlug!, projectId!).then((lr) => setLogs((lr as { data?: typeof logs }).data ?? []));
                     return true;
                   } catch (e) {
                     const err = (e as { response?: { data?: { error?: { details?: Array<{ code: string; open_count?: number }> } } } });
@@ -133,7 +133,7 @@ export default function ProjectSettings() {
                 onDuplicate={async () => {
                   try {
                     const r = await LifecycleAPI.duplicate(workspaceSlug!, projectId!);
-                    const d = (r as any).data;
+                    const d = (r as { data?: { id?: string } }).data;
                     toast("已创建 draft 副本（四件套与成员已复制）", "ok");
                     if (d?.id) nav(`/${workspaceSlug}/projects/${d.id}/settings`);
                   } catch { toast("副本重开失败", "error"); }
@@ -162,7 +162,7 @@ export default function ProjectSettings() {
                       onClick={async () => {
                         const r = await LifecycleAPI.transition(workspaceSlug!, projectId!, {
                           to_status: "closed", force: true, reason: "强制关闭（向导确认）" });
-                        setStatus((r as any).data.status);
+                        setStatus((r as { data: { status: typeof status } }).data.status);
                         setCloseWizard(null); setCloseName("");
                         toast("已关闭（终态——重开走副本）", "ok");
                       }}

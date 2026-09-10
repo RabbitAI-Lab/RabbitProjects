@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { Logo } from "../components/Logo";
 import { useStores } from "../stores";
-import { AuthAPI } from "../services/api";
 
 export default function Login() {
   const { session } = useStores();
@@ -41,8 +40,8 @@ export default function Login() {
     try {
       await session.signIn(email, password, remember);
       nav(next ?? `/${session.currentWsSlug ?? ""}/projects`);
-    } catch (e: any) {
-      setErr(e?.message ?? "登录失败");
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "登录失败");
     } finally {
       setLoading(false);
     }
@@ -94,7 +93,7 @@ export default function Login() {
         </button>
       </form>
       <button type="button" onClick={async () => {
-        try { await session.signIn("zhangsan@rabbit.dev", "Rabbit123"); nav(`/${session.currentWsSlug}/projects`); } catch (e: any) { setErr(e?.message); }
+        try { await session.signIn("zhangsan@rabbit.dev", "Rabbit123"); nav(`/${session.currentWsSlug}/projects`); } catch (e: unknown) { setErr(e instanceof Error ? e.message : "登录失败"); }
       }} className="w-full h-[34px] mt-2.5 bg-white text-neutral-700 border border-neutral-300 rounded-md font-medium hover:bg-neutral-50">一键进入演示账号（张三）</button>
       <div className="border-t border-neutral-200 mt-5 pt-4 text-[13px] text-neutral-500 text-center">没有账号？ <Link className="text-brand-600" to={`/register${email.trim() ? `?email=${encodeURIComponent(email.trim())}` : ""}`}>立即注册</Link></div>
     </div>

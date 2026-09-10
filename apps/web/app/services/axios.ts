@@ -136,5 +136,6 @@ function buildFriendlyError(
 
 export async function getCsrf(): Promise<string> {
   const r = await api.get<ApiEnvelopeSuccess<{ csrf_token: string }>>("auth/csrf-token/");
-  return (r as any).data.csrf_token;
+  // 响应拦截器已把信封解包到 data（见上），这里按解包后的形状取值
+  return (r as unknown as { data: { csrf_token: string } }).data.csrf_token;
 }

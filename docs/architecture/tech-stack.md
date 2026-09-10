@@ -44,13 +44,13 @@
 | --- | --- | --- | --- |
 | React | `19.1.x` | UI 框架，所有前端应用的渲染基础 | 与 Plane 保持一致；React 19 提供稳定的 `useOptimistic`（看板拖拽乐观更新直接受益）、`use` hook、Actions、以及自动批处理；生态成熟度最高，团队上手成本最低 |
 | React Router | `7.x`（Framework Mode） | 客户端路由 + 数据加载 + 嵌套布局，Vite 构建 | 需求文档明确要求 v7；Framework Mode 提供 loader/action 数据契约、类型安全路由（`typegen`）、嵌套路由与布局，能力对齐 Next.js App Router 但**不绑定 Vercel 运行时**，可纯 SPA 部署到 Nginx 静态目录，契合私有化部署要求 |
-| Vite | `6.3.x` | 前端构建工具与 dev server | HMR 毫秒级，冷启动基于 esbuild 预打包；Rollup 生产构建产物可控；React Router v7 官方一等公民集成；Monorepo 下对 workspace 源码链接支持良好（无需先 build packages 即可 dev） |
+| Vite | `6.4.x` | 前端构建工具与 dev server | HMR 毫秒级，冷启动基于 esbuild 预打包；Rollup 生产构建产物可控；React Router v7 官方一等公民集成；Monorepo 下对 workspace 源码链接支持良好（无需先 build packages 即可 dev） |
 | TypeScript | `5.8.x` | 全量静态类型 | 需求文档要求「零隐式 any」；5.x 的 `satisfies`、const 类型参数、`isolatedDeclarations` 提升 monorepo 包构建速度 |
 | MobX | `6.13.x` | 领域状态管理（observable store） | 与 Plane 一致；面向对象的 store 树天然匹配「工作空间 → 项目 → 任务」的领域模型；细粒度依赖追踪使看板万级卡片局部更新无需手写 memo；相较 Redux 样板代码极少 |
 | mobx-react-lite | `4.1.x` | React 绑定（`observer`） | 函数组件场景下比 `mobx-react` 更轻（不含 class 组件支持）；本项目全函数组件 |
 | mobx-react | `9.2.x` | React 绑定（兼容 class 组件 / `Provider`） | 仅在需要 class ErrorBoundary + observer 的少数场景引入；与 Plane 依赖保持一致 |
 | SWR | `2.3.x` | 远程数据获取与缓存 | 与 Plane 一致；`stale-while-revalidate` 策略让切换视图秒开；内置去重、焦点重验证、`mutate` 乐观更新，与 MobX 分工明确（见 §2.1） |
-| Axios | `1.8.x` | HTTP 客户端（SWR fetcher 底座） | 需求文档 §1.2 明确「SWR + Axios」；拦截器统一注入 CSRF token / `X-API-Key`、统一解包 `{status,data,meta}` 响应体、统一映射错误码（见 `api-conventions.md`） |
+| Axios | `1.18.x` | HTTP 客户端（SWR fetcher 底座） | 需求文档 §1.2 明确「SWR + Axios」；拦截器统一注入 CSRF token / `X-API-Key`、统一解包 `{status,data,meta}` 响应体、统一映射错误码（见 `api-conventions.md`） |
 | TailwindCSS | `4.1.x` | 原子化 CSS | 与 Plane 一致；v4 的 Oxide 引擎（Rust）构建提速数量级，CSS-first 配置（`@theme`）替代 JS config，天然适配设计 token；无运行时开销，产物体积随实际使用裁剪 |
 | @tailwindcss/vite | `4.1.x` | Tailwind v4 的 Vite 插件 | v4 推荐接入方式，替代 PostCSS 链路，减少一层构建开销 |
 | Headless UI | `2.2.x` | 无样式可访问组件（Dialog/Menu/Combobox/Popover） | 与 Plane 一致；提供完整键盘导航与 ARIA 语义，作为自研 `@rp/ui` 的可访问性底座，样式 100% 由 Tailwind 掌控，不与设计系统冲突 |

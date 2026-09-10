@@ -5,6 +5,7 @@ import { ProjectSidebar } from "../components/ProjectSidebar";
 import { FieldAPI, IssueAPI, IssueTypeAPI, ProjectAPI, unwrap, type CustomFieldDef, type FieldOption } from "../services/api";
 import type { ApiError } from "../services/axios";
 import { useStores } from "../stores";
+import { usePermissionSync } from "../components/PermissionGate";
 import { toast } from "../components/Toast";
 
 /** 字段管理页（C.52 / TASK-008 §3.1）：项目设置 → 字段。
@@ -52,6 +53,7 @@ type IssueTypeRow = { id: string; name: string; color: string; is_active: boolea
 export default function ProjectFields() {
   const { workspaceSlug, projectId } = useParams<{ workspaceSlug: string; projectId: string }>();
   const stores = useStores();
+  usePermissionSync(); // 管理员门禁对快照晚到重渲染（fail-closed 竞态，见 PermissionGate.tsx）
   const isAdmin = stores.permission.effectiveProjectRole(projectId, workspaceSlug) >= 20;
 
   const [project, setProject] = useState<{ name: string; identifier: string } | null>(null);

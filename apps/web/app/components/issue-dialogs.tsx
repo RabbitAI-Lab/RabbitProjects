@@ -240,8 +240,10 @@ export function WorkLogDialog({ slug, projectId, issueId, issueName, edit, onClo
   const [date, setDate] = useState(edit?.worked_on ?? new Date().toISOString().slice(0, 10));
   const [note, setNote] = useState(edit?.note ?? "");
   const [saving, setSaving] = useState(false);
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const min30 = new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10);
+  // 渲染期不取时钟（react(purity)）：可补填窗口锚定挂载时刻
+  const [mountedAtMs] = useState(() => Date.now());
+  const todayStr = new Date(mountedAtMs).toISOString().slice(0, 10);
+  const min30 = new Date(mountedAtMs - 30 * 86400_000).toISOString().slice(0, 10);
 
   async function save(reopen: boolean) {
     if (saving) return;

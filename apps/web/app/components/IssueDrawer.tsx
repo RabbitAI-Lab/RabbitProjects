@@ -22,6 +22,7 @@ import {
 import type { ApiError } from "../services/axios";
 import { useStores } from "../stores";
 import { useIssueRemoteFlash } from "../realtime/useIssueRemoteFlash";
+import { usePermissionSync } from "./PermissionGate";
 import { StateBadge } from "./StateBadge";
 import { GuardDialog, isGuardBlocked, type GuardItem } from "./workflow/GuardDialog";
 import { WorkflowAPI, type TransitionAvailableItem } from "../services/api";
@@ -311,6 +312,7 @@ export function IssueDrawer({ issueId, slug, projectId, onClose, onChanged, laye
   /** C.42 关联行跳转 / C.44 阻塞项跳转：不提供则抽屉内自查自开（嵌套换 issueId）。 */
   onOpenIssue?: (issueId: string) => void;
 }) {
+  usePermissionSync(); // 权限快照晚到重渲染（属性区读写门禁竞态，见 PermissionGate.tsx）
   const [issue, setIssue] = useState<Issue | null>(null);
   const [editing, setEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");

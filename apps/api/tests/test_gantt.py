@@ -630,13 +630,14 @@ def test_it07_viewport_query_uses_gantt_index(env):
     with connection.cursor() as cur:
         cur.execute("SET LOCAL lock_timeout = '2s'")
         # 同前缀窄索引（issues_project_id_* / idx_issue_active_by_project 等）在
-        # 等值条件下恒优于宽复合偏索引——事务内动态下线 issues 全部非唯一索引后
+        # 等值条件下恒优于宽复合偏索引——事务内动态下线 issues 全部非主键索引
+        # （含唯一索引：project_id 前缀的偏条件唯一键同样参与等值计划竞争）后
         # EXPLAIN，形状证明不依赖库上恰好缺哪些索引；DDL 随 pytest-django 回滚复原
         cur.execute(
             "SELECT i.relname FROM pg_index x "
             "JOIN pg_class i ON i.oid = x.indexrelid "
             "JOIN pg_class t ON t.oid = x.indrelid "
-            "WHERE t.relname = 'issues' AND NOT x.indisprimary AND NOT x.indisunique "
+            "WHERE t.relname = 'issues' AND NOT x.indisprimary "
             "AND i.relname <> 'idx_issue_gantt_viewport'")
         for (name,) in cur.fetchall():
             cur.execute(f'DROP INDEX IF EXISTS "{name}"')  # noqa: S608 -- 名取自 pg_catalog，无注入面

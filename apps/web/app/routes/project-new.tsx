@@ -4,6 +4,6 @@ import { useNavigate, useParams } from "react-router";
 export default function ProjectNew() {
   const { workspaceSlug } = useParams<{ workspaceSlug: string }>();
   const nav = useNavigate();
-  useEffect(() => { nav(`/${workspaceSlug}/projects`); }, [workspaceSlug]);
+  useEffect(() => { nav(`/${workspaceSlug}/projects`); }, [nav, workspaceSlug]);
   return null;
 }

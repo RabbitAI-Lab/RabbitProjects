@@ -30,6 +30,7 @@ from plane.db.models import (
 from plane.db.seeds.project_states import seed_project_states
 from plane.db.services.cpm import CPMEngine, cpm_recompute
 from plane.db.services.issue_link import create_relation
+from plane.db.services.issue_sequence import next_sequence_id
 
 pytestmark = pytest.mark.django_db
 
@@ -56,7 +57,7 @@ def _client(user) -> APIClient:
 def _sched(env, name, start, target, *, group="unstarted") -> Issue:
     state = State.objects.filter(project=env["proj"], group=group).first()
     return Issue.objects.create(
-        project=env["proj"], name=name, state=state,
+        project=env["proj"], name=name, state=state, sequence_id=next_sequence_id(env["proj"].pk),
         start_date=start, target_date=target, created_by=env["owner"])
 
 
@@ -155,6 +156,7 @@ class TestCacheFingerprint:
                                        workspace=env["ws"], created_by=env["owner"])
         seed_project_states(proj2)
         ext = Issue.objects.create(project=proj2, name="外部任务",
+                                   sequence_id=next_sequence_id(proj2.pk),
                                    start_date="2026-09-01", target_date="2026-09-05",
                                    created_by=env["owner"])
         a, b, c, d, e = _mk_net(env)

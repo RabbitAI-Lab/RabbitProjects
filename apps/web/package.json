@@ -22,7 +22,7 @@
     "@rp/ui": "workspace:*",
     "@tanstack/react-virtual": "3.13.26",
     "@xyflow/react": "^12.11.6",
-    "axios": "1.8.x",
+    "axios": "1.18.x",
     "html-to-image": "1.11.13",
     "isbot": "^5",
     "lucide-react": "0.511.x",
@@ -50,7 +50,7 @@
     "oxlint": "1.x",
     "tailwindcss": "4.1.x",
     "typescript": "5.8.x",
-    "vite": "6.3.x",
+    "vite": "6.4.3",
     "vitest": "3.x"
   }
 }

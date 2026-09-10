@@ -93,13 +93,13 @@ export function InviteMemberModal({
     if (!tags.length || sending) return;
     setSending(true);
     try {
-      const r: any = await WorkspaceMemberAPI.invite(workspaceSlug, { emails: tags, role });
-      setResults(((r as any).data ?? []) as InviteResult[]);
-      setInviteLinks(((r as any).meta?.invite_links ?? null) as Record<string, string> | null);
+      const r = await WorkspaceMemberAPI.invite(workspaceSlug, { emails: tags, role });
+      setResults((r as { data?: InviteResult[] }).data ?? []);
+      setInviteLinks((r as { meta?: { invite_links?: Record<string, string> } }).meta?.invite_links ?? null);
       setPhase("result");
       onInvited?.();
-    } catch (e: any) {
-      toast(e?.message ?? "发送失败", "error");
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : "发送失败", "error");
     } finally {
       setSending(false);
     }

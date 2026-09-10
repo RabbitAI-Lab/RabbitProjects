@@ -27,7 +27,7 @@ export function NewTaskModal({ slug, projectId, projectName, onClose, onCreated 
 
   useEffect(() => {
     ProjectAPI.states(slug, projectId, { include_cancelled: "1" }).then((r) => {
-      const list = ((r as any).data ?? []) as StateOpt[];
+      const list = (r as { data?: StateOpt[] }).data ?? [];
       setStates(list);
       const def = list.find((x) => x.is_default) ?? list[0];
       if (def) setStateId(def.id);
@@ -36,10 +36,12 @@ export function NewTaskModal({ slug, projectId, projectName, onClose, onCreated 
 
   const cur = states.find((x) => x.id === stateId);
   const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  // 渲染期不取时钟（react(purity)）：快捷日期锚定挂载时刻
+  const [today] = useState(() => new Date());
   const quick = {
-    今天: fmt(new Date()),
-    明天: fmt(new Date(Date.now() + 86400000)),
-    下周: fmt(new Date(Date.now() + 7 * 86400000)),
+    今天: fmt(today),
+    明天: fmt(new Date(today.getTime() + 86400000)),
+    下周: fmt(new Date(today.getTime() + 7 * 86400000)),
   };
 
   async function submit() {
@@ -58,7 +60,7 @@ export function NewTaskModal({ slug, projectId, projectName, onClose, onCreated 
       onCreated?.();
       if (keepOpen) { setName(""); setDescHtml(""); if (descRef.current) descRef.current.innerHTML = ""; setTargetDate(""); setAssignMe(false); setLoading(false); }
       else onClose();
-    } catch (e: any) { setErr(e?.message ?? "创建失败"); setLoading(false); }
+    } catch (e: unknown) { setErr(e instanceof Error ? e.message : "创建失败"); setLoading(false); }
   }
 
   return (

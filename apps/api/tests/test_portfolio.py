@@ -37,6 +37,7 @@ from plane.db.services.issue_link import (
     RelationValidationError,
     create_relation,
 )
+from plane.db.services.issue_sequence import next_sequence_id
 from plane.db.services.issue_transition_guard import assert_completable
 
 pytestmark = pytest.mark.django_db
@@ -87,6 +88,7 @@ def _mk_pf(env, name, parent=None, manager=None) -> Portfolio:
 def _mk_issue(proj, name, *, group="unstarted", estimate=None, actor) -> Issue:
     state = State.objects.filter(project=proj, group=group).first()
     return Issue.objects.create(project=proj, name=name, state=state,
+                                sequence_id=next_sequence_id(proj.pk),
                                 estimate_minutes=estimate, created_by=actor)
 
 

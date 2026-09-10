@@ -28,7 +28,8 @@ function Guard({ children }: { children?: ReactNode }) {
     loc.pathname === "/labels-admin" ||
     loc.pathname.startsWith("/invite/");
   useEffect(() => {
-    if (allowedPublic) { setReady(true); return; }
+    // 公共路径直接放行（渲染守卫 `!ready && !allowedPublic` 已覆盖，无需置位 ready）
+    if (allowedPublic) return;
     // 规范 ③ 实测根因：内存态 isBootstrapped/isLoggedIn 跨 page 复用，而会话 cookie
     // 可能已被清（e2e beforeEach / 用户在他标签页退出）。此时旧逻辑直接放行 → 后续请求
     // 全部 401 → axios 拦截器整页跳 /login，页面表现为「闪 blank 再跳登录」。
@@ -52,7 +53,7 @@ function Guard({ children }: { children?: ReactNode }) {
       nav(`/login?next=${encodeURIComponent(loc.pathname + loc.search)}`, { replace: true });
       return;
     }
-    setFailed(false);
+    // failed 仅由 8s 超时 / bootstrap 异常置位；重试入口自带复位，无需同步重置
     let cancel = false;
     const timer = setTimeout(() => { if (!cancel && !root.session.isBootstrapped) setFailed(true); }, 8000); // §3.1：8s 超时切错误态
     root.session.bootstrap().then((ok) => {

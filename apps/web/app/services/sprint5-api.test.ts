@@ -21,8 +21,10 @@ const parseBody = (c: Call | undefined): unknown =>
   c ? (typeof c.body === "string" ? JSON.parse(c.body) : c.body) : undefined;
 let calls: Call[] = [];
 
-(api.defaults as { adapter?: unknown }).adapter = (async (cfg: Record<string, any>) => {
-  calls.push({ method: cfg.method, url: cfg.url, body: cfg.data, params: cfg.params });
+(api.defaults as { adapter?: unknown }).adapter = (async (cfg: {
+  method?: string; url?: string; data?: unknown; params?: Record<string, unknown>;
+}) => {
+  calls.push({ method: cfg.method ?? "", url: cfg.url ?? "", body: cfg.data, ...(cfg.params ? { params: cfg.params } : {}) });
   return { data: { status: "success", data: { ok: 1 } }, status: 200,
            statusText: "OK", headers: {}, config: cfg };
 }) as unknown as typeof api.defaults.adapter;

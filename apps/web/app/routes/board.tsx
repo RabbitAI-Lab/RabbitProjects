@@ -14,12 +14,14 @@ import { GroupedBoard } from "../components/views/GroupedBoard";
 import { SwimlaneMatrix } from "../components/views/SwimlaneMatrix";
 import { useViewPage } from "../components/views/useViewPage";
 import { BulkOperations, TruncationStrip, useBulkSelection, useMarquee } from "../components/views/BulkOperations";
+import { usePermissionSync } from "../components/PermissionGate";
 
 /** Sprint-3 Phase 3-A：BOARD-003 §3.1/§3.2 分组看板泛化 + 视图切换器工具条（C.64~C.67）。
  *  Sprint-1/2 冻结表面（C.29/C.30/C.44/C.45/C.51）在泛化看板上保留：
  *  hover Peek、⛔ 角标与 tooltip、列内快速创建、完成被拦 M-BLOCKED、标签管理入口。 */
 export default function Board() {
   const { workspaceSlug, projectId } = useParams<{ workspaceSlug: string; projectId: string }>();
+  usePermissionSync(); // 权限快照晚到重渲染（fail-closed 竞态，见 PermissionGate.tsx）
   const vp = useViewPage({ workspaceSlug, projectId, layout: "kanban" });
   // BOARD-005（C.154）：?sub_group_by= 二维泳道（行分组维度；清空回一维）
   const [spParams] = useSearchParams();

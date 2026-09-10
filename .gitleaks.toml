@@ -1,0 +1,32 @@
+# gitleaks 仓库级配置（security-gate 工作流消费；useDefault 继承全部内置规则）
+#
+# BR-06 纪律：本文件只做「虚构固件豁免」，不做任何真实凭据的放行。
+# gitleaks 判定的 leak 在 ci/security_verdict.py 里按 CRITICAL 零容忍处置
+# （豁免单 security/exemptions.yml 只适用于 HIGH 依赖漏洞，不适用于凭据），
+# 因此新增虚构示例凭据时必须在这里登记路径并注明出处，否则 gate 必红。
+#
+# 2026-09-10 全量审计（对应 security-gate run 34281867793 的 8 条
+# generic-api-key findings）：以下 7 个文件的命中值均为文档示例 / 测试占位——
+#   - rp_live_/rp_sk_ 前缀 key：INTG 规格文档的请求示例（产品未上线的虚构前缀）
+#   - whsec_ webhook 签名密钥：INTG-002 文档示例
+#   - abc123def456：sprint-2-flow.py 的占位 token 夹具
+#   - abcdefghij2345678…：sprint-1 原型的字母序列假 reset token
+#   - RFC 7515 JWS 示例 nonce（dGhlIHNhbXBsZSBub25jZQ== = "the sample nonce"）
+#   - 01JBX6P4… ULID 样例 / AUTH-004 文档中的示例串
+# 与 2026-09-07 凭据泄漏排查结论一致：全仓 + git 历史均为 @rabbit.dev 虚构固件，
+# 无真实泄漏。
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "虚构固件：规格文档示例与测试占位（逐文件登记，见上方审计注）"
+paths = [
+  '''^docs/sprint-future-p4/INTG-004-open-api\.md$''',
+  '''^docs/sprint-5-integration-standard/INTG-002-webhook-basic\.md$''',
+  '''^docs/sprint-1-mvp/AUTH-004-profile-password\.md$''',
+  '''^docs/sprint-0-poc/BOARD-001-fixed-kanban\.md$''',
+  '''^docs/sprint-0-poc/INFRA-002-docker-compose\.md$''',
+  '''^docs/design/sprint-1-hifi-prototype\.html$''',
+  '''^tests/jmeter/sprint-2-flow\.py$''',
+]

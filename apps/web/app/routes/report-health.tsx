@@ -51,7 +51,7 @@ export default function ReportHealthPage() {
   const openDrill = async (dim: string) => {
     if (!ws || !projectId) return;
     setDrillDim(dim);
-    setDrillNow(Date.now());
+    setDrillNow(() => Date.now());
     try {
       setDrillRows(unwrap<DrillRow[]>(await ReportAPI.healthDrilldown(ws, projectId, dim)) ?? []);
     } catch { setDrillRows([]); }

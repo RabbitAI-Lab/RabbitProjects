@@ -1,8 +1,9 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import { Topbar } from "../components/Topbar";
 import { ProjectSidebar } from "../components/ProjectSidebar";
 import { IssueDrawer } from "../components/IssueDrawer";
+import { usePermissionSync } from "../components/PermissionGate";
 import { NewTaskModal } from "../components/NewTaskModal";
 import { AvatarStack, fmtMinutes } from "../components/issue-dialogs";
 import {
@@ -126,6 +127,7 @@ function CfCell({ field, value, nameOf }: {
 
 export default function IssuesList() {
   const { workspaceSlug, projectId } = useParams<{ workspaceSlug: string; projectId: string }>();
+  usePermissionSync(); // 权限快照晚到重渲染（行点击 fail-closed 竞态，见 PermissionGate.tsx）
   const [issues, setIssues] = useState<Issue[]>([]);
   const [project, setProject] = useState<{ name: string; identifier: string } | null>(null);
   const [quick, setQuick] = useState("");
@@ -407,14 +409,14 @@ export default function IssuesList() {
 
 
   /** 已加载子树内的后代集合（移动候选排除自身与后代，C.63；后端仍有 CTE 兜底） */
-  function descendantsLoaded(id: string): Set<string> {
+  const descendantsLoaded = useCallback((id: string): Set<string> => {
     const out = new Set<string>();
     const walk = (pid: string) => {
       for (const k of childrenByParent[pid] ?? []) { if (!out.has(k.id)) { out.add(k.id); walk(k.id); } }
     };
     walk(id);
     return out;
-  }
+  }, [childrenByParent]);
 
   // ── 展开懒加载（§3.1：?parent_id=&order_by=sort_order&per_page=50） ──
   async function fetchChildren(parentId: string): Promise<Issue[]> {
@@ -755,7 +757,7 @@ export default function IssuesList() {
       .filter((i) => !forbidden.has(i.id) && !i.id.startsWith("temp-"))
       .filter((i) => !q || i.name.toLowerCase().includes(q) || i.issue_key.toLowerCase().includes(q))
       .slice(0, 8);
-  }, [moveModalFor, moveSearch, issueById, childrenByParent]);
+  }, [moveModalFor, moveSearch, issueById, descendantsLoaded]);
 
   /** 节点在已加载树中的深度（根=1）——「移动到…」候选行「第 N 层」与「＋」预判共用 */
   function depthLoaded(id: string): number {

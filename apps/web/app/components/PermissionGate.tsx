@@ -11,6 +11,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useParams } from "react-router";
 import { observer } from "mobx-react-lite";
+import { reaction } from "mobx";
 import { useStores } from "../stores";
 import { PERMISSION_LABELS, type PermissionKey, type Scope } from "../stores/permission";
 
@@ -149,6 +150,24 @@ export function usePermission(
   const { permission: store } = useStores();
   const ctx = useRouteCtx();
   return store.can(permission, scope, resourceId, ctx);
+}
+
+/** 权限快照晚到重渲染锚（AUTH-005 fail-closed 竞态）。
+ *  非 observer 页面在渲染期直读 effectiveProjectRole/can 时，若快照晚于首屏
+ *  到达（登录后直接深链、慢网络、大租户 200+ 项目快照 >200ms），页面会停留在
+ *  陈旧的 fail-closed 渲染且无任何状态变化触发重渲染——列表行点击被「无多选
+ *  权限」吞掉、管理页卡在权限门禁（2026-09-10 e2e 环境排查实测复现）。
+ *  消费 effectiveProjectRole 的页面挂本 hook 一次，即对齐 PermissionGate 的响应性。 */
+export function usePermissionSync(): void {
+  const { permission } = useStores();
+  const [, force] = useState(0);
+  useEffect(() => {
+    const dispose = reaction(
+      () => permission.snapshot,
+      () => force((n) => n + 1),
+    );
+    return () => dispose();
+  }, [permission]);
 }
 
 /** 导出 PERMISSION_LABELS 供 403 页 / 其它消费者复用（AUTH-005 §3.3 中文名渲染） */

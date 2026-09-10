@@ -1,6 +1,5 @@
 import { type RouteConfig, index, layout, route } from "@react-router/dev/routes";
 
-import { permissionRoutes } from "./route-groups/permissions";
 import { publicExtraRoutes } from "./route-groups/public-extra";
 import { settingsRoutes } from "./route-groups/settings";
 import { teamRoutes } from "./route-groups/team";

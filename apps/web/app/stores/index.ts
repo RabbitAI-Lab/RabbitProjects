@@ -5,7 +5,7 @@ import { makeAutoObservable } from "mobx";
 // Sprint-3 Phase 3-C（COLLAB-004 §4.4）：实时连接状态机 + presence 表同源。
 import { FilterTreeStore, PresenceStore, RealtimeStore, SelectionStore, ViewStore } from "@rp/shared-state";
 import type { Issue, WorkspaceSummary } from "@rp/types";
-import { AuthAPI, type MeEnvelope } from "../services/api";
+import { AuthAPI, unwrap, type MeEnvelope } from "../services/api";
 import { clearSessionProbe, markSessionProbe } from "../services/session-probe";
 import { PermissionStore } from "./permission";
 
@@ -55,7 +55,7 @@ export class SessionStore {
   async bootstrap(): Promise<boolean> {
     try {
       const r = await AuthAPI.me();
-      this.setSession((r as any).data);
+      this.setSession(unwrap<MeEnvelope>(r));
       this.isBootstrapped = true;
       this._onLogin?.();                       // AUTH-005 §2.6：登录成功 → 拉权限快照
       return true;
@@ -71,13 +71,13 @@ export class SessionStore {
 
   async signIn(email: string, password: string, remember = false): Promise<void> {
     const r = await AuthAPI.signIn(email, password, remember);
-    this.setSession((r as any).data);
+    this.setSession(unwrap<MeEnvelope>(r));
     this._onLogin?.();                         // AUTH-005 §2.6：登录成功 → 拉权限快照
   }
 
   async signUp(email: string, password: string, displayName?: string, justRegistered?: boolean): Promise<void> {
     const r = await AuthAPI.signUp(email, password, displayName);
-    this.setSession((r as any).data);
+    this.setSession(unwrap<MeEnvelope>(r));
     if (justRegistered) this.justRegistered = true; // AUTH-001 §3.5：注册成功工作台顶部一次性欢迎条
     this._onLogin?.();                         // AUTH-005 §2.6：注册即登录 → 拉权限快照
   }

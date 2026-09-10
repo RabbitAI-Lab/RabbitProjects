@@ -36,6 +36,7 @@ from plane.db.services.agile_reports import (
     compute_cycle_snapshot,
     cycle_daily_snapshot,
 )
+from plane.db.services.issue_sequence import next_sequence_id
 
 pytestmark = pytest.mark.django_db
 
@@ -78,6 +79,7 @@ def _mk_cycle(env, name="Sprint 24", start=None, end=None, status=Cycle.Status.P
 def _mk_issue(env, name, *, group="unstarted", estimate=240) -> Issue:
     state = State.objects.filter(project=env["proj"], group=group).first()
     return Issue.objects.create(project=env["proj"], name=name, state=state,
+                                sequence_id=next_sequence_id(env["proj"].pk),
                                 estimate_minutes=estimate, created_by=env["owner"])
 
 
@@ -152,6 +154,7 @@ class TestBatchAssign:
                                        workspace=env["ws"], created_by=env["owner"])
         seed_project_states(proj2)
         other = Issue.objects.create(project=proj2, name="外部任务",
+                                     sequence_id=next_sequence_id(proj2.pk),
                                      created_by=env["owner"])
         c = _mk_cycle(env)
         resp = _client(env["owner"]).put(

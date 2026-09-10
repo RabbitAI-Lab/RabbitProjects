@@ -65,7 +65,7 @@ describe("响应拦截器（C1 信封解包）", () => {
     expect(r.data instanceof Uint8Array).toBe(true);
   });
   it("HTTP 409 信封错误 → reject 友好 Error（保留 code 与 details）", async () => {
-    (api.defaults.adapter as unknown) = async (cfg: Record<string, unknown>) => {
+    (api.defaults.adapter as unknown) = async (_cfg: Record<string, unknown>) => {
       const e = new Error("Request failed with status code 409") as Error & {
         response?: { status: number; data: unknown }; config: Record<string, unknown>; isAxiosError: boolean;
       };

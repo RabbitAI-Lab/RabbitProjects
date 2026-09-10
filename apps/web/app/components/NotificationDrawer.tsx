@@ -14,7 +14,7 @@
  *  ADR-0010 教训 #4：dropdown 全局点击监听禁 document click；本组件自管 mount + 内部 onClose
  *  + Esc 监听，不挂 document mousedown。
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
 import { NotificationAPI, unwrap } from "../services/api";
@@ -97,31 +97,22 @@ function relTime(iso: string, now: Date): string {
   return `${Math.floor(diff / 86400)} 天前`;
 }
 
-const MOCK: NotifRow[] = [
-  { id: "m1", title: "王五 在 RBT-128 中提到了你", data: { issue_id: "iss-1", issue_key: "RBT-128", verb: "mention" }, created_at: new Date(Date.now() - 3 * 60_000).toISOString() },
-  { id: "m2", title: "李四 将 RBT-130 指派给你", data: { issue_id: "iss-2", issue_key: "RBT-130", verb: "assign" }, created_at: new Date(Date.now() - 25 * 60_000).toISOString() },
-  { id: "m3", title: "张三 评论了 RBT-130", data: { issue_id: "iss-3", issue_key: "RBT-130", verb: "comment" }, created_at: new Date(Date.now() - 2 * 3600_000).toISOString() },
-  { id: "m4", title: "王五 更新了 RBT-128：状态 待办 → 进行中", data: { issue_id: "iss-4", issue_key: "RBT-128", verb: "update" }, read_at: new Date(Date.now() - 86400_000).toISOString(), created_at: new Date(Date.now() - 86400_000 - 3600_000).toISOString() },
-  { id: "m5", title: "系统 · 你加入项目『RabbitProjects』", data: { verb: "system" }, read_at: new Date(Date.now() - 86400_000 * 3).toISOString(), created_at: new Date(Date.now() - 86400_000 * 3).toISOString() },
-];
-
 export function NotificationDrawer({ open, onClose, workspaceSlug, onUnreadChange, mockData }: NotificationDrawerProps) {
   const nav = useNavigate();
   const [items, setItems] = useState<NotifRow[]>(mockData ?? []);
   const [loading, setLoading] = useState(false);
   const [onlyUnread, setOnlyUnread] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [moreCursor, setMoreCursor] = useState<string | null>(null);
   const [moreLoaded, setMoreLoaded] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const drawerRef = useRef<HTMLDivElement | null>(null);
-
-  const now = useMemo(() => new Date(), [open]);
+  // 「现在」锚定在最近一次数据刷新时刻——分组/相对时间随首屏与加载更多自然滚动
+  const [now, setNow] = useState(() => new Date());
 
   // 打开时拉首屏（mock 模式跳过）
   useEffect(() => {
     if (!open) return;
-    if (mockData) { setItems(mockData); return; }
+    if (mockData) { setItems(mockData); setNow(new Date()); return; }
     let cancel = false;
     setLoading(true); setErr(null); setMoreLoaded(false); setHasMore(true);
     NotificationAPI.list({ per_page: 20 })
@@ -129,6 +120,7 @@ export function NotificationDrawer({ open, onClose, workspaceSlug, onUnreadChang
         if (cancel) return;
         const list = unwrap<NotifRow[]>(r);
         setItems(list);
+        setNow(new Date());
       })
       .catch((e: unknown) => {
         if (cancel) return;
@@ -172,7 +164,6 @@ export function NotificationDrawer({ open, onClose, workspaceSlug, onUnreadChang
     } finally {
       setMoreLoaded(false);
     }
-    void moreCursor; // 占位字段（保留 hook 拓扑，便于未来接 cursor）
   }
 
   function openItem(n: NotifRow) {

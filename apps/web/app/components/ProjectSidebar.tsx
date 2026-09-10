@@ -1,5 +1,4 @@
 import { NavLink, useParams } from "react-router";
-import { useStores } from "../stores";
 
 /** Sprint-3（BOARD-003 §3.2 布局段）：表格视图图标（list/kanban 同族 lucide 路径）。 */
 const tableIcon = (

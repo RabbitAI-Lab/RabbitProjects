@@ -20,5 +20,13 @@
     "react/react-in-jsx-scope": "off",
     "import/no-unassigned-import": "off"
   },
-  "ignorePatterns": ["dist", "build", "storybook-static", "**/generated/**", "scripts/*"]
+  "ignorePatterns": ["dist", "build", "storybook-static", "**/generated/**", "scripts/*"],
+  "overrides": [
+    {
+      "files": ["**/services/axios.ts"],
+      "rules": {
+        "eslint/no-restricted-imports": "off"
+      }
+    }
+  ]
 }

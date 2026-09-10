@@ -14,7 +14,7 @@
  *  其中 workspace 隐式提升 = WS_ADMIN+(≥15) → ProjectRole.ADMIN(20)
  */
 import { action, computed, makeObservable, observable, runInAction } from "mobx";
-import { PermissionsAPI, setPermissionsRevalidator, type PermissionSnapshot } from "../services/api";
+import { PermissionsAPI, setPermissionsRevalidator, unwrap, type PermissionSnapshot } from "../services/api";
 import type { RootStore } from "./index";
 
 /** 角色等级值（rbac §2、AUTH-005 §1.3.1）。前端不在此引入业务方法，只用于查表与整数比较。 */
@@ -166,7 +166,7 @@ export class PermissionStore {
     this.setLoading(true);
     try {
       const r = await PermissionsAPI.my(workspaceSlug);
-      this.hydrate((r as any).data as PermissionSnapshot);
+      this.hydrate(unwrap<PermissionSnapshot>(r));
     } finally {
       this.setLoading(false);
     }

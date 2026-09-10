@@ -3,7 +3,7 @@
  *  WS 级页面：预设四套浏览 + 两步下发向导（第一步预演回显 BR-05 状态映射，
  *  第二步 confirm 实例化为项目工作流草稿并引导进画布）。 */
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 
 import { ProjectAPI, TemplateAPI, unwrap } from "../services/api";
 import { toast } from "../components/Toast";

@@ -169,14 +169,14 @@ function CreateTeamModal({ onClose }: { onClose: () => void }) {
     setLoading(true); setErr(null);
     try {
       const r = await WorkspaceAPI.create(name.trim(), desc.trim() || undefined);
-      const slug = (r as any).data?.slug as string | undefined;
+      const slug = (r as { data?: { slug?: string } }).data?.slug;
       toast("团队创建成功");
       await session.bootstrap(); // 刷新工作区列表（含新团队 OWNER 角色）
       if (slug) session.setCurrentWs(slug); // 顶栏跟随新团队（bootstrap 会把 currentWs 重置为默认团队）
       onClose();
       if (slug) nav(`/${slug}/projects`);
-    } catch (e: any) {
-      setErr(e?.message ?? "创建失败"); setLoading(false);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "创建失败"); setLoading(false);
     }
   }
 

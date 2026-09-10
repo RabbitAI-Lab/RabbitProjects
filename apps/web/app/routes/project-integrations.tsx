@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router";
 import { Topbar } from "../components/Topbar";
 import { ProjectSidebar } from "../components/ProjectSidebar";
-import { GithubIntegrationAPI, ProjectAPI, type GithubBindingRow, unwrap } from "../services/api";
+import { GithubIntegrationAPI, ProjectAPI, type GithubBindingRow } from "../services/api";
 import { ConfirmDialog } from "../components/files/FileDialogs";
 import { toast } from "../components/Toast";
 
@@ -30,13 +30,13 @@ export default function ProjectIntegrationsPage() {
     }).catch(() => {});
   }, [slug, projectId]);
 
-  const load = () => {
+  const load = useCallback(() => {
     GithubIntegrationAPI.listBindings(slug!, projectId!).then(
       (r) => setBindings((r as { data?: GithubBindingRow[] }).data ?? [])).catch(() => setBindings([]));
     GithubIntegrationAPI.syncLogs(slug!, projectId!).then(
       (r) => setConflicts((r as { data?: Array<{ id: string; repository: string; scope: string; winner_side: string; occurred_at: string }> }).data ?? [])).catch(() => setConflicts([]));
-  };
-  useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [slug, projectId]);
+  }, [slug, projectId]);
+  useEffect(() => { load(); }, [load]);
 
   const install = async () => {
     try {
@@ -63,8 +63,10 @@ export default function ProjectIntegrationsPage() {
     }
   };
 
+  // 渲染期不取时钟（react(purity)）：锚定挂载时刻，相对分钟数随重挂载刷新
+  const [mountedAt] = useState(() => Date.now());
   const lastSync = (b: GithubBindingRow) =>
-    b.last_synced_at ? `${Math.max(0, Math.round((Date.now() - +new Date(b.last_synced_at)) / 60000))} 分钟前` : "未同步";
+    b.last_synced_at ? `${Math.max(0, Math.round((mountedAt - +new Date(b.last_synced_at)) / 60000))} 分钟前` : "未同步";
 
   return (
     <div className="h-screen flex flex-col bg-neutral-50">

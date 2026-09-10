@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router";
 import { Topbar } from "../components/Topbar";
 import { ProjectSidebar } from "../components/ProjectSidebar";
@@ -28,13 +28,13 @@ export default function ProjectWebhooksPage() {
     }).catch(() => {});
   }, [slug, projectId]);
 
-  const load = () => WebhookAPI.list(slug!, projectId!).then((r) => {
+  const load = useCallback(() => WebhookAPI.list(slug!, projectId!).then((r) => {
     const body = r as { data?: WebhookEndpointRow[]; meta?: { event_choices?: string[] } };
     setRows(body.data ?? []);
     setEventChoices(body.meta?.event_choices?.filter((e) => e !== PING) ?? []);
-  }).catch(() => toast("Webhook 列表加载失败", "error"));
+  }).catch(() => toast("Webhook 列表加载失败", "error")), [slug, projectId]);
 
-  useEffect(() => { void load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [slug, projectId]);
+  useEffect(() => { void load(); }, [load]);
 
   const toggle = async (row: WebhookEndpointRow) => {
     try {

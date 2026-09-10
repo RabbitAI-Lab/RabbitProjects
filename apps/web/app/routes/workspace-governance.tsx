@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { Topbar } from "../components/Topbar";
-import { GovernanceAPI, WorkspaceAPI, type WorkspaceSummary } from "../services/api";
+import { GovernanceAPI, unwrap, WorkspaceAPI, type WorkspaceSummary } from "../services/api";
 import { ConfirmDialog } from "../components/files/FileDialogs";
 import { toast } from "../components/Toast";
 
@@ -17,7 +17,7 @@ export default function WorkspaceGovernancePage() {
 
   useEffect(() => {
     WorkspaceAPI.list().then((r) => {
-      const target = ((r as any).data as WorkspaceSummary[]).find((w) => w.slug === slug) ?? null;
+      const target = unwrap<WorkspaceSummary[]>(r).find((w) => w.slug === slug) ?? null;
       setWs(target);
     }).catch(() => setWs(null));
   }, [slug]);
@@ -64,7 +64,7 @@ export default function WorkspaceGovernancePage() {
               <ConfirmDialog title="归档工作空间？" danger okText="确认归档" onClose={() => setArchiving(false)}
                 onOk={async () => {
                   const r = await GovernanceAPI.archive(slug!);
-                  const d = (r as any).data;
+                  const d = (r as { data: { affected_projects: number } }).data;
                   toast(`已归档——${d.affected_projects} 个项目进入只读`, "ok");
                   setArchiving(false);
                 }}>
@@ -81,7 +81,7 @@ export default function WorkspaceGovernancePage() {
 function ActivityBlock({ slug }: { slug: string }) {
   const [stats, setStats] = useState<Awaited<ReturnType<typeof GovernanceAPI.activityStats>>["data"] | null>(null);
   useEffect(() => {
-    GovernanceAPI.activityStats(slug).then((r) => setStats((r as any).data ?? null))
+    GovernanceAPI.activityStats(slug).then((r) => setStats(unwrap<Awaited<ReturnType<typeof GovernanceAPI.activityStats>>["data"]>(r) ?? null))
       .catch(() => setStats(null));
   }, [slug]);
   if (!stats) return <div className="h-40 rounded-xl bg-neutral-100 animate-pulse" />;
@@ -143,9 +143,9 @@ function LabelsBlock({ slug }: { slug: string }) {
   const [rows, setRows] = useState<Array<{ id: string; name: string; color: string; description: string }>>([]);
   const [form, setForm] = useState({ name: "", color: "#3B82F6", description: "" });
   const [removing, setRemoving] = useState<{ id: string; name: string } | null>(null);
-  const load = () => GovernanceAPI.listLabels(slug).then(
-    (r) => setRows((r as any).data ?? []), () => setRows([]));
-  useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [slug]);
+  const load = useCallback(() => GovernanceAPI.listLabels(slug).then(
+    (r) => setRows((r as { data?: typeof rows }).data ?? []), () => setRows([])), [slug]);
+  useEffect(() => { load(); }, [load]);
   return (
     <section className="bg-white rounded-xl border border-neutral-200 p-6" data-sb-scope="labels-block">
       <div className="flex items-center justify-between mb-4">
@@ -185,7 +185,7 @@ function LabelsBlock({ slug }: { slug: string }) {
         <ConfirmDialog title={`删除全局标签「${removing.name}」？`} danger okText="删除" onClose={() => setRemoving(null)}
           onOk={async () => {
             const r = await GovernanceAPI.deleteLabel(slug, removing.id);
-            const affected = (r as any).data?.affected_issues ?? 0;
+            const affected = (r as { data?: { affected_issues?: number } }).data?.affected_issues ?? 0;
             toast(`已删除（${affected} 个任务引用写入名字快照）`, "ok");
             setRemoving(null); load();
           }}>
@@ -200,7 +200,7 @@ function StatesBlock({ slug }: { slug: string }) {
   const [snap, setSnap] = useState<{ name: string; version: number; groups: StateGroup[] } | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    GovernanceAPI.getDefaultStates(slug).then((r) => setSnap((r as any).data ?? null));
+    GovernanceAPI.getDefaultStates(slug).then((r) => setSnap((r as { data?: { name: string; version: number; groups: StateGroup[] } }).data ?? null));
   }, [slug]);
   if (!snap) return <div className="h-40 rounded-xl bg-neutral-100 animate-pulse" />;
   const GROUP_CN: Record<string, string> = {
@@ -216,8 +216,9 @@ function StatesBlock({ slug }: { slug: string }) {
     setBusy(true);
     try {
       const r = await GovernanceAPI.putDefaultStates(slug, { groups: snap.groups });
-      setSnap((r as any).data ?? snap);
-      toast(`已保存（版本 v${((r as any).data?.version ?? snap.version + 1)}，新项目起生效——快照语义）`, "ok");
+      const d = (r as { data?: { name: string; version: number; groups: StateGroup[] } }).data;
+      setSnap(d ?? snap);
+      toast(`已保存（版本 v${d?.version ?? snap.version + 1}，新项目起生效——快照语义）`, "ok");
     } catch (e) {
       toast(e instanceof Error ? e.message : "保存失败", "error");
     } finally { setBusy(false); }

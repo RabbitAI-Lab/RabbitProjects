@@ -89,11 +89,10 @@ export default function AutomationRulesPage() {
 
   // oxlint-disable-next-line react/set-state-in-effect -- 服务端 loader（同 approvals.tsx 基线）
   useEffect(() => { load(); }, [load]);
-  // oxlint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!ws || !projectId || tab !== "runs") return;
+    if (tab !== "runs") return;
     loadRuns();
-  }, [tab, ws, projectId]);
+  }, [tab, loadRuns]);
   // oxlint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!ws || !projectId) return;

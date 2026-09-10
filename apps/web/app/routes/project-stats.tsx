@@ -25,7 +25,6 @@ export default function ProjectStatsPage() {
   }, [slug, projectId]);
 
   const load = useCallback(() => {
-    setLoading(true);
     Promise.all([
       ProjectStatsAPI.progress(slug!, projectId!, { days }),
       ProjectStatsAPI.members(slug!, projectId!, roleFilter ? { role: roleFilter } : {}),
@@ -53,7 +52,7 @@ export default function ProjectStatsPage() {
             <div className="flex gap-1" role="tablist" aria-label="统计窗口">
               {([7, 14, 30, 90] as const).map((d) => (
                 <button key={d} role="tab" aria-selected={days === d}
-                  onClick={() => setDays(d)}
+                  onClick={() => { setLoading(true); setDays(d); }}
                   className={`h-8 px-3 rounded-md text-[13px] border ${
                     days === d ? "bg-brand-500 text-white border-brand-500"
                       : "bg-white text-neutral-700 border-neutral-300 hover:bg-neutral-50"}`}>
@@ -125,7 +124,7 @@ export default function ProjectStatsPage() {
             <section className="bg-white rounded-xl border border-neutral-200 overflow-auto" data-sb-scope="stats-members">
               <div className="flex items-center justify-between p-4 border-b border-neutral-100">
                 <div className="text-[13px] font-medium text-neutral-700">成员任务量</div>
-                <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}
+                <select value={roleFilter} onChange={(e) => { setLoading(true); setRoleFilter(e.target.value); }}
                   aria-label="角色筛选"
                   className="h-8 px-2 border border-neutral-300 rounded-md text-[13px] bg-white">
                   <option value="">全部角色</option>

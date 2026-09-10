@@ -17,7 +17,7 @@
     "@rp/tailwind-config": "workspace:*",
     "@rp/types": "workspace:*",
     "@rp/ui": "workspace:*",
-    "axios": "1.8.x",
+    "axios": "1.18.x",
     "isbot": "^5",
     "lucide-react": "0.511.x",
     "mobx": "6.13.x",
@@ -37,7 +37,7 @@
     "oxlint": "1.x",
     "tailwindcss": "4.1.x",
     "typescript": "5.8.x",
-    "vite": "6.3.x",
+    "vite": "6.4.3",
     "vitest": "3.x"
   }
 }

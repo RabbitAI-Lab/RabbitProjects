@@ -9,7 +9,7 @@
     "start": "react-router-serve ./build/server/index.js",
     "lint": "oxlint app",
     "typecheck": "react-router typegen && tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@react-router/node": "7.x",

@@ -4,6 +4,9 @@ import { makeKeyPair, signTicket, uuid } from "./testutil";
 import { extractToken, MAX_ROOMS_PER_TICKET, verifyTicket } from "./ticket";
 
 const keys = makeKeyPair();
+// 「他方密钥」也模块级预生成：RSA 2048 质数搜索在慢速 CI 跑机上可超 5s 单测限时
+// （用例内现场 makeKeyPair() 曾致 UT-01「错误公钥」在 GitHub runner 超时）
+const otherKeys = makeKeyPair();
 
 describe("extractToken", () => {
   it("从 /live/connect?token=… 提取票据", () => {
@@ -36,8 +39,7 @@ describe("verifyTicket（UT-01 安全）", () => {
   });
 
   it("错误公钥（他方密钥签发）拒绝", () => {
-    const other = makeKeyPair();
-    expect(verifyTicket(signTicket(other), keys.publicKey)).toBeNull();
+    expect(verifyTicket(signTicket(otherKeys), keys.publicKey)).toBeNull();
   });
 
   it("伪造字符串票据拒绝", () => {

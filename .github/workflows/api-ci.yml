@@ -11,6 +11,8 @@ jobs:
     env:
       SECRET_KEY: dev
       DATABASE_URL: postgresql://rp:rp@127.0.0.1:5432/rabbit_projects
+      REDIS_URL: redis://127.0.0.1:6379/0
+      CELERY_BROKER_URL: amqp://rp:rp@127.0.0.1:5672//
     services:
       # pytest 全量需真 PG（settings/test 直连；SQLite 走不通 advisory lock/GIN 等）
       postgres:
@@ -26,6 +28,28 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # pytest 有真实 broker/redis 依赖（CPM 重算/异步导出 dispatch、死信直连 redis）
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: rp
+          RABBITMQ_DEFAULT_PASS: rp
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -47,3 +71,6 @@ jobs:
         working-directory: apps/api
       - run: uv run pytest -q
         working-directory: apps/api
+        env:
+          # 共享 runner 硬件慢于 dev 机，缓存命中 P99 门禁按 3ms 放宽（本地默认 1ms）
+          RP_PERF_P99_MS: "3"

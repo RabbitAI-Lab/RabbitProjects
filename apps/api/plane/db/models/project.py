@@ -38,7 +38,9 @@ class Project(BaseModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["workspace", "identifier"],
-                condition=models.Q(deleted_at__isnull=True),
+                # BR-14：identifier 占用只看 active；draft 同号是合法中间态
+                # （激活时 _guard_activate 应用层复检挡 409），见 0037 迁移
+                condition=models.Q(deleted_at__isnull=True, status="active"),
                 name="uniq_project_identifier_per_workspace",
             ),
         ]

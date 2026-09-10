@@ -71,8 +71,12 @@ def main() -> None:
 
     def mk_issue(ident: str, name: str, group: str, start: date, target: date) -> Issue:
         st = State.objects.filter(project=projects[ident], group=group).first()
+        # sequence_id 必须显式递增（模型 default=1；直接 ORM 建不走 create_issue 服务，
+        # 撞 uniq_issue_sequence_per_project——2026-09-10 dev 库 3 项目 seq=1 重复复盘）
+        from plane.db.services.issue_sequence import next_sequence_id
         return Issue.objects.create(
             project=projects[ident], name=name, state=st,
+            sequence_id=next_sequence_id(projects[ident].pk),
             start_date=start, target_date=target, estimate_minutes=480, created_by=owner)
 
     a1 = mk_issue("S9A1", "订单中心重构", "started", today - timedelta(days=8), today + timedelta(days=2))

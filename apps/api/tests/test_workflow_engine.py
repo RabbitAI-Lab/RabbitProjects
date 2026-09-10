@@ -35,6 +35,7 @@ from plane.db.models import (
     WorkspaceRole,
 )
 from plane.db.seeds.project_states import seed_project_states
+from plane.db.services.issue_sequence import next_sequence_id
 from plane.workflow.approval import ApprovalError, ApprovalService
 from plane.workflow.services import TransitionError, WorkflowService
 
@@ -77,6 +78,7 @@ def _mk_issue(env, name="任务A", state=None, actor=None, issue_type=None):
         project=env["proj"], name=name,
         state=state or env["states"]["待办"],
         issue_type=issue_type,
+        sequence_id=next_sequence_id(env["proj"].pk),
         created_by=actor or env["owner"],
     )
 

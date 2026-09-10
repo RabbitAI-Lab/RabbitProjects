@@ -35,6 +35,7 @@ from plane.db.seeds.project_states import seed_project_states
 from plane.db.services.health import (
     HealthReportService,
 )
+from plane.db.services.issue_sequence import next_sequence_id
 
 pytestmark = pytest.mark.django_db
 
@@ -69,6 +70,7 @@ def _mk_issue(env, name, *, group="unstarted", estimate=None, target=None) -> Is
     state = State.objects.filter(project=env["proj"], group=group).first()
     return Issue.objects.create(
         project=env["proj"], name=name, state=state,
+        sequence_id=next_sequence_id(env["proj"].pk),
         estimate_minutes=estimate, target_date=target, created_by=env["owner"])
 
 

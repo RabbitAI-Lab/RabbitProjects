@@ -26,6 +26,7 @@ from plane.db.models import (
 from plane.db.models.roles import WorkspaceRole
 from plane.db.seeds.project_states import seed_project_states
 from plane.db.services import view_governance as vg
+from plane.db.services.issue_sequence import next_sequence_id
 
 pytestmark = pytest.mark.django_db
 
@@ -261,7 +262,7 @@ class TestApplicationSurface:
         issues = []
         for i in range(n):
             issue = Issue.objects.create(
-                project=env["proj"], name=f"任务{i}",
+                project=env["proj"], name=f"任务{i}", sequence_id=next_sequence_id(env["proj"].pk),
                 state=state, created_by=env["owner"])
             issues.append(issue)
         return issues

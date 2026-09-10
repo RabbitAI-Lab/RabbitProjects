@@ -41,8 +41,9 @@ while IFS= read -r mig; do
   fi
 done < "$WORK/plan.txt"
 
-# ② 落库 + 扩展 + GIN 索引（扩展必须先于 GIN，见已知坑 ①）
+# ② 落库 + 扩展 + GIN 索引（扩展必须先于 GIN，见已知坑 ①）+ 手工 DDL 附加
 psql -v ON_ERROR_STOP=1 -q < "$WORK/all.sql"
+psql -v ON_ERROR_STOP=1 -q < "$ROOT/ci/manual_ddl_addendum.sql"
 psql -v ON_ERROR_STOP=1 -q <<'SQL'
 CREATE EXTENSION IF NOT EXISTS btree_gin;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;

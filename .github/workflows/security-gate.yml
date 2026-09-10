@@ -40,8 +40,11 @@ jobs:
       - name: gitleaks
         run: |
           curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz
-          ./gitleaks detect --source . --report-format json --report-path gitleaks.json --no-git || \
-          ./gitleaks detect --source . --report-format json --report-path gitleaks.json
+          # 2026-09-10 修正扫描序：原 `--no-git || 全历史` 在工作树干净后永远不会扫
+          # git 历史（fetch-depth: 0 形同虚设）。改为历史优先，无 git 场景才回退树扫描。
+          # 虚构固件豁免见 .gitleaks.toml（BR-06：真实凭据零容忍，verdict 终审）。
+          ./gitleaks detect --source . --report-format json --report-path gitleaks.json || \
+          ./gitleaks detect --source . --report-format json --report-path gitleaks.json --no-git
       # ④ 镜像扫描（api 镜像；pull 失败回退 fs 扫描——本地无镜像源时不断流）
       - name: trivy image / fs
         run: |

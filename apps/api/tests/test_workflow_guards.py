@@ -25,6 +25,7 @@ from plane.db.models import (
     WorkspaceRole,
 )
 from plane.db.seeds.project_states import seed_project_states
+from plane.db.services.issue_sequence import next_sequence_id
 from plane.workflow.services import TransitionError, WorkflowService
 
 pytestmark = pytest.mark.django_db
@@ -57,6 +58,7 @@ def _mk_issue(env, name="任务", state=None, actor=None, **kw):
     return Issue.objects.create(
         project=env["proj"], name=name,
         state=state or env["states"]["待办"],
+        sequence_id=next_sequence_id(env["proj"].pk),
         created_by=actor or env["owner"], **kw)
 
 

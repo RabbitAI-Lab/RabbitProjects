@@ -2,6 +2,13 @@
 
 E2E 与 JMeter 都跑真实 PG（不能跑 SQLite）。本指南负责把容器 + schema 一次性建好。
 
+> **推荐：全新环境直接跑 `ci/api_db_bootstrap.sh`**（api-ci 同款配方：按
+> `migrate --plan` 拓扑序全量 sqlmigrate → 落库 → 扩展 + GIN → 附加手工 DDL
+> （审批守卫触发器，见 `ci/manual_ddl_addendum.sql`）→ `migrate --fake`），
+> 可避免下方手工分步配方的历史漂移（2026-09-10 曾因旧配方 `grep -v WHERE`
+> 剥掉偏条件唯一索引、遗漏种子与触发器，致 dev 库长期缺 13 个约束）。
+> 下面保留手工步骤供排障参考。
+
 ## 1. 起 PG 17 容器
 
 ```bash

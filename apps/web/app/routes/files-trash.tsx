@@ -3,11 +3,13 @@ import { Topbar } from "../components/Topbar";
 import { ProjectSidebar } from "../components/ProjectSidebar";
 import { FileTrash, useProjectHeader } from "../components/files/FileLibrary";
 import { useStores } from "../stores";
+import { usePermissionSync } from "../components/PermissionGate";
 
 /** Sprint-4（FILE-002 §3.1 / C.117）：回收站页——R1 口径列表 + 还原 + 彻底删除（仅 ADMIN）。 */
 export default function FilesTrash() {
   const { workspaceSlug, projectId } = useParams<{ workspaceSlug: string; projectId: string }>();
   const stores = useStores();
+  usePermissionSync(); // hydrated/角色随快照晚到翻正（见 PermissionGate.tsx）
   const myRole = stores.permission.effectiveProjectRole(projectId, workspaceSlug);
   const hydrated = stores.permission.snapshot !== null;
   const canUpload = !hydrated || myRole >= 15; // file.delete CONTRIBUTOR+（还原入口）

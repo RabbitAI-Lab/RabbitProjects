@@ -22,7 +22,9 @@ export default function GanttCpmPage() {
     const data = unwrap<{ rows: CpmRow[] }>(await CriticalPathAPI.rows(ws, projectId).catch(() => null));
     setRows(data?.rows ?? []);
     setSelected((prev) => prev && data?.rows.some((r) => r.id === prev.id) ? prev : data?.rows[0] ?? null);
-    setConfig(unwrap<CpmConfig>(await CriticalPathAPI.config(ws, projectId).catch(() => null)) ?? null);
+    try {
+      setConfig(unwrap<CpmConfig>(await CriticalPathAPI.config(ws, projectId)) ?? null);
+    } catch { /* 取数失败：保持默认开关展示 */ }
   }, [ws, projectId]);
 
   // oxlint-disable-next-line react/set-state-in-effect -- 服务端 loader（org-structure 基线）

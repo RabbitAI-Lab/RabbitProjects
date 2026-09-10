@@ -18,8 +18,10 @@ export function CriticalPathBar({ onCriticalChange }: {
 
   const load = useCallback(async () => {
     if (!ws || !projectId) return;
-    const data = unwrap<{ rows: CpmRow[] }>(await CriticalPathAPI.rows(ws, projectId).catch(() => null));
-    setRows(data?.rows ?? []);
+    try {
+      const data = unwrap<{ rows: CpmRow[] }>(await CriticalPathAPI.rows(ws, projectId));
+      setRows(data?.rows ?? []);
+    } catch { /* 限流（10/min）/失败：保持空态（60s 窗口自恢复） */ }
   }, [ws, projectId]);
 
   // oxlint-disable-next-line react/set-state-in-effect -- 服务端 loader（org-structure 基线）

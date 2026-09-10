@@ -90,6 +90,21 @@ async function login(page) {
   await sleep(1800);
 }
 
+
+/** projects 列表取数（偶发空 body——SyntaxError 时重试一次）。 */
+async function fetchProj(page, ident) {
+  for (let i = 0; i < 3; i += 1) {
+    try {
+      const r = await page.request.fetch(`${WEB}/api/v1/workspaces/workspace/projects/?status=all`);
+      const b = await r.json();
+      const proj = (b?.data ?? []).find((x) => x.identifier === ident);
+      if (proj) return proj;
+    } catch { /* 重试 */ }
+    await sleep(600);
+  }
+  throw new Error(`project ${ident} not found`);
+}
+
 /* ═══ 幕 1 · 项目集 ═══ */
 async function scenePortfolio(page) {
   await login(page);
@@ -115,11 +130,7 @@ async function scenePortfolio(page) {
 /* ═══ 幕 2 · 迭代与燃尽 ═══ */
 async function sceneCycles(page) {
   await login(page);
-  const [proj] = await (async () => {
-    const r = await page.request.fetch(`${WEB}/api/v1/workspaces/workspace/projects/?status=all`);
-    const b = await r.json();
-    return [b.data.find((p) => p.identifier === "S9A1")];
-  })();
+  const proj = await fetchProj(page, "S9A1");
   await page.goto(`/workspace/projects/${proj.id}/cycles`);
   await sleep(1400);
   await page.locator('[data-sb-scope="burndown-card"]').scrollIntoViewIfNeeded();
@@ -137,9 +148,7 @@ async function sceneCycles(page) {
 /* ═══ 幕 3 · 速率 + 累积流 ═══ */
 async function sceneReports(page) {
   await login(page);
-  const r = await page.request.fetch(`${WEB}/api/v1/workspaces/workspace/projects/?status=all`);
-  const b = await r.json();
-  const proj = b.data.find((p) => p.identifier === "S9A1");
+  const proj = await fetchProj(page, "S9A1");
   await page.goto(`/workspace/projects/${proj.id}/reports/velocity`);
   await sleep(1600);
   await page.locator('[data-sb-scope="velocity-conclusion"]').scrollIntoViewIfNeeded();
@@ -151,9 +160,7 @@ async function sceneReports(page) {
 /* ═══ 幕 4 · 健康度 + 负载 ═══ */
 async function sceneHealth(page) {
   await login(page);
-  const r = await page.request.fetch(`${WEB}/api/v1/workspaces/workspace/projects/?status=all`);
-  const b = await r.json();
-  const proj = b.data.find((p) => p.identifier === "S9A1");
+  const proj = await fetchProj(page, "S9A1");
   await page.goto(`/workspace/projects/${proj.id}/reports/health`);
   await sleep(1600);
   // 下钻抽屉（实时口径）
@@ -167,9 +174,7 @@ async function sceneHealth(page) {
 /* ═══ 幕 5 · Wiki ═══ */
 async function sceneWiki(page) {
   await login(page);
-  const r = await page.request.fetch(`${WEB}/api/v1/workspaces/workspace/projects/?status=all`);
-  const b = await r.json();
-  const proj = b.data.find((p) => p.identifier === "S9A1");
+  const proj = await fetchProj(page, "S9A1");
   await page.goto(`/workspace/projects/${proj.id}/wiki`);
   await sleep(1400);
   await page.locator('[data-sb-scope="wiki-tree"]').getByText("API 设计规范").click();
@@ -192,9 +197,7 @@ async function sceneWiki(page) {
 /* ═══ 幕 6 · 关键路径 ═══ */
 async function sceneCriticalPath(page) {
   await login(page);
-  const r = await page.request.fetch(`${WEB}/api/v1/workspaces/workspace/projects/?status=all`);
-  const b = await r.json();
-  const proj = b.data.find((p) => p.identifier === "S9G2");
+  const proj = await fetchProj(page, "S9G2");
   await page.goto(`/workspace/projects/${proj.id}/gantt`);
   await sleep(2200);
   await page.locator('[data-sb-scope="cp-toggle"]').check();

@@ -120,10 +120,11 @@ export default function GanttCpmPage() {
                   onChange={(e) => saveConfig({ target_completion_date: e.target.value || null })} />
               </div>
             </div>
-            {/* 行表 */}
-              <div className="card" data-sb-scope="cpm-rows">
+            </div>
+            {/* 行表：两卡下方全宽（在 grid 外——放 grid 内会掉进 340px 左列，五列挤压叠字） */}
+              <div className="card mt-4 overflow-x-auto" data-sb-scope="cpm-rows">
                 <table className="tbl">
-                  <thead><tr><th>任务</th><th>最早</th><th>最晚</th><th>浮动</th><th>关键</th></tr></thead>
+                  <thead><tr><th>任务</th><th>最早开始</th><th>最晚开始</th><th>浮动（天）</th><th>关键</th></tr></thead>
                   <tbody>
                     {rows.map((r) => (
                       <tr key={r.id} className={`cursor-pointer ${selected?.id === r.id ? "bg-brand-50/60" : ""}`} onClick={() => setSelected(r)}>
@@ -138,7 +139,6 @@ export default function GanttCpmPage() {
                   </tbody>
                 </table>
               </div>
-            </div>
 
           </div>
         </main>

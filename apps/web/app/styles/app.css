@@ -117,3 +117,14 @@
 .tree-node.sel .cnt{color:#2f5fe0}
 @keyframes slide-r{from{transform:translateX(24px);opacity:0}}
 @keyframes slide-d{from{transform:translateY(-8px);opacity:0}}
+
+/* ═════════ Sprint-9 冻结稿通用类（docs/design/sprint-9-hifi-prototype.html
+   FROZEN 2026-09-10 · 158~162 行逐条同源——token 换等值 hex：ink-3=#8c8c8c /
+   line=#e5e5e5 / surface-2=#f5f5f5。此前 .tbl 漏移植，portfolios 项目列表、
+   gantt-cpm 行表、report-health 抽屉表三处 className="tbl" 全裸渲染——
+   表格收缩到内容宽度且单元格无内边距，表头「最早/最晚/浮动/关键」挤成一串（S9 走查⑤） ═════════ */
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{font-size:12px;font-weight:500;color:#8c8c8c;text-align:left;padding:8px 12px;border-bottom:1px solid #e5e5e5;white-space:nowrap}
+.tbl td{padding:9px 12px;border-bottom:1px solid #e5e5e5;vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tbody tr:hover{background:#f5f5f5}

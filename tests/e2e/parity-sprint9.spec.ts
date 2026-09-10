@@ -157,6 +157,15 @@ test.describe("S9E2E · 项目集/报表/Wiki/关键路径 parity", () => {
     const guards = attachGuards(page);
     guards.allow({ method: "POST", url: "/wiki/", status: 409 });
     await loginDemo(page);
+    // 幂等清理：上次失败运行可能残留 S9E2E 空间（断言失败跳过尾部清理）
+    const oldSpaces = await apiCall(page, "GET", `/api/v1/workspaces/${WS}/projects/?status=all`);
+    for (const prj of ((oldSpaces.body?.data as Array<{ id: string }>) ?? [])) {
+      const sp = await apiCall(page, "GET", `/api/v1/workspaces/${WS}/wiki/spaces/?project_id=${prj.id}`).catch(() => null);
+      for (const spc of ((sp?.body?.data as Array<{ id: string; name: string }>) ?? [])
+        .filter((x) => x.name.startsWith(TAG))) {
+        await apiCall(page, "DELETE", `/api/v1/workspaces/${WS}/wiki/spaces/${spc.id}/`).catch(() => {});
+      }
+    }
     const { proj } = await seedProject(page);
     const space = await apiCall(page, "POST", `/api/v1/workspaces/${WS}/wiki/spaces/`,
       { project_id: proj.id, name: `${TAG}-空间-${Date.now() % 10000}` });
@@ -182,7 +191,7 @@ test.describe("S9E2E · 项目集/报表/Wiki/关键路径 parity", () => {
     await expect(page.locator('[data-sb-scope="wiki-doc-body"]')).toContainText("错误码");  // 发布内容渲染（非空）
     // 独立检索入口（BR-10 权限前置 + 标题 3x）
     await page.goto(`/${WS}/wiki-search`);
-    await page.locator('[data-sb-scope="wiki-search-bar"] input').fill(`错误码规范 ${Date.now() % 10000}`);
+    await page.locator('[data-sb-scope="wiki-search-bar"] input').fill("S9E2E 错误码");
     page.locator('[data-sb-scope="wiki-search-bar"] button').click();
     await expect(page.locator('[data-sb-scope="wiki-search-results"]')).toContainText(pageTitle, { timeout: 10_000 });
     // 清数（软删空间）

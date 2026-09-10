@@ -35,11 +35,6 @@ export function ProjectSidebar({ projectName, identifier }: { projectName: strin
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18M15 3v18"/></svg>
         看板
       </NavLink>
-      {/* Sprint-4（GANTT-001 §3.1 / C.98）：甘特视图入口 */}
-      <NavLink to={`${base}/gantt`} className={({ isActive }) => item(isActive)}>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h9M4 12h13M4 18h7"/><circle cx="18" cy="6" r="1.6" fill="currentColor" stroke="none"/><circle cx="11" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="16" cy="18" r="1.6" fill="currentColor" stroke="none"/></svg>
-        甘特
-      </NavLink>
       {/* Sprint-4（FILE-002 §3.1 / C.112）：文件库入口（左树右表双视图 + 回收站） */}
       <NavLink to={`${base}/files`} className={({ isActive }) => item(isActive)}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
@@ -50,21 +45,24 @@ export function ProjectSidebar({ projectName, identifier }: { projectName: strin
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>
         动态
       </NavLink>
-      {/* Sprint-9（RPT-003 §3.1）：迭代管理 + 燃尽图 */}
-      <NavLink to={`${base}/cycles`} className={({ isActive }) => item(isActive)} data-sb-scope="nav-cycles">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v9h-9"/></svg>
-        迭代
-      </NavLink>
-      {/* Sprint-9（FILE-005 §3.1）：Wiki 知识库 */}
-      <NavLink to={`${base}/wiki`} className={({ isActive }) => item(isActive)} data-sb-scope="nav-wiki">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-        Wiki
-      </NavLink>
       {/* Sprint-5（RPT-002 §3.1 / C.131）：项目统计 */}
       <NavLink to={`${base}/stats`} className={({ isActive }) => item(isActive)}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3v16a2 2 0 0 0 2 2h16M7 15l3-4 3 3 5-7"/></svg>
         统计
       </NavLink>
+      {/* ── 走查修复 2026-09-10：分组对齐冻结原型（视图/规划/报表/知识/管理）── */}
+      <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider px-2.5 py-2 mt-1">规划</div>
+      {/* Sprint-9（RPT-003 §3.1）：迭代管理 + 燃尽图（原型：项目·规划） */}
+      <NavLink to={`${base}/cycles`} className={({ isActive }) => item(isActive)} data-sb-scope="nav-cycles">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v9h-9"/></svg>
+        迭代
+      </NavLink>
+      {/* Sprint-4（GANTT-001 §3.1 / C.98）：甘特视图（归规划组——原型：项目·规划） */}
+      <NavLink to={`${base}/gantt`} className={({ isActive }) => item(isActive)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h9M4 12h13M4 18h7"/><circle cx="18" cy="6" r="1.6" fill="currentColor" stroke="none"/><circle cx="11" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="16" cy="18" r="1.6" fill="currentColor" stroke="none"/></svg>
+        甘特
+      </NavLink>
+      <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider px-2.5 py-2 mt-1">报表</div>
       {/* Sprint-9（RPT-003 §3.2/3.3 + RPT-004 §3）：报表族（速率/累积流/健康度/负载） */}
       <NavLink to={`${base}/reports/velocity`} className={({ isActive }) => item(isActive)} data-sb-scope="nav-velocity">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M7 14l3-4 3 2 5-6"/></svg>
@@ -82,17 +80,23 @@ export function ProjectSidebar({ projectName, identifier }: { projectName: strin
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18M3 9h18M3 15h18"/></svg>
         团队负载
       </NavLink>
-      {/* Sprint-7（TASK-013 §3.1 / C.143）：工时周视图/队列/台账——2026-09-09 入口补口 */}
+      {/* Sprint-7（TASK-013 §3.1 / C.143）：工时周视图/队列/台账（负载热力数据同源——归报表组） */}
       <NavLink to={`${base}/worklog`} className={({ isActive }) => item(isActive)}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
         工时
       </NavLink>
-      {/* Sprint-7（WF-003 §4.5 / C.146）：自动化规则——2026-09-09 入口补口 */}
+      <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider px-2.5 py-2 mt-1">知识</div>
+      {/* Sprint-9（FILE-005 §3.1）：Wiki 知识库（原型：项目·知识） */}
+      <NavLink to={`${base}/wiki`} className={({ isActive }) => item(isActive)} data-sb-scope="nav-wiki">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        Wiki
+      </NavLink>
+      <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider px-2.5 py-2 mt-1">管理</div>
+      {/* Sprint-7（WF-003 §4.5 / C.146）：自动化规则（项目自动化配置——归管理组） */}
       <NavLink to={`${base}/automation`} className={({ isActive }) => item(isActive)}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
         自动化
       </NavLink>
-      <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider px-2.5 py-2 mt-1">管理</div>
       {/* Sprint-7（WF-001/WF-005 / C.144）：工作流列表（画布入口 + 模板下发的产物管理） */}
       <NavLink to={`${base}/workflows`} end className={({ isActive }) => item(isActive)}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="5" x="3" y="3" rx="1"/><rect width="8" height="5" x="3" y="16" rx="1"/><path d="M7 8v4M12 5.5v3.5a3 3 0 0 0 3 3h3"/><path d="M18 11v2"/></svg>

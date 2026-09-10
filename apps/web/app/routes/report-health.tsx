@@ -16,7 +16,7 @@ type Health = {
   band: "green" | "yellow" | "red" | "insufficient";
   trend_7d: { date: string; score: number | null }[];
 };
-type DrillRow = { id: string; issue_key: string; name: string; target_date: string | null; state_group: string };
+type DrillRow = { id: string; issue_key: string; name: string; target_date: string | null; state_group: string; assignee?: string | null };
 
 const DIM_META: Record<string, { name: string; unit: (d: NonNullable<Dim>) => string; hint: string }> = {
   progress: { name: "进度偏差", unit: (d) => `完成/时间偏差 ${d.value >= 0 ? "+" : ""}${d.value}`, hint: "参考线：时间进度" },
@@ -38,6 +38,8 @@ export default function ReportHealthPage() {
   const [data, setData] = useState<Health | null>(null);
   const [drillDim, setDrillDim] = useState<string | null>(null);
   const [drillRows, setDrillRows] = useState<DrillRow[]>([]);
+  /** 抽屉打开时刻锚定（Date.now 渲染期禁用——purity；实时口径的「现在」取开抽屉瞬间足够） */
+  const [drillNow, setDrillNow] = useState(() => Date.now());
 
   const load = useCallback(async () => {
     if (!ws || !projectId) return;
@@ -49,6 +51,7 @@ export default function ReportHealthPage() {
   const openDrill = async (dim: string) => {
     if (!ws || !projectId) return;
     setDrillDim(dim);
+    setDrillNow(Date.now());
     try {
       setDrillRows(unwrap<DrillRow[]>(await ReportAPI.healthDrilldown(ws, projectId, dim)) ?? []);
     } catch { setDrillRows([]); }
@@ -148,26 +151,37 @@ export default function ReportHealthPage() {
       {drillDim && (
         <>
           <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setDrillDim(null)} />
-          <div className="fixed top-0 right-0 bottom-0 z-50 flex w-[440px] flex-col bg-white shadow-2xl" data-sb-scope="health-drill-drawer">
-            <div className="flex items-center gap-2.5 border-b border-neutral-200 p-4">
+          <div className="fixed top-0 right-0 bottom-0 z-50 flex w-[440px] max-w-[92vw] flex-col bg-white shadow-2xl" data-sb-scope="health-drill-drawer">
+            <div className="flex items-center gap-2.5 border-b border-neutral-200 px-4 py-3.5">
               <button className="icon-btn" onClick={() => setDrillDim(null)}>✕</button>
               <b className="text-[14px]">{DIM_META[drillDim]?.name} · 构成任务（{drillRows.length} 实时）</b>
-              <span className="ml-auto text-[11.5px] text-neutral-400">实时时点 · meta.as_of=realtime</span>
+              <span className="ml-auto shrink-0 text-[11.5px] text-neutral-400">实时时点（BR-04②）</span>
             </div>
             <div className="flex-1 overflow-auto">
               <table className="tbl">
-                <thead><tr><th>任务</th><th>截止</th><th>状态</th></tr></thead>
+                <thead><tr><th>任务</th><th>截止</th><th>逾期</th><th>负责人</th></tr></thead>
                 <tbody>
-                  {drillRows.map((r) => (
-                    <tr key={r.id}>
-                      <td><span className="badge-id">{r.issue_key}</span> {r.name}</td>
-                      <td className="font-mono">{r.target_date ?? "—"}</td>
-                      <td className="text-neutral-500">{r.state_group}</td>
-                    </tr>
-                  ))}
-                  {drillRows.length === 0 && <tr><td colSpan={3} className="py-8 text-center text-neutral-400">无构成任务</td></tr>}
+                  {drillRows.map((r) => {
+                    const overdueDays = r.target_date && r.state_group !== "completed"
+                      ? Math.floor((drillNow - Date.parse(r.target_date)) / 86400000) : 0;
+                    return (
+                      <tr key={r.id} className="cursor-pointer">
+                        <td>
+                          <span className="badge-id">{r.issue_key}</span>
+                          <div className="mt-0.5 text-[12.5px]">{r.name}</div>
+                        </td>
+                        <td className="whitespace-nowrap font-mono text-[12px]">{r.target_date?.slice(5) ?? "—"}</td>
+                        <td className={`whitespace-nowrap font-mono text-[12px] ${overdueDays > 0 ? "font-semibold text-red-600" : "text-neutral-300"}`}>
+                          {overdueDays > 0 ? `${overdueDays} 天` : "—"}
+                        </td>
+                        <td className="whitespace-nowrap text-neutral-500">{r.assignee ?? "—"}</td>
+                      </tr>
+                    );
+                  })}
+                  {drillRows.length === 0 && <tr><td colSpan={4} className="py-8 text-center text-neutral-400">无构成任务</td></tr>}
                 </tbody>
               </table>
+              <div className="px-4 py-2.5 text-[11.5px] text-neutral-400">…（游标分页 · 点击行跳转任务详情）</div>
             </div>
           </div>
         </>

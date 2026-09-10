@@ -100,28 +100,8 @@ export default function GanttCpmPage() {
                 )}
               </div>
 
-              {/* 行表 */}
-              <div className="card" data-sb-scope="cpm-rows">
-                <table className="tbl">
-                  <thead><tr><th>任务</th><th>最早</th><th>最晚</th><th>浮动</th><th>关键</th></tr></thead>
-                  <tbody>
-                    {rows.map((r) => (
-                      <tr key={r.id} className={`cursor-pointer ${selected?.id === r.id ? "bg-brand-50/60" : ""}`} onClick={() => setSelected(r)}>
-                        <td><span className="badge-id">{r.issue_key}</span>{r.has_external_preds && <span className="ml-1.5" title="有外部前置">⚓</span>}</td>
-                        <td className="font-mono text-[12px]">{r.es}</td>
-                        <td className="font-mono text-[12px]">{r.ls}</td>
-                        <td className={`font-mono ${r.float_days < 0 ? "text-red-600" : r.float_days === 0 ? "text-amber-600" : ""}`}>{r.float_days}</td>
-                        <td>{r.is_critical ? <span className="rounded bg-red-50 px-1.5 py-0.5 text-[11px] text-red-600">关键</span> : <span className="text-neutral-400">—</span>}</td>
-                      </tr>
-                    ))}
-                    {rows.length === 0 && <tr><td colSpan={5} className="py-8 text-center text-neutral-400">暂无 CPM 行</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* 预警配置（§3.3） */}
-            <div className="card mt-4 p-4" data-sb-scope="cpm-config">
+              {/* 预警配置（§3.3） */}
+            <div className="card p-4" data-sb-scope="cpm-config">
               <div className="mb-1.5 text-[13.5px] font-semibold">预警配置（项目管理员）</div>
               <div className="flex items-center gap-2.5 border-b border-neutral-200 py-2.5 text-[13px]">
                 <div><b>关键任务逾期预警</b><div className="text-[11.5px] text-neutral-400">每日一条至负责人 + 项目经理（BR-08）</div></div>
@@ -138,6 +118,26 @@ export default function GanttCpmPage() {
                   onChange={(e) => saveConfig({ target_completion_date: e.target.value || null })} />
               </div>
             </div>
+            {/* 行表 */}
+              <div className="card" data-sb-scope="cpm-rows">
+                <table className="tbl">
+                  <thead><tr><th>任务</th><th>最早</th><th>最晚</th><th>浮动</th><th>关键</th></tr></thead>
+                  <tbody>
+                    {rows.map((r) => (
+                      <tr key={r.id} className={`cursor-pointer ${selected?.id === r.id ? "bg-brand-50/60" : ""}`} onClick={() => setSelected(r)}>
+                        <td><span className="badge-id">{r.issue_key}</span>{r.has_external_preds && <span className="ml-1.5" title="有外部前置">⚓</span>}</td>
+                        <td className="whitespace-nowrap font-mono text-[12px] text-neutral-600">{r.es.slice(5)}</td>
+                        <td className="whitespace-nowrap font-mono text-[12px] text-neutral-600">{r.ls.slice(5)}</td>
+                        <td className={`font-mono ${r.float_days < 0 ? "text-red-600" : r.float_days === 0 ? "text-amber-600" : ""}`}>{r.float_days}</td>
+                        <td>{r.is_critical ? <span className="rounded bg-red-50 px-1.5 py-0.5 text-[11px] text-red-600">关键</span> : <span className="text-neutral-400">—</span>}</td>
+                      </tr>
+                    ))}
+                    {rows.length === 0 && <tr><td colSpan={5} className="py-8 text-center text-neutral-400">暂无 CPM 行</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
           </div>
         </main>
       </div>

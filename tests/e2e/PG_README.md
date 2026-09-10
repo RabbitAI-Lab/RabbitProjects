@@ -27,8 +27,10 @@ DATABASE_URL="postgresql://rp:rp@localhost:5432/rabbit_projects" SECRET_KEY=dev 
 DATABASE_URL="postgresql://rp:rp@localhost:5432/rabbit_projects" SECRET_KEY=dev \
   uv run --project apps/api python apps/api/manage.py sqlmigrate db 0002_initial > /tmp/db-2-pg.sql
 
-# 2) 拼接 + 落库（sqlmigrate 不输出偏条件 unique WHERE；PG 部分 UNIQUE 兼容）
-cat /tmp/ct-pg.sql /tmp/auth-pg.sql /tmp/db-2-pg.sql /tmp/sess-pg.sql | grep -v "WHERE" > /tmp/all-clean.sql
+# 2) 拼接 + 落库（sqlmigrate 在 PG 连接下产出的就是 PG 方言 DDL，偏条件
+#    unique WHERE 直接可用——2026-09-10 起不再 grep -v 剥除，剥掉会丢失
+#    全部偏条件唯一索引，约束类测试必炸）
+cat /tmp/ct-pg.sql /tmp/auth-pg.sql /tmp/db-2-pg.sql /tmp/sess-pg.sql > /tmp/all-clean.sql
 docker exec -i rp-pg psql -U rp -d rabbit_projects -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 docker exec -i rp-pg psql -U rp -d rabbit_projects < /tmp/all-clean.sql
 

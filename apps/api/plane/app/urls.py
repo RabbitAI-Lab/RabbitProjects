@@ -1,4 +1,5 @@
 """统一响应信封（api-conventions.md §4）。"""
+
 from importlib import import_module
 
 from django.db import connection
@@ -58,7 +59,7 @@ class HealthView(APIView):
     permission_classes = [AllowAny]
     # BR-05（INFRA-005 §2.3）：健康检查不消耗配额也不被限——L2 全局四类经
     # DEFAULT_THROTTLE_CLASSES 生效后，显式空声明维持 INFRA-002 §4.10 口径
-    #（DRF 的 throttle_classes 是整体替换，空列表即豁免）
+    # （DRF 的 throttle_classes 是整体替换，空列表即豁免）
     throttle_classes: list = []
 
     def get(self, request):
@@ -93,24 +94,28 @@ urlpatterns = [
         name="activity-dead-letter-discard",
     ),
     # 发布门禁（QA-001 §4.4——系统管理员面 instances/ 前缀，Sprint-6 T6-06）
-    path("instances/release-gates/", ReleaseGateListView.as_view(),
-         name="release-gates-list"),
-    path("instances/release-gates/create/", ReleaseGateCreateView.as_view(),
-         name="release-gates-create"),
-    path("instances/release-gates/<uuid:gate_id>/", ReleaseGateDetailView.as_view(),
-         name="release-gates-detail"),
-    path("instances/release-gates/<uuid:gate_id>/gate-events/",
-         ReleaseGateEventView.as_view(), name="release-gates-event"),
-    path("instances/release-gates/<uuid:gate_id>/checklist/<str:key>/sign/",
-         ReleaseGateSignView.as_view(), name="release-gates-sign"),
-    path("instances/release-gates/<uuid:gate_id>/verdict/",
-         ReleaseGateVerdictView.as_view(), name="release-gates-verdict"),
+    path("instances/release-gates/", ReleaseGateListView.as_view(), name="release-gates-list"),
+    path("instances/release-gates/create/", ReleaseGateCreateView.as_view(), name="release-gates-create"),
+    path("instances/release-gates/<uuid:gate_id>/", ReleaseGateDetailView.as_view(), name="release-gates-detail"),
+    path(
+        "instances/release-gates/<uuid:gate_id>/gate-events/",
+        ReleaseGateEventView.as_view(),
+        name="release-gates-event",
+    ),
+    path(
+        "instances/release-gates/<uuid:gate_id>/checklist/<str:key>/sign/",
+        ReleaseGateSignView.as_view(),
+        name="release-gates-sign",
+    ),
+    path(
+        "instances/release-gates/<uuid:gate_id>/verdict/",
+        ReleaseGateVerdictView.as_view(),
+        name="release-gates-verdict",
+    ),
     # admin 运维面（INFRA-005 §4.2——备份/限流，T6-05）
     path("instances/backups/", BackupRunListView.as_view(), name="ops-backups-list"),
-    path("instances/backups/trigger/", BackupRunTriggerView.as_view(),
-         name="ops-backups-trigger"),
-    path("instances/rate-limit/summary/", RateLimitSummaryView.as_view(),
-         name="ops-ratelimit-summary"),
+    path("instances/backups/trigger/", BackupRunTriggerView.as_view(), name="ops-backups-trigger"),
+    path("instances/rate-limit/summary/", RateLimitSummaryView.as_view(), name="ops-ratelimit-summary"),
     path("auth/sign-up/", SignUpView.as_view(), name="auth-signup"),
     path("auth/sign-in/", SignInView.as_view(), name="auth-signin"),
     path("auth/sign-out/", SignOutView.as_view(), name="auth-signout"),
@@ -120,16 +125,31 @@ urlpatterns = [
     path("workspaces/<slug:slug>/", WorkspaceDetailView.as_view(), name="workspaces-detail"),
     path("workspaces/<slug:slug>/projects/", ProjectListCreateView.as_view(), name="projects-list-create"),
     # ── Sprint-5（PROJ-003 §4.2）──
-    path("workspaces/<slug:slug>/projects/<uuid:project_id>/transitions/",
-         ProjectTransitionView.as_view(), name="project-transitions"),
-    path("workspaces/<slug:slug>/projects/<uuid:project_id>/status-logs/",
-         ProjectStatusLogView.as_view(), name="project-status-logs"),
-    path("workspaces/<slug:slug>/projects/<uuid:project_id>/duplicate/",
-         ProjectDuplicateView.as_view(), name="project-duplicate"),
-    path("workspaces/<slug:slug>/project-templates/",
-         ProjectTemplateListCreateView.as_view(), name="project-templates-list-create"),
-    path("workspaces/<slug:slug>/project-templates/<uuid:template_id>/",
-         ProjectTemplateDetailView.as_view(), name="project-templates-detail"),
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/transitions/",
+        ProjectTransitionView.as_view(),
+        name="project-transitions",
+    ),
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/status-logs/",
+        ProjectStatusLogView.as_view(),
+        name="project-status-logs",
+    ),
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/duplicate/",
+        ProjectDuplicateView.as_view(),
+        name="project-duplicate",
+    ),
+    path(
+        "workspaces/<slug:slug>/project-templates/",
+        ProjectTemplateListCreateView.as_view(),
+        name="project-templates-list-create",
+    ),
+    path(
+        "workspaces/<slug:slug>/project-templates/<uuid:template_id>/",
+        ProjectTemplateDetailView.as_view(),
+        name="project-templates-detail",
+    ),
     path("workspaces/<slug:slug>/projects/<uuid:project_id>/", ProjectDetailView.as_view(), name="projects-detail"),
     path(
         "workspaces/<slug:slug>/projects/<uuid:project_id>/states/",
@@ -151,39 +171,40 @@ urlpatterns = [
 #: sprint-1 按功能域拆分的路由片段（plane/app/routes/*.py 各自导出 urlpatterns）。
 #: 拆分原因见 plane/app/routes/__init__.py：避免并行开发在单一 urls.py 上互相踩踏。
 FEATURE_MODULES = (
-    "permissions",      # AUTH-005 权限下发
-    "users",            # AUTH-004 资料 / 密码 / 重置
-    "members",          # TEAM-002 团队成员与邀请
+    "permissions",  # AUTH-005 权限下发
+    "users",  # AUTH-004 资料 / 密码 / 重置
+    "members",  # TEAM-002 团队成员与邀请
     "project_members",  # PROJ-002 项目成员 / 收藏
-    "labels",           # TASK-002 项目标签
-    "attachments",      # FILE-001 任务附件
-    "file_library",     # FILE-002 项目文件库与多层级目录
-    "file_versions",    # FILE-003 分片会话 / 版本 / 预览调度
-    "file_shares",      # FILE-004 文件分享链接与权限管控
-    "comments",         # COLLAB-001 评论
-    "notifications",    # COLLAB-001 通知中心
-    "stats",            # RPT-001 个人统计
-    "custom_fields",    # TASK-008 自定义字段（Schema API + 管理 CRUD）
-    "issue_views",      # BOARD-003 保存的视图（views/ CRUD 五端点）
+    "labels",  # TASK-002 项目标签
+    "attachments",  # FILE-001 任务附件
+    "file_library",  # FILE-002 项目文件库与多层级目录
+    "file_versions",  # FILE-003 分片会话 / 版本 / 预览调度
+    "file_shares",  # FILE-004 文件分享链接与权限管控
+    "comments",  # COLLAB-001 评论
+    "notifications",  # COLLAB-001 通知中心
+    "stats",  # RPT-001 个人统计
+    "custom_fields",  # TASK-008 自定义字段（Schema API + 管理 CRUD）
+    "issue_views",  # BOARD-003 保存的视图（views/ CRUD 五端点）
     "activity_stream",  # COLLAB-003 项目动态流（合流 + 折叠 + 组感知游标）
-    "issue_bulk",       # BOARD-004 任务批量操作（bulk/ + bulk/archive/ + bulk/preview/）
-    "realtime",         # COLLAB-004 live 实时票据（换票 / 续签 / verify-rooms 内部复核）
-    "gantt",            # GANTT-001 甘特取数地基（视窗行 / 连线批量 / 未排期）
-    "integrations",     # INTG-001 GitHub 集成（安装 / 绑定 / 入站 Webhook / 日志）
-    "webhooks",         # INTG-002 出站 Webhook（端点 / 投递 / 重放）
-    "workflow",         # M11-WF 工作流引擎与审批（WF-001/WF-002，Sprint-7）
-    "automation",       # M11-WF 自动化规则（WF-003，Sprint-7 R3）
-    "worklog_approval", # M4-TASK 工时审批（TASK-013，Sprint-7 R3）
+    "issue_bulk",  # BOARD-004 任务批量操作（bulk/ + bulk/archive/ + bulk/preview/）
+    "realtime",  # COLLAB-004 live 实时票据（换票 / 续签 / verify-rooms 内部复核）
+    "gantt",  # GANTT-001 甘特取数地基（视窗行 / 连线批量 / 未排期）
+    "integrations",  # INTG-001 GitHub 集成（安装 / 绑定 / 入站 Webhook / 日志）
+    "webhooks",  # INTG-002 出站 Webhook（端点 / 投递 / 重放）
+    "workflow",  # M11-WF 工作流引擎与审批（WF-001/WF-002，Sprint-7）
+    "automation",  # M11-WF 自动化规则（WF-003，Sprint-7 R3）
+    "worklog_approval",  # M4-TASK 工时审批（TASK-013，Sprint-7 R3）
     "templates_audit",  # M11-WF 模板库与审计（WF-005/006，Sprint-7 R5）
-    "departments",      # M1-AUTH 部门组织架构（AUTH-007，Sprint-8 R1）
-    "custom_roles",     # M1-AUTH 自定义角色组（AUTH-008，Sprint-8 R2）
-    "sso",              # M1-AUTH SSO 单点登录（AUTH-009，Sprint-8 R3）
-    "audit_logs",       # M1-AUTH 全站审计（AUTH-010，Sprint-8 R4）
-    "portfolios",       # M3-PROJ 项目集组合树（PROJ-004，Sprint-9）
-    "cycles",           # M10-RPT 敏捷报表迭代（RPT-003，Sprint-9）
-    "wiki",             # M7-FILE Wiki 知识库（FILE-005，Sprint-9）
-    "gantt_cpm",        # M6-GANTT 关键路径（GANTT-003，Sprint-9）
-    "health_reports",   # M10-RPT 健康度/负载（RPT-004，Sprint-9）
+    "departments",  # M1-AUTH 部门组织架构（AUTH-007，Sprint-8 R1）
+    "custom_roles",  # M1-AUTH 自定义角色组（AUTH-008，Sprint-8 R2）
+    "sso",  # M1-AUTH SSO 单点登录（AUTH-009，Sprint-8 R3）
+    "audit_logs",  # M1-AUTH 全站审计（AUTH-010，Sprint-8 R4）
+    "portfolios",  # M3-PROJ 项目集组合树（PROJ-004，Sprint-9）
+    "cycles",  # M10-RPT 敏捷报表迭代（RPT-003，Sprint-9）
+    "wiki",  # M7-FILE Wiki 知识库（FILE-005，Sprint-9）
+    "gantt_cpm",  # M6-GANTT 关键路径（GANTT-003，Sprint-9）
+    "health_reports",  # M10-RPT 健康度/负载（RPT-004，Sprint-9）
+    "governance",  # M1-AUTH 租户治理与风控（AUTH-012，P4 R1——17 端点）
 )
 
 for _name in FEATURE_MODULES:

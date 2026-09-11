@@ -158,6 +158,12 @@ REST_FRAMEWORK = {
 #: 演示经 env ``RATE_LIMIT_ENABLED=1`` 临时开启（§7.2.1 限流矩阵压测入口）。
 RATE_LIMIT_ENABLED = env_bool("RATE_LIMIT_ENABLED", False)
 
+#: 租户治理开关（AUTH-012 BR-11，P4 R1）：SaaS 形态 True / 私有化 False。
+#: base 默认 False——私有化「零变化」基底（治理 API SERVER_NOT_IMPLEMENTED、
+#: 引擎不调度、Workspace/audit_log 回填迁移不执行）；dev/test/演示经 env
+#: ``TENANT_GOVERNANCE_ENABLED=1`` 开启；SaaS prod 置 True。
+TENANT_GOVERNANCE_ENABLED = env_bool("TENANT_GOVERNANCE_ENABLED", False)
+
 #: 备份产物三校验①的大小阈值（INFRA-005 BR-07）：低于即判「异常偏小」失败
 #:（空库/错库/半途截断）。dev 空库调试可 env 调小。
 BACKUP_MIN_SIZE_BYTES = int(env("BACKUP_MIN_SIZE_BYTES", str(1024 * 1024)))

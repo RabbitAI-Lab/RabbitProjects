@@ -119,6 +119,12 @@ class Workspace(BaseModel):
         default=list, blank=True, verbose_name="基础状态模板快照",
         help_text='{"version": n, "groups": [...]}（§2.3；空 = 未覆盖内置默认）',
     )
+    # AUTH-012（P4 R1）§4.1：租户归集列——null 即「未治理租户」（私有化/迁移期），
+    # 治理 API 对其 SERVER_NOT_IMPLEMENTED（BR-11）；SaaS 回填迁移见 0039。
+    tenant = models.ForeignKey(
+        "db.Tenant", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="workspaces", verbose_name="归属租户",
+    )
 
     class Meta(BaseModel.Meta):
         db_table = "workspaces"

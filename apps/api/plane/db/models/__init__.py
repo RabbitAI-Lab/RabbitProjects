@@ -14,6 +14,15 @@ from .cycle import Cycle, CycleSnapshot, DailyGroupSnapshot, ProjectReportConfig
 from .department import Department, DepartmentGrantBatch
 from .file import FileFolder, FileVersion, UploadSession
 from .file_share import FileShareAccess, FileShareLink
+from .governance import (
+    BoundaryReport,
+    GovernanceTicket,
+    RiskAppeal,
+    RiskEvent,
+    RiskRule,
+    Tenant,
+    TenantQuota,
+)
 from .health import ExportTask, HealthConfig, HealthSnapshot
 from .integration import IntegrationInstallation, SyncConflictLog
 from .issue import Issue, IssueActivity, IssueAssignee, IssueLabel, IssueLink
@@ -130,4 +139,11 @@ __all__ = [
     "HealthSnapshot",
     "HealthConfig",
     "ExportTask",
+    "Tenant",
+    "TenantQuota",
+    "RiskRule",
+    "RiskEvent",
+    "GovernanceTicket",
+    "RiskAppeal",
+    "BoundaryReport",
 ]

@@ -214,7 +214,10 @@ class TenantListView(APIView):
                 message="非法排序字段",
                 details=[{"field": "ordering", "code": "INVALID", "message": f"{ordering} 不在排序白名单"}],
             )
-        qs = Tenant.objects.all()
+        # 实例级资源非用户域：tenant_ops 全租户视角经 unsafe_all 显式例外
+        # （AUTH-006 BR-08——平台治理总览，AUTH-012 §4.4 守门在 require_tenant_ops）
+        qs = Tenant.objects.unsafe_all(
+            reason="tenant_ops 平台治理总览（AUTH-012 §4.4，实例级资源非用户域）")
         search = q.get("search", "").strip()
         if search:
             qs = qs.filter(name__icontains=search)

@@ -74,6 +74,7 @@ MIDDLEWARE = [
     "plane.base.middleware.ResponseEnvelopeMiddleware",  # ⑤
     "plane.base.middleware.MaintenanceModeMiddleware",  # ⑥
     "plane.base.middleware.WorkspaceArchiveMiddleware",  # ⑦ Sprint-5 TEAM-003 归档写保护
+    "plane.governance.middleware.GovernanceMiddleware",  # ⑧ AUTH-012 P4：冻结写拒/IP 封禁/租户速率桶
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -139,15 +140,22 @@ REST_FRAMEWORK = {
     # [*BASE_THROTTLES, X] 展开模式冲突（dev 被带起 L2 打爆 flow/pytest，或
     # prod 静默摘除视图级 L2），偏差见 plane/base/throttling.py 模块 docstring。
     "DEFAULT_THROTTLE_CLASSES": [
-        "plane.base.throttling.ApiKeyRateThrottle",    # ① Key
+        "plane.base.throttling.ApiKeyRateThrottle",  # ① Key
         "plane.base.throttling.OAuthAppRateThrottle",  # ② OAuth（复合键）
-        "plane.base.throttling.UserRateThrottle",      # ③ Session 用户
-        "plane.base.throttling.AnonRateThrottle",      # ④ 匿名 IP
+        "plane.base.throttling.UserRateThrottle",  # ③ Session 用户
+        "plane.base.throttling.AnonRateThrottle",  # ④ 匿名 IP
     ],
     "DEFAULT_THROTTLE_RATES": {
-        "user": "60/min", "apikey": "60/min", "oauth": "60/min", "anon": "30/min",
-        "auth": "10/min", "report": "10/min", "search": "30/min",
-        "presign": "30/min", "bulk": "10/min", "share_unlock": "5/10m",
+        "user": "60/min",
+        "apikey": "60/min",
+        "oauth": "60/min",
+        "anon": "30/min",
+        "auth": "10/min",
+        "report": "10/min",
+        "search": "30/min",
+        "presign": "30/min",
+        "bulk": "10/min",
+        "share_unlock": "5/10m",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
@@ -210,7 +218,7 @@ AWS_S3_BUCKET_NAME = env("AWS_S3_BUCKET_NAME", "rp-uploads")
 # ── FILE-002 工作空间存储配额（BR-11「存 WS 设置，默认 10GB，可配置」──
 # 仓库无 Workspace 设置模型，以环境级配置承载（规格 §4.1.3 DDL 清单亦无 WS 列；
 # 偏差登记见 FILE-002 任务报告 / ADR-0022）。
-WS_STORAGE_QUOTA_BYTES = int(env("WS_STORAGE_QUOTA_BYTES", str(10 * 1024 ** 3)))
+WS_STORAGE_QUOTA_BYTES = int(env("WS_STORAGE_QUOTA_BYTES", str(10 * 1024**3)))
 
 # ── 功能常量（Sprint-2 TASK-004 §4.1：层级三层防线 + 子树上限）──
 from plane.settings.features import (  # noqa: E402,F401

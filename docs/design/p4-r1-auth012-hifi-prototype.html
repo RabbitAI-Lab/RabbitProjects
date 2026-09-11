@@ -8,8 +8,16 @@
 ════════════════════════════════════════════════════════════════════════════════
 RabbitProjects · P4 R1 高保真可交互原型（AUTH-012 多租户隔离与风控告警溯源）
 ════════════════════════════════════════════════════════════════════════════════
-状态：DRAFT 2026-09-11（待用户评审冻结）——冻结前不写任何 UI 代码
-      （CLAUDE.md 硬门槛）。评审通过后头部改记 FROZEN + 评审记录。
+状态：FROZEN 2026-09-11（用户复审通过）——UI 实现以此为准；任何改动需重新
+      走评审解冻（CLAUDE.md 硬门槛）。
+
+评审记录
+  2026-09-11 一审（用户走查）：两条意见——①左侧菜单乱：三个管理面侧栏结构
+    不一致、基线侧栏样式（.side-item/.side-label/.p-id）漏移植靠内联补丁、
+    跨视角演示跳转混入真实 IA；②冻结审批弹窗步骤条与连接线重叠（空
+    inline-flex 基线顶偏 + 连接线画在圆点上层）。当日修订 #1 收口（abae793）。
+  2026-09-11 复审（用户）：「没问题」——冻结生效。O1~O8 开放点全部按本
+    原型实现；侧栏 IA 以「平台治理三面同构 / 客户侧设置组」为准。
 
 评审修订 2026-09-11 #1（用户走查两条）：
   ① 侧栏 IA 重构：三个管理面（总览/租户详情/事件中心）统一为「运营身份块 +
@@ -746,7 +754,7 @@ audit_ids: #41872…#41918（47 条）</textarea>
 
 <!-- ══════════════════ DOCK 演示面板 ══════════════════ -->
 <aside class="dock open" id="dock">
-  <div class="dock-head" onclick="document.getElementById('dock').classList.toggle('open')">P4·R1 原型演示 <span style="margin-left:auto;font-size:11px;color:var(--ink-4)">DRAFT · O1~O8</span></div>
+  <div class="dock-head" onclick="document.getElementById('dock').classList.toggle('open')">P4·R1 原型演示 <span style="margin-left:auto;font-size:11px;color:var(--ink-4)">FROZEN · O1~O8</span></div>
   <div class="dock-body">
     <div class="dock-sec">页面直达（AUTH-012 §3.1 五页）</div>
     <button class="dock-item" onclick="go('#/admin/tenants')">▦ 平台租户总览（§3.2）</button>

@@ -41,6 +41,9 @@ RULE_SEVERITY = {
     "R-06": "medium",
 }
 
+#: 聚合升级比较用级别秩（_fire 档位升级判定——同桶 warn→deny 留痕不吞）
+_SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
+
 #: tier 默认配额（§2.3 配额表；TenantQuota 列 null 时跟随本表）
 #: enterprise 成员「按合同 Seats」→ None 表示不设硬值（seats 列承载合同值）
 TIER_DEFAULTS: dict[str, dict] = {
@@ -86,9 +89,14 @@ def resolve_tenant(workspace_id) -> str | None:
 
 
 def tier_quota(tenant) -> dict:
-    """租户生效配额：TenantQuota 显式值优先，null 列跟随 tier 默认表。"""
+    """租户生效配额：TenantQuota 显式值优先，null 列跟随 tier 默认表。
+
+    无配额行（回填迁移只建 Tenant 不建 Quota）按 tier 默认整表取值——
+    反向描述符 tenant.quota 对缺行会抛 DoesNotExist，必须安全查询。"""
     defaults = TIER_DEFAULTS.get(tenant.tier, TIER_DEFAULTS["free"])
-    quota = getattr(tenant, "quota", None)
+    from plane.db.models import TenantQuota
+
+    quota = TenantQuota.objects.filter(tenant=tenant).first()
     if quota is None:
         return dict(defaults)
     return {
@@ -342,7 +350,14 @@ class RiskRuleEngine:
         existing = RiskEvent.objects.filter(aggregate_key=agg_key, status="open").first()
         if existing:
             existing.evidence["occurrences"] = existing.evidence.get("occurrences", 1) + 1
-            existing.save(update_fields=["evidence", "updated_at"])
+            # 档位升级不吞（IT-10：warn→deny 仍在同桶聚合事件上留痕——
+            # 升级 severity 并合并证据，处置链按最高档执行）
+            new_sev = severity or RULE_SEVERITY.get(rule.code, "medium")
+            if _SEVERITY_RANK.get(new_sev, 0) > _SEVERITY_RANK.get(existing.severity, 0):
+                existing.severity = new_sev
+                existing.evidence.update(self._snapshot_evidence(ev, evidence or {}))
+                existing.evidence["escalated_to"] = new_sev
+            existing.save(update_fields=["evidence", "severity", "updated_at"])
             return existing
         event = RiskEvent.objects.create(
             tenant_id=tenant_id,

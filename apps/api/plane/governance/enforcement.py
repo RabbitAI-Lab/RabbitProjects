@@ -21,16 +21,65 @@ logger = logging.getLogger("plane.governance")
 
 
 def _governed_tenant_of(workspace):
-    """工作空间 → 治理租户；门控关闭或未治理返回 None（调用方跳过判定）。"""
+    """工作空间 → 治理租户；门控关闭、未治理或**降级宽限期内**（§2.3：
+    只告警不硬拒，UT-04）返回 None——调用方统一跳过硬拒判定。"""
     if not getattr(dj_settings, "TENANT_GOVERNANCE_ENABLED", False):
         return None
     if workspace is None or workspace.tenant_id is None:
         return None
-    return workspace.tenant
+    tenant = workspace.tenant
+    if _in_grace_period(tenant):
+        return None
+    return tenant
+
+
+def _in_grace_period(tenant) -> bool:
+    """降级宽限期内只告警不硬拒（§2.3：降级给 30 天宽限期，到期后硬拒——
+    UT-04；告警面走引擎/日志，本判定只放行硬拒）。"""
+    from plane.db.models import TenantQuota
+
+    quota = TenantQuota.objects.filter(tenant=tenant).first()
+    until = quota.downgrade_grace_until if quota else None
+    return bool(until) and timezone.now().date() < until
 
 
 def _export_day_key(tenant_id: str) -> str:
     return f"risk:R-03:tenant:{tenant_id}:1d:{timezone.now():%Y%m%d}:rows"
+
+
+def check_storage_quota(workspace, incoming: int) -> None:
+    """第 1 强制点（两层模型 L-T 租户层，硬上限）：Σ 下挂 WS 已用 + incoming
+    > 租户配额 → 409 QUOTA_STORAGE_EXCEEDED（details 注明「租户层」，
+    §2.3 扣减顺序：任一层拒绝整体拒绝、不落预留）。
+
+    层序注：FILE-002 WS 层判定在 presign 服务事务内（QuotaExceededError
+    先例）；本判定前置在服务调用前——租户层为 Σ 硬上限，先拒时 WS 层
+    预留同样未落，语义等价（拒绝层归因按实际触发层标注）。"""
+    tenant = _governed_tenant_of(workspace)
+    if tenant is None:
+        return
+    from django.db.models import Sum
+
+    from plane.db.models import FileAsset, Workspace
+    from plane.governance.risk_engine import tier_quota
+
+    quota = tier_quota(tenant)["storage_bytes"]
+    if not quota or incoming <= 0:
+        return
+    ws_ids = list(Workspace.objects.filter(tenant=tenant).values_list("id", flat=True))
+    used = FileAsset.objects.filter(workspace_id__in=ws_ids).aggregate(s=Sum("size"))["s"] or 0
+    if used + incoming > quota:
+        raise AppException(
+            "QUOTA_STORAGE_EXCEEDED",
+            message="租户存储配额不足",
+            details=[
+                {
+                    "field": "file_size",
+                    "code": "QUOTA",
+                    "message": f"租户层：已用 {used} / {quota}，本次需 {incoming}（§2.3 两层模型硬上限）",
+                }
+            ],
+        )
 
 
 def check_export_deny(workspace, *, estimated_rows: int = 0) -> None:

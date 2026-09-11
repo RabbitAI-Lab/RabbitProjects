@@ -66,9 +66,17 @@ def require_tenant_ops(request) -> None:
 
 
 def _gov_record(request, action: str, *, obj, detail, workspace=None):
-    """治理动作落审计（governance 域注册表；系统级视角 workspace 可空）。"""
+    """治理动作落审计（governance 域注册表；系统级视角 workspace 可空）。
+
+    event_key 必须 ≤80 列宽（audit_log.event_key varchar(80)）——sha256
+    截断构造（audit 域 exported 同款范式）。"""
+    import hashlib
+    import uuid as _uuid
+
     record(
-        event_key=f"gov.{action}:{obj.get('id')}:{request.user.id}:{timezone.now().timestamp()}",
+        event_key=hashlib.sha256(
+            f"gov.{action}:{obj.get('id')}:{request.user.id}:{_uuid.uuid4()}".encode()
+        ).hexdigest()[:80],
         category="governance",
         action=action,
         workspace_id=(workspace.id if workspace else None),
@@ -216,8 +224,7 @@ class TenantListView(APIView):
             )
         # 实例级资源非用户域：tenant_ops 全租户视角经 unsafe_all 显式例外
         # （AUTH-006 BR-08——平台治理总览，AUTH-012 §4.4 守门在 require_tenant_ops）
-        qs = Tenant.objects.unsafe_all(
-            reason="tenant_ops 平台治理总览（AUTH-012 §4.4，实例级资源非用户域）")
+        qs = Tenant.objects.unsafe_all(reason="tenant_ops 平台治理总览（AUTH-012 §4.4，实例级资源非用户域）")
         search = q.get("search", "").strip()
         if search:
             qs = qs.filter(name__icontains=search)

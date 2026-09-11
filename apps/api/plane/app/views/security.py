@@ -121,8 +121,13 @@ class SecurityRulesView(APIView):
                 "updated_by": request.user,
             },
         )
+        import hashlib
+        import uuid as _uuid
+
         record(
-            event_key=f"gov.rule_tightened:{code}:{tenant.id}:{request.user.id}:{timezone.now().timestamp()}",
+            event_key=hashlib.sha256(
+                f"gov.rule_tightened:{code}:{request.user.id}:{_uuid.uuid4()}".encode()
+            ).hexdigest()[:80],
             category="governance",
             action="rule_tightened",
             workspace_id=ws.id,
@@ -162,8 +167,13 @@ class SecurityAppealView(APIView):
         appeal = RiskAppeal.objects.create(
             event=ev, tenant=tenant, applicant=request.user, reason=reason, created_by=request.user
         )
+        import hashlib
+        import uuid as _uuid
+
         record(
-            event_key=f"gov.appeal_filed:{ev.id}:{request.user.id}:{timezone.now().timestamp()}",
+            event_key=hashlib.sha256(
+                f"gov.appeal_filed:{ev.id}:{request.user.id}:{_uuid.uuid4()}".encode()
+            ).hexdigest()[:80],
             category="governance",
             action="appeal_filed",
             workspace_id=ws.id,
@@ -216,8 +226,13 @@ class L2TicketApprovalView(APIView):
         ticket.note = str(request.data.get("note") or "")[:255]
         ticket.updated_by = request.user
         ticket.save()
+        import hashlib
+        import uuid as _uuid
+
         record(
-            event_key=f"gov.l2_decided:{ticket.id}:{request.user.id}:{timezone.now().timestamp()}",
+            event_key=hashlib.sha256(
+                f"gov.l2_decided:{ticket.id}:{request.user.id}:{_uuid.uuid4()}".encode()
+            ).hexdigest()[:80],
             category="governance",
             action="l2_decided",
             workspace_id=ws.id,

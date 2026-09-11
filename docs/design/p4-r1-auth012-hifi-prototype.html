@@ -11,6 +11,16 @@ RabbitProjects · P4 R1 高保真可交互原型（AUTH-012 多租户隔离与�
 状态：DRAFT 2026-09-11（待用户评审冻结）——冻结前不写任何 UI 代码
       （CLAUDE.md 硬门槛）。评审通过后头部改记 FROZEN + 评审记录。
 
+评审修订 2026-09-11 #1（用户走查两条）：
+  ① 侧栏 IA 重构：三个管理面（总览/租户详情/事件中心）统一为「运营身份块 +
+     平台治理组（租户总览 / 风控事件中心 / 边界报告台账 R1+ 置灰）」同构侧栏；
+     客户侧 V-SEC 收敛为工作空间身份块 + 设置组。根因是基线 .psidebar/.side-item/
+     .side-label/.p-id 样式漏移植，此前靠内联 justify-content 逐个补丁且各面
+     结构不一致；跨视角跳转（运营↔客户）移出演示 dock 专属，不再混入真实 IA。
+  ② 冻结审批步骤条（O5）修复：.n 圆点改块级 flex 居中（原先空 inline-flex 的
+     基线对齐会把圆点顶偏）+ position:relative;z-index:1 压住连接线（原先定位
+     元素 ::before 画在圆点上层，连接线横穿圆点）。
+
 基线与依据
   · 视觉语言基线：docs/design/sprint-9-hifi-prototype.html（FROZEN 2026-09-10）
     token / 控件 / 外壳 / dock 模式全部延续，零漂移。
@@ -190,11 +200,11 @@ a:hover{text-decoration:underline}
 .disp-opt .t{font-size:13px;font-weight:500}
 .disp-opt .d{font-size:11.5px;color:var(--ink-3)}
 .disp-opt .tag-need{font-size:11px;color:var(--amber-ink);background:var(--amber-bg);border:1px solid var(--amber-line);padding:0 6px;border-radius:4px;margin-left:6px}
-/* O5 审批步骤条 */
-.steps{display:flex;gap:0;margin:4px 0 18px}
+/* O5 审批步骤条（修订#1：圆点块级居中 + 压线层级，连接线不再与圆点重叠） */
+.steps{display:flex;gap:0;margin:6px 0 20px}
 .step{flex:1;text-align:center;position:relative;font-size:12px;color:var(--ink-3)}
-.step .n{width:26px;height:26px;border-radius:50%;background:var(--surface-2);color:var(--ink-3);display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;margin-bottom:5px;border:2px solid var(--line-strong)}
-.step::before{content:"";position:absolute;top:13px;left:-50%;width:100%;height:2px;background:var(--line)}
+.step .n{width:26px;height:26px;border-radius:50%;background:var(--surface-2);color:var(--ink-3);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;margin:0 auto 6px;border:2px solid var(--line-strong);position:relative;z-index:1}
+.step::before{content:"";position:absolute;top:12px;left:-50%;width:100%;height:2px;background:var(--line)}
 .step:first-child::before{display:none}
 .step.on{color:var(--brand-600);font-weight:500}
 .step.on .n{background:var(--brand-500);border-color:var(--brand-500);color:#fff}
@@ -227,8 +237,16 @@ a:hover{text-decoration:underline}
 .l2card.ok{border-color:#a7f3d0;background:var(--ok-bg)}
 .kv{display:grid;grid-template-columns:96px 1fr;gap:4px 10px;font-size:12.5px}
 .kv .k{color:var(--ink-3)}
-/* admin 侧栏 */
-.asidebar{width:200px;border-right:1px solid var(--line);background:var(--surface);padding:12px;display:flex;flex-direction:column;gap:2px;flex-shrink:0}
+/* admin 侧栏（修订#1：基线 .psidebar/.side-item 同构移植，宽 200） */
+.asidebar{width:200px;border-right:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:2px;padding:12px;flex-shrink:0;overflow:auto}
+.p-id{display:flex;gap:10px;align-items:center;padding:4px 8px 12px}
+.p-id .nm{font-size:13.5px;font-weight:600}
+.side-item{display:flex;align-items:center;gap:9px;height:34px;padding:0 10px;border-radius:var(--radius-md);font-size:13.5px;color:var(--ink-2);text-align:left}
+.side-item:hover{background:var(--surface-2)}
+.side-item.active{background:var(--brand-50);color:var(--brand-600);font-weight:500}
+.side-item:disabled{color:var(--ink-4)}
+.side-item:disabled:hover{background:none}
+.side-label{font-size:11px;color:var(--ink-4);letter-spacing:.05em;margin:12px 0 4px 8px}
 /* dock（基线沿用） */
 .dock{position:fixed;right:18px;bottom:18px;width:242px;background:var(--surface);border:1px solid var(--line-strong);border-radius:12px;box-shadow:var(--shadow-lg);z-index:80;overflow:hidden}
 .dock-head{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--surface-2);font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer;user-select:none}
@@ -263,12 +281,11 @@ a:hover{text-decoration:underline}
   </header>
   <div class="shell">
     <aside class="asidebar">
-      <div class="side-label" style="margin-top:2px">平台治理</div>
-      <button class="side-item active" style="justify-content:flex-start">▦ 租户总览</button>
-      <button class="side-item" style="justify-content:flex-start" onclick="go('#/admin/risk-events')">⚠ 风控事件中心</button>
-      <button class="side-item" style="justify-content:flex-start;color:var(--ink-4)">🏛 边界报告台账 <span class="hint" style="margin-left:auto;font-size:10px">R1+</span></button>
-      <div class="side-label">返回</div>
-      <button class="side-item" style="justify-content:flex-start" onclick="go('#/ws/settings/security')">◂ 客户侧视角（我的租户安全）</button>
+      <div class="p-id"><div class="avatar" style="background:#262626;border-radius:8px;font-size:11px">RP</div><div><div class="nm">平台运营后台</div><div class="hint" style="font-size:11px">tenant_ops · SaaS 治理</div></div></div>
+      <div class="side-label" style="margin-top:0">平台治理</div>
+      <button class="side-item active">▦ 租户总览</button>
+      <button class="side-item" onclick="go('#/admin/risk-events')">⚠ 风控事件中心</button>
+      <button class="side-item" disabled>🧾 边界报告台账 <span class="hint" style="margin-left:auto;font-size:10px">R1+</span></button>
     </aside>
     <main class="pmain">
       <div class="page">
@@ -344,9 +361,11 @@ a:hover{text-decoration:underline}
   </header>
   <div class="shell">
     <aside class="asidebar">
-      <div class="side-label" style="margin-top:2px">平台治理</div>
-      <button class="side-item" style="justify-content:flex-start" onclick="go('#/admin/tenants')">▦ 租户总览</button>
-      <button class="side-item" style="justify-content:flex-start" onclick="go('#/admin/risk-events')">⚠ 风控事件中心</button>
+      <div class="p-id"><div class="avatar" style="background:#262626;border-radius:8px;font-size:11px">RP</div><div><div class="nm">平台运营后台</div><div class="hint" style="font-size:11px">tenant_ops · SaaS 治理</div></div></div>
+      <div class="side-label" style="margin-top:0">平台治理</div>
+      <button class="side-item active" onclick="go('#/admin/tenants')">▦ 租户总览</button>
+      <button class="side-item" onclick="go('#/admin/risk-events')">⚠ 风控事件中心</button>
+      <button class="side-item" disabled>🧾 边界报告台账 <span class="hint" style="margin-left:auto;font-size:10px">R1+</span></button>
     </aside>
     <main class="pmain">
       <div class="page">
@@ -432,9 +451,11 @@ a:hover{text-decoration:underline}
   </header>
   <div class="shell">
     <aside class="asidebar">
-      <div class="side-label" style="margin-top:2px">平台治理</div>
-      <button class="side-item" style="justify-content:flex-start" onclick="go('#/admin/tenants')">▦ 租户总览</button>
-      <button class="side-item active" style="justify-content:flex-start">⚠ 风控事件中心</button>
+      <div class="p-id"><div class="avatar" style="background:#262626;border-radius:8px;font-size:11px">RP</div><div><div class="nm">平台运营后台</div><div class="hint" style="font-size:11px">tenant_ops · SaaS 治理</div></div></div>
+      <div class="side-label" style="margin-top:0">平台治理</div>
+      <button class="side-item" onclick="go('#/admin/tenants')">▦ 租户总览</button>
+      <button class="side-item active">⚠ 风控事件中心</button>
+      <button class="side-item" disabled>🧾 边界报告台账 <span class="hint" style="margin-left:auto;font-size:10px">R1+</span></button>
     </aside>
     <main class="pmain">
       <div class="page">
@@ -494,13 +515,11 @@ a:hover{text-decoration:underline}
   </header>
   <div class="shell">
     <aside class="asidebar">
-      <div class="side-label" style="margin-top:2px">设置</div>
-      <button class="side-item" style="justify-content:flex-start">👥 成员</button>
-      <button class="side-item" style="justify-content:flex-start">🏷 标签与状态</button>
-      <button class="side-item active" style="justify-content:flex-start">🛡 我的租户安全</button>
-      <div class="side-label">平台视角</div>
-      <button class="side-item" style="justify-content:flex-start" onclick="go('#/admin/tenants')">▸ 平台租户总览（运营）</button>
-      <button class="side-item" style="justify-content:flex-start" onclick="go('#/admin/risk-events')">▸ 风控事件中心（运营）</button>
+      <div class="p-id"><div class="avatar" style="background:var(--brand-500)">B</div><div><div class="nm">Beta Ltd</div><div class="hint" style="font-size:11px">beta-main · 标准版</div></div></div>
+      <div class="side-label" style="margin-top:0">设置</div>
+      <button class="side-item">👥 成员</button>
+      <button class="side-item">🏷 标签与状态</button>
+      <button class="side-item active">🛡 我的租户安全</button>
     </aside>
     <main class="pmain">
       <div class="page">
@@ -578,9 +597,9 @@ a:hover{text-decoration:underline}
   </div>
   <div class="shell">
     <aside class="asidebar"><div class="side-label" style="margin-top:2px">视图</div>
-      <button class="side-item active" style="justify-content:flex-start">☰ 任务列表</button>
-      <button class="side-item" style="justify-content:flex-start">▦ 看板</button>
-      <button class="side-item" style="justify-content:flex-start">▤ 表格</button>
+      <button class="side-item active">☰ 任务列表</button>
+      <button class="side-item">▦ 看板</button>
+      <button class="side-item">▤ 表格</button>
     </aside>
     <main class="pmain" style="position:relative">
       <div class="page">

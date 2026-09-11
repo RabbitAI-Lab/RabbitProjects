@@ -256,6 +256,19 @@ RabbitProjects 是一套复刻 [Ones](https://ones.cn/) 与 [Plane](https://gith
 | 80 | [sprint-future-p4/AI-001-ai-features.md](sprint-future-p4/AI-001-ai-features.md) | AI 辅助能力（摘要 / 预警 / 生成） | 远期 | P4 | AI |
 | 81 | [sprint-future-p4/RPT-005-dashboard.md](sprint-future-p4/RPT-005-dashboard.md) | 企业数据大屏与自定义报表 | 远期 | P4 | RPT |
 | 82 | [sprint-future-p4/INFRA-006-ha-deploy.md](sprint-future-p4/INFRA-006-ha-deploy.md) | 高可用集群与私有化部署 | 远期 | P4 | INFRA |
+| 83 | sprint-future-p4/INTG-005-wecom-dingtalk.md（待编·P4 R8） | 企业微信 / 钉钉通道 | 远期 | P4 | INTG |
+| 84 | sprint-future-p4/FILE-007-archive-compliance.md（待编·P4 R10） | 项目归档强制合规 | 远期 | P4 | FILE |
+| 85 | sprint-future-p4/RPT-006-cross-org-analytics.md（待编·P4 R12） | 跨组织经营分析 | 远期 | P4 | RPT |
+| 86 | sprint-future-p4/GANTT-004-portfolio-gantt.md（待编·P4 R15） | 跨项目甘特汇总 | 远期 | P4 | GANTT |
+| 87 | sprint-future-p4/GANTT-005-resource-load.md（待编·P4 R15） | 资源负载甘特 | 远期 | P4 | GANTT |
+| 88 | sprint-future-p4/GANTT-006-cp-lock.md（待编·P4 R15） | 关键路径锁定 | 远期 | P4 | GANTT |
+| 89 | sprint-future-p4/BOARD-006-global-board.md（待编·P4 R16） | 跨项目全局看板 | 远期 | P4 | BOARD |
+| 90 | sprint-future-p4/BOARD-007-view-templates.md（待编·P4 R16） | 企业级统一视图模板 | 远期 | P4 | BOARD |
+| 91 | sprint-future-p4/WF-007-timeout-transition.md（待编·P4 R17） | 超时自动流转 | 远期 | P4 | WF |
+| 92 | sprint-future-p4/PROJ-005-resource-scheduling.md（待编·P4 R17） | 跨项目资源统一调度 | 远期 | P4 | PROJ |
+| 93 | sprint-future-p4/COLLAB-005-push-strategy.md（待编·P4 R18） | 统一消息推送策略 | 远期 | P4 | COLLAB |
+
+> #83~#93 为 P4 v2 范围裁定（2026-09-10）新增的 11 份规格编号，随对应轮次第 0 阶段产出后转为正式链接；INTG-004 的「应用市场」增补章并入其文档不另立编号。
 
 ---
 
@@ -306,18 +319,18 @@ TASK-008-custom-fields-basic.md
 | `INFRA` | 基础设施与部署运维 | 1.2 / 8.2 部署运维 | 6 | INFRA-001 ~ 006 |
 | `AUTH` | 账号与权限 | 3.1 / 四 | 12 | AUTH-001 ~ 012 |
 | `TEAM` | 团队管理 | 3.2 | 3 | TEAM-001 ~ 003 |
-| `PROJ` | 项目管理 | 3.3 | 4 | PROJ-001 ~ 004 |
+| `PROJ` | 项目管理 | 3.3 | 5 | PROJ-001 ~ 005 |
 | `TASK` | 任务核心（统一工作项） | 3.4 | 15 | TASK-001 ~ 015 |
-| `WF` | 工作流与审批 | 3.4 企业级工作流 | 6 | WF-001 ~ 006 |
-| `BOARD` | 看板视图 | 3.5 | 5 | BOARD-001 ~ 005 |
-| `GANTT` | 甘特图进度 | 3.6 | 3 | GANTT-001 ~ 003 |
-| `FILE` | 文件资源与知识库 | 3.7 | 6 | FILE-001 ~ 006 |
-| `COLLAB` | 实时协作与通知 | 3.8 | 4 | COLLAB-001 ~ 004 |
-| `INTG` | 第三方工具集成 | 3.9 | 4 | INTG-001 ~ 004 |
-| `RPT` | 数据报表 | 8.2 数据报表 | 5 | RPT-001 ~ 005 |
+| `WF` | 工作流与审批 | 3.4 企业级工作流 | 7 | WF-001 ~ 007 |
+| `BOARD` | 看板视图 | 3.5 | 7 | BOARD-001 ~ 007 |
+| `GANTT` | 甘特图进度 | 3.6 | 6 | GANTT-001 ~ 006 |
+| `FILE` | 文件资源与知识库 | 3.7 | 7 | FILE-001 ~ 007 |
+| `COLLAB` | 实时协作与通知 | 3.8 | 5 | COLLAB-001 ~ 005 |
+| `INTG` | 第三方工具集成 | 3.9 | 5 | INTG-001 ~ 005 |
+| `RPT` | 数据报表 | 8.2 数据报表 | 6 | RPT-001 ~ 006 |
 | `AI` | AI 辅助能力 | 3.9 / 8.2 AI 能力 | 1 | AI-001 |
 | `QA` | 质量保障与加固 | 8.2 / Sprint 6 | 1 | QA-001 |
-| | **合计** | | **82** | |
+| | **合计** | | **93**（含 11 份待编） | |
 
 ---
 

@@ -42,3 +42,4 @@ apps/api/.coverage
 # ZCode 会话本地目录（agent 会话状态，不进库）
 .zcode/
 docs/sprint-8-enterprise-org/videos/
+docs/p4-r1-acceptance/videos/

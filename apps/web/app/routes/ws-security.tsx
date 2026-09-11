@@ -59,12 +59,14 @@ export default function WsSecurityPage() {
     if (!ws) return;
     try {
       const r = await SecurityAPI.events(ws);
-      const meta = (r as unknown as { meta?: {
-        water?: Water; rules?: RuleRow[]; l2_tickets?: TicketRow[] } }).meta;
-      setEvents((r as unknown as EventRow[]) ?? []);
-      setWater(meta?.water ?? null);
-      setRules(meta?.rules ?? []);
-      setTickets(meta?.l2_tickets ?? []);
+      const resp = r as unknown as {
+        data?: EventRow[];
+        meta?: { water?: Water; rules?: RuleRow[]; l2_tickets?: TicketRow[] };
+      };
+      setEvents(resp.data ?? []);
+      setWater(resp.meta?.water ?? null);
+      setRules(resp.meta?.rules ?? []);
+      setTickets(resp.meta?.l2_tickets ?? []);
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "加载失败");
     }

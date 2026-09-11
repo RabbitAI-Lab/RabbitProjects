@@ -228,14 +228,14 @@ def test_ut14_r02_geo_distance(env):
               "workspace_id": str(env["ws"].id),
               "detail": {"geo": {"lat": 31.23, "lng": 121.47}}}   # 上海
         eng.on_login(tid, ev)                              # 首登录建基线
-        assert RiskEvent.objects.count() == 0
+        assert RiskEvent.objects.filter(tenant_id=tid).count() == 0
         eng.on_login(tid, {**ev, "detail": {"geo": {"lat": 39.90, "lng": 116.40}}})
         # 上海→北京 ~1068km > 1000 → 触发
-        assert RiskEvent.objects.filter(rule_code="R-02").count() == 1
+        assert RiskEvent.objects.filter(tenant_id=tid, rule_code="R-02").count() == 1
         # 不同账号不受波及（主体=账号）
         ev2 = {**ev, "actor_id": "u2", "detail": {"geo": {"lat": 31.25, "lng": 121.50}}}
         eng.on_login(tid, ev2)
-        assert RiskEvent.objects.filter(rule_code="R-02").count() == 1
+        assert RiskEvent.objects.filter(tenant_id=tid, rule_code="R-02").count() == 1
 
 
 def test_ut15_r04_operator_subject(env):
@@ -248,9 +248,9 @@ def test_ut15_r04_operator_subject(env):
               "workspace_id": str(env["ws"].id)}
         for _ in range(5):
             eng.on_perm_grant(tid, ev)
-        assert RiskEvent.objects.count() == 0
+        assert RiskEvent.objects.filter(tenant_id=tid).count() == 0
         eng.on_perm_grant(tid, ev)                         # 第 6 次
-        assert RiskEvent.objects.filter(rule_code="R-04").count() == 1
+        assert RiskEvent.objects.filter(tenant_id=tid, rule_code="R-04").count() == 1
         for _ in range(5):
             eng.on_perm_grant(tid, {**ev, "actor_id": "op2"})
         assert RiskEvent.objects.filter(rule_code="R-04").count() == 1
@@ -301,12 +301,12 @@ def test_ut17_r06_dual_counter(env):
             eng.on_api_call(tid, {**base,
                                   "detail": {"token_id": "tk1",
                                              "is_get_list": i < 280}})
-        assert RiskEvent.objects.filter(rule_code="R-06").count() == 0
+        assert RiskEvent.objects.filter(tenant_id=tid, rule_code="R-06").count() == 0
         for _ in range(240):                               # 追加全 GET：t≥400 后占比过 95%
             eng.on_api_call(tid, {**base,
                                   "detail": {"token_id": "tk1",
                                              "is_get_list": True}})
-        assert RiskEvent.objects.filter(rule_code="R-06").count() == 1
+        assert RiskEvent.objects.filter(tenant_id=tid, rule_code="R-06").count() == 1
         # 占比 80% 不触发（双键独立——total 越线但 getlist 不达 95%）
         cache.delete_pattern("risk:R-06:*") if hasattr(cache, "delete_pattern") else None
         for i in range(500):
@@ -333,11 +333,12 @@ def test_ut06_br08_aggregation(env, monkeypatch):
         ev = {"action": "role_grant", "actor_id": "op1"}
         eng._fire(rule, str(env["tenant"].id), "operator:op1", ev, evidence={})
         eng._fire(rule, str(env["tenant"].id), "operator:op1", ev, evidence={})
-        assert RiskEvent.objects.count() == 1
-        assert RiskEvent.objects.first().evidence.get("occurrences") == 2
+        _tid = str(env["tenant"].id)
+        assert RiskEvent.objects.filter(tenant_id=_tid).count() == 1
+        assert RiskEvent.objects.filter(tenant_id=_tid).first().evidence.get("occurrences") == 2
         monkeypatch.setattr(risk_engine, "timezone", _TZ(11))   # 跨桶
         eng._fire(rule, str(env["tenant"].id), "operator:op1", ev, evidence={})
-        assert RiskEvent.objects.count() == 2                 # 分桶各建
+        assert RiskEvent.objects.filter(tenant_id=_tid).count() == 2  # 分桶各建
 
 
 def test_ut11_ungoverned_skip(env):
@@ -346,9 +347,10 @@ def test_ut11_ungoverned_skip(env):
     with GOV:
         plain = Workspace.objects.create(name="P", slug=f"w-plain-{env['ops1'].id.hex[:6]}",
                                          owner=env["admin"], created_by=env["admin"])
+        before = RiskEvent.objects.count()
         RiskRuleEngine().ingest({"action": "login_failed", "ip": "1.2.3.4",
                                  "workspace_id": str(plain.id)})
-        assert RiskEvent.objects.count() == 0
+        assert RiskEvent.objects.count() == before
 
 
 def test_ut12_private_mode_off(env):
@@ -357,9 +359,10 @@ def test_ut12_private_mode_off(env):
     r = c.get("/api/v1/instances/tenants/")
     assert r.status_code == 501
     assert r.json()["error"]["code"] == "SERVER_NOT_IMPLEMENTED"
+    before = RiskEvent.objects.count()
     RiskRuleEngine().ingest({"action": "login_failed", "ip": "1.2.3.4",
                              "workspace_id": str(env["ws"].id)})
-    assert RiskEvent.objects.count() == 0
+    assert RiskEvent.objects.count() == before
 
 
 def test_ut10_evidence_snapshot(env, monkeypatch):
@@ -607,10 +610,10 @@ def test_ut22_it10_r03_deny_tier(env):
         quota = TIER_DEFAULTS["free"]["export_rows_per_day"]   # 10,000
         ev = {"action": "export", "workspace_id": str(env["ws"].id)}
         eng.on_export(tid, {**ev, "detail": {"rows": int(quota * 0.81)}})
-        warn = RiskEvent.objects.get(rule_code="R-03")
+        warn = RiskEvent.objects.get(tenant_id=tid, rule_code="R-03")
         assert warn.severity == "medium" and warn.evidence["tier"] == "warn"
         eng.on_export(tid, {**ev, "detail": {"rows": quota}})  # 累计越界 100%+
-        deny = (RiskEvent.objects.filter(rule_code="R-03")
+        deny = (RiskEvent.objects.filter(tenant_id=tid, rule_code="R-03")
                 .order_by("-created_at").first())
         assert deny.severity == "high" and deny.evidence["tier"] == "deny"
         env["tenant"].refresh_from_db()

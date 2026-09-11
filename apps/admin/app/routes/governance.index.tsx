@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
 
@@ -42,17 +42,22 @@ export default function GovernanceTenants() {
   const [loaded, setLoaded] = useState(false);
   const [tier, setTier] = useState("");
   const [state, setState] = useState("");
+  const [search, setSearch] = useState("");
+  const seqRef = useRef(0);
 
   const load = useCallback(() => {
+    const my = ++seqRef.current; // 陈旧响应守卫：慢的旧请求晚到不得覆盖新结果
     const q = new URLSearchParams();
+    if (search.trim()) q.set("search", search.trim());
     if (tier) q.set("tier", tier);
     if (state) q.set("state", state);
     api<TenantRow[]>("GET", `/instances/tenants/${q.size ? `?${q}` : ""}`).then((r) => {
+      if (my !== seqRef.current) return;
       setLoaded(true);
       if (r.status === "success" && r.data) setRows(r.data);
       else setMsg(r.error?.message ?? "加载失败");
     });
-  }, [tier, state]);
+  }, [search, tier, state]);
 
   useEffect(load, [load]);
 
@@ -70,6 +75,9 @@ export default function GovernanceTenants() {
           </span>
         )}
         <div className="ml-auto flex gap-2">
+          <input value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="搜索租户名 / ID" data-sb-scope="tenant-search"
+            className="h-8 w-48 rounded-md border border-neutral-300 px-2.5 text-[12.5px] bg-white" />
           <select value={tier} onChange={(e) => setTier(e.target.value)}
             className="h-8 rounded-md border border-neutral-300 px-2 text-[12.5px] bg-white">
             <option value="">套餐：全部</option>

@@ -90,6 +90,20 @@ export default function GovernanceRiskEvents() {
                   {ev.freeze_approval.pending === "release" ? "解除二签" : "冻结二签"}
                 </button>
               )}
+              {ev.status === "actioned" && !ev.freeze_approval?.pending && (
+                <button onClick={async () => {
+                  const r = await api<{ pending_second_sign: boolean }>(
+                    "POST", `/instances/risk-events/${ev.id}/releases/`, { note: "" });
+                  if (r.status !== "success") { setMsg(r.error?.message ?? "解除失败"); return; }
+                  setMsg(r.data?.pending_second_sign
+                    ? "解除已发起——需另一运营二签生效（BR-03 同审批级）"
+                    : "处置已解除（即时生效）");
+                  load();
+                }} data-sb-scope="release-open"
+                  className="h-7 px-2.5 rounded-md border border-green-500 text-green-700 text-[12px] hover:bg-green-50">
+                  解除
+                </button>
+              )}
               {ev.status === "open" && (
                 <>
                   <button onClick={() => setL2(ev)}

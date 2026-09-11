@@ -18,6 +18,7 @@ from django.core.cache import cache
 from django.test import override_settings
 from rest_framework.test import APIClient, APIRequestFactory
 
+from plane.base.exception import AppException
 from plane.db.models import (
     GovernanceTicket,
     RiskAppeal,
@@ -33,8 +34,7 @@ from plane.db.models import (
 from plane.db.models.roles import WorkspaceRole
 from plane.governance import enforcement, risk_engine
 from plane.governance.middleware import GovernanceMiddleware
-from plane.governance.risk_engine import RiskRuleEngine, TIER_DEFAULTS, tier_quota
-from plane.base.exception import AppException
+from plane.governance.risk_engine import TIER_DEFAULTS, RiskRuleEngine, tier_quota
 
 pytestmark = pytest.mark.django_db
 
@@ -263,12 +263,12 @@ def test_ut16_r05_night_predicate(env, monkeypatch):
     class _NightTZ:
         @staticmethod
         def now():
-            return dt.datetime(2026, 9, 11, 3, 0, tzinfo=dt.timezone.utc)
+            return dt.datetime(2026, 9, 11, 3, 0, tzinfo=dt.UTC)
 
     class _DayTZ:
         @staticmethod
         def now():
-            return dt.datetime(2026, 9, 11, 10, 0, tzinfo=dt.timezone.utc)
+            return dt.datetime(2026, 9, 11, 10, 0, tzinfo=dt.UTC)
 
     with GOV:
         tid = str(env["tenant"].id)
@@ -280,7 +280,6 @@ def test_ut16_r05_night_predicate(env, monkeypatch):
             eng.on_delete(tid, ev)
         eng.on_delete(tid, ev)                             # 第 51 个
         assert RiskEvent.objects.filter(rule_code="R-05").count() == 1
-        day_key = None
         monkeypatch.setattr(risk_engine, "timezone", _DayTZ)
         before = eng._read(f"risk:R-05:tenant:{tid}:1d:20260911")
         eng.on_delete(tid, ev)                             # 10:00 窗外
@@ -325,7 +324,7 @@ def test_ut06_br08_aggregation(env, monkeypatch):
             self._hour = hour
 
         def now(self):
-            return dt.datetime(2026, 9, 11, self._hour, 30, tzinfo=dt.timezone.utc)
+            return dt.datetime(2026, 9, 11, self._hour, 30, tzinfo=dt.UTC)
 
     with GOV:
         monkeypatch.setattr(risk_engine, "timezone", _TZ(10))
@@ -514,7 +513,7 @@ def test_ut18_l2_gate_and_written_confirm(env):
         assert row.get("l2_fields") == ["issue.title"]
         # 过期后剥离
         GovernanceTicket.objects.filter(pk=t.id).update(
-            expires_at=dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1))
+            expires_at=dt.datetime.now(dt.UTC) - dt.timedelta(hours=1))
         rr2 = c.get("/api/v1/instances/risk-events/")
         row2 = next(x for x in rr2.json()["data"] if x["id"] == str(ev.id))
         assert "l2_fields" not in row2
@@ -581,9 +580,7 @@ def test_ut20_it09_appeal_chain(env):
 
 def test_ut21_risk_rule_unique_constraints(env):
     _fire_rule_seeded()
-    from django.db import IntegrityError
-
-    from django.db import transaction
+    from django.db import IntegrityError, transaction
 
     with pytest.raises(IntegrityError):
         with transaction.atomic():                          # 保存点：防事务中止污染

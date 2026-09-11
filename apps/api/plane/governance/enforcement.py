@@ -40,7 +40,7 @@ def _in_grace_period(tenant) -> bool:
 
     quota = TenantQuota.objects.filter(tenant=tenant).first()
     until = quota.downgrade_grace_until if quota else None
-    return bool(until) and timezone.now().date() < until
+    return until is not None and timezone.now().date() < until
 
 
 def _export_day_key(tenant_id: str) -> str:

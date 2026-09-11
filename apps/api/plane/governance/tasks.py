@@ -48,7 +48,7 @@ def execute_action(action: str, tenant_id: str, rule_code: str, event_id: str | 
     """规则处置执行（§4.3 处置隔离；治理域写动作全落事件 actions 台账）。"""
     if not getattr(settings, "TENANT_GOVERNANCE_ENABLED", False):
         return {"skipped": "governance_disabled"}
-    result = {"action": action, "rule": rule_code, "tenant": tenant_id}
+    result: dict[str, object] = {"action": action, "rule": rule_code, "tenant": tenant_id}
     if action == "alert":
         # 告警：通知平台运营（事件台账已落，通知通道 COLLAB 域 P4 演进）
         logger.info("risk.alert rule=%s tenant=%s event=%s", rule_code, tenant_id, event_id)

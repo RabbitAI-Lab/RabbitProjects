@@ -18,6 +18,7 @@ const HREF: Record<string, string> = {
   "my-tasks": "my-tasks",
   "settings/members": "settings/members",
   "settings/sso": "settings/sso",
+  "settings/security": "settings/security",
 };
 
 const items = [
@@ -42,6 +43,8 @@ const items = [
   { to: "settings/members", label: "团队设置", enabled: true },
   // AUTH-009 §3.1（C.155，Sprint-8 R6）：SSO 配置（WS_OWNER）
   { to: "settings/sso", label: "SSO 登录", enabled: true },
+  // AUTH-012 §3.1（P4 R1）：我的租户安全（WS_ADMIN）
+  { to: "settings/security", label: "安全中心", enabled: true },
 ] satisfies ReadonlyArray<{ to: string; label: string; enabled: boolean; end?: boolean; hint?: string }>;
 
 export function Sidebar({ workspaceSlug }: { workspaceSlug: string }) {

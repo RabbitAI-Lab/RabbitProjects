@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 
+from django.db import models
 from django.utils import timezone
 from rest_framework.views import APIView
 
@@ -58,7 +59,33 @@ class SecurityEventsView(APIView):
         _require_ws_admin(request, self)
         ws, tenant = _governed_tenant(request, slug)
         events = [_serialize(e) for e in RiskEvent.objects.filter(tenant=tenant).order_by("-created_at")[:100]]
-        return success_response(events, meta={"count": len(events), "tenant_id": str(tenant.id)})
+        # 客户页数据通道（§3.1 行 5）：水位（预警口径 §3.4）+ 待批 L2 工单 +
+        # 本租户规则阈值（平台默认 vs 租户当前——调紧表数据源）
+        from plane.app.views.governance import _tenant_water
+        from plane.governance.risk_engine import tier_quota
+
+        rules = [{
+            "code": r.code, "threshold": r.threshold, "is_override": r.tenant_id is not None,
+        } for r in RiskRule.objects.filter(
+            models.Q(tenant=tenant) | models.Q(tenant__isnull=True),
+            is_enabled=True).order_by("code")]
+        tickets = [{
+            "id": str(t.id), "status": t.status, "channel": t.approve_channel,
+            "scope": t.scope, "note": t.note, "created_at": t.created_at,
+            "expires_at": t.expires_at,
+        } for t in GovernanceTicket.objects.filter(
+            tenant=tenant, status=GovernanceTicket.Status.PENDING
+        ).order_by("-created_at")[:10]]
+        quota = tier_quota(tenant)
+        return success_response(events, meta={
+            "count": len(events), "tenant_id": str(tenant.id),
+            "water": _tenant_water(tenant),
+            "quota": {"storage_bytes": quota["storage_bytes"],
+                      "api_rate_per_minute": quota["api_rate_per_minute"],
+                      "export_rows_per_day": quota["export_rows_per_day"],
+                      "member_limit": quota["member_limit"]},
+            "rules": rules, "l2_tickets": tickets,
+        })
 
 
 def _serialize(ev) -> dict:

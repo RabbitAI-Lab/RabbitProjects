@@ -6,6 +6,7 @@ import { useStores } from "../stores";
 import { WorkspaceAPI, NotificationAPI, unwrap } from "../services/api";
 import { toast } from "./Toast";
 import { NotificationBell, NotificationDrawer } from "./NotificationDrawer";
+import { FrozenBanner } from "./FrozenBanner";
 
 const ROLE_LABEL: Record<number, string> = { 20: "所有者", 15: "管理员", 10: "成员", 5: "访客" };
 const hashColor = (id: string) =>
@@ -68,6 +69,8 @@ export function Topbar() {
   }
 
   return (
+    <>
+    <FrozenBanner />
     <header className="h-12 bg-white border-b border-neutral-200 flex items-center gap-2.5 px-3.5 relative z-30">
       {/* ── 团队切换器（左）── */}
       <div className="relative">
@@ -149,6 +152,7 @@ export function Topbar() {
         onUnreadChange={setUnread}
       />
     </header>
+    </>
   );
 }
 

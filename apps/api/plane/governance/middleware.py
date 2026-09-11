@@ -127,7 +127,12 @@ class GovernanceMiddleware:
                     )
         except Exception:  # noqa: BLE001 —— fail-open 同限流域
             pass
-        return self.get_response(request)
+        response = self.get_response(request)
+        # 冻结横幅数据通道（§3.4：租户成员视角）：读响应携带标记头，
+        # web 端 axios 拦截器读取后置全局横幅（写请求已在上方 409 短路）
+        if frozen:
+            response["X-Tenant-Frozen"] = "1"
+        return response
 
     @staticmethod
     def _tenant_rpm(tid: str) -> int | None:

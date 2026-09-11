@@ -6,6 +6,8 @@ export const teamRoutes: RouteConfigEntry[] = [
   // C.15 团队成员设置页（ADR-0011 #18：侧栏「团队设置」点亮为该入口）
   route(":workspaceSlug/settings/members", "routes/team-members.tsx"),
   route(":workspaceSlug/settings/governance", "routes/workspace-governance.tsx"),
+  // AUTH-012 §3.1（P4 R1）：我的租户安全（客户 WS_ADMIN 风控/阈值/L2）
+  route(":workspaceSlug/settings/security", "routes/ws-security.tsx"),
   // C.20 项目设置·成员 Tab（基线=C.8 设置页新增第 2 区块）
   route(
     ":workspaceSlug/projects/:projectId/settings/members",

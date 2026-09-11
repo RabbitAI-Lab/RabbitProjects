@@ -2,6 +2,7 @@ import axios, { type AxiosInstance } from "axios";
 import { API_BASE_URL } from "../config";
 import { toast } from "../components/Toast";
 import { triggerPermissionsRevalidate } from "./permissions-revalidator";
+import { setTenantFrozen } from "./frozen-banner";
 
 /** 统一 axios 实例（INFRA-001 §4.11：业务组件不得直连 axios，统一经 services/ 层）。
  *  - withCredentials 携带 session cookie
@@ -68,6 +69,8 @@ api.interceptors.request.use((cfg) => {
 
 api.interceptors.response.use(
   (r) => {
+    // AUTH-012（P4 R1）§3.4：冻结标记头 → 横幅通道（不带标记即复位）
+    setTenantFrozen(r.headers?.["x-tenant-frozen"] === "1");
     const body = r.data;
     if (body && typeof body === "object" && "status" in body) {
       if (body.status === "success") {

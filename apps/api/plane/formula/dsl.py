@@ -568,5 +568,7 @@ def infer_result_type(node: Node) -> str:
         r = returns.get(name)
         if r == "any":  # prop/prop_cf 运行时定：静态不窄化（算术混用交运行期 BR-05）
             return "any"
+        if r is None:  # mypy: dict.get 宽化收窄（未知函数已在词法层白名单拒绝）
+            raise FormulaSyntaxError(f"无法推断 {name!r} 返回类型")
         return r
     raise FormulaSyntaxError(f"无法推断类型节点 {kind!r}")

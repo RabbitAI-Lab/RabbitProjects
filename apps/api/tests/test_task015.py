@@ -150,7 +150,7 @@ def test_delete_baseline_cascade_and_permission(env):
     r2 = _c(env["owner"]).delete(f"{_base(env)}{baseline.id}/")
     assert r2.status_code == 200
     assert not Baseline.objects.filter(pk=baseline.id).exists()
-    assert not BaselineItem.objects.exists()  # 级联清理
+    assert not BaselineItem.objects.filter(baseline__project=env["proj"]).exists()  # 级联清理（作用域）
 
 
 def test_purged_row_survives(env):

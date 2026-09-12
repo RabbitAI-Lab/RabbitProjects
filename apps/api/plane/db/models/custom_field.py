@@ -6,6 +6,7 @@
 - P3/P4 扩展列（permission_config / cascade_config / formula）本迭代建列不启用
   （零 DDL 升级预留，架构 §7.2「先建列后启用」）。
 """
+
 from __future__ import annotations
 
 import re
@@ -38,8 +39,10 @@ class CustomFieldDefinition(BaseModel):
         RELATION = "relation", "关联工作项"
         DATE_RANGE = "date_range", "日期区间"
         ATTACHMENT = "attachment", "附件"
-        # ---- P4 ----
+        # ---- P4 ----（TASK-014：三类型枚举即代码，零 DDL）
         FORMULA = "formula", "公式计算"
+        CASCADE_MULTI = "cascade_multi", "多级级联（2-5 级）"
+        RELATION_XPROJECT = "relation_xproject", "跨项目关联"
 
     #: 多值类型集合——值在 JSONB 中以数组存储，筛选走 @> 包含语义（不可排序）
     MULTI_VALUE_TYPES = frozenset({FieldType.MULTI_SELECT, FieldType.MEMBER_MULTI, FieldType.ATTACHMENT})
@@ -48,8 +51,7 @@ class CustomFieldDefinition(BaseModel):
     #: P2 管理入口白名单（TASK-008 §1.2：12 种基础类型；P3/P4 枚举仅占位）
     P2_ALLOWED_TYPES = frozenset(list(FieldType.values)[:12])
     #: TASK-012（Sprint-7 R2）：四高级类型管理入口白名单——企业版许可开放
-    P3_ENTERPRISE_TYPES = frozenset(
-        {FieldType.CASCADE, FieldType.RELATION, FieldType.DATE_RANGE, FieldType.ATTACHMENT})
+    P3_ENTERPRISE_TYPES = frozenset({FieldType.CASCADE, FieldType.RELATION, FieldType.DATE_RANGE, FieldType.ATTACHMENT})
 
     workspace = models.ForeignKey(
         "db.Workspace",
@@ -92,7 +94,7 @@ class CustomFieldDefinition(BaseModel):
         blank=True,
         verbose_name="选项配置",
         help_text='[{"label":"高","value":"high","color":"#EF4444","sort_order":1}]；'
-                  "option value 创建后不可改（BR-04）",
+        "option value 创建后不可改（BR-04）",
     )
 
     sort_order = models.FloatField(default=65535.0, verbose_name="显示排序", help_text="浮点插值，支持拖拽排序")
@@ -183,9 +185,7 @@ class CustomFieldDefinition(BaseModel):
         # BR-01 / BR-06：field_key 与 field_type 创建后不可变。
         # 注意 pk 带 default（uuid4），未落库实例 pk 已有值——须用 _state.adding 判定新建。
         if not self._state.adding:
-            orig_key, orig_type = (
-                type(self).all_objects.values_list("field_key", "field_type").get(pk=self.pk)
-            )
+            orig_key, orig_type = type(self).all_objects.values_list("field_key", "field_type").get(pk=self.pk)
             if (orig_key, orig_type) != (self.field_key, self.field_type):
                 raise ValidationError("字段键名与类型创建后不可修改（BR-01/BR-06）")
         self.full_clean()

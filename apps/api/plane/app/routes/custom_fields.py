@@ -12,8 +12,41 @@ from plane.app.views.custom_fields import (
     IssuePropertySortOrderView,
     WorkspaceIssuePropertyListCreateView,
 )
+from plane.app.views.formula_fields import (
+    CascadeFieldCreateView,
+    FormulaFieldCreateView,
+    PreviewExpressionView,
+    RelationFieldCreateView,
+    ValidateExpressionView,
+)
 
 urlpatterns = [
+    # ── P4 三类型字段（TASK-014 §4.5，R3）──
+    path(
+        "workspaces/<slug:slug>/issue-properties/formula/",
+        FormulaFieldCreateView.as_view(),
+        name="ws-field-formula-create",
+    ),
+    path(
+        "workspaces/<slug:slug>/issue-properties/cascade/",
+        CascadeFieldCreateView.as_view(),
+        name="ws-field-cascade-create",
+    ),
+    path(
+        "workspaces/<slug:slug>/issue-properties/relation/",
+        RelationFieldCreateView.as_view(),
+        name="ws-field-relation-create",
+    ),
+    path(
+        "workspaces/<slug:slug>/issue-properties/validate-expression/",
+        ValidateExpressionView.as_view(),
+        name="ws-field-validate",
+    ),
+    path(
+        "workspaces/<slug:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/preview-expression/",
+        PreviewExpressionView.as_view(),
+        name="ws-field-preview",
+    ),
     # Schema API（ETag/304 协商缓存；TASK-011 筛选器 / 动态表单三方依赖的冻结契约）
     path(
         "workspaces/<slug:slug>/projects/<uuid:project_id>/field-schema/",

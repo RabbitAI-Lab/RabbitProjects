@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     "django_filters",
     "drf_spectacular",
     "plane.db",
+    "plane.ai",  # AI 能力（AI-001，P4 R8）
 ]
 
 # ── 中间件：六件套顺序即 §4.6 编号（顺序敏感，禁止重排）────

@@ -212,6 +212,7 @@ FEATURE_MODULES = (
     "file_compliance",  # M7-FILE 文件合规（FILE-006，P4 R6——6 路径）
     "reports",  # M10-RPT 大屏与自定义报表（RPT-005，P4 R7——11 路径）
     "cross_org",  # M10-RPT 跨组织经营分析（RPT-006，P4 R7——2 路径）
+    "ai",  # M12-AI AI 能力（AI-001，P4 R8——6 路径）
 )
 
 for _name in FEATURE_MODULES:

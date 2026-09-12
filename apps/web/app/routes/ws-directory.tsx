@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router";
 import { Topbar } from "../components/Topbar";
-import { Sidebar } from "../components/Sidebar";
+import { SystemSidebar } from "../components/SystemSidebar";
 import { toast } from "../components/Toast";
 import { api } from "../services/axios";
 
@@ -141,7 +141,7 @@ export default function WsDirectoryPage() {
     <div className="flex h-screen flex-col">
       <Topbar />
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar workspaceSlug={ws ?? ""} />
+        <SystemSidebar workspaceSlug={ws ?? ""} />
         <main className="flex-1 overflow-auto p-4">
           <div className="mx-auto max-w-[1080px] px-2 py-4" data-sb-scope="ws-directory">
             <div className="mb-[18px] flex items-center gap-3">

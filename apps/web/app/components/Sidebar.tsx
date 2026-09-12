@@ -7,12 +7,11 @@ import { WorkspaceRole } from "../stores/permission";
 /**
  * 工作空间侧栏（菜单 IA 重排 2026-09-12，用户走查定稿）。
  *
- * 四组心智分组 + 角色可见性：
- *   工作台      —— 空间资产与日常工作流（全员）
- *   个人        —— 跟「我」走的事务（全员）
- *   管理与治理  —— 治理面（WS_ADMIN+；SSO 登录仅 WS_OWNER——过渡期空间级，
- *                随 AUTH-009 回改升租户级后改指租户配置）
- *   设置        —— 空间配置族（WS_ADMIN+）
+ * 三组心智分组 + 角色可见性（2026-09-12 二次定稿：治理/身份/安全族迁
+ * 头像下拉「系统管理」控制台——SystemSidebar/system.tsx）：
+ *   工作台 —— 空间资产与日常工作流（全员）
+ *   个人   —— 跟「我」走的事务（全员）
+ *   设置   —— 仅成员与角色（WS_ADMIN+；用户裁定保留于空间设置）
  *
  * 角色来源：PermissionStore.workspaceRole（快照未到达 fail-open 显示，
  * 与 PermissionGate 竞态口径一致——后端权限守卫兜底）。
@@ -27,13 +26,7 @@ const HREF: Record<string, string> = {
   "wiki-search": "wiki-search",
   approvals: "approvals",
   "my-tasks": "my-tasks",
-  org: "org",
-  "audit-logs": "audit-logs",
-  "workflow-templates": "workflow-templates",
-  "settings/sso": "settings/sso",
   "settings/members": "settings/members",
-  "settings/directory": "settings/directory",
-  "settings/security": "settings/security",
 };
 
 type Item = {
@@ -72,33 +65,13 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    key: "governance",
-    label: "管理与治理",
-    minRole: WorkspaceRole.ADMIN,
-    items: [
-      // AUTH-007 §3.1（C.150，Sprint-8 R6）：组织管理
-      { to: "org", label: "组织", enabled: true },
-      // AUTH-010 §3.1（C.152，Sprint-8 R6）：空间审计日志
-      { to: "audit-logs", label: "审计", enabled: true },
-      // WF-005 §3（Sprint-7 / C.145）：模板库——下发需管理权，归治理组
-      { to: "workflow-templates", label: "模板库", enabled: true },
-      // AUTH-009 §3.1（C.155，Sprint-8 R6）：SSO 配置——含全体成员认证
-      // 入口，rbac 附录 B 定 OWNER 专属；过渡期空间级，升租户级后入口改挂
-      { to: "settings/sso", label: "SSO 登录", enabled: true,
-        minRole: WorkspaceRole.OWNER },
-    ],
-  },
-  {
     key: "settings",
     label: "设置",
     minRole: WorkspaceRole.ADMIN,
     items: [
-      // ADR-0011 #18 / TEAM-002 §3.1（C.15）：成员与角色（原「团队设置」）
+      // ADR-0011 #18 / TEAM-002 §3.1（C.15）：成员与角色（用户裁定保留于
+      // 空间设置；治理/身份/安全族已迁头像下拉「系统管理」控制台）
       { to: "settings/members", label: "成员与角色", enabled: true },
-      // AUTH-011 §3.1（P4 R2）：身份源（目录同步）
-      { to: "settings/directory", label: "身份源", enabled: true },
-      // AUTH-012 §3.1（P4 R1）：我的租户安全
-      { to: "settings/security", label: "安全中心", enabled: true },
     ],
   },
 ];

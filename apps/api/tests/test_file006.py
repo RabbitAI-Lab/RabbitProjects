@@ -209,7 +209,12 @@ def test_watermark_text_and_render(env):
     assert "张三" in text and "z@corp.com" in text  # BR-02 语汇
     from plane.db.services.file_compliance import render_watermarked_png
 
-    png = open("/tmp/tiny.png", "rb").read()
+    # 1×1 PNG 自造数（原 open("/tmp/tiny.png") 依赖本机残留文件，CI 全新环境
+    # FileNotFoundError——2026-09-13 api-ci 首扫 P4 分支暴露）
+    png = bytes.fromhex(
+        "89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de"
+        "0000000c49444154789c63f8cfc0000003010100c9fe92ef0000000049454e44ae"
+        "426082")
     out = render_watermarked_png(png, text)
     assert out is not None and out[:4] == b"\x89PNG"  # 平铺合成成功
     assert render_watermarked_png(b"not-image", text) is None  # 失败不阻断

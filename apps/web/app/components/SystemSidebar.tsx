@@ -59,7 +59,11 @@ export const SystemSidebar = observer(function SystemSidebar({ workspaceSlug }: 
           <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider px-2.5 py-1.5">
             {group.label}
           </div>
-          {group.items.map((it) => (
+          {group.items
+            // 角色可见性（与 system.tsx 卡片网格/空间侧栏 Sidebar 同口径：
+            // fail-open——快照未到按可见处理，页面后端守卫兜底）
+            .filter((it) => role >= (("minRole" in it ? it.minRole : undefined) ?? WorkspaceRole.ADMIN))
+            .map((it) => (
             <NavLink key={it.to} to={`/${workspaceSlug}/${it.to}`}
               className={({ isActive }) =>
                 `h-[34px] px-2.5 rounded-md flex items-center gap-2 text-sm ${isActive

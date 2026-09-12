@@ -238,6 +238,16 @@ class ResponseEnvelopeMiddleware:
 
 
 # ── ⑥ MaintenanceModeMiddleware（最内层，P2 启用开关）────────
+def _license_state(hostname: str) -> dict:
+    """License 状态读取（LicenseStatus.MISSING 全功能——dev/test 零阻断）。"""
+    try:
+        from plane.license import verify_license
+
+        return verify_license(hostname=hostname)
+    except Exception:  # noqa: BLE001 —— 校验面缺陷不阻断服务
+        return {"state": "missing", "readonly": False}
+
+
 class MaintenanceModeMiddleware:
     """维护模式下白名单外统一 503 SERVER_MAINTENANCE（§4.3 / §8.6）。"""
 
@@ -248,6 +258,25 @@ class MaintenanceModeMiddleware:
 
     def __call__(self, request):
         from django.conf import settings as dj_settings
+
+        # INFRA-006（P4 R9）BR-06：License 失效只读模式——写请求拒（读与
+        # 导出白名单放行，数据永不锁死）；优先于 MAINTENANCE_MODE 判定。
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            host = request.get_host().split(":")[0]
+            status = _license_state(host)
+            if status.get("readonly"):
+                return JsonResponse(
+                    {
+                        "status": "error",
+                        "error": {
+                            "code": "LICENSE_EXPIRED" if status["state"] == "expired" else "LICENSE_INVALID",
+                            "message": "License 已失效：系统进入只读模式（数据完整、导出可用；续期后自动恢复，BR-06）",
+                            "details": [],
+                            "request_id": current_request_id() or "unknown",
+                        },
+                    },
+                    status=409,
+                )
 
         if getattr(dj_settings, "MAINTENANCE_MODE", False) and not request.path.startswith(self.WHITELIST):
             req_id = current_request_id() or "unknown"

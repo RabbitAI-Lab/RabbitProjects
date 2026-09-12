@@ -63,6 +63,12 @@ def _base(env):
 
 # ── 归档 / 恢复 ────────────────────────────────────────────────
 def test_archive_owner_only_and_idempotent(env):
+    # FILE-007（R6）归档合规闸门：先完成任务再归档（阻断语义另有专测）
+    from plane.db.models import Issue
+    from django.utils import timezone as _tz
+
+    Issue.objects.filter(project__workspace=env["ws"]).update(
+        completed_at=_tz.now())
     assert _client(env["admin"]).post(
         f"{_base(env)}/archive/", format="json").status_code == 403
     r = _client(env["owner"]).post(f"{_base(env)}/archive/", format="json")
@@ -77,6 +83,13 @@ def test_archive_owner_only_and_idempotent(env):
 
 
 def test_archive_middleware_write_guard(env):
+    # FILE-007（R6）合规清场后归档（写保护语义与本闸门正交）
+    from django.utils import timezone as _tz
+
+    from plane.db.models import Issue
+
+    Issue.objects.filter(project__workspace=env["ws"]).update(
+        completed_at=_tz.now())
     _client(env["owner"]).post(f"{_base(env)}/archive/", format="json")
     # GET 放行（admin——member 非项目成员按矩阵本就 404）
     assert _client(env["admin"]).get(

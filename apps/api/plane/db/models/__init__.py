@@ -6,6 +6,7 @@ from .audit import AuditLog
 from .automation import AutomationRule, AutomationRun, AutomationSetting
 from .backup import BackupRun
 from .base import BaseModel, SoftDeleteManager, SoftDeleteQuerySet
+from .baseline import Baseline, BaselineItem
 from .comment import CommentReaction, IssueComment
 from .cpm import CPMAlertConfig, IssueCPMCache
 from .custom_field import CustomFieldDefinition
@@ -160,4 +161,6 @@ __all__ = [
     "DirectoryUserMapping",
     "DirectorySyncRun",
     "DirectoryPendingAction",
+    "Baseline",
+    "BaselineItem",
 ]

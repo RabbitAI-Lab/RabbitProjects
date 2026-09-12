@@ -17,6 +17,8 @@ urlpatterns = [
     path("api/v1/", include(("plane.app.urls", "app"), namespace="app")),
     # space 公开分组（FILE-004 首个落地：文件分享匿名面）
     path("api/v1/public/", include(("plane.space.urls", "space"), namespace="space")),
+    # Open API 管理面 + external/ 白名单（INTG-004，P4 R4）
+    path("api/v1/", include("plane.api.urls")),
     # SCIM 2.0 协议端点（AUTH-011 §2.5：Bearer Token + 信封豁免，P4 R2）
     path("scim/v2/Users/", ScimUsersView.as_view(), name="scim-users"),
     path("scim/v2/Users/<uuid:scim_id>/", ScimUserDetailView.as_view(), name="scim-user-detail"),

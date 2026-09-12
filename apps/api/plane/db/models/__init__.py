@@ -38,6 +38,7 @@ from .issue import Issue, IssueActivity, IssueAssignee, IssueLabel, IssueLink
 from .issue_type import IssueType
 from .label import Label
 from .notification import Notification
+from .openapi import ApiCallLog, APIToken, OAuthApplication, OAuthCode, OAuthGrant
 from .portfolio import MilestoneItem, Portfolio, PortfolioMilestone, PortfolioProject
 from .project import Project, ProjectFavorite, ProjectMember, ProjectStatusLog, ProjectTemplate, SystemAdmin
 from .release import ReleaseGate, ReleaseGateEvent
@@ -163,4 +164,9 @@ __all__ = [
     "DirectoryPendingAction",
     "Baseline",
     "BaselineItem",
+    "APIToken",
+    "OAuthApplication",
+    "OAuthGrant",
+    "OAuthCode",
+    "ApiCallLog",
 ]

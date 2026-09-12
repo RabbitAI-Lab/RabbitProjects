@@ -22,6 +22,7 @@ from .directory import (
     ScimConnector,
 )
 from .file import FileFolder, FileVersion, UploadSession
+from .file_compliance import CompliancePolicy, DlpRule, LegalHold
 from .file_share import FileShareAccess, FileShareLink
 from .governance import (
     BoundaryReport,
@@ -184,4 +185,7 @@ __all__ = [
     "ZoomConnector",
     "ImWebhookChannel",
     "ImSubscription",
+    "CompliancePolicy",
+    "LegalHold",
+    "DlpRule",
 ]

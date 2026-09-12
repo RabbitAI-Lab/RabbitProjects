@@ -5,6 +5,7 @@ P2+ 通过 entity_type 注册制扩展，零 DDL；FILE-002 注册 ``project_fil
 （文件库，entity_id = FileFolder.id），并按 FILE-002 §1.7 第 1 行登记新增
 ``folder`` / ``issue`` 两个可空外键作为多态列之上的冗余读列（双挂反查与目录树联查）。
 """
+
 from django.db import models
 
 from plane.db.models.base import BaseModel
@@ -26,6 +27,7 @@ class FileAsset(BaseModel):
 
     class EntityType(models.TextChoices):
         """注册制（FILE-001 §2.4 BR-12）：新增宿主须在 §1.4 矩阵登记并经架构评审。"""
+
         ISSUE = "issue", "任务"
         AVATAR = "avatar", "头像"
         # COLLAB-002 评论图片挂载点（FILE-001 §1.4 注册位）：entity_id 落当前 issue，
@@ -52,9 +54,7 @@ class FileAsset(BaseModel):
         verbose_name="所属项目",
         help_text="头像等无项目实体为 NULL",
     )
-    entity_type = models.CharField(
-        max_length=32, choices=EntityType.choices, verbose_name="宿主类型"
-    )
+    entity_type = models.CharField(max_length=32, choices=EntityType.choices, verbose_name="宿主类型")
     entity_id = models.UUIDField(verbose_name="宿主实体 ID")
 
     attributes = models.JSONField(
@@ -63,6 +63,9 @@ class FileAsset(BaseModel):
         help_text='{"name":"error-500.png","size":2097152,"mime":"image/png","ext":".png"}',
     )
     size = models.BigIntegerField(default=0, verbose_name="字节数", db_index=True)
+    # FILE-006（P4 R6）：DLP 命中快照与 purge 标记（迁移 AddField 承载）
+    dlp_hits = models.JSONField(default=list, blank=True, verbose_name="DLP 命中规则名")
+    purged_at = models.DateTimeField(null=True, blank=True, verbose_name="合规 purge 标记时间")
     storage_path = models.TextField(
         verbose_name="对象键",
         help_text="ws/proj/entity_type/entity_id/{ulid}.{ext}",

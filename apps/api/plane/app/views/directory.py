@@ -526,6 +526,21 @@ class PendingActionResolveView(APIView):
             from plane.directory.services import DirectorySyncService
 
             svc = DirectorySyncService(ws, "ldap", run_id=str(action.source_run_id))
+            # 幂等：映射已存在（历史演示/旧待办残留）→ 跳过开通直接置 resolved
+            from plane.db.models import DirectoryUserMapping
+
+            already = DirectoryUserMapping.objects.filter(
+                workspace=ws, channel="ldap",
+                external_id=payload.get("external_id") or action.dedup_key).exists()
+            if already:
+                action.status = "resolved"
+                action.resolved_by = request.user
+                action.resolved_action = decision
+                action.save(update_fields=["status", "resolved_by",
+                                           "resolved_action", "updated_at"])
+                return success_response({
+                    "id": str(action.id), "status": "resolved",
+                    "action": decision, "note": "映射已存在——幂等跳过开通"})
             if not svc._seats_available():
                 raise AppException("RESOURCE_STATE_INVALID", message="席位仍不足——请先完成扩容（BR-03 不静默失败）")
             svc._create_or_merge(

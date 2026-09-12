@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 
 from django.db import transaction
+from django.utils import timezone
 
 from plane.audit.recorder import record
 from plane.db.models import User, WorkspaceMember
@@ -164,6 +165,23 @@ class DirectorySyncService:
     def _create_or_merge(self, entry: dict, email: str) -> None:
         from plane.db.models import DirectoryUserMapping
 
+        # 身份映射唯一约束辖含软删行（uq_directory_identity 无条件式）——
+        # 撞软删行时复活而非 500/400（身份重建即复活语义）
+        stale = DirectoryUserMapping.all_objects.filter(
+            workspace=self.workspace, channel=self.channel, external_id=entry["external_id"]
+        ).first()
+        if stale is not None:
+            stale.deleted_at = None
+            stale.email_snapshot = email
+            stale.absence_count = 0
+            stale.disabled_at_source = ""
+            stale.updated_at = timezone.now()
+            stale.save(
+                update_fields=["deleted_at", "email_snapshot", "absence_count", "disabled_at_source", "updated_at"]
+            )
+            self._ensure_membership(stale.user)
+            self.buckets.created.append({"email": email, "reason": "reactivated"})
+            return
         user = User.objects.filter(email=email).first()
         if user is None:
             # 席位检查（BR-03）：租户/工作空间满员 → 待开通队列，不中断批次

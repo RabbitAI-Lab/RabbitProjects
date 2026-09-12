@@ -79,7 +79,7 @@ def test_ut01_missing_email_skipped(env):
     b = svc.reconcile([_entry(env, "g1", "")], full_sync=True)
     assert b.counts() == {"created": 0, "updated": 0, "disabled": 0, "skipped": 1, "failed": 0}
     assert b.skipped[0]["reason"] == "missing_email"
-    assert DirectoryUserMapping.objects.count() == 0
+    assert DirectoryUserMapping.objects.filter(workspace=env["ws"]).count() == 0
 
 
 def test_ut02_email_normalization(env):
@@ -197,19 +197,19 @@ def test_ut13_seats_full_pending(env):
         svc = DirectorySyncService(env["ws"], "ldap")
         b = svc.reconcile([_entry(env, "g1", "over.seat@corp.com")], full_sync=True)
     assert b.counts()["created"] == 0
-    pending = DirectoryPendingAction.objects.get(kind="pending_provision")
+    pending = DirectoryPendingAction.objects.filter(kind="pending_provision", workspace=env["ws"]).first()
     assert pending.payload["email"] == "over.seat@corp.com"
     # 幂等去重：同 external_id 再入队复用
     with patch.object(DirectorySyncService, "_seats_available", return_value=False):
         DirectorySyncService(env["ws"], "ldap").reconcile([_entry(env, "g1", "over.seat@corp.com")], full_sync=True)
-    assert DirectoryPendingAction.objects.filter(kind="pending_provision").count() == 1
+    assert DirectoryPendingAction.objects.filter(kind="pending_provision", workspace=env["ws"]).count() == 1
 
 
 def test_ut15_email_change_manual_review(env):
     _mapping(env, env["member"], "g1", "old.mail@corp.com")
     svc = DirectorySyncService(env["ws"], "ldap")
     b = svc.reconcile([_entry(env, "g1", "new.mail@corp.com")], full_sync=True)
-    review = DirectoryPendingAction.objects.get(kind="manual_review")
+    review = DirectoryPendingAction.objects.filter(kind="manual_review", workspace=env["ws"]).first()
     assert review.payload["old_email"] == "old.mail@corp.com"
     assert review.payload["new_email"] == "new.mail@corp.com"
     assert b.skipped[0]["reason"] == "email_changed_manual_review"

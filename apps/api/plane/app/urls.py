@@ -214,6 +214,7 @@ FEATURE_MODULES = (
     "cross_org",  # M10-RPT 跨组织经营分析（RPT-006，P4 R7——2 路径）
     "ai",  # M12-AI AI 能力（AI-001，P4 R8——6 路径）
     "gantt_portfolio",  # M6-GANTT 跨项目三件套（GANTT-004/005/006，P4 R15——3 路径）
+    "p4_final",  # M5/M11/M3/M2 收口（BOARD-006/007+WF-007+PROJ-005+COLLAB-005，R16~R18——6 路径）
 )
 
 for _name in FEATURE_MODULES:

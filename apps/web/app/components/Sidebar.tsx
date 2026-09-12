@@ -19,6 +19,7 @@ const HREF: Record<string, string> = {
   "settings/members": "settings/members",
   "settings/sso": "settings/sso",
   "settings/security": "settings/security",
+  "settings/directory": "settings/directory",
 };
 
 const items = [
@@ -45,6 +46,8 @@ const items = [
   { to: "settings/sso", label: "SSO 登录", enabled: true },
   // AUTH-012 §3.1（P4 R1）：我的租户安全（WS_ADMIN）
   { to: "settings/security", label: "安全中心", enabled: true },
+  // AUTH-011 §3.1（P4 R2）：身份源（WS_ADMIN）
+  { to: "settings/directory", label: "身份源", enabled: true },
 ] satisfies ReadonlyArray<{ to: string; label: string; enabled: boolean; end?: boolean; hint?: string }>;
 
 export function Sidebar({ workspaceSlug }: { workspaceSlug: string }) {

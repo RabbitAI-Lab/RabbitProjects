@@ -14,7 +14,7 @@
  */
 import { test, expect, type Page } from "@playwright/test";
 import { execSync } from "node:child_process";
-import { attachGuards } from "./no-console-errors";
+import { attachGuards, HTTP } from "./no-console-errors";
 
 const API_ORIGIN = process.env.E2E_BASE_URL ?? "http://localhost:3001";
 const WS = "workspace";
@@ -59,6 +59,8 @@ async function seedProject(page: Page, name: string, identifier: string) {
 test.describe("S5E2E · 治理与生命周期 parity", () => {
   test("C.131 统计页：进度卡 + days 切换 + 成员表（RPT-002 §3.1/§3.2）", async ({ page }) => {
         const guards = attachGuards(page);
+    // 冷却重载 + 三次 days 切换最坏各跨一个限流窗口，默认 30s 用例超时不够
+    test.setTimeout(600_000);
     await loginDemo(page);
     const pid = await seedProject(page, "S5E2E-统计", "S5ST");
     // 造 3 条任务（统计面非零）
@@ -66,23 +68,65 @@ test.describe("S5E2E · 治理与生命周期 parity", () => {
       await apiCall(page, "POST", `/api/v1/workspaces/${WS}/projects/${pid}/issues/`,
         { name: `统计任务${i}`, priority: "none", sequence_id: i, sort_order: i * 100 });
     }
+    // BR-13 统计限流（report 桶 10/min·user，stats 与甘特/报表聚合共桶）：整链以
+    // 演示号连跑时桶易被前置 spec 耗尽，进度卡黄条降级是设计内行为——guard 与
+    // 甘特 spec 同口径放行 stats 族 429；内容断言靠等窗口滚动后的页面重载保真
+    // （不用 apiCall 探针：探针自身也占桶，会反噬紧随其后的页面请求）
+    guards.allow({ method: "GET", url: "/stats/", status: HTTP.TOO_MANY });
+    guards.allow({ method: "GET", url: "/stats/members/", status: HTTP.TOO_MANY });
     // 用户入口：项目卡片 → 侧栏「统计」
     await page.goto(`/${WS}/projects/${pid}/issues`);
     await page.getByRole("link", { name: "统计" }).click();
     await expect(page.getByRole("heading", { name: "统计" })).toBeVisible(); // C.131 页框架
-    // 进度卡：五组分布 + 完成率大数（C.131 进度卡）
-    await expect(page.locator('[data-sb-scope="stats-progress"]')).toBeVisible();
+    // 进度卡：五组分布 + 完成率大数（C.131 进度卡）——撞限流则「重载 + 等 16s
+    // 窗口滚动」轮询（检查必须落在重载渲染完成之后，而非 reload+ε 瞬间）
+    await expect
+      .poll(async () => {
+        if (await page.locator('[data-sb-scope="stats-progress"]').isVisible().catch(() => false)) {
+          return true;
+        }
+        await page.reload();
+        await page.waitForTimeout(16_000);
+        return await page.locator('[data-sb-scope="stats-progress"]').isVisible().catch(() => false);
+      }, { timeout: 150_000, intervals: [1_000] })
+      .toBe(true);
     await expect(page.getByText("完成率（剔已取消）")).toBeVisible();
     await expect(page.getByText("逾期").first()).toBeVisible();
     // days 切换（C.131 ?days= 7/14/30/90）
+    // 行为断言三件套：切 days 必须发出 stats 请求且拿到 200。原实现
+    // `expect(waitForResponse()).toBeTruthy()` 不会 await（非 web-first），
+    // 是空转断言——429 时 pending promise 在用例结束才以「Test ended」显形。
+    // 现按 poll 真等 200：撞设计内限流（report 桶 10/min·user）时 UI 不会自发
+    // 重试（每夜实测 429 后重点零请求）——等 16s 窗口滚动后整页重载再切
     for (const d of ["7 天", "14 天", "90 天"] as const) {
-      await page.getByRole("tab", { name: d }).click();
-      const resp = page.waitForResponse((r) => r.url().includes(`/projects/${pid}/stats/`) && r.url().includes(`days=${d.replace(" 天", "")}`) && r.status() === 200);
-      await page.getByRole("tab", { name: d }).click(); // 再点触发（已选中态则首次即请求）
-      await expect(resp).toBeTruthy();
+      await expect
+        .poll(async () => {
+          const respPromise = page.waitForResponse(
+            (r) => r.url().includes(`/projects/${pid}/stats/`)
+              && r.url().includes(`days=${d.replace(" 天", "")}`),
+            { timeout: 8_000 },
+          ).catch(() => null);
+          await page.getByRole("tab", { name: d }).click();
+          const resp = await respPromise;
+          if (resp?.status() === 200) return 200;
+          await page.waitForTimeout(16_000);
+          await page.reload();
+          return resp?.status() ?? 0;
+        }, { timeout: 90_000, intervals: [1_000] })
+        .toBe(200);
     }
-    // 成员任务量表（C.131 成员表：列头 + 合计行）
-    await expect(page.locator('[data-sb-scope="stats-members"]')).toBeVisible();
+    // 成员任务量表（C.131 成员表：列头 + 合计行）——同口径：429 降级则重载 +
+    // 等窗口滚动后再查
+    await expect
+      .poll(async () => {
+        if (await page.locator('[data-sb-scope="stats-members"]').isVisible().catch(() => false)) {
+          return true;
+        }
+        await page.reload();
+        await page.waitForTimeout(16_000);
+        return await page.locator('[data-sb-scope="stats-members"]').isVisible().catch(() => false);
+      }, { timeout: 150_000, intervals: [1_000] })
+      .toBe(true);
     await expect(page.getByText("成员任务量")).toBeVisible();
     await expect(page.getByRole("cell", { name: "合计" })).toBeVisible();
     await expect(guards(), "console/net errors").toEqual([]);

@@ -247,7 +247,7 @@ def seed_files(proj: str, actor: str, big_folder: str) -> None:
     psql(f"""
     INSERT INTO file_assets (id, workspace_id, project_id, entity_type, entity_id, folder_id,
                              attributes, size, storage_path, status, is_uploaded,
-                             uploaded_by_id, visibility, allowed_members, download_count,
+                             uploaded_by_id, visibility, allowed_members, dlp_hits, download_count,
                              created_by_id, updated_by_id, created_at, updated_at)
     SELECT gen_random_uuid(),
            (SELECT workspace_id FROM projects WHERE id = '{proj}'), '{proj}'::uuid,
@@ -258,13 +258,13 @@ def seed_files(proj: str, actor: str, big_folder: str) -> None:
                               'mime', CASE WHEN g % 3 = 0 THEN 'image/png' ELSE 'text/plain' END,
                               'ext', CASE WHEN g % 3 = 0 THEN '.png' ELSE '.txt' END),
            2048, 's4bench/big/' || g, 'uploaded', true,
-           '{actor}'::uuid, 'all', '[]'::jsonb, 0,
+           '{actor}'::uuid, 'all', '[]'::jsonb, '[]'::jsonb, 0,
            '{actor}'::uuid, '{actor}'::uuid, now(), now()
       FROM generate_series(1, {N_BIG_FOLDER}) g""")
     psql(f"""
     INSERT INTO file_assets (id, workspace_id, project_id, entity_type, entity_id, folder_id,
                              attributes, size, storage_path, status, is_uploaded,
-                             uploaded_by_id, visibility, allowed_members, download_count,
+                             uploaded_by_id, visibility, allowed_members, dlp_hits, download_count,
                              created_by_id, updated_by_id, created_at, updated_at)
     SELECT gen_random_uuid(),
            (SELECT workspace_id FROM projects WHERE id = '{proj}'), '{proj}'::uuid,
@@ -274,7 +274,7 @@ def seed_files(proj: str, actor: str, big_folder: str) -> None:
            jsonb_build_object('name', 'S4B-leaf-' || lpad(g::text, 4, '0') || '.png',
                               'size', 1024, 'mime', 'image/png', 'ext', '.png'),
            1024, 's4bench/leaf/' || g, 'uploaded', true,
-           '{actor}'::uuid, 'all', '[]'::jsonb, 0,
+           '{actor}'::uuid, 'all', '[]'::jsonb, '[]'::jsonb, 0,
            '{actor}'::uuid, '{actor}'::uuid, now(), now()
       FROM generate_series(1, {N_SPREAD}) g""")
     psql("ANALYZE file_assets; ANALYZE file_folders;")

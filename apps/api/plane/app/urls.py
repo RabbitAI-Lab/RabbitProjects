@@ -210,6 +210,7 @@ FEATURE_MODULES = (
     "slack_zoom",  # M9-INTG Slack/Zoom 集成（INTG-003，P4 R5——6 路径）
     "im_integrations",  # M9-INTG 企微/钉钉通道（INTG-005，P4 R5b——6 路径）
     "file_compliance",  # M7-FILE 文件合规（FILE-006，P4 R6——6 路径）
+    "reports",  # M10-RPT 大屏与自定义报表（RPT-005，P4 R7——11 路径）
 )
 
 for _name in FEATURE_MODULES:

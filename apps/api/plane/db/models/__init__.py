@@ -43,6 +43,7 @@ from .openapi import ApiCallLog, APIToken, OAuthApplication, OAuthCode, OAuthGra
 from .portfolio import MilestoneItem, Portfolio, PortfolioMilestone, PortfolioProject
 from .project import Project, ProjectFavorite, ProjectMember, ProjectStatusLog, ProjectTemplate, SystemAdmin
 from .release import ReleaseGate, ReleaseGateEvent
+from .reports import Dashboard, DisplayToken, Report, ReportSubscription
 from .roles import ProjectRole, WorkspaceRole
 from .slack_zoom import (
     IssueMeeting,
@@ -188,4 +189,8 @@ __all__ = [
     "CompliancePolicy",
     "LegalHold",
     "DlpRule",
+    "Report",
+    "Dashboard",
+    "DisplayToken",
+    "ReportSubscription",
 ]

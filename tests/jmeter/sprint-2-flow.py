@@ -1177,8 +1177,8 @@ _rset(_m2, _pl, "ValueError: bad payload", "0")
 # 权限收紧（用户裁决 2026-09-05）：仅 SystemAdmin 可访问——先授予测试账号
 _admin_uid = admin.req("GET", "/api/v1/users/me/")[1]["data"]["user"]["id"]
 _pg_exec(
-    "INSERT INTO system_admins (id, user_id, is_active, allowed_ip_cidrs, created_at, updated_at) "
-    "SELECT gen_random_uuid(), id, true, '[]'::jsonb, now(), now() FROM users WHERE id = %s "
+    "INSERT INTO system_admins (id, user_id, is_active, is_tenant_ops, allowed_ip_cidrs, created_at, updated_at) "
+    "SELECT gen_random_uuid(), id, true, false, '[]'::jsonb, now(), now() FROM users WHERE id = %s "
     "ON CONFLICT DO NOTHING", (_admin_uid,))
 code, body = admin.req("GET", "/api/v1/activity-dead-letters/")
 items = (body or {}).get("data") or []

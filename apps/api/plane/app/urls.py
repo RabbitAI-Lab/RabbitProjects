@@ -207,6 +207,7 @@ FEATURE_MODULES = (
     "governance",  # M1-AUTH 租户治理与风控（AUTH-012，P4 R1——17 端点）
     "directory",  # M1-AUTH 目录同步（AUTH-011，P4 R2——12 管理端点）
     "baselines",  # M4-TASK 任务基线（TASK-015，P4 R3——6 端点）
+    "slack_zoom",  # M9-INTG Slack/Zoom 集成（INTG-003，P4 R5——6 路径）
 )
 
 for _name in FEATURE_MODULES:

@@ -43,6 +43,13 @@ from .portfolio import MilestoneItem, Portfolio, PortfolioMilestone, PortfolioPr
 from .project import Project, ProjectFavorite, ProjectMember, ProjectStatusLog, ProjectTemplate, SystemAdmin
 from .release import ReleaseGate, ReleaseGateEvent
 from .roles import ProjectRole, WorkspaceRole
+from .slack_zoom import (
+    IssueMeeting,
+    SlackChannelSubscription,
+    SlackMessageAnchor,
+    SlackUserMap,
+    ZoomConnector,
+)
 from .sso import IdentityProvider, SSOAccount
 from .state import State
 from .user import User
@@ -169,4 +176,9 @@ __all__ = [
     "OAuthGrant",
     "OAuthCode",
     "ApiCallLog",
+    "SlackChannelSubscription",
+    "SlackUserMap",
+    "SlackMessageAnchor",
+    "IssueMeeting",
+    "ZoomConnector",
 ]

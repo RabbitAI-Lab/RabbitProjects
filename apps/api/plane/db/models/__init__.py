@@ -56,6 +56,7 @@ from .user import User
 from .view import IssueView
 from .view_preference import UserViewPreference
 from .webhook import WebhookDelivery, WebhookEndpoint
+from .wecom_dingtalk import ImSubscription, ImWebhookChannel
 from .wiki import WikiPage, WikiPageVersion, WikiSpace
 from .workflow import (
     TemplateDistribution,
@@ -181,4 +182,6 @@ __all__ = [
     "SlackMessageAnchor",
     "IssueMeeting",
     "ZoomConnector",
+    "ImWebhookChannel",
+    "ImSubscription",
 ]

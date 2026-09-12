@@ -12,6 +12,14 @@ from .custom_field import CustomFieldDefinition
 from .custom_role import CustomRole, ProjectRoleAssignment
 from .cycle import Cycle, CycleSnapshot, DailyGroupSnapshot, ProjectReportConfig
 from .department import Department, DepartmentGrantBatch
+from .directory import (
+    DirectoryChannel,
+    DirectoryPendingAction,
+    DirectorySyncRun,
+    DirectoryUserMapping,
+    LdapDirectoryConfig,
+    ScimConnector,
+)
 from .file import FileFolder, FileVersion, UploadSession
 from .file_share import FileShareAccess, FileShareLink
 from .governance import (
@@ -146,4 +154,10 @@ __all__ = [
     "GovernanceTicket",
     "RiskAppeal",
     "BoundaryReport",
+    "DirectoryChannel",
+    "LdapDirectoryConfig",
+    "ScimConnector",
+    "DirectoryUserMapping",
+    "DirectorySyncRun",
+    "DirectoryPendingAction",
 ]

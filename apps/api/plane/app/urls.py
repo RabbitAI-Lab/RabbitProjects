@@ -205,6 +205,7 @@ FEATURE_MODULES = (
     "gantt_cpm",  # M6-GANTT 关键路径（GANTT-003，Sprint-9）
     "health_reports",  # M10-RPT 健康度/负载（RPT-004，Sprint-9）
     "governance",  # M1-AUTH 租户治理与风控（AUTH-012，P4 R1——17 端点）
+    "directory",  # M1-AUTH 目录同步（AUTH-011，P4 R2——12 管理端点）
 )
 
 for _name in FEATURE_MODULES:

@@ -19,6 +19,11 @@ EVENT_REGISTRY: dict[str, dict[str, str]] = {
         "removed": "移除成员",
         "role_changed": "成员角色变更",
         "member_assigned": "成员部门归属变更",
+        "directory_created": "目录同步开通（AUTH-011）",
+        "directory_updated": "目录同步变更",
+        "directory_disabled": "目录同步禁用",
+        "directory_restored": "目录同步复活",
+        "directory_resolved": "目录待办处置",
     },
     "department": {
         "created": "新建部门",

@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from rest_framework.test import APIClient
 
-from plane.ai.gateway import AiGateway, mask_outbound, restore_inbound, rule_risk_score
-from plane.ai.models import AiCallLedger, AiConsent, AiFeedback, AiQuotaCounter, IssueRiskScore
+from plane.ai.gateway import AiGateway, mask_outbound, restore_inbound
+from plane.ai.models import AiCallLedger, AiConsent, AiFeedback, IssueRiskScore
 from plane.db.models import Issue, Project, User, Workspace, WorkspaceMember
 from plane.db.models.roles import WorkspaceRole
 
@@ -79,7 +79,6 @@ def test_summary_masking_and_ledger(env):
 
 
 def test_quota_exceeded(env):
-    from unittest.mock import patch
 
     _consent(env, caps=("summary",))
     from django.core.cache import cache as _cache

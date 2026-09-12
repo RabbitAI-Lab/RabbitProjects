@@ -12,7 +12,6 @@ import hashlib
 import hmac
 
 import pytest
-from django.utils import timezone
 from rest_framework.test import APIClient
 
 from plane.db.models import (
@@ -20,7 +19,6 @@ from plane.db.models import (
     Issue,
     Project,
     SlackChannelSubscription,
-    SlackUserMap,
     User,
     Workspace,
     WorkspaceMember,
@@ -87,7 +85,7 @@ def test_subscription_crud_and_dedup(env):
     r5 = c.post(_subs(env), {"channel_id": "CCHAN1"}, format="json")
     assert r5.status_code == 201
     # DB 表达式索引兜底（绕预检直插）
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="duplicate key|unique|violates"):  # noqa: B017 —— DB 约束面（psycopg 异常版本不稳，模式断言）:
         SlackChannelSubscription.objects.create(
             installation=env["inst"], channel_id="CCHAN1", channel_name="x", event_types=[]
         )  # 同范围存活行唯一索引拦截

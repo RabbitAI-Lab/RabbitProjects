@@ -4,6 +4,7 @@
 @ 2511 项目）；custom_codes_bulk 一次 IN 预取后查询数与项目数无关——
 本文件以 django_assert_numQueries 锁定常数基线（含会话/用户装载）。
 """
+
 from __future__ import annotations
 
 import pytest
@@ -26,21 +27,17 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture()
 def env(db):
-    owner = User.objects.create_user(email="perm-owner@rabbit.dev",
-                                     password="Rabbit123!", display_name="主")
-    ws = Workspace.objects.create(name="P", slug=f"w-perm-{owner.id.hex[:8]}",
-                                  owner=owner, created_by=owner)
-    WorkspaceMember.objects.create(workspace=ws, member=owner,
-                                   role=WorkspaceRole.OWNER, created_by=owner)
-    projects = [Project.objects.create(workspace=ws, name=f"P{i}",
-                                       identifier=f"PM{i}",
-                                       created_by=owner) for i in range(3)]
-    role = CustomRole.objects.create(project=projects[0], name="只读加强",
-                                     permissions=["issue.view.list"], created_by=owner)
-    ProjectRoleAssignment.objects.create(project=projects[0], role=role, user=owner,
-                                         created_by=owner)
-    ProjectMember.objects.create(project=projects[2], workspace=ws, member=owner,
-                                 role=10, created_by=owner)
+    owner = User.objects.create_user(email="perm-owner@rabbit.dev", password="Rabbit123!", display_name="主")
+    ws = Workspace.objects.create(name="P", slug=f"w-perm-{owner.id.hex[:8]}", owner=owner, created_by=owner)
+    WorkspaceMember.objects.create(workspace=ws, member=owner, role=WorkspaceRole.OWNER, created_by=owner)
+    projects = [
+        Project.objects.create(workspace=ws, name=f"P{i}", identifier=f"PM{i}", created_by=owner) for i in range(3)
+    ]
+    role = CustomRole.objects.create(
+        project=projects[0], name="只读加强", permissions=["issue.view.list"], created_by=owner
+    )
+    ProjectRoleAssignment.objects.create(project=projects[0], role=role, user=owner, created_by=owner)
+    ProjectMember.objects.create(project=projects[2], workspace=ws, member=owner, role=10, created_by=owner)
     return {"owner": owner, "ws": ws, "projects": projects, "role": role}
 
 
@@ -58,7 +55,7 @@ def test_snapshot_constant_queries(env, django_assert_num_queries):
     pids = {str(p.id) for p in env["projects"]}
     assert pids <= set(data["projects"])
     first = data["projects"][str(env["projects"][0].id)]
-    assert first["custom_codes"] == ["issue.view.list"]   # 挂接并集下发
+    assert first["custom_codes"] == ["issue.view.list"]  # 挂接并集下发
 
 
 def test_bulk_matches_singular(env):

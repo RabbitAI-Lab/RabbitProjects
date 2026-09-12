@@ -12,6 +12,12 @@ from rest_framework.test import APIClient
 
 from plane.db.models import CustomFieldDefinition, Issue, Project, User, Workspace, WorkspaceMember
 from plane.db.models.roles import WorkspaceRole
+from plane.formula.derived import (
+    affected_formulas,
+    build_dep_graph,
+    detect_cycle,
+    recompute_issue,
+)
 from plane.formula.dsl import (
     EvalContext,
     FormulaComplexityError,
@@ -20,12 +26,6 @@ from plane.formula.dsl import (
     evaluate,
     infer_result_type,
     parse,
-)
-from plane.formula.derived import (
-    affected_formulas,
-    build_dep_graph,
-    detect_cycle,
-    recompute_issue,
 )
 
 pytestmark = pytest.mark.django_db

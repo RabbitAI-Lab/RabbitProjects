@@ -6,6 +6,7 @@
 串行化、后提交者 409）需双连接真并发，落收口专项；HTTP 侧全矩阵在
 tests/jmeter/sprint-2-flow.py TASK-005 段。
 """
+
 from __future__ import annotations
 
 import pytest
@@ -29,22 +30,21 @@ def owner(db) -> User:
 
 
 def _project(owner: User) -> Project:
-    ws = Workspace.objects.create(
-        name="W", slug=f"w-link-{owner.id.hex[:8]}", owner=owner, created_by=owner)
+    ws = Workspace.objects.create(name="W", slug=f"w-link-{owner.id.hex[:8]}", owner=owner, created_by=owner)
     return Project.objects.create(name="P", identifier="LINK", workspace=ws, created_by=owner)
 
 
 def _issue(proj: Project, name: str) -> Issue:
     seq = Issue.objects.filter(project=proj).count() + 1
     return Issue.objects.create(
-        name=name, project=proj, sequence_id=seq, sort_order=seq * 100, created_by=proj.created_by)
+        name=name, project=proj, sequence_id=seq, sort_order=seq * 100, created_by=proj.created_by
+    )
 
 
 def test_paired_records_and_mirror_read(owner):
     proj = _project(owner)
     a, b = _issue(proj, "A"), _issue(proj, "B")
-    forward, mirror = create_relation(
-        issue_id=a.id, related_issue_id=b.id, relation_type="blocks", actor_id=owner.id)
+    forward, mirror = create_relation(issue_id=a.id, related_issue_id=b.id, relation_type="blocks", actor_id=owner.id)
     assert forward.relation_type == "blocks" and mirror.relation_type == "is_blocked_by"
     # B 侧视角读到前置；is_blocked_by 传入归一化为同一业务事实
     rels = relations_of(b.id)
@@ -57,45 +57,36 @@ def test_self_and_cross_project_rejected(owner):
     proj = _project(owner)
     a = _issue(proj, "A")
     with pytest.raises(RelationValidationError):
-        create_relation(issue_id=a.id, related_issue_id=a.id,
-                        relation_type="relates_to", actor_id=owner.id)
+        create_relation(issue_id=a.id, related_issue_id=a.id, relation_type="relates_to", actor_id=owner.id)
     ws2 = Workspace.objects.create(name="W2", slug=f"w2-{owner.id.hex[:6]}", owner=owner, created_by=owner)
     proj2 = Project.objects.create(name="P2", identifier="LNK2", workspace=ws2, created_by=owner)
     b2 = _issue(proj2, "B2")
     with pytest.raises(RelationValidationError):
-        create_relation(issue_id=a.id, related_issue_id=b2.id,
-                        relation_type="blocks", actor_id=owner.id)
+        create_relation(issue_id=a.id, related_issue_id=b2.id, relation_type="blocks", actor_id=owner.id)
 
 
 def test_direct_and_indirect_cycle(owner):
     proj = _project(owner)
     a, b, c = _issue(proj, "A"), _issue(proj, "B"), _issue(proj, "C")
-    create_relation(issue_id=a.id, related_issue_id=b.id,
-                    relation_type="blocks", actor_id=owner.id)
-    create_relation(issue_id=b.id, related_issue_id=c.id,
-                    relation_type="blocks", actor_id=owner.id)
+    create_relation(issue_id=a.id, related_issue_id=b.id, relation_type="blocks", actor_id=owner.id)
+    create_relation(issue_id=b.id, related_issue_id=c.id, relation_type="blocks", actor_id=owner.id)
     # 间接环：C blocks A 闭合
     with pytest.raises(CircularDependencyError) as ei:
-        create_relation(issue_id=c.id, related_issue_id=a.id,
-                        relation_type="blocks", actor_id=owner.id)
+        create_relation(issue_id=c.id, related_issue_id=a.id, relation_type="blocks", actor_id=owner.id)
     assert "依赖链" in str(ei.value)
     # is_blocked_by 归一化后的同边（A 被 C 阻塞）同样成环
     with pytest.raises(CircularDependencyError):
-        create_relation(issue_id=a.id, related_issue_id=c.id,
-                        relation_type="is_blocked_by", actor_id=owner.id)
+        create_relation(issue_id=a.id, related_issue_id=c.id, relation_type="is_blocked_by", actor_id=owner.id)
 
 
 def test_duplicate_including_mirror_direction(owner):
     proj = _project(owner)
     a, b = _issue(proj, "A"), _issue(proj, "B")
-    create_relation(issue_id=a.id, related_issue_id=b.id,
-                    relation_type="blocks", actor_id=owner.id)
+    create_relation(issue_id=a.id, related_issue_id=b.id, relation_type="blocks", actor_id=owner.id)
     with pytest.raises(AlreadyExistsError):
-        create_relation(issue_id=a.id, related_issue_id=b.id,
-                        relation_type="blocks", actor_id=owner.id)
+        create_relation(issue_id=a.id, related_issue_id=b.id, relation_type="blocks", actor_id=owner.id)
     with pytest.raises(AlreadyExistsError):  # 镜像方向（B 被 A 阻塞）
-        create_relation(issue_id=b.id, related_issue_id=a.id,
-                        relation_type="is_blocked_by", actor_id=owner.id)
+        create_relation(issue_id=b.id, related_issue_id=a.id, relation_type="is_blocked_by", actor_id=owner.id)
 
 
 def test_deep_chain_120_not_flagged(owner):
@@ -107,28 +98,28 @@ def test_deep_chain_120_not_flagged(owner):
     proj = _project(owner)
     nodes = [_issue(proj, f"N{i}") for i in range(30)]  # 30 层已覆盖 > 业务深度直觉
     for prev, nxt in zip(nodes, nodes[1:], strict=False):
-        create_relation(issue_id=prev.id, related_issue_id=nxt.id,
-                        relation_type="blocks", actor_id=owner.id)
+        create_relation(issue_id=prev.id, related_issue_id=nxt.id, relation_type="blocks", actor_id=owner.id)
     # 尾部再加一条不闭合的边：末端 → 首端之外的独立节点
     tail_extra = _issue(proj, "EXTRA")
-    create_relation(issue_id=nodes[-1].id, related_issue_id=tail_extra.id,
-                    relation_type="blocks", actor_id=owner.id)  # 不抛 = 放行
+    create_relation(
+        issue_id=nodes[-1].id, related_issue_id=tail_extra.id, relation_type="blocks", actor_id=owner.id
+    )  # 不抛 = 放行
     # 首端 blocks 末端也不成环（同向延伸）；末端 blocks 首端才成环
     with pytest.raises(CircularDependencyError):
-        create_relation(issue_id=nodes[-1].id, related_issue_id=nodes[0].id,
-                        relation_type="blocks", actor_id=owner.id)
+        create_relation(issue_id=nodes[-1].id, related_issue_id=nodes[0].id, relation_type="blocks", actor_id=owner.id)
 
 
 def test_delete_removes_mirror(owner):
     proj = _project(owner)
     a, b = _issue(proj, "A"), _issue(proj, "B")
     forward, mirror = create_relation(
-        issue_id=a.id, related_issue_id=b.id, relation_type="relates_to", actor_id=owner.id)
+        issue_id=a.id, related_issue_id=b.id, relation_type="relates_to", actor_id=owner.id
+    )
     deleted = delete_relation(link_id=forward.id, actor_id=owner.id)
     assert deleted.id == forward.id
     from plane.db.models import IssueLink
-    assert not IssueLink.objects.filter(
-        id__in=[forward.id, mirror.id], deleted_at__isnull=True).exists()
+
+    assert not IssueLink.objects.filter(id__in=[forward.id, mirror.id], deleted_at__isnull=True).exists()
     assert delete_relation(link_id=forward.id, actor_id=owner.id) is None  # 幂等 404 语义
 
 
@@ -140,8 +131,7 @@ def test_transition_blocked_and_force_channel(owner):
 
     proj = _project(owner)
     a, b = _issue(proj, "A"), _issue(proj, "B")
-    create_relation(issue_id=a.id, related_issue_id=b.id,
-                    relation_type="blocks", actor_id=owner.id)
+    create_relation(issue_id=a.id, related_issue_id=b.id, relation_type="blocks", actor_id=owner.id)
     done = State.objects.create(project=proj, name="已完成", group="completed")
     todo = State.objects.create(project=proj, name="待办", group="unstarted")
     b.state = todo

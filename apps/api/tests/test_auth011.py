@@ -151,7 +151,7 @@ def test_ut07_reactivate_with_snapshot(env):
 
 
 def test_ut08_manual_never_reactivate(env):
-    m = _mapping(env, env["member"], "g1", "d-member@rabbit.dev", disabled_at_source="manual")
+    _mapping(env, env["member"], "g1", "d-member@rabbit.dev", disabled_at_source="manual")
     User.objects.filter(pk=env["member"].pk).update(is_active=False)
     svc = DirectorySyncService(env["ws"], "ldap")
     b = svc.reconcile([_entry(env, "g1", "d-member@rabbit.dev")], full_sync=True)
@@ -167,7 +167,7 @@ def test_ut09_protected_members(env):
     WorkspaceMember.objects.create(workspace=env["ws"], member=prot, role=WorkspaceRole.MEMBER, created_by=prot)
     _mapping(env, prot, "g9", "svc@rabbit.dev", is_sync_protected=True)
     svc = DirectorySyncService(env["ws"], "ldap")
-    b = svc.reconcile([], full_sync=True)
+    svc.reconcile([], full_sync=True)
     svc2 = DirectorySyncService(env["ws"], "ldap")
     b2 = svc2.reconcile([], full_sync=True)  # 两轮缺席
     env["owner"].refresh_from_db()

@@ -13,8 +13,8 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from plane.db.models import (
-    APIToken,
     ApiCallLog,
+    APIToken,
     Issue,
     Project,
     User,
@@ -160,7 +160,8 @@ def test_oauth_full_chain(env):
         "/api/v1/oauth/token/", {"grant_type": "refresh_token", "refresh_token": tok["refresh_token"]}, format="json"
     )
     assert r_ref.status_code == 200
-    new_refresh = r_ref.json()["refresh_token"]
+    # 轮换签发新值（旧值随即作废——下方旧值复用断言）
+    r_ref.json()["refresh_token"]
     r_old = c.post(
         "/api/v1/oauth/token/", {"grant_type": "refresh_token", "refresh_token": tok["refresh_token"]}, format="json"
     )

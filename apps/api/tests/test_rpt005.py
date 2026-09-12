@@ -6,7 +6,6 @@ import pytest
 from rest_framework.test import APIClient
 
 from plane.db.models import (
-    Dashboard,
     Issue,
     Project,
     Report,
@@ -75,7 +74,7 @@ def test_report_crud_version_lock_and_preview(env):
     assert r_dup.status_code == 409
     # 乐观锁
     detail = c.patch(f"{base}/{rid}/", {"config": {"metrics": []}}, format="json")
-    v = detail.json()["data"]["version"]
+    detail.json()["data"]["version"]
     r_conflict = c.patch(f"{base}/{rid}/", {"version": 0}, format="json")
     assert r_conflict.status_code == 409
     # 预览

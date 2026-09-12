@@ -5,7 +5,6 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
-from django.core.cache import cache
 from rest_framework.test import APIClient
 
 from plane.db.models import (
@@ -15,7 +14,6 @@ from plane.db.models import (
     PortfolioMilestone,
     PortfolioProject,
     Project,
-    ProjectWorklogConfig,
     User,
     WorkLogSummary,
     Workspace,
@@ -70,7 +68,6 @@ def test_portfolio_gantt_range_and_milestone(env):
 
 
 def test_resource_load_bands(env):
-    from plane.db.models import ProjectWorklogConfig as _Cfg
 
     week = dt.date(2026, 9, 7)  # 周一
     WorkLogSummary.objects.create(

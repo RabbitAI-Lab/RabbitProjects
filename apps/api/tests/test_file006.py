@@ -18,7 +18,6 @@ from plane.db.models import (
     CompliancePolicy,
     DlpRule,
     FileAsset,
-    Issue,
     LegalHold,
     Project,
     User,
@@ -27,8 +26,8 @@ from plane.db.models import (
 )
 from plane.db.models.roles import WorkspaceRole
 from plane.db.services.file_compliance import (
-    retention_sweep,
     resolve_policy,
+    retention_sweep,
     scan_text,
     validate_dlp_pattern,
     watermark_text,
@@ -85,7 +84,7 @@ def test_policy_inheritance_and_override(env):
     c.patch(f"{base}/policy/", {"asset_id": str(env["asset"].id), "download": None}, format="json")
     assert resolve_policy(env["asset"])["download"] == "deny"  # 回落项目级
     # 一域一策：同域二策 409 UNIQUE 预检层在唯一约束
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="duplicate key|unique|violates"):  # noqa: B017 —— DB 约束面（psycopg 异常版本不稳，模式断言）:
         CompliancePolicy.objects.create(project=env["proj"], download="allow", created_by=env["owner"])
 
 
@@ -102,8 +101,8 @@ def test_policy_version_optimistic_lock(env):
 
 def test_download_and_share_gates(env):
     CompliancePolicy.objects.create(asset=env["asset"], download="deny", share_link="deny", created_by=env["owner"])
-    from plane.db.services.file_compliance import assert_download_allowed, assert_share_allowed
     from plane.base.exception import AppException
+    from plane.db.services.file_compliance import assert_download_allowed, assert_share_allowed
 
     with pytest.raises(AppException) as exc:
         assert_download_allowed(env["asset"])  # BR-03

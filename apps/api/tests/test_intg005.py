@@ -14,8 +14,8 @@ from unittest.mock import patch
 import pytest
 from rest_framework.test import APIClient
 
+from plane.app.views.im_integrations import _dingtalk_sign
 from plane.db.models import (
-    ImSubscription,
     ImWebhookChannel,
     Issue,
     Project,
@@ -25,7 +25,6 @@ from plane.db.models import (
     WorkspaceMember,
 )
 from plane.db.models.roles import WorkspaceRole
-from plane.app.views.im_integrations import _dingtalk_sign, im_deliver
 
 pytestmark = pytest.mark.django_db
 
@@ -141,9 +140,9 @@ def test_ut04_im_actions(env):
 
 
 def test_ut05_degraded_after_retries(env):
-    from plane.app.views.im_integrations import deliver_once
-
     import requests as _rq
+
+    from plane.app.views.im_integrations import deliver_once
 
     with patch.object(_rq, "post", side_effect=RuntimeError("webhook down")):
         try:

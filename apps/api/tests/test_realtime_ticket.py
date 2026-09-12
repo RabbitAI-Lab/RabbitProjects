@@ -9,6 +9,7 @@ unknown 事件丢弃）、挂点（Activity 落库后扇出、评论/通知 on_c
 force_authenticate）；RS256 密钥对在测试内生成（cryptography），经
 override_settings 注入——不依赖 .env。
 """
+
 from __future__ import annotations
 
 import json
@@ -47,12 +48,18 @@ pytestmark = pytest.mark.django_db
 # ────────────────────────────────────────────────────────────────
 _key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 PRIV_PEM = _key.private_bytes(
-    serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+    serialization.Encoding.PEM,
+    serialization.PrivateFormat.PKCS8,
     serialization.NoEncryption(),
 ).decode()
-PUB_PEM = _key.public_key().public_bytes(
-    serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo,
-).decode()
+PUB_PEM = (
+    _key.public_key()
+    .public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    .decode()
+)
 
 # 单行 \n 转义形态（normalize_pem 归一用例）
 PRIV_ESCAPED = PRIV_PEM.replace("\n", "\\n")
@@ -72,27 +79,30 @@ def env(db):
     owner = User.objects.create_user(email="c004-owner@rabbit.dev", password="Rabbit123!")
     viewer = User.objects.create_user(email="c004-viewer@rabbit.dev", password="Rabbit123!")
     outsider = User.objects.create_user(email="c004-outsider@rabbit.dev", password="Rabbit123!")
-    ws = Workspace.objects.create(name="W", slug=f"w-c004-{owner.id.hex[:8]}",
-                                  owner=owner, created_by=owner)
-    for u, role in ((owner, WorkspaceRole.OWNER), (viewer, WorkspaceRole.MEMBER),
-                    (outsider, WorkspaceRole.MEMBER)):
+    ws = Workspace.objects.create(name="W", slug=f"w-c004-{owner.id.hex[:8]}", owner=owner, created_by=owner)
+    for u, role in ((owner, WorkspaceRole.OWNER), (viewer, WorkspaceRole.MEMBER), (outsider, WorkspaceRole.MEMBER)):
         WorkspaceMember.objects.create(workspace=ws, member=u, role=role, created_by=owner)
     proj = Project.objects.create(name="P", identifier="C04", workspace=ws, created_by=owner)
-    ProjectMember.objects.create(project=proj, member=viewer, role=ProjectRole.VIEWER,
-                                 created_by=owner)
+    ProjectMember.objects.create(project=proj, member=viewer, role=ProjectRole.VIEWER, created_by=owner)
     seed_project_states(proj)
     todo = State.objects.get(project=proj, group=State.Group.UNSTARTED)
     started = State.objects.get(project=proj, group=State.Group.STARTED)
-    issue = Issue.objects.create(name="T1", project=proj, state=todo,
-                                 sequence_id=1, sort_order=100, created_by=owner)
-    other_proj = Project.objects.create(name="P2", identifier="CX9", workspace=ws,
-                                        created_by=owner)
-    foreign_issue = Issue.objects.create(name="T-foreign", project=other_proj, state=todo,
-                                         sequence_id=1, sort_order=100, created_by=owner)
+    issue = Issue.objects.create(name="T1", project=proj, state=todo, sequence_id=1, sort_order=100, created_by=owner)
+    other_proj = Project.objects.create(name="P2", identifier="CX9", workspace=ws, created_by=owner)
+    foreign_issue = Issue.objects.create(
+        name="T-foreign", project=other_proj, state=todo, sequence_id=1, sort_order=100, created_by=owner
+    )
     return {
-        "owner": owner, "viewer": viewer, "outsider": outsider, "ws": ws,
-        "proj": proj, "todo": todo, "started": started,
-        "issue": issue, "other_proj": other_proj, "foreign_issue": foreign_issue,
+        "owner": owner,
+        "viewer": viewer,
+        "outsider": outsider,
+        "ws": ws,
+        "proj": proj,
+        "todo": todo,
+        "started": started,
+        "issue": issue,
+        "other_proj": other_proj,
+        "foreign_issue": foreign_issue,
     }
 
 
@@ -111,15 +121,20 @@ def _token_url(env) -> str:
 # ────────────────────────────────────────────────────────────────
 class TestIssueToken:
     def test_issue_and_verify_roundtrip(self, rt_settings, env):
-        resp = _client(env["viewer"]).post(_token_url(env), {
-            "client_tab_id": "tab-1",
-            "issue_rooms": [str(env["issue"].id)],
-        }, format="json")
+        resp = _client(env["viewer"]).post(
+            _token_url(env),
+            {
+                "client_tab_id": "tab-1",
+                "issue_rooms": [str(env["issue"].id)],
+            },
+            format="json",
+        )
         assert resp.status_code == 200
         data = resp.json()["data"]
         rooms = data["rooms"]
         assert rooms == [
-            f"project:{env['proj'].id}", f"issue:{env['issue'].id}",
+            f"project:{env['proj'].id}",
+            f"issue:{env['issue'].id}",
             f"user:{env['viewer'].id}",
         ]
         assert data["renew_after"] == 90
@@ -132,24 +147,38 @@ class TestIssueToken:
 
     def test_viewer_can_get_ticket_project_read(self, rt_settings, env):
         """project.read（VIEWER+）即可换票（§1.3 订阅条件表）。"""
-        resp = _client(env["viewer"]).post(_token_url(env), {
-            "client_tab_id": "tab-v", "issue_rooms": [],
-        }, format="json")
+        resp = _client(env["viewer"]).post(
+            _token_url(env),
+            {
+                "client_tab_id": "tab-v",
+                "issue_rooms": [],
+            },
+            format="json",
+        )
         assert resp.status_code == 200
 
     def test_outsider_404(self, rt_settings, env):
         """非项目成员 → 404 存在性隐藏（_access 收口）。"""
-        resp = _client(env["outsider"]).post(_token_url(env), {
-            "client_tab_id": "tab-o", "issue_rooms": [],
-        }, format="json")
+        resp = _client(env["outsider"]).post(
+            _token_url(env),
+            {
+                "client_tab_id": "tab-o",
+                "issue_rooms": [],
+            },
+            format="json",
+        )
         assert resp.status_code == 404
 
     def test_invisible_issue_rejects_whole_ticket_403(self, rt_settings, env):
         """issue 不可见（他项目）→ 403 PERM_DENIED 拒整票（§4.2.1）。"""
-        resp = _client(env["owner"]).post(_token_url(env), {
-            "client_tab_id": "tab-x",
-            "issue_rooms": [str(env["issue"].id), str(env["foreign_issue"].id)],
-        }, format="json")
+        resp = _client(env["owner"]).post(
+            _token_url(env),
+            {
+                "client_tab_id": "tab-x",
+                "issue_rooms": [str(env["issue"].id), str(env["foreign_issue"].id)],
+            },
+            format="json",
+        )
         assert resp.status_code == 403
         body = resp.json()
         assert body["error"]["code"] == "PERM_DENIED"
@@ -158,32 +187,47 @@ class TestIssueToken:
         """issue_rooms > 8（project+user+8=10 上限）→ 400 VALIDATION_INVALID_PARAM。"""
         ids = []
         for i in range(2, 11):  # 9 个任务 → 11 rooms
-            ids.append(str(Issue.objects.create(
-                name=f"T{i}", project=env["proj"], state=env["todo"],
-                sequence_id=i, sort_order=i * 100, created_by=env["owner"]).id))
-        resp = _client(env["owner"]).post(_token_url(env), {
-            "client_tab_id": "tab-cap", "issue_rooms": ids,
-        }, format="json")
+            ids.append(
+                str(
+                    Issue.objects.create(
+                        name=f"T{i}",
+                        project=env["proj"],
+                        state=env["todo"],
+                        sequence_id=i,
+                        sort_order=i * 100,
+                        created_by=env["owner"],
+                    ).id
+                )
+            )
+        resp = _client(env["owner"]).post(
+            _token_url(env),
+            {
+                "client_tab_id": "tab-cap",
+                "issue_rooms": ids,
+            },
+            format="json",
+        )
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "VALIDATION_INVALID_PARAM"
 
     def test_pem_escaped_newline_form_supported(self, rt_settings, env):
         """PEM 单行 \n 转义注入形态与真实多行等价（normalize_pem）。"""
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(
-                "django.conf.settings.LIVE_JWT_PRIVATE_KEY", PRIV_ESCAPED,
-                raising=True)
-            resp = _client(env["owner"]).post(_token_url(env), {
-                "client_tab_id": "tab-e", "issue_rooms": [],
-            }, format="json")
+            mp.setattr("django.conf.settings.LIVE_JWT_PRIVATE_KEY", PRIV_ESCAPED, raising=True)
+            resp = _client(env["owner"]).post(
+                _token_url(env),
+                {
+                    "client_tab_id": "tab-e",
+                    "issue_rooms": [],
+                },
+                format="json",
+            )
             assert resp.status_code == 200
-            claims = pyjwt.decode(resp.json()["data"]["token"], PUB_PEM,
-                                  algorithms=["RS256"])
+            claims = pyjwt.decode(resp.json()["data"]["token"], PUB_PEM, algorithms=["RS256"])
             assert claims["sub"] == str(env["owner"].id)
 
     def test_missing_client_tab_id_400(self, rt_settings, env):
-        resp = _client(env["owner"]).post(_token_url(env), {"issue_rooms": []},
-                                          format="json")
+        resp = _client(env["owner"]).post(_token_url(env), {"issue_rooms": []}, format="json")
         assert resp.status_code == 400
 
 
@@ -203,37 +247,59 @@ class TestRenewToken:
     def test_renew_rotates_jti_and_keeps_rooms(self, rt_settings, env):
         first = self._first_ticket(env, env["owner"], [str(env["issue"].id)])
         c = _client(env["owner"])
-        resp = c.post("/api/v1/users/me/realtime-token/renew/", {
-            "token": first["token"], "client_tab_id": "tab-r",
-        }, format="json")
+        resp = c.post(
+            "/api/v1/users/me/realtime-token/renew/",
+            {
+                "token": first["token"],
+                "client_tab_id": "tab-r",
+            },
+            format="json",
+        )
         assert resp.status_code == 200
         renewed = resp.json()["data"]
         old = pyjwt.decode(first["token"], PUB_PEM, algorithms=["RS256"])
         new = pyjwt.decode(renewed["token"], PUB_PEM, algorithms=["RS256"])
-        assert new["jti"] != old["jti"]              # jti 轮换
-        assert new["rooms"] == old["rooms"]           # 房间集以旧票为准
+        assert new["jti"] != old["jti"]  # jti 轮换
+        assert new["rooms"] == old["rooms"]  # 房间集以旧票为准
         assert new["ws"] == old["ws"]
 
     def test_renew_expired_old_token_401(self, rt_settings, env):
         first = self._first_ticket(env, env["owner"])
         # 手工签一张已过期的旧票（同私钥）
         now = int(timezone.now().timestamp())
-        expired = pyjwt.encode({
-            "sub": str(env["owner"].id), "rooms": first["rooms"],
-            "ws": f"{env['owner'].id}:tab-r",
-            "iat": now - 300, "exp": now - 60, "jti": "expired-jti",
-        }, PRIV_PEM, algorithm="RS256")
-        resp = _client(env["owner"]).post("/api/v1/users/me/realtime-token/renew/", {
-            "token": expired, "client_tab_id": "tab-r",
-        }, format="json")
+        expired = pyjwt.encode(
+            {
+                "sub": str(env["owner"].id),
+                "rooms": first["rooms"],
+                "ws": f"{env['owner'].id}:tab-r",
+                "iat": now - 300,
+                "exp": now - 60,
+                "jti": "expired-jti",
+            },
+            PRIV_PEM,
+            algorithm="RS256",
+        )
+        resp = _client(env["owner"]).post(
+            "/api/v1/users/me/realtime-token/renew/",
+            {
+                "token": expired,
+                "client_tab_id": "tab-r",
+            },
+            format="json",
+        )
         assert resp.status_code == 401
         assert resp.json()["error"]["code"] == "AUTH_TOKEN_EXPIRED"
 
     def test_renew_other_users_token_403(self, rt_settings, env):
         first = self._first_ticket(env, env["owner"])
-        resp = _client(env["viewer"]).post("/api/v1/users/me/realtime-token/renew/", {
-            "token": first["token"], "client_tab_id": "tab-r",
-        }, format="json")
+        resp = _client(env["viewer"]).post(
+            "/api/v1/users/me/realtime-token/renew/",
+            {
+                "token": first["token"],
+                "client_tab_id": "tab-r",
+            },
+            format="json",
+        )
         assert resp.status_code == 403
         assert resp.json()["error"]["code"] == "PERM_DENIED"
 
@@ -243,30 +309,45 @@ class TestRenewToken:
         c = _client(env["owner"])
         # 增加一个可见 issue、去掉旧 issue
         new_issue = Issue.objects.create(
-            name="T-new", project=env["proj"], state=env["todo"],
-            sequence_id=99, sort_order=99, created_by=env["owner"])
-        resp = c.post("/api/v1/users/me/realtime-token/renew/", {
-            "token": first["token"], "client_tab_id": "tab-r",
-            "issue_rooms": [str(new_issue.id)],
-        }, format="json")
+            name="T-new", project=env["proj"], state=env["todo"], sequence_id=99, sort_order=99, created_by=env["owner"]
+        )
+        resp = c.post(
+            "/api/v1/users/me/realtime-token/renew/",
+            {
+                "token": first["token"],
+                "client_tab_id": "tab-r",
+                "issue_rooms": [str(new_issue.id)],
+            },
+            format="json",
+        )
         assert resp.status_code == 200
         renewed = resp.json()["data"]
         assert f"issue:{new_issue.id}" in renewed["rooms"]
         assert f"issue:{env['issue'].id}" not in renewed["rooms"]
         # 增加不可见 → 403 拒续签
-        resp2 = c.post("/api/v1/users/me/realtime-token/renew/", {
-            "token": first["token"], "client_tab_id": "tab-r",
-            "issue_rooms": [str(env["foreign_issue"].id)],
-        }, format="json")
+        resp2 = c.post(
+            "/api/v1/users/me/realtime-token/renew/",
+            {
+                "token": first["token"],
+                "client_tab_id": "tab-r",
+                "issue_rooms": [str(env["foreign_issue"].id)],
+            },
+            format="json",
+        )
         assert resp2.status_code == 403
 
     def test_renew_after_member_removed_403(self, rt_settings, env):
         """viewer 被移出项目后续签拒绝（project 房间失效重校验）。"""
         first = self._first_ticket(env, env["viewer"])
         ProjectMember.objects.filter(project=env["proj"], member=env["viewer"]).delete()
-        resp = _client(env["viewer"]).post("/api/v1/users/me/realtime-token/renew/", {
-            "token": first["token"], "client_tab_id": "tab-r",
-        }, format="json")
+        resp = _client(env["viewer"]).post(
+            "/api/v1/users/me/realtime-token/renew/",
+            {
+                "token": first["token"],
+                "client_tab_id": "tab-r",
+            },
+            format="json",
+        )
         assert resp.status_code == 403
 
 
@@ -280,69 +361,78 @@ class TestVerifyRooms:
         resp = APIClient().post(self.URL, {"tickets": []}, format="json")
         assert resp.status_code == 403
         assert resp.json()["error"]["code"] == "PERM_DENIED"
-        resp2 = APIClient().post(
-            self.URL, {"tickets": []}, format="json",
-            HTTP_X_INTERNAL_KEY="wrong-key")
+        resp2 = APIClient().post(self.URL, {"tickets": []}, format="json", HTTP_X_INTERNAL_KEY="wrong-key")
         assert resp2.status_code == 403
 
     def test_returns_only_invalid_entries(self, rt_settings, env):
         ProjectMember.objects.create(
-            project=env["other_proj"], member=env["owner"], role=ProjectRole.ADMIN,
-            created_by=env["owner"])
+            project=env["other_proj"], member=env["owner"], role=ProjectRole.ADMIN, created_by=env["owner"]
+        )
         payload = {
             "tickets": [
                 {  # 全有效（project / issue / user）
                     "sub": str(env["owner"].id),
-                    "rooms": [f"project:{env['proj'].id}",
-                              f"issue:{env['issue'].id}",
-                              f"user:{env['owner'].id}"],
+                    "rooms": [f"project:{env['proj'].id}", f"issue:{env['issue'].id}", f"user:{env['owner'].id}"],
                 },
                 {  # viewer 已被移出：project/issue 失效，user 恒有效
                     "sub": str(env["viewer"].id),
-                    "rooms": [f"project:{env['proj'].id}",
-                              f"issue:{env['issue'].id}",
-                              f"user:{env['viewer'].id}"],
+                    "rooms": [f"project:{env['proj'].id}", f"issue:{env['issue'].id}", f"user:{env['viewer'].id}"],
                 },
             ],
         }
-        ProjectMember.objects.filter(project=env["proj"],
-                                     member=env["viewer"]).delete()
-        resp = APIClient().post(self.URL, payload, format="json",
-                                HTTP_X_INTERNAL_KEY="test-internal-key")
+        ProjectMember.objects.filter(project=env["proj"], member=env["viewer"]).delete()
+        resp = APIClient().post(self.URL, payload, format="json", HTTP_X_INTERNAL_KEY="test-internal-key")
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "success"
         invalid = body["data"]["invalid"]
-        assert invalid == [{
-            "sub": str(env["viewer"].id),
-            "rooms": [f"project:{env['proj'].id}", f"issue:{env['issue'].id}"],
-        }]
+        assert invalid == [
+            {
+                "sub": str(env["viewer"].id),
+                "rooms": [f"project:{env['proj'].id}", f"issue:{env['issue'].id}"],
+            }
+        ]
 
     def test_all_valid_returns_empty_invalid(self, rt_settings, env):
-        resp = APIClient().post(self.URL, {
-            "tickets": [{
-                "sub": str(env["owner"].id),
-                "rooms": [f"project:{env['proj'].id}", f"user:{env['owner'].id}"],
-            }],
-        }, format="json", HTTP_X_INTERNAL_KEY="test-internal-key")
+        resp = APIClient().post(
+            self.URL,
+            {
+                "tickets": [
+                    {
+                        "sub": str(env["owner"].id),
+                        "rooms": [f"project:{env['proj'].id}", f"user:{env['owner'].id}"],
+                    }
+                ],
+            },
+            format="json",
+            HTTP_X_INTERNAL_KEY="test-internal-key",
+        )
         assert resp.status_code == 200
         assert resp.json()["data"]["invalid"] == []
 
     def test_unknown_sub_only_user_room_valid(self, rt_settings, env):
         ghost = str(uuid_mod.uuid4())
-        resp = APIClient().post(self.URL, {
-            "tickets": [{
-                "sub": ghost,
-                "rooms": [f"project:{env['proj'].id}", f"user:{ghost}"],
-            }],
-        }, format="json", HTTP_X_INTERNAL_KEY="test-internal-key")
+        resp = APIClient().post(
+            self.URL,
+            {
+                "tickets": [
+                    {
+                        "sub": ghost,
+                        "rooms": [f"project:{env['proj'].id}", f"user:{ghost}"],
+                    }
+                ],
+            },
+            format="json",
+            HTTP_X_INTERNAL_KEY="test-internal-key",
+        )
         assert resp.json()["data"]["invalid"] == [
             {"sub": ghost, "rooms": [f"project:{env['proj'].id}"]},
         ]
 
     def test_malformed_tickets_400(self, rt_settings, env):
-        resp = APIClient().post(self.URL, {"tickets": [{"rooms": ["project:x"]}]},
-                                format="json", HTTP_X_INTERNAL_KEY="test-internal-key")
+        resp = APIClient().post(
+            self.URL, {"tickets": [{"rooms": ["project:x"]}]}, format="json", HTTP_X_INTERNAL_KEY="test-internal-key"
+        )
         assert resp.status_code == 400
 
 
@@ -357,21 +447,29 @@ def _mk_library_file(env, *, visibility="all", project=None, name="规格.pdf"):
     proj = project or env["proj"]
     # 根层同层同名唯一（BR-01）：目录名取随机后缀防同测试内互撞
     folder = FileFolder.objects.create(
-        project=proj, parent=None, name=f"F-{uuid_mod.uuid4().hex[:8]}",
+        project=proj,
+        parent=None,
+        name=f"F-{uuid_mod.uuid4().hex[:8]}",
         visibility="all",
-        created_by=env["owner"], updated_by=env["owner"],
+        created_by=env["owner"],
+        updated_by=env["owner"],
     )
     ext = ".pdf"
     return FileAsset.objects.create(
-        workspace=env["ws"], project=proj,
+        workspace=env["ws"],
+        project=proj,
         entity_type=FileAsset.EntityType.PROJECT_FILE,
-        entity_id=folder.id, folder=folder,
+        entity_id=folder.id,
+        folder=folder,
         attributes={"name": name, "size": 2048, "mime": "application/pdf", "ext": ext},
         size=2048,
         storage_path=f"{env['ws'].id}/{proj.id}/project_file/{folder.id}/{ulid_new()}{ext}",
-        status=FileAsset.Status.UPLOADED, uploaded_by=env["owner"],
-        visibility=visibility, allowed_members=[],
-        created_by=env["owner"], updated_by=env["owner"],
+        status=FileAsset.Status.UPLOADED,
+        uploaded_by=env["owner"],
+        visibility=visibility,
+        allowed_members=[],
+        created_by=env["owner"],
+        updated_by=env["owner"],
     )
 
 
@@ -381,11 +479,15 @@ class TestFileRooms:
     def test_file_room_in_ticket(self, rt_settings, env):
         """可见文件（all 态，VIEWER 成员）→ rooms 含 file:{asset_id}（issue 之序、user 之前）。"""
         asset = _mk_library_file(env)
-        resp = _client(env["viewer"]).post(_token_url(env), {
-            "client_tab_id": "tab-f",
-            "issue_rooms": [str(env["issue"].id)],
-            "file_rooms": [str(asset.id)],
-        }, format="json")
+        resp = _client(env["viewer"]).post(
+            _token_url(env),
+            {
+                "client_tab_id": "tab-f",
+                "issue_rooms": [str(env["issue"].id)],
+                "file_rooms": [str(asset.id)],
+            },
+            format="json",
+        )
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["rooms"] == [
@@ -400,27 +502,42 @@ class TestFileRooms:
     def test_invisible_file_rejects_whole_ticket_403(self, rt_settings, env):
         """admins 态文件对 VIEWER 不可见 → 403 PERM_DENIED 拒整票（对齐 issue 语义）。"""
         hidden = _mk_library_file(env, visibility="admins")
-        resp = _client(env["viewer"]).post(_token_url(env), {
-            "client_tab_id": "tab-h", "file_rooms": [str(hidden.id)],
-        }, format="json")
+        resp = _client(env["viewer"]).post(
+            _token_url(env),
+            {
+                "client_tab_id": "tab-h",
+                "file_rooms": [str(hidden.id)],
+            },
+            format="json",
+        )
         assert resp.status_code == 403
         assert resp.json()["error"]["code"] == "PERM_DENIED"
 
     def test_foreign_project_file_rejects_403(self, rt_settings, env):
         """他项目文件（即使 owner 本人可读）不入本票据项目域 → 403。"""
         foreign = _mk_library_file(env, project=env["other_proj"])
-        resp = _client(env["owner"]).post(_token_url(env), {
-            "client_tab_id": "tab-x", "file_rooms": [str(foreign.id)],
-        }, format="json")
+        resp = _client(env["owner"]).post(
+            _token_url(env),
+            {
+                "client_tab_id": "tab-x",
+                "file_rooms": [str(foreign.id)],
+            },
+            format="json",
+        )
         assert resp.status_code == 403
         assert resp.json()["error"]["code"] == "PERM_DENIED"
 
     def test_admin_sees_admins_visibility_file(self, rt_settings, env):
         """admins 态文件对项目管理员（owner 隐式 ADMIN）可订。"""
         hidden = _mk_library_file(env, visibility="admins")
-        resp = _client(env["owner"]).post(_token_url(env), {
-            "client_tab_id": "tab-a", "file_rooms": [str(hidden.id)],
-        }, format="json")
+        resp = _client(env["owner"]).post(
+            _token_url(env),
+            {
+                "client_tab_id": "tab-a",
+                "file_rooms": [str(hidden.id)],
+            },
+            format="json",
+        )
         assert resp.status_code == 200
         assert f"file:{hidden.id}" in resp.json()["data"]["rooms"]
 
@@ -429,29 +546,53 @@ class TestFileRooms:
         asset = _mk_library_file(env)
         ids = [str(env["issue"].id)]
         for i in range(100, 107):  # 共 8 个 issue
-            ids.append(str(Issue.objects.create(
-                name=f"T{i}", project=env["proj"], state=env["todo"],
-                sequence_id=i, sort_order=i * 100, created_by=env["owner"]).id))
-        resp = _client(env["owner"]).post(_token_url(env), {
-            "client_tab_id": "tab-cap2", "issue_rooms": ids,
-            "file_rooms": [str(asset.id)],
-        }, format="json")
+            ids.append(
+                str(
+                    Issue.objects.create(
+                        name=f"T{i}",
+                        project=env["proj"],
+                        state=env["todo"],
+                        sequence_id=i,
+                        sort_order=i * 100,
+                        created_by=env["owner"],
+                    ).id
+                )
+            )
+        resp = _client(env["owner"]).post(
+            _token_url(env),
+            {
+                "client_tab_id": "tab-cap2",
+                "issue_rooms": ids,
+                "file_rooms": [str(asset.id)],
+            },
+            format="json",
+        )
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "VALIDATION_INVALID_PARAM"
 
     def test_renew_keeps_and_revalidates_file_rooms(self, rt_settings, env):
         """续签缺省沿用旧票 file 房间并重校验；收紧可见性后 → 403。"""
         asset = _mk_library_file(env)
-        first = _client(env["viewer"]).post(_token_url(env), {
-            "client_tab_id": "tab-rf", "file_rooms": [str(asset.id)],
-        }, format="json").json()["data"]
+        first = (
+            _client(env["viewer"])
+            .post(
+                _token_url(env),
+                {
+                    "client_tab_id": "tab-rf",
+                    "file_rooms": [str(asset.id)],
+                },
+                format="json",
+            )
+            .json()["data"]
+        )
         assert f"file:{asset.id}" in first["rooms"]
 
         # 缺省续签：file 房间沿用且仍可见
         renewed = _client(env["viewer"]).post(
             "/api/v1/users/me/realtime-token/renew/",
             {"token": first["token"], "client_tab_id": "tab-rf"},
-            format="json")
+            format="json",
+        )
         assert renewed.status_code == 200
         assert f"file:{asset.id}" in renewed.json()["data"]["rooms"]
 
@@ -461,7 +602,8 @@ class TestFileRooms:
         tightened = _client(env["viewer"]).post(
             "/api/v1/users/me/realtime-token/renew/",
             {"token": first["token"], "client_tab_id": "tab-rf"},
-            format="json")
+            format="json",
+        )
         assert tightened.status_code == 403
 
     def test_verify_rooms_file_visibility(self, rt_settings, env):
@@ -473,26 +615,46 @@ class TestFileRooms:
         deleted.save(update_fields=["deleted_at", "updated_at"])
         resp = APIClient().post(
             "/api/v1/internal/realtime/verify-rooms/",
-            {"tickets": [{
-                "sub": str(env["viewer"].id),
-                "rooms": [f"file:{visible.id}", f"file:{hidden.id}",
-                          f"file:{deleted.id}", f"user:{env['viewer'].id}"],
-            }]}, format="json", HTTP_X_INTERNAL_KEY="test-internal-key")
+            {
+                "tickets": [
+                    {
+                        "sub": str(env["viewer"].id),
+                        "rooms": [
+                            f"file:{visible.id}",
+                            f"file:{hidden.id}",
+                            f"file:{deleted.id}",
+                            f"user:{env['viewer'].id}",
+                        ],
+                    }
+                ]
+            },
+            format="json",
+            HTTP_X_INTERNAL_KEY="test-internal-key",
+        )
         assert resp.status_code == 200
         invalid = resp.json()["data"]["invalid"]
-        assert invalid == [{
-            "sub": str(env["viewer"].id),
-            "rooms": [f"file:{hidden.id}", f"file:{deleted.id}"],
-        }]
+        assert invalid == [
+            {
+                "sub": str(env["viewer"].id),
+                "rooms": [f"file:{hidden.id}", f"file:{deleted.id}"],
+            }
+        ]
 
     def test_verify_rooms_file_invalid_uuid(self, rt_settings, env):
         """file:not-a-uuid → 失效（形态闸）。"""
         resp = APIClient().post(
             "/api/v1/internal/realtime/verify-rooms/",
-            {"tickets": [{
-                "sub": str(env["owner"].id),
-                "rooms": ["file:not-a-uuid"],
-            }]}, format="json", HTTP_X_INTERNAL_KEY="test-internal-key")
+            {
+                "tickets": [
+                    {
+                        "sub": str(env["owner"].id),
+                        "rooms": ["file:not-a-uuid"],
+                    }
+                ]
+            },
+            format="json",
+            HTTP_X_INTERNAL_KEY="test-internal-key",
+        )
         assert resp.json()["data"]["invalid"] == [
             {"sub": str(env["owner"].id), "rooms": ["file:not-a-uuid"]},
         ]
@@ -516,12 +678,14 @@ class TestPublishEvent:
         fake = FakeRedis()
         with patch.object(event_publisher, "_redis", return_value=fake):
             ok = event_publisher.publish_event.apply(
-                args=["issue.state.changed",
-                      {"issue_id": "i1", "actor_id": "u1",
-                       "from_group": "unstarted", "to_group": "started"},
-                      ["project:p1", "issue:i1"],
-                      "2026-09-05T06:32:00.220Z"],
-                kwargs={}).get()
+                args=[
+                    "issue.state.changed",
+                    {"issue_id": "i1", "actor_id": "u1", "from_group": "unstarted", "to_group": "started"},
+                    ["project:p1", "issue:i1"],
+                    "2026-09-05T06:32:00.220Z",
+                ],
+                kwargs={},
+            ).get()
         assert ok is True
         assert len(fake.published) == 1
         channel, raw = fake.published[0]
@@ -530,8 +694,7 @@ class TestPublishEvent:
         assert msg == {
             "event": "issue.state.changed",
             "rooms": ["project:p1", "issue:i1"],
-            "payload": {"issue_id": "i1", "actor_id": "u1",
-                        "from_group": "unstarted", "to_group": "started"},
+            "payload": {"issue_id": "i1", "actor_id": "u1", "from_group": "unstarted", "to_group": "started"},
             "occurred_at": "2026-09-05T06:32:00.220Z",
         }
 
@@ -541,10 +704,9 @@ class TestPublishEvent:
         fake = FakeRedis()
         with patch.object(event_publisher, "_redis", return_value=fake):
             ok = event_publisher.publish_event.apply(
-                args=["issue.updated",
-                      {"blob": "x" * event_publisher.MAX_MESSAGE_BYTES},
-                      ["project:p1"], None],
-                kwargs={}).get()
+                args=["issue.updated", {"blob": "x" * event_publisher.MAX_MESSAGE_BYTES}, ["project:p1"], None],
+                kwargs={},
+            ).get()
         assert ok is False
         assert fake.published == []
 
@@ -552,9 +714,7 @@ class TestPublishEvent:
         event_publisher.reset_redis_state()
         fake = FakeRedis()
         with patch.object(event_publisher, "_redis", return_value=fake):
-            ok = event_publisher.publish_event.apply(
-                args=["not.an.event", {}, ["project:p1"], None],
-                kwargs={}).get()
+            ok = event_publisher.publish_event.apply(args=["not.an.event", {}, ["project:p1"], None], kwargs={}).get()
         assert ok is False
         assert fake.published == []
 
@@ -563,8 +723,8 @@ class TestPublishEvent:
         event_publisher.reset_redis_state()
         with patch.object(event_publisher, "_redis", return_value=None):
             ok = event_publisher.publish_event.apply(
-                args=["issue.updated", {"issue_id": "i1"}, ["project:p1"], None],
-                kwargs={}).get()
+                args=["issue.updated", {"issue_id": "i1"}, ["project:p1"], None], kwargs={}
+            ).get()
         assert ok is False
 
     def test_redis_error_gives_up_without_raise(self, rt_settings, caplog):
@@ -575,8 +735,8 @@ class TestPublishEvent:
             boom.publish = lambda *a, **k: (_ for _ in ()).throw(ConnectionError("down"))
             with patch.object(event_publisher, "_redis", return_value=boom):
                 ok = event_publisher.publish_event.apply(
-                    args=["issue.updated", {"issue_id": "i1"}, ["project:p1"], None],
-                    kwargs={}).get()
+                    args=["issue.updated", {"issue_id": "i1"}, ["project:p1"], None], kwargs={}
+                ).get()
         assert ok is False  # 不抛错（推送尽力而为）
         assert any("giveup" in r.message for r in caplog.records)
 
@@ -591,26 +751,28 @@ class TestMountPoints:
         with patch.object(event_publisher, "dispatch_event") as mock_dispatch:
             record_activity_row.apply(
                 kwargs=dict(
-                    issue_id=str(env["issue"].id), actor_id=str(env["owner"].id),
-                    verb="updated", field="state", epoch=1000.0,
-                    old_identifier=None, new_identifier=str(env["started"].id),
-                ))
+                    issue_id=str(env["issue"].id),
+                    actor_id=str(env["owner"].id),
+                    verb="updated",
+                    field="state",
+                    epoch=1000.0,
+                    old_identifier=None,
+                    new_identifier=str(env["started"].id),
+                )
+            )
         events = {c.args[0] for c in mock_dispatch.call_args_list}
         assert "issue.state.changed" in events
         assert "activity.created" in events
         # rooms：issue.state.changed → project + issue
-        state_call = next(c for c in mock_dispatch.call_args_list
-                          if c.args[0] == "issue.state.changed")
-        assert state_call.args[2] == [
-            f"project:{env['proj'].id}", f"issue:{env['issue'].id}"]
+        state_call = next(c for c in mock_dispatch.call_args_list if c.args[0] == "issue.state.changed")
+        assert state_call.args[2] == [f"project:{env['proj'].id}", f"issue:{env['issue'].id}"]
         payload = state_call.args[1]
-        assert payload["to_group"] == "started"    # identifier → 组语义解析
+        assert payload["to_group"] == "started"  # identifier → 组语义解析
         assert payload["from_group"] is None
         assert payload["actor_id"] == str(env["owner"].id)
         assert payload["version"]
         # activity.created → 仅 project 房间 + 水位锚
-        activity_call = next(c for c in mock_dispatch.call_args_list
-                             if c.args[0] == "activity.created")
+        activity_call = next(c for c in mock_dispatch.call_args_list if c.args[0] == "activity.created")
         assert activity_call.args[2] == [f"project:{env['proj'].id}"]
         assert ":" in activity_call.args[1]["stream_cursor"]
 
@@ -618,11 +780,14 @@ class TestMountPoints:
         with patch.object(event_publisher, "dispatch_event") as mock_dispatch:
             record_activity_row.apply(
                 kwargs=dict(
-                    issue_id=str(env["issue"].id), actor_id=str(env["owner"].id),
-                    verb="updated", field="sort_order", epoch=2000.0,
-                ))
-        board_calls = [c for c in mock_dispatch.call_args_list
-                       if c.args[0] == "board.moved"]
+                    issue_id=str(env["issue"].id),
+                    actor_id=str(env["owner"].id),
+                    verb="updated",
+                    field="sort_order",
+                    epoch=2000.0,
+                )
+            )
+        board_calls = [c for c in mock_dispatch.call_args_list if c.args[0] == "board.moved"]
         assert len(board_calls) == 1
         assert board_calls[0].args[2] == [f"project:{env['proj'].id}"]  # 仅 project
         assert board_calls[0].args[1]["column_version"]
@@ -632,33 +797,40 @@ class TestMountPoints:
         from plane.bgtasks.issue_activity import record_activity_batch
 
         with patch.object(event_publisher, "dispatch_event") as mock_dispatch:
-            record_activity_batch.apply(kwargs={"payload": {
-                "batch": [
-                    {"issue_id": str(env["issue"].id),
-                     "actor_id": str(env["owner"].id),
-                     "verb": "updated", "field": "name", "epoch": 7777.0},
-                ],
-                "comment": "batch: 批量更新",
-            }})
-        issue_updated = [c for c in mock_dispatch.call_args_list
-                         if c.args[0] == "issue.updated"]
+            record_activity_batch.apply(
+                kwargs={
+                    "payload": {
+                        "batch": [
+                            {
+                                "issue_id": str(env["issue"].id),
+                                "actor_id": str(env["owner"].id),
+                                "verb": "updated",
+                                "field": "name",
+                                "epoch": 7777.0,
+                            },
+                        ],
+                        "comment": "batch: 批量更新",
+                    }
+                }
+            )
+        issue_updated = [c for c in mock_dispatch.call_args_list if c.args[0] == "issue.updated"]
         assert len(issue_updated) == 1
         assert issue_updated[0].args[1]["batch_id"] == 7777.0
 
     def test_activity_dedup_skip_does_not_republish(self, rt_settings, env):
         """行级幂等命中（exists）→ 不重复扇出。"""
-        kwargs = dict(issue_id=str(env["issue"].id), actor_id=str(env["owner"].id),
-                      verb="updated", field="name", epoch=3000.0)
+        kwargs = dict(
+            issue_id=str(env["issue"].id), actor_id=str(env["owner"].id), verb="updated", field="name", epoch=3000.0
+        )
         with patch.object(event_publisher, "dispatch_event") as mock_dispatch:
             record_activity_row.apply(kwargs=dict(kwargs))
             record_activity_row.apply(kwargs=dict(kwargs))  # at-least-once 重投
         total = mock_dispatch.call_args_list
-        assert len({json.dumps([c.args[0], c.args[1].get("brief")], default=str)
-                    for c in total}) >= 1
+        assert len({json.dumps([c.args[0], c.args[1].get("brief")], default=str) for c in total}) >= 1
         # 同一 (issue, field, epoch) 只落一行
         from plane.db.models import IssueActivity
-        assert IssueActivity.objects.filter(
-            issue=env["issue"], field="name", epoch=3000.0).count() == 1
+
+        assert IssueActivity.objects.filter(issue=env["issue"], field="name", epoch=3000.0).count() == 1
 
     def test_comment_create_publishes_on_commit(self, rt_settings, env):
         """评论落库 → on_commit 后 comment.created 扇出（issue + project 摘要房间）。"""
@@ -667,13 +839,11 @@ class TestMountPoints:
         with patch.object(event_publisher, "dispatch_event") as mock_dispatch:
             with DjangoTestCase.captureOnCommitCallbacks(execute=True) as callbacks:
                 comment, _ = CommentService().create(
-                    issue=env["issue"], actor=env["owner"],
-                    payload={"comment_html": "<p>hello world</p>"})
-        comment_events = [c for c in mock_dispatch.call_args_list
-                          if c.args[0] == "comment.created"]
+                    issue=env["issue"], actor=env["owner"], payload={"comment_html": "<p>hello world</p>"}
+                )
+        comment_events = [c for c in mock_dispatch.call_args_list if c.args[0] == "comment.created"]
         assert len(comment_events) == 1
-        assert comment_events[0].args[2] == [
-            f"issue:{env['issue'].id}", f"project:{env['proj'].id}"]
+        assert comment_events[0].args[2] == [f"issue:{env['issue'].id}", f"project:{env['proj'].id}"]
         assert comment_events[0].args[1]["comment_id"] == str(comment.id)
         assert comment_events[0].args[1]["actor_id"] == str(env["owner"].id)
         assert callbacks  # on_commit 确实注册且已执行
@@ -684,15 +854,16 @@ class TestMountPoints:
         from plane.db.services.notify import fanout_comment
 
         comment = IssueComment.objects.create(
-            issue=env["issue"], actor=env["owner"], comment_html="<p>@view</p>",
-            created_by=env["owner"])
+            issue=env["issue"], actor=env["owner"], comment_html="<p>@view</p>", created_by=env["owner"]
+        )
         with patch.object(event_publisher, "dispatch_event") as mock_dispatch:
-            fanout_comment(comment_id=str(comment.id),
-                           issue_id=str(env["issue"].id),
-                           actor=env["owner"],
-                           mention_ids={str(env["viewer"].id)})
-        notif_events = [c for c in mock_dispatch.call_args_list
-                        if c.args[0] == "notification.created"]
+            fanout_comment(
+                comment_id=str(comment.id),
+                issue_id=str(env["issue"].id),
+                actor=env["owner"],
+                mention_ids={str(env["viewer"].id)},
+            )
+        notif_events = [c for c in mock_dispatch.call_args_list if c.args[0] == "notification.created"]
         assert len(notif_events) >= 1
         for call in notif_events:
             room = call.args[2][0]

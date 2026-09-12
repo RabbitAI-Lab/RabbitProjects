@@ -6,6 +6,7 @@ Sprint-2 起：pytest 专项直连 dev PG（settings/test.py 已把 TEST.NAME �
 由 ``django_db``（TestCase 事务回滚）保证零残留。
 禁止 TransactionTestCase：其 flush 会清空 dev 库（真提交语义走 sprint-2-flow.py）。
 """
+
 from __future__ import annotations
 
 import pytest

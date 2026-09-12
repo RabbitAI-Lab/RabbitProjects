@@ -6,15 +6,14 @@ import base64
 import datetime as dt
 import hashlib
 import json
-import os
 
 import pytest
 from django.core.cache import cache
 from rest_framework.test import APIClient
 
-from plane.db.models import Project, User, Workspace, WorkspaceMember
+from plane.db.models import User, Workspace, WorkspaceMember
 from plane.db.models.roles import WorkspaceRole
-from plane.license import GRACE_READWRITE, LicenseStatus, _verify, verify_license
+from plane.license import GRACE_READWRITE, LicenseStatus, _verify
 
 pytestmark = pytest.mark.django_db
 

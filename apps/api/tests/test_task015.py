@@ -94,7 +94,7 @@ def test_snapshot_and_compare_diff_types(env):
     # 变更：i2 延期 3 天；i3 软删；新增 i4；i1 换人（assignee_changed）
     i2.target_date = dt.date(2026, 9, 21)
     i2.save(update_fields=["target_date"])
-    i3.deleted_at = dt.datetime.now(dt.timezone.utc)
+    i3.deleted_at = dt.datetime.now(dt.UTC)
     i3.save(update_fields=["deleted_at"])
     _mk_issue(env, 4, "新增任务")
     from plane.db.models import IssueAssignee

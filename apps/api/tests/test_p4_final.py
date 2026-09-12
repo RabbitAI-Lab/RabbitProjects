@@ -12,14 +12,13 @@ from plane.app.views.p4_final import route_push, wf_timeout_sweep
 from plane.db.models import (
     Issue,
     Project,
-    ProjectMember,
     State,
     User,
     WorkLogSummary,
     Workspace,
     WorkspaceMember,
 )
-from plane.db.models.roles import ProjectRole, WorkspaceRole
+from plane.db.models.roles import WorkspaceRole
 
 pytestmark = pytest.mark.django_db
 
@@ -53,20 +52,20 @@ def test_global_board_lanes_and_visibility(env):
     Issue.objects.create(project=env["proj"], name="t2", sequence_id=2, state=s_done, created_by=env["owner"])
     r = _c(env["owner"]).get(f"/api/v1/workspaces/{env['ws'].slug}/global-board/")
     assert r.status_code == 200
-    lanes = {l["key"]: l["count"] for l in r.json()["data"]["lanes"]}
+    lanes = {lane["key"]: lane["count"] for lane in r.json()["data"]["lanes"]}
     assert lanes["unstarted"] == 1 and lanes["completed"] == 1  # UT-01
     # UT-02 不可见项目不进聚合：WS_MEMBER 且无项目成员行 → accessible_by
     # 项目集为空（AUTH-006 行级矩阵口径）——聚合为 0
     stranger = User.objects.create_user(email="pf-str@rabbit.dev", password="Rabbit123!")
     WorkspaceMember.objects.create(workspace=env["ws"], member=stranger, role=WorkspaceRole.MEMBER, created_by=stranger)
     r2 = _c(stranger).get(f"/api/v1/workspaces/{env['ws'].slug}/global-board/")
-    lanes2 = {l["key"]: l["count"] for l in r2.json()["data"]["lanes"]}
+    lanes2 = {lane["key"]: lane["count"] for lane in r2.json()["data"]["lanes"]}
     assert sum(lanes2.values()) == 0  # 行级隔离生效
     # WS_ADMIN+ 隐式可见全项目（rbac §7.4）
     admin = User.objects.create_user(email="pf-adm@rabbit.dev", password="Rabbit123!", display_name="管")
     WorkspaceMember.objects.create(workspace=env["ws"], member=admin, role=WorkspaceRole.ADMIN, created_by=admin)
     r3 = _c(admin).get(f"/api/v1/workspaces/{env['ws'].slug}/global-board/")
-    lanes3 = {l["key"]: l["count"] for l in r3.json()["data"]["lanes"]}
+    lanes3 = {lane["key"]: lane["count"] for lane in r3.json()["data"]["lanes"]}
     assert lanes3["unstarted"] + lanes3["completed"] == 2
 
 

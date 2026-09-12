@@ -30,11 +30,6 @@ def check_archive_compliance(workspace) -> dict:
     )[:_BLOCKING_LIST_LIMIT]
     for issue in open_issues:
         blocking.append({"kind": "open_issue", "issue": str(issue.id), "name": issue.name})
-    from plane.db.models import Issue as _I
-
-    blocking_count = _I.objects.filter(
-        project__workspace=workspace, deleted_at__isnull=True, completed_at__isnull=True
-    ).count()
     for hold in LegalHold.objects.filter(asset__workspace=workspace, released_at__isnull=True)[:10]:
         blocking.append({"kind": "legal_hold", "hold": str(hold.id), "reason": hold.reason})
 

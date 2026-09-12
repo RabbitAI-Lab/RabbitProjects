@@ -4,6 +4,7 @@
   BR-01 ~ BR-14 业务规则（批量邀请分拣 / 接受原子翻转 / 移除级联 / 层级 + 末位保护 / 所有权转让）。
   业务规则全部集中在本 Service；view 层只做参数解析与权限接线（INFRA-003 收口原则）。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -45,17 +46,13 @@ class MemberService:
     @staticmethod
     def get_membership(user, workspace) -> WorkspaceMember | None:
         """取用户在指定工作空间的 active 成员行。"""
-        return (
-            WorkspaceMember.objects
-            .filter(workspace=workspace, member=user, is_active=True, deleted_at__isnull=True)
-            .first()
-        )
+        return WorkspaceMember.objects.filter(
+            workspace=workspace, member=user, is_active=True, deleted_at__isnull=True
+        ).first()
 
     # ────────── 邀请（§4.3.1） ──────────
 
-    def invite_members(
-        self, *, workspace, actor, emails: list[str], role: int = WorkspaceRole.MEMBER
-    ) -> list[dict]:
+    def invite_members(self, *, workspace, actor, emails: list[str], role: int = WorkspaceRole.MEMBER) -> list[dict]:
         """批量邀请：一次取数、内存分拣、逐条独立落库。
 
         返回逐条结果（added / invited / skipped / failed）。
@@ -65,8 +62,7 @@ class MemberService:
             raise AppException(
                 "VALIDATION_ERROR",
                 message="邀请角色仅支持成员或管理员",
-                details=[{"field": "role", "code": "NOT_A_CHOICE",
-                          "message": "邀请角色仅支持成员或管理员"}],
+                details=[{"field": "role", "code": "NOT_A_CHOICE", "message": "邀请角色仅支持成员或管理员"}],
             )
 
         # 归一化 + 请求内去重（保留首现顺序）
@@ -96,13 +92,16 @@ class MemberService:
         pending_invites: dict[str, WorkspaceMemberInvite] = {
             inv.email: inv
             for inv in WorkspaceMemberInvite.objects.filter(
-                workspace=workspace, status=WorkspaceMemberInvite.Status.PENDING,
+                workspace=workspace,
+                status=WorkspaceMemberInvite.Status.PENDING,
             )
         }
 
         # 当前 active 成员数 + 名额剩余
         active_count = WorkspaceMember.objects.filter(
-            workspace=workspace, is_active=True, deleted_at__isnull=True,
+            workspace=workspace,
+            is_active=True,
+            deleted_at__isnull=True,
         ).count()
         remaining_seats = MAX_WORKSPACE_MEMBERS - active_count
 
@@ -116,33 +115,51 @@ class MemberService:
             if registered:
                 # 已注册 → 直加或复活软删行
                 if remaining_seats <= 0:
-                    results.append({
-                        "email": email, "status": "failed", "reason": "member_limit",
-                        "message": f"已达标准版成员上限（{MAX_WORKSPACE_MEMBERS}）",
-                    })
+                    results.append(
+                        {
+                            "email": email,
+                            "status": "failed",
+                            "reason": "member_limit",
+                            "message": f"已达标准版成员上限（{MAX_WORKSPACE_MEMBERS}）",
+                        }
+                    )
                     continue
                 user_id = self._get_user_id(email)
                 member, revived = self._add_or_reactivate(
-                    workspace=workspace, user_id=user_id, role=role, actor=actor,
+                    workspace=workspace,
+                    user_id=user_id,
+                    role=role,
+                    actor=actor,
                 )
                 remaining_seats -= 1
-                results.append({
-                    "email": email, "status": "added",
-                    "member_id": str(member.id), "role": role, "revived": revived,
-                })
+                results.append(
+                    {
+                        "email": email,
+                        "status": "added",
+                        "member_id": str(member.id),
+                        "role": role,
+                        "revived": revived,
+                    }
+                )
             else:
                 # 未注册 → token 邀请（或顺延既有 pending）
                 invite, token, refreshed = self._upsert_invite(
-                    workspace=workspace, actor=actor, email=email, role=role,
+                    workspace=workspace,
+                    actor=actor,
+                    email=email,
+                    role=role,
                     existing=pending_invites.get(email),
                 )
-                results.append({
-                    "email": email, "status": "invited",
-                    "invite_id": str(invite.id),
-                    "expires_at": invite.expires_at.isoformat(),
-                    "refreshed": refreshed,
-                    "_token_plain": token,  # 内部传递：用于降级回显；序列化时清除
-                })
+                results.append(
+                    {
+                        "email": email,
+                        "status": "invited",
+                        "invite_id": str(invite.id),
+                        "expires_at": invite.expires_at.isoformat(),
+                        "refreshed": refreshed,
+                        "_token_plain": token,  # 内部传递：用于降级回显；序列化时清除
+                    }
+                )
         return results
 
     @staticmethod
@@ -150,8 +167,7 @@ class MemberService:
     def _add_or_reactivate(*, workspace, user_id, role, actor):
         """已注册非成员 → 直加或复活软删行（UPDATE 而非 INSERT，§2.3 复活语义）。"""
         soft_deleted = (
-            WorkspaceMember.all_objects
-            .select_for_update()
+            WorkspaceMember.all_objects.select_for_update()
             .filter(workspace=workspace, member_id=user_id, deleted_at__isnull=False)
             .first()
         )
@@ -161,20 +177,28 @@ class MemberService:
             soft_deleted.role = role
             soft_deleted.updated_at = timezone.now()
             soft_deleted.updated_by = actor
-            soft_deleted.save(update_fields=[
-                "deleted_at", "is_active", "role", "updated_at", "updated_by",
-            ])
+            soft_deleted.save(
+                update_fields=[
+                    "deleted_at",
+                    "is_active",
+                    "role",
+                    "updated_at",
+                    "updated_by",
+                ]
+            )
             member, revived = soft_deleted, True
         else:
             member = WorkspaceMember.objects.create(
-                workspace=workspace, member_id=user_id, role=role,
-                is_active=True, created_by=actor, updated_by=actor,
+                workspace=workspace,
+                member_id=user_id,
+                role=role,
+                is_active=True,
+                created_by=actor,
+                updated_by=actor,
             )
             revived = False
 
-        transaction.on_commit(
-            lambda m=member: _notify_member_added(m, actor)
-        )
+        transaction.on_commit(lambda m=member: _notify_member_added(m, actor))
         return member, revived
 
     @staticmethod
@@ -192,10 +216,14 @@ class MemberService:
 
         token, token_hash = WorkspaceMemberInvite.issue_token()
         invite = WorkspaceMemberInvite.objects.create(
-            workspace=workspace, email=email, role=role,
+            workspace=workspace,
+            email=email,
+            role=role,
             token_hash=token_hash,
             expires_at=timezone.now() + timedelta(days=WorkspaceMemberInvite.INVITE_TTL_DAYS),
-            invited_by=actor, created_by=actor, updated_by=actor,
+            invited_by=actor,
+            created_by=actor,
+            updated_by=actor,
         )
         return invite, token, False
 
@@ -205,12 +233,7 @@ class MemberService:
     def accept_invite(self, *, token: str, actor: User) -> WorkspaceMember:
         """接受邀请：哈希检索 + 邮箱绑定校验 + 原子状态翻转 + 成员落库。"""
         token_hash = hashlib.sha256(token.encode()).hexdigest()
-        invite = (
-            WorkspaceMemberInvite.objects
-            .select_for_update()
-            .filter(token_hash=token_hash)
-            .first()
-        )
+        invite = WorkspaceMemberInvite.objects.select_for_update().filter(token_hash=token_hash).first()
         if invite is None or invite.status != WorkspaceMemberInvite.Status.PENDING:
             raise AppException(
                 "VALIDATION_ERROR",
@@ -237,12 +260,7 @@ class MemberService:
         跳过 token 校验（注册钩子路径不需要 token）。
         §2.8 软限二次校验：仅对「消耗名额」路径生效；早期 active 成员兜底分支不消耗名额。
         """
-        existing = (
-            WorkspaceMember.objects
-            .select_for_update()
-            .filter(workspace=invite.workspace, member=actor)
-            .first()
-        )
+        existing = WorkspaceMember.objects.select_for_update().filter(workspace=invite.workspace, member=actor).first()
         if existing is not None and existing.deleted_at is None and existing.is_active:
             # 已是 active 成员（兜底）→ 标记邀请 accepted 后直接返回
             invite.status = WorkspaceMemberInvite.Status.ACCEPTED
@@ -253,13 +271,21 @@ class MemberService:
 
         # §2.8 软限二次校验（仅对复活 / 新建两条「消耗名额」路径生效）
         active_count = WorkspaceMember.objects.filter(
-            workspace=invite.workspace, is_active=True, deleted_at__isnull=True,
+            workspace=invite.workspace,
+            is_active=True,
+            deleted_at__isnull=True,
         ).count()
         if active_count + 1 > MAX_WORKSPACE_MEMBERS:
             raise AppException(
                 "RESOURCE_LIMIT_EXCEEDED",
                 message=f"工作空间已达标准版成员上限（{MAX_WORKSPACE_MEMBERS}），无法接受该邀请",
             )
+
+        # AUTH-012（P4）租户层成员配额（ADR-0032#6）：注册钩子自动接受路径与
+        # InvitationAcceptView 显式路径同口径（门控/未治理/宽限期内置跳过）
+        from plane.governance.enforcement import check_member_quota
+
+        check_member_quota(invite.workspace)
 
         if existing is not None and existing.deleted_at is not None:
             # 复活软删行（裸 unique_together 不允许 INSERT 新行，§2.3）
@@ -268,14 +294,22 @@ class MemberService:
             existing.role = invite.role
             existing.updated_at = timezone.now()
             existing.updated_by = invite.invited_by or actor
-            existing.save(update_fields=[
-                "deleted_at", "is_active", "role", "updated_at", "updated_by",
-            ])
+            existing.save(
+                update_fields=[
+                    "deleted_at",
+                    "is_active",
+                    "role",
+                    "updated_at",
+                    "updated_by",
+                ]
+            )
             member = existing
         else:
             member = WorkspaceMember.objects.create(
-                workspace=invite.workspace, member=actor,
-                role=invite.role, is_active=True,
+                workspace=invite.workspace,
+                member=actor,
+                role=invite.role,
+                is_active=True,
                 created_by=invite.invited_by or actor,
                 updated_by=invite.invited_by or actor,
             )
@@ -296,11 +330,9 @@ class MemberService:
         邮箱在注册时已验证（AUTH-001），故跳过 BR-04 的登录邮箱比对。
         """
         members: list[WorkspaceMember] = []
-        for invite in (
-            WorkspaceMemberInvite.objects
-            .filter(email=user.email.lower(), status=WorkspaceMemberInvite.Status.PENDING)
-            .select_for_update()
-        ):
+        for invite in WorkspaceMemberInvite.objects.filter(
+            email=user.email.lower(), status=WorkspaceMemberInvite.Status.PENDING
+        ).select_for_update():
             member = MemberService._do_accept(invite=invite, actor=user)
             members.append(member)
         return members
@@ -317,13 +349,13 @@ class MemberService:
         membership.save(update_fields=["deleted_at", "is_active", "updated_by", "updated_at"])
         # 级联：ProjectMember.workspace 冗余列使之为单表 UPDATE
         ProjectMember.objects.filter(
-            workspace=workspace, member=membership.member, deleted_at__isnull=True,
+            workspace=workspace,
+            member=membership.member,
+            deleted_at__isnull=True,
         ).update(deleted_at=timezone.now(), updated_at=timezone.now())
         # BR-12（TASK-007 §4.3.3，TEAM-002 同口径）：移除即失权 —— 同事务物理删除
         # 该成员在本工作空间全部项目的 IssueAssignee 行（原「保留指派」口径已回改）
-        purge_member_assignments(
-            workspace_id=workspace.id, member_id=membership.member_id, actor=actor
-        )
+        purge_member_assignments(workspace_id=workspace.id, member_id=membership.member_id, actor=actor)
 
     @transaction.atomic
     def remove_member(self, *, workspace, member: WorkspaceMember, actor) -> None:
@@ -333,22 +365,26 @@ class MemberService:
             raise AppException(
                 "VALIDATION_ERROR",
                 message="不能移除自己，请使用退出团队",
-                details=[{"field": "member_id", "code": "INVALID",
-                          "message": "不能移除自己，请使用退出团队"}],
+                details=[{"field": "member_id", "code": "INVALID", "message": "不能移除自己，请使用退出团队"}],
             )
         operator_membership = self.get_membership(actor, workspace)
         if operator_membership is None:
             raise AppException("PERM_NOT_WORKSPACE_MEMBER", message="你不是该工作空间成员")
         # rbac §7.1：层级保护
         assert_can_manage_member(
-            operator_role=operator_membership.role, target_role=member.role,
+            operator_role=operator_membership.role,
+            target_role=member.role,
         )
 
         self._soft_delete_with_cascade(workspace=workspace, membership=member, actor=actor)
         transaction.on_commit(
-            lambda: _notify_member_event(member.member_id, "workspace.member.removed",
-                                         workspace=workspace, actor=actor,
-                                         actor_display=actor.display_name)
+            lambda: _notify_member_event(
+                member.member_id,
+                "workspace.member.removed",
+                workspace=workspace,
+                actor=actor,
+                actor_display=actor.display_name,
+            )
         )
 
     @transaction.atomic
@@ -359,7 +395,9 @@ class MemberService:
         if membership.role == WorkspaceRole.OWNER:
             raise AppException("RESOURCE_STATE_INVALID", message="所有者不能退出团队，请先转让所有权")
         active_count = WorkspaceMember.objects.filter(
-            workspace=workspace, is_active=True, deleted_at__isnull=True,
+            workspace=workspace,
+            is_active=True,
+            deleted_at__isnull=True,
         ).count()
         if active_count <= 1:
             raise AppException("RESOURCE_STATE_INVALID", message="团队仅剩你一名成员，无法退出")
@@ -367,9 +405,12 @@ class MemberService:
         self._soft_delete_with_cascade(workspace=workspace, membership=membership, actor=actor)
         transaction.on_commit(
             lambda: _notify_member_event(
-                actor.id, "workspace.member.removed",
-                workspace=workspace, actor=actor,
-                actor_display=actor.display_name, self_initiated=True,
+                actor.id,
+                "workspace.member.removed",
+                workspace=workspace,
+                actor=actor,
+                actor_display=actor.display_name,
+                self_initiated=True,
             )
         )
 
@@ -381,8 +422,7 @@ class MemberService:
             raise AppException(
                 "VALIDATION_ERROR",
                 message="所有者角色仅能通过转让变更",
-                details=[{"field": "role", "code": "NOT_A_CHOICE",
-                          "message": "所有者角色仅能通过转让变更"}],
+                details=[{"field": "role", "code": "NOT_A_CHOICE", "message": "所有者角色仅能通过转让变更"}],
             )
         if member.member_id == actor.id:
             raise AppException(
@@ -394,8 +434,7 @@ class MemberService:
             raise AppException(
                 "VALIDATION_ERROR",
                 message="所有者仅能通过转让所有权产生",
-                details=[{"field": "role", "code": "NOT_A_CHOICE",
-                          "message": "所有者仅能通过转让所有权产生"}],
+                details=[{"field": "role", "code": "NOT_A_CHOICE", "message": "所有者仅能通过转让所有权产生"}],
             )
         if new_role not in (WorkspaceRole.MEMBER, WorkspaceRole.ADMIN):
             raise AppException(
@@ -410,7 +449,9 @@ class MemberService:
         operator_role = operator_membership.role
         # rbac §7.1：层级保护（双向：被改角色 < 操作者 ∧ 新角色 < 操作者）
         assert_can_manage_member(
-            operator_role=operator_role, target_role=member.role, new_role=new_role,
+            operator_role=operator_role,
+            target_role=member.role,
+            new_role=new_role,
         )
 
         old_role = member.role
@@ -420,36 +461,36 @@ class MemberService:
 
         transaction.on_commit(
             lambda: _notify_member_event(
-                member.member_id, "workspace.member.role_changed",
-                workspace=workspace, actor=actor, actor_display=actor.display_name,
-                old_role=old_role, new_role=new_role,
+                member.member_id,
+                "workspace.member.role_changed",
+                workspace=workspace,
+                actor=actor,
+                actor_display=actor.display_name,
+                old_role=old_role,
+                new_role=new_role,
             )
         )
         return member
 
     @transaction.atomic
-    def transfer_ownership(self, *, workspace, target: WorkspaceMember, actor,
-                            confirm_name: str) -> dict:
+    def transfer_ownership(self, *, workspace, target: WorkspaceMember, actor, confirm_name: str) -> dict:
         if confirm_name != workspace.name:
             raise AppException(
                 "VALIDATION_ERROR",
                 message="输入的团队名称不匹配",
-                details=[{"field": "confirm_name", "code": "INVALID",
-                          "message": "输入的团队名称不匹配"}],
+                details=[{"field": "confirm_name", "code": "INVALID", "message": "输入的团队名称不匹配"}],
             )
         if target.role != WorkspaceRole.ADMIN or not target.is_active:
             raise AppException(
                 "VALIDATION_ERROR",
                 message="转让目标必须是在职管理员",
-                details=[{"field": "new_owner_member_id", "code": "INVALID",
-                          "message": "转让目标必须是在职管理员"}],
+                details=[{"field": "new_owner_member_id", "code": "INVALID", "message": "转让目标必须是在职管理员"}],
             )
         if target.member_id == actor.id:
             raise AppException(
                 "VALIDATION_ERROR",
                 message="不能转让给自己",
-                details=[{"field": "new_owner_member_id", "code": "INVALID",
-                          "message": "不能转让给自己"}],
+                details=[{"field": "new_owner_member_id", "code": "INVALID", "message": "不能转让给自己"}],
             )
 
         current = self.get_membership(actor, workspace)
@@ -458,9 +499,7 @@ class MemberService:
 
         # 固定 id 序加锁防死锁；两行同锁保证「恰一 OWNER」不变量无真空窗口
         rows = list(
-            WorkspaceMember.objects.select_for_update()
-            .filter(pk__in=sorted([target.pk, current.pk]))
-            .order_by("pk")
+            WorkspaceMember.objects.select_for_update().filter(pk__in=sorted([target.pk, current.pk])).order_by("pk")
         )
         if len(rows) != 2 or {r.role for r in rows} != {WorkspaceRole.OWNER, WorkspaceRole.ADMIN}:
             raise AppException("RESOURCE_CONFLICT", message="成员状态已变化，请刷新后重试")
@@ -477,17 +516,25 @@ class MemberService:
 
         transaction.on_commit(
             lambda: _notify_member_event(
-                target.member_id, "workspace.member.role_changed",
-                workspace=workspace, actor=actor, actor_display=actor.display_name,
-                old_role=WorkspaceRole.ADMIN, new_role=WorkspaceRole.OWNER,
+                target.member_id,
+                "workspace.member.role_changed",
+                workspace=workspace,
+                actor=actor,
+                actor_display=actor.display_name,
+                old_role=WorkspaceRole.ADMIN,
+                new_role=WorkspaceRole.OWNER,
                 ownership_transferred=True,
             )
         )
         transaction.on_commit(
             lambda: _notify_member_event(
-                actor.id, "workspace.member.role_changed",
-                workspace=workspace, actor=actor, actor_display=actor.display_name,
-                old_role=WorkspaceRole.OWNER, new_role=WorkspaceRole.ADMIN,
+                actor.id,
+                "workspace.member.role_changed",
+                workspace=workspace,
+                actor=actor,
+                actor_display=actor.display_name,
+                old_role=WorkspaceRole.OWNER,
+                new_role=WorkspaceRole.ADMIN,
                 ownership_transferred=True,
             )
         )
@@ -506,12 +553,7 @@ class MemberService:
     @transaction.atomic
     def revoke_invite(*, workspace, invite_id, actor) -> bool:
         """撤销 pending 邀请；幂等：已 revoked 视为成功。"""
-        invite = (
-            WorkspaceMemberInvite.objects
-            .select_for_update()
-            .filter(id=invite_id, workspace=workspace)
-            .first()
-        )
+        invite = WorkspaceMemberInvite.objects.select_for_update().filter(id=invite_id, workspace=workspace).first()
         if invite is None:
             return False
         if invite.status == WorkspaceMemberInvite.Status.PENDING:
@@ -523,6 +565,7 @@ class MemberService:
 
 # ────────── 通知投递（on_commit 钩子内调用） ──────────
 
+
 def _safe_delay(task, *args, **kwargs):
     """业务层投递通知的兜底 —— broker 不可用时静默失败。
 
@@ -531,9 +574,8 @@ def _safe_delay(task, *args, **kwargs):
     """
     try:
         task.delay(*args, **kwargs)
-    except Exception as exc:                              # noqa: BLE001
-        logger.warning("notify.delivery_failed task=%s exc=%s",
-                       getattr(task, "name", task), exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("notify.delivery_failed task=%s exc=%s", getattr(task, "name", task), exc)
 
 
 def _notify_member_added(member: WorkspaceMember, actor) -> None:
@@ -553,8 +595,7 @@ def _notify_member_added(member: WorkspaceMember, actor) -> None:
     )
 
 
-def _notify_member_event(receiver_id, event: str, *, workspace, actor,
-                         actor_display: str, **extra) -> None:
+def _notify_member_event(receiver_id, event: str, *, workspace, actor, actor_display: str, **extra) -> None:
     from plane.bgtasks.notifications import send_workspace_notification
 
     context = {
@@ -565,5 +606,7 @@ def _notify_member_event(receiver_id, event: str, *, workspace, actor,
     context.update(extra)
     _safe_delay(
         send_workspace_notification,
-        receiver_id=str(receiver_id), event=event, context=context,
+        receiver_id=str(receiver_id),
+        event=event,
+        context=context,
     )

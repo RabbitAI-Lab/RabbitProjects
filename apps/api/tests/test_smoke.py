@@ -3,6 +3,7 @@
 真正的接口/行为验证在 tests/jmeter/sprint-{0,1}-flow.py（CI gate），此处只守
 「包能导入 + 关键常量不漂移」。
 """
+
 import django
 
 django.setup()

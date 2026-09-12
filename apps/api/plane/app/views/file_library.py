@@ -21,6 +21,7 @@
 彻底删除仅 PROJ_ADMIN 收紧）；目录=folder.manage；可见性=file.permission.manage。
 项目归档只读（BR-14）：写操作 403 PERM_PROJECT_ARCHIVED。
 """
+
 from __future__ import annotations
 
 import base64
@@ -67,9 +68,7 @@ def _require_not_archived(project) -> None:
 
 
 def _get_folder(*, project, folder_id) -> FileFolder:
-    folder = FileFolder.objects.filter(
-        pk=folder_id, project=project, deleted_at__isnull=True
-    ).first()
+    folder = FileFolder.objects.filter(pk=folder_id, project=project, deleted_at__isnull=True).first()
     if folder is None:
         raise NotFound("RESOURCE_NOT_FOUND")
     return folder
@@ -94,7 +93,7 @@ def _decode_cursor(raw: str | None) -> int:
         return 0
     try:
         return max(int(base64.b64decode(raw).decode().split(":")[1]), 0)
-    except Exception:                                            # noqa: BLE001
+    except Exception:  # noqa: BLE001
         raise AppException("VALIDATION_INVALID_CURSOR") from None
 
 
@@ -154,17 +153,13 @@ class FolderListCreateView(APIView):
     """GET/POST …/projects/{id}/folders/ —— 目录树（可见性剪枝）/ 新建目录。"""
 
     def get(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user
-        )
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         _require_role(project, _FILE_READ, permission_key="file.read")
         return success_response(svc.folder_tree(project=project, user=request.user))
 
     def post(self, request, *args, **kwargs):
         """新建目录（folder.manage，BR-01/UT-20）。"""
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user
-        )
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         _require_role(project, _FOLDER_MANAGE, permission_key="folder.manage")
         _require_not_archived(project)
         s = FolderCreateSerializer(data=request.data)
@@ -183,8 +178,7 @@ class FolderListCreateView(APIView):
             status_code=status.HTTP_201_CREATED,
             headers={
                 "Location": request.build_absolute_uri(
-                    f"/api/v1/workspaces/{kwargs['slug']}/projects/{project.id}/"
-                    f"folders/{folder.id}/"
+                    f"/api/v1/workspaces/{kwargs['slug']}/projects/{project.id}/folders/{folder.id}/"
                 )
             },
         )
@@ -194,9 +188,7 @@ class FolderDetailView(APIView):
     """PATCH …/folders/{id}/ —— 改名/移动=folder.manage；可见性=file.permission.manage。"""
 
     def patch(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user
-        )
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         folder = _get_folder(project=project, folder_id=kwargs["folder_id"])
         s = FolderUpdateSerializer(data=request.data)
         s.is_valid(raise_exception=True)
@@ -224,7 +216,8 @@ class FolderDetailView(APIView):
                     visibility=data.get("visibility", folder.visibility),
                     allowed_members=(
                         [str(m) for m in data["allowed_members"]]
-                        if "allowed_members" in data else list(folder.allowed_members or [])
+                        if "allowed_members" in data
+                        else list(folder.allowed_members or [])
                     ),
                 )
         except Exception as exc:  # noqa: BLE001 —— 收窄映射后重抛
@@ -232,12 +225,9 @@ class FolderDetailView(APIView):
         folder.refresh_from_db()
         return success_response(_folder_row(folder))
 
-
     def delete(self, request, *args, **kwargs):
         """DELETE …/folders/{id}/ —— 整树软删（BR-05），回传文件数（UT-14）。"""
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user
-        )
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         folder = _get_folder(project=project, folder_id=kwargs["folder_id"])
         _require_role(project, _FOLDER_MANAGE, permission_key="folder.manage")
         _require_not_archived(project)
@@ -250,9 +240,7 @@ class FolderFilesListView(APIView):
     """GET …/folders/{id}/files/ —— 目录文件列表（§4.2.1 形状 + 逐文件可见性过滤）。"""
 
     def get(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user
-        )
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         _require_role(project, _FILE_READ, permission_key="file.read")
         from plane.db.services.file_permission import assert_can_view
 
@@ -276,38 +264,41 @@ class FolderFilePresignView(APIView):
     """POST …/folders/{id}/files/presign/ —— 上传预签名（三步复用，§4.2.2/BR-03）。"""
 
     def post(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user
-        )
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         _require_role(project, _FILE_UPLOAD, permission_key="file.upload")
         _require_not_archived(project)
         folder = _get_folder(project=project, folder_id=kwargs["folder_id"])
         s = FilePresignSerializer(data=request.data)
         s.is_valid(raise_exception=True)
+        # AUTH-012 §4.5 第 1 强制点：租户层存储硬上限（WS 层判定在 presign_file
+        # 事务内——两层任一拒绝均不落预留）
+        from plane.governance.enforcement import check_storage_quota
+
+        check_storage_quota(project.workspace, int(s.validated_data["file_size"]))
         try:
-            data = svc.presign_file(
-                folder=folder, payload=s.validated_data, actor=request.user
-            )
+            data = svc.presign_file(folder=folder, payload=s.validated_data, actor=request.user)
         except svc.QuotaExceededError as exc:
             # §2.5「配额耗尽」：409 QUOTA_STORAGE_EXCEEDED / details 子码 QUOTA
             raise AppException(
                 "QUOTA_STORAGE_EXCEEDED",
                 message="工作空间存储空间不足",
-                details=[{
-                    "field": "file_size", "code": "QUOTA",
-                    "message": (
-                        f"已用 {_human(exc.used + exc.pending)} / {_human(exc.quota)}，"
-                        f"本次需 {_human(exc.incoming)}"
-                    ),
-                }],
+                details=[
+                    {
+                        "field": "file_size",
+                        "code": "QUOTA",
+                        "message": (
+                            f"已用 {_human(exc.used + exc.pending)} / {_human(exc.quota)}，"
+                            f"本次需 {_human(exc.incoming)}"
+                        ),
+                    }
+                ],
             ) from exc
         return success_response(
             data,
             status_code=status.HTTP_201_CREATED,
             headers={
                 "Location": request.build_absolute_uri(
-                    f"/api/v1/workspaces/{kwargs['slug']}/projects/{project.id}/"
-                    f"files/{data['asset_id']}/"
+                    f"/api/v1/workspaces/{kwargs['slug']}/projects/{project.id}/files/{data['asset_id']}/"
                 )
             },
         )
@@ -318,9 +309,7 @@ class FileDownloadUrlView(APIView):
     """GET …/files/{asset_id}/download-url/ —— 下载预签名（5 分钟，BR-09 实时校验）。"""
 
     def get(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user
-        )
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         _require_role(project, _FILE_READ, permission_key="file.read")
         asset = _get_library_asset(project=project, asset_id=kwargs["asset_id"])
         data = svc.file_download_url(asset=asset, user=request.user)  # 计数 BR-10
@@ -331,9 +320,7 @@ class FileDetailView(APIView):
     """PATCH …/files/{asset_id}/ —— 重命名/移动/双挂=file.update（R1）；可见性=ADMIN。"""
 
     def patch(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user
-        )
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         asset = _get_library_asset(project=project, asset_id=kwargs["asset_id"])
         s = FileUpdateSerializer(data=request.data)
         s.is_valid(raise_exception=True)
@@ -343,10 +330,7 @@ class FileDetailView(APIView):
         if touches_content:
             # R1 受限项（BR-13）：CONTRIBUTOR 仅本人上传；ADMIN 全量（UT-19）
             _require_role(project, _FILE_UPDATE, permission_key="file.update")
-            if (
-                (project.current_user_role or 0) < ProjectRole.ADMIN
-                and asset.uploaded_by_id != request.user.id
-            ):
+            if (project.current_user_role or 0) < ProjectRole.ADMIN and asset.uploaded_by_id != request.user.id:
                 raise AppException(
                     "PERM_DENIED",
                     message="仅本人上传的文件可修改（PROJ_CONTRIBUTOR 受限项）",
@@ -364,33 +348,42 @@ class FileDetailView(APIView):
         from plane.db.services.file_stream import emit_file_activity
 
         if "name" in payload and payload["name"] is not None:
-            transaction.on_commit(lambda: emit_file_activity(
-                project_id=project.id, asset_id=asset.id,
-                actor_id=request.user.id, action="renamed",
-                old_value=old_name, new_value=payload["name"],
-                comment=f"将文件「{old_name}」重命名为「{payload['name']}」"))
+            transaction.on_commit(
+                lambda: emit_file_activity(
+                    project_id=project.id,
+                    asset_id=asset.id,
+                    actor_id=request.user.id,
+                    action="renamed",
+                    old_value=old_name,
+                    new_value=payload["name"],
+                    comment=f"将文件「{old_name}」重命名为「{payload['name']}」",
+                )
+            )
         if "folder_id" in payload:
             new_folder_name = asset.folder.name if asset.folder else None
-            transaction.on_commit(lambda: emit_file_activity(
-                project_id=project.id, asset_id=asset.id,
-                actor_id=request.user.id, action="moved",
-                old_value=old_folder_name or "根目录", new_value=new_folder_name or "根目录",
-                comment=(f"移动文件「{old_name}」到「{new_folder_name}」"
-                         if new_folder_name else f"移动文件「{old_name}」到根目录")))
+            transaction.on_commit(
+                lambda: emit_file_activity(
+                    project_id=project.id,
+                    asset_id=asset.id,
+                    actor_id=request.user.id,
+                    action="moved",
+                    old_value=old_folder_name or "根目录",
+                    new_value=new_folder_name or "根目录",
+                    comment=(
+                        f"移动文件「{old_name}」到「{new_folder_name}」"
+                        if new_folder_name
+                        else f"移动文件「{old_name}」到根目录"
+                    ),
+                )
+            )
         return success_response(svc.file_row(asset, expand_uploaded_by=False))
-
 
     def delete(self, request, *args, **kwargs):
         """DELETE …/files/{asset_id}/ —— 软删进回收站（R1：ADMIN 或上传者）。"""
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user
-        )
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         asset = _get_library_asset(project=project, asset_id=kwargs["asset_id"])
         _require_role(project, _FILE_DELETE, permission_key="file.delete")
-        if (
-            (project.current_user_role or 0) < ProjectRole.ADMIN
-            and asset.uploaded_by_id != request.user.id
-        ):
+        if (project.current_user_role or 0) < ProjectRole.ADMIN and asset.uploaded_by_id != request.user.id:
             raise AppException(
                 "PERM_DENIED",
                 message="仅本人上传的文件可删除（PROJ_CONTRIBUTOR 受限项）",
@@ -401,10 +394,15 @@ class FileDetailView(APIView):
         from plane.db.services.file_stream import emit_file_activity
 
         name = (asset.attributes or {}).get("name", "")
-        transaction.on_commit(lambda: emit_file_activity(
-            project_id=project.id, asset_id=asset.id,
-            actor_id=request.user.id, action="deleted",
-            comment=f"删除了文件「{name}」（已入回收站）"))
+        transaction.on_commit(
+            lambda: emit_file_activity(
+                project_id=project.id,
+                asset_id=asset.id,
+                actor_id=request.user.id,
+                action="deleted",
+                comment=f"删除了文件「{name}」（已入回收站）",
+            )
+        )
         # 204 禁带 body（C1 例外，auth.py 同款）——success_response(None, 204) 会给
         # 无体状态码渲染 32 字节 JSON，keep-alive 下游把残留字节解析成下一响应的
         # 状态行 → 代理层 500/连接错位（e2e 双 context 连续 DELETE 稳定复现）
@@ -415,22 +413,13 @@ class FileRestoreView(APIView):
     """POST …/files/{asset_id}/restore/ —— 回收站还原（BR-07；file.delete 同码）。"""
 
     def post(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user
-        )
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         _require_role(project, _FILE_DELETE, permission_key="file.delete")
-        asset = _get_library_asset(
-            project=project, asset_id=kwargs["asset_id"], include_deleted=True
-        )
+        asset = _get_library_asset(project=project, asset_id=kwargs["asset_id"], include_deleted=True)
         if asset.deleted_at is None:
-            raise AppException(
-                "RESOURCE_STATE_INVALID", message="文件不在回收站中"
-            )
+            raise AppException("RESOURCE_STATE_INVALID", message="文件不在回收站中")
         # R1 同键口径：CONTRIBUTOR 仅可还原本人删除项（与回收站列表过滤一致，BR-13）
-        if (
-            (project.current_user_role or 0) < ProjectRole.ADMIN
-            and asset.uploaded_by_id != request.user.id
-        ):
+        if (project.current_user_role or 0) < ProjectRole.ADMIN and asset.uploaded_by_id != request.user.id:
             raise AppException(
                 "PERM_DENIED",
                 message="仅本人上传的文件可还原（PROJ_CONTRIBUTOR 受限项）",
@@ -441,10 +430,15 @@ class FileRestoreView(APIView):
         from plane.db.services.file_stream import emit_file_activity
 
         name = (asset.attributes or {}).get("name", "")
-        transaction.on_commit(lambda: emit_file_activity(
-            project_id=project.id, asset_id=asset.id,
-            actor_id=request.user.id, action="restored",
-            comment=f"从回收站恢复了文件「{name}」"))
+        transaction.on_commit(
+            lambda: emit_file_activity(
+                project_id=project.id,
+                asset_id=asset.id,
+                actor_id=request.user.id,
+                action="restored",
+                comment=f"从回收站恢复了文件「{name}」",
+            )
+        )
         return success_response(svc.file_row(asset))
 
 
@@ -452,9 +446,7 @@ class FileTrashListView(APIView):
     """GET …/files/trash/ —— 回收站列表（R1 同键过滤：ADMIN 全量 / 本人删除项）。"""
 
     def get(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user
-        )
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         _require_role(project, _FILE_DELETE, permission_key="file.delete")
         params = {
             "ordering": request.query_params.get("ordering") or None,
@@ -469,9 +461,7 @@ class FileStorageView(APIView):
     """GET …/files/storage/ —— 配额用量（§4.2.3）。"""
 
     def get(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user
-        )
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         _require_role(project, _FILE_READ, permission_key="file.read")
         return success_response(svc.workspace_storage_usage(project.workspace_id))
 
@@ -480,12 +470,8 @@ class FilePurgeView(APIView):
     """DELETE …/files/{asset_id}/purge/ —— 彻底删除（BR-06 引用计数；仅 PROJ_ADMIN）。"""
 
     def delete(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user
-        )
-        asset = _get_library_asset(
-            project=project, asset_id=kwargs["asset_id"], include_deleted=True
-        )
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
+        asset = _get_library_asset(project=project, asset_id=kwargs["asset_id"], include_deleted=True)
         # §4.2 #13：file.delete 仅 PROJ_ADMIN 收紧（R1 的「本人」口径不适用彻底删除）
         if (project.current_user_role or 0) < ProjectRole.ADMIN:
             raise AppException(
@@ -502,9 +488,7 @@ class FileCompleteView(APIView):
     幂等；FILE-003 §4.3.4 起成功回调挂版本接线：新名翻转五态 / 同名并入版本链）。"""
 
     def post(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user
-        )
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         _require_role(project, _FILE_UPLOAD, permission_key="file.upload")
         asset = _get_library_asset(project=project, asset_id=kwargs["asset_id"])
         # 校验 actor == 上传人（防 B 拿 A 的 asset_id 完成确认，FILE-001 同款）
@@ -519,10 +503,15 @@ class FileCompleteView(APIView):
         if was_pending and data.get("id") == str(asset.id):
             from plane.db.services.file_stream import emit_file_activity
 
-            transaction.on_commit(lambda: emit_file_activity(
-                project_id=project.id, asset_id=asset.id,
-                actor_id=request.user.id, action="uploaded",
-                comment=f"上传了文件「{data.get('name', '')}」"))
+            transaction.on_commit(
+                lambda: emit_file_activity(
+                    project_id=project.id,
+                    asset_id=asset.id,
+                    actor_id=request.user.id,
+                    action="uploaded",
+                    comment=f"上传了文件「{data.get('name', '')}」",
+                )
+            )
         return success_response(data)
 
 

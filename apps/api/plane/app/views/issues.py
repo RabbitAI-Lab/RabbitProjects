@@ -163,9 +163,11 @@ class IssueListCreateView(ListCreateAPIView):
             .prefetch_related("issue_assignees", "issue_labels")
             # WF-002 §3.5（补口轮）：审批中徽标——Exists 子查询一次注入（详情等
             # 非 list 上下文不经此路径，SerializerMethodField 回落 False）
-            .annotate(_has_pending_approval=Exists(
-                ApprovalInstance.objects.filter(
-                    issue_id=OuterRef("pk"), status=ApprovalInstance.Status.PENDING)))
+            .annotate(
+                _has_pending_approval=Exists(
+                    ApprovalInstance.objects.filter(issue_id=OuterRef("pk"), status=ApprovalInstance.Status.PENDING)
+                )
+            )
         )
 
     def list(self, request, *args, **kwargs):
@@ -176,11 +178,10 @@ class IssueListCreateView(ListCreateAPIView):
         from plane.db.models import CustomFieldDefinition as _CFD3
         from plane.db.services.field_permissions import FieldPermissionService
 
-        _cf_defs = list(_CFD3.objects
-                         .filter(workspace_id=project.workspace_id)
-                         .filter(Q(project=project) | Q(project__isnull=True)))
-        self._list_access = FieldPermissionService().cached_resolve(
-            request, request.user, project, _cf_defs)
+        _cf_defs = list(
+            _CFD3.objects.filter(workspace_id=project.workspace_id).filter(Q(project=project) | Q(project__isnull=True))
+        )
+        self._list_access = FieldPermissionService().cached_resolve(request, request.user, project, _cf_defs)
 
         # ── group_by 维度解析（BOARD-003 §4.2-6：白名单 + 别名归一，非法 → 400）──
         dimension = None
@@ -190,17 +191,14 @@ class IssueListCreateView(ListCreateAPIView):
         sub_dimension = None
         if request.query_params.get("sub_group_by"):
             if not dimension:
-                raise AppException(
-                    "VALIDATION_INVALID_PARAM",
-                    message="sub_group_by 需与 group_by 搭配使用")
-            sub_dimension = resolve_dimension(project,
-                                              request.query_params.get("sub_group_by"))
+                raise AppException("VALIDATION_INVALID_PARAM", message="sub_group_by 需与 group_by 搭配使用")
+            sub_dimension = resolve_dimension(project, request.query_params.get("sub_group_by"))
             if sub_dimension == dimension:  # BR-07
                 raise AppException(
                     "VALIDATION_ERROR",
                     message="行分组维度不得与列分组维度相同",
-                    details=[{"field": "sub_group_by", "code": "INVALID",
-                              "message": "行分组维度不得与列分组维度相同"}])
+                    details=[{"field": "sub_group_by", "code": "INVALID", "message": "行分组维度不得与列分组维度相同"}],
+                )
 
         # ── 编译上下文（TASK-011 §4.3：占位符解析与 cf 分派共用）──
         ctx = CompileContext.build(project=project, user=request.user, access_map=self._list_access)
@@ -215,10 +213,7 @@ class IssueListCreateView(ListCreateAPIView):
             view = IssueView.objects.filter(id=raw_vid, project=project, deleted_at__isnull=True).first()
             # 应用面（列表/分组消费）：内置 / 本人 / 共享视图全员可用
             # （BOARD-005 BR-01 放开 shared；personal 他人视图仍存在性隐藏）
-            if view is None or not (
-                view.is_system or view.owner_id == request.user.id
-                or view.access == "shared"
-            ):
+            if view is None or not (view.is_system or view.owner_id == request.user.id or view.access == "shared"):
                 raise NotFound("RESOURCE_NOT_FOUND") from None  # 存在性隐藏（§6-9/BR-11）
             view_tree, degraded = resolve_view(view, project=project, user=request.user)
             view_q = compile_dsl(view_tree, ctx)
@@ -264,20 +259,27 @@ class IssueListCreateView(ListCreateAPIView):
         qs, warning = filterset.apply_order(qs, request.query_params.get("order_by"))
 
         # ── BR-17 结构化 applied 增量（仅 ?filters= 存在时附加——无该参数响应逐字节不变）──
-        applied_extra = self._dsl_applied_extra(
-            ctx, view_tree=view_tree, adhoc_tree=adhoc_tree, view_meta=view_meta
-        )
+        applied_extra = self._dsl_applied_extra(ctx, view_tree=view_tree, adhoc_tree=adhoc_tree, view_meta=view_meta)
 
         # ── group_by 走分组分支（BOARD-002 契约的维度泛化，BOARD-003 §4.2.2）──
         if dimension and sub_dimension:
             return self._matrix_response(
-                request, project, qs, dimension, sub_dimension,
-                view_applied, applied_extra, degraded, view_meta)
+                request, project, qs, dimension, sub_dimension, view_applied, applied_extra, degraded, view_meta
+            )
         if dimension:
             base_unfiltered = self._base_queryset(project, include_archived=include_archived)
             return self._grouped_response(
-                request, project, qs, base_unfiltered, filterset, warning,
-                dimension, view_applied, applied_extra, degraded, view_id_out=view_meta,
+                request,
+                project,
+                qs,
+                base_unfiltered,
+                filterset,
+                warning,
+                dimension,
+                view_applied,
+                applied_extra,
+                degraded,
+                view_id_out=view_meta,
                 count_annotations=annotations,
             )
 
@@ -305,9 +307,7 @@ class IssueListCreateView(ListCreateAPIView):
         }
         if view_tree:
             vecho = resolved_applied(view_tree, ctx)
-            extra["resolved_placeholders"] = {
-                **vecho["resolved_placeholders"], **echo["resolved_placeholders"]
-            }
+            extra["resolved_placeholders"] = {**vecho["resolved_placeholders"], **echo["resolved_placeholders"]}
             extra["conditions_count"] += vecho["conditions_count"]
             extra["groups_count"] += vecho["groups_count"]
         if view_meta:
@@ -341,8 +341,18 @@ class IssueListCreateView(ListCreateAPIView):
         return success_response(_strip_hidden(IssueSerializer(rows, many=True).data, self._list_access), meta=meta)
 
     def _grouped_response(
-        self, request, project, base_qs, base_unfiltered, filterset, warning,
-        dimension, view_applied, applied_extra, degraded, view_id_out,
+        self,
+        request,
+        project,
+        base_qs,
+        base_unfiltered,
+        filterset,
+        warning,
+        dimension,
+        view_applied,
+        applied_extra,
+        degraded,
+        view_id_out,
         count_annotations=None,
     ):
         """分组响应（BOARD-003 §4.2.2，BOARD-002 契约的维度泛化）。
@@ -380,9 +390,7 @@ class IssueListCreateView(ListCreateAPIView):
                     if count_annotations:
                         hydrate = hydrate.annotate(**count_annotations)
                     rows = list(hydrate.order_by(*ordering))
-            next_cursor = (
-                self._encode_cursor(offset + per_group, group_id=key) if offset + per_group < total else None
-            )
+            next_cursor = self._encode_cursor(offset + per_group, group_id=key) if offset + per_group < total else None
             grouped[key] = {
                 "results": _strip_hidden(IssueSerializer(rows, many=True).data, self._list_access),
                 "total_results": total,
@@ -409,8 +417,16 @@ class IssueListCreateView(ListCreateAPIView):
         return success_response(grouped, meta=meta)
 
     def _matrix_response(
-        self, request, project, qs, dimension, sub_dimension,
-        view_applied, applied_extra, degraded, view_id_out,
+        self,
+        request,
+        project,
+        qs,
+        dimension,
+        sub_dimension,
+        view_applied,
+        applied_extra,
+        degraded,
+        view_id_out,
     ):
         """二维泳道矩阵（BOARD-005 §2.3/§4.3）。
 
@@ -437,26 +453,39 @@ class IssueListCreateView(ListCreateAPIView):
                     break
                 for row in rows_def:
                     cell_qs = qs.filter(
-                        group_filter_q(dimension, col["key"]),
-                        group_filter_q(sub_dimension, row["key"]))
+                        group_filter_q(dimension, col["key"]), group_filter_q(sub_dimension, row["key"])
+                    )
                     count = cell_qs.count()
                     sample_ids = []
                     if count:
-                        sample_ids = [str(i) for i in
-                                      cell_qs.order_by("sort_order", "id")
-                                      .values_list("id", flat=True)[:8]]
-                    matrix.append({
-                        "col": col["key"], "row": row["key"],
-                        "count": count, "sample_issue_ids": sample_ids,
-                    })
+                        sample_ids = [
+                            str(i) for i in cell_qs.order_by("sort_order", "id").values_list("id", flat=True)[:8]
+                        ]
+                    matrix.append(
+                        {
+                            "col": col["key"],
+                            "row": row["key"],
+                            "count": count,
+                            "sample_issue_ids": sample_ids,
+                        }
+                    )
         if matrix_degraded:
             # 降级一维（§2.5）：沿用既有分组响应 + meta.degraded
             base_unfiltered = self._base_queryset(project, include_archived=False)
             filterset = IssueFilterSet(request, drop_keys=(), project=project)
             resp = self._grouped_response(
-                request, project, qs, base_unfiltered, filterset, None,
-                dimension, view_applied, applied_extra, degraded,
-                view_id_out=view_id_out)
+                request,
+                project,
+                qs,
+                base_unfiltered,
+                filterset,
+                None,
+                dimension,
+                view_applied,
+                applied_extra,
+                degraded,
+                view_id_out=view_id_out,
+            )
             resp.data["meta"]["degraded"] = {"sub_group_by": matrix_degraded}
             return resp
         meta = {
@@ -472,9 +501,7 @@ class IssueListCreateView(ListCreateAPIView):
             meta["view_id"] = view_id_out["id"]
         if degraded:
             meta["degraded"] = degraded
-        return success_response({"matrix": matrix,
-                                 "columns": meta.pop("columns"),
-                                 "rows": meta.pop("rows")}, meta=meta)
+        return success_response({"matrix": matrix, "columns": meta.pop("columns"), "rows": meta.pop("rows")}, meta=meta)
 
     # ----------------------- 游标与 per_page -----------------------
     def _parse_per_page(self) -> int:
@@ -534,8 +561,7 @@ class IssueListCreateView(ListCreateAPIView):
 
             effective_type_id_early = s.validated_data.get("type_id")
             issue_type_obj = (
-                IssueType.objects.filter(pk=effective_type_id_early).first()
-                if effective_type_id_early else None
+                IssueType.objects.filter(pk=effective_type_id_early).first() if effective_type_id_early else None
             )
             state_id = WorkflowService().resolve_initial_state(project, issue_type_obj).id
 
@@ -567,9 +593,7 @@ class IssueListCreateView(ListCreateAPIView):
             )
             if assignee_ids:
                 # TASK-007：创建首派同样收敛唯一写入口（校验 + 落库 + 通知一体）
-                sync_assignees_full(
-                    issue_id=issue.id, new_ids=assignee_ids, actor_id=request.user.id
-                )
+                sync_assignees_full(issue_id=issue.id, new_ids=assignee_ids, actor_id=request.user.id)
             if label_ids:
                 sync_labels(issue, label_ids, request.user.id)
             transaction.on_commit(
@@ -684,8 +708,7 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
             raise AppException(
                 "RESOURCE_STATE_INVALID",
                 message="该项目已启用工作流，状态变更请走流转端点",
-                details=[{"field": "state_id", "code": "INVALID",
-                          "message": "受控流转：POST …/transitions/"}],
+                details=[{"field": "state_id", "code": "INVALID", "message": "受控流转：POST …/transitions/"}],
             )
 
         # ---- WF-004 §2.3/§4.4：字段锁定拦截（读时派生；PROJ_ADMIN 豁免留痕）----
@@ -704,17 +727,22 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
                     raise AppException(
                         "VALIDATION_ERROR",
                         message=f"字段在状态「{issue.state.name}」中锁定，流转出该状态自动解锁",
-                        details=[{"field": f, "code": "FIELD_LOCKED",
-                                  "message": f"锁定来源：{issue.state.name}"} for f in _hit],
+                        details=[
+                            {"field": f, "code": "FIELD_LOCKED", "message": f"锁定来源：{issue.state.name}"}
+                            for f in _hit
+                        ],
                     )
                 # 管理员强制路径留痕（field="field_locks.force" 单字段特例，WF-004 §2.3）
                 _epoch_lock = _current_epoch()
                 from plane.bgtasks.issue_activity import enqueue_activity
 
                 enqueue_activity(
-                    issue_id=issue.id, actor_id=request.user.id, verb="updated",
+                    issue_id=issue.id,
+                    actor_id=request.user.id,
+                    verb="updated",
                     epoch=_epoch_lock,
-                    before={"field_locks.force": None}, after={"field_locks.force": _hit},
+                    before={"field_locks.force": None},
+                    after={"field_locks.force": _hit},
                     comment=f"管理员强制修改锁定字段：{', '.join(_hit)}",
                 )
 
@@ -727,18 +755,15 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
             from plane.db.models import CustomFieldDefinition
             from plane.db.services.field_permissions import FieldPermissionService
 
-            _cf_defs = list(CustomFieldDefinition.objects
-                             .filter(workspace_id=issue.project.workspace_id)
-                             .filter(Q(applicable_types__contains=[str(issue.issue_type_id)])
-                                     if issue.issue_type_id else Q())
-                             .filter(Q(project=issue.project) | Q(project__isnull=True)))
-            _access = FieldPermissionService().cached_resolve(
-                request, request.user, issue.project, _cf_defs)
-            _dropped = FieldPermissionService.drop_non_writable(
-                dict(data["custom_fields"] or {}), _access)
+            _cf_defs = list(
+                CustomFieldDefinition.objects.filter(workspace_id=issue.project.workspace_id)
+                .filter(Q(applicable_types__contains=[str(issue.issue_type_id)]) if issue.issue_type_id else Q())
+                .filter(Q(project=issue.project) | Q(project__isnull=True))
+            )
+            _access = FieldPermissionService().cached_resolve(request, request.user, issue.project, _cf_defs)
+            _dropped = FieldPermissionService.drop_non_writable(dict(data["custom_fields"] or {}), _access)
             if _dropped:
-                data["custom_fields"] = {k: v for k, v in data["custom_fields"].items()
-                                          if k not in _dropped}
+                data["custom_fields"] = {k: v for k, v in data["custom_fields"].items() if k not in _dropped}
                 request._dropped_fields = _dropped  # meta.warning 透出钩子
 
         epoch = _current_epoch()
@@ -968,6 +993,7 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
             merged_cf = merge_custom_fields(
                 project, issue.issue_type_id, issue.custom_fields or {}, data["custom_fields"]
             )
+            changed_cf_keys = {change["key"] for change in diff_custom_fields(issue.custom_fields, merged_cf)}
             for change in diff_custom_fields(issue.custom_fields, merged_cf):
                 activities.append(
                     {
@@ -978,6 +1004,12 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
                     }
                 )
             issue.custom_fields = merged_cf
+            # TASK-014（P4 R3）§2.4：派生公式失效传播（同步打标 + 异步重算）。
+            # 公式键自身写入经校验层拒绝（BR-01 只读），changed 集恒为手填键。
+            if changed_cf_keys:
+                from plane.formula.derived import invalidate
+
+                invalidate(issue.id, changed_cf_keys)
 
         # ---- 负责人（TASK-007：兼容路径收敛 sync_assignees_full 唯一写入口，
         #      保留原有 assignees 汇总 Activity 行；逐人明细行由 on_commit 任务补写 BR-10）----
@@ -994,9 +1026,7 @@ class IssueDetailView(RetrieveUpdateDestroyAPIView):
                         "comment": "更新了 负责人",
                     }
                 )
-                sync_assignees_full(
-                    issue_id=issue.id, new_ids=new_ids, actor_id=request.user.id
-                )
+                sync_assignees_full(issue_id=issue.id, new_ids=new_ids, actor_id=request.user.id)
 
         with transaction.atomic():
             issue.save()
@@ -1140,9 +1170,9 @@ class IssueSubIssueListCreateView(APIView):
         from plane.db.models import CustomFieldDefinition as _CFD4
         from plane.db.services.field_permissions import FieldPermissionService
 
-        _cf_defs = list(_CFD4.objects
-                        .filter(workspace_id=project.workspace_id)
-                        .filter(Q(project=project) | Q(project__isnull=True)))
+        _cf_defs = list(
+            _CFD4.objects.filter(workspace_id=project.workspace_id).filter(Q(project=project) | Q(project__isnull=True))
+        )
         _access = FieldPermissionService().cached_resolve(request, request.user, project, _cf_defs)
         data = _strip_hidden(IssueSerializer(subs, many=True).data, _access)
         return success_response(
@@ -1210,9 +1240,7 @@ class IssueSubIssueListCreateView(APIView):
             from plane.workflow.services import WorkflowService
 
             sub_type_id = s.validated_data.get("type_id")
-            issue_type_obj = (
-                IssueType.objects.filter(pk=sub_type_id).first() if sub_type_id else None
-            )
+            issue_type_obj = IssueType.objects.filter(pk=sub_type_id).first() if sub_type_id else None
             state_id = WorkflowService().resolve_initial_state(project, issue_type_obj).id
         max_order = Issue.objects.filter(project=project, deleted_at__isnull=True).aggregate(m=Max("sort_order"))["m"]
         epoch = _current_epoch()
@@ -1243,9 +1271,7 @@ class IssueSubIssueListCreateView(APIView):
             )
             if assignee_ids:
                 # TASK-007：子任务创建首派同样收敛唯一写入口
-                sync_assignees_full(
-                    issue_id=sub.id, new_ids=assignee_ids, actor_id=request.user.id
-                )
+                sync_assignees_full(issue_id=sub.id, new_ids=assignee_ids, actor_id=request.user.id)
             if label_ids:
                 sync_labels(sub, label_ids, request.user.id)
             transaction.on_commit(
@@ -1311,12 +1337,11 @@ class IssueActivityListView(APIView):
         if cursor_epoch is not None:
             qs_filter = base.filter(epoch__lt=cursor_epoch)
         epochs = list(
-            qs_filter.order_by("-epoch").values_list("epoch", flat=True)
-            .distinct("epoch")[: self.GROUP_PAGE_SIZE + 1])
+            qs_filter.order_by("-epoch").values_list("epoch", flat=True).distinct("epoch")[: self.GROUP_PAGE_SIZE + 1]
+        )
         has_next = len(epochs) > self.GROUP_PAGE_SIZE
         epochs = epochs[: self.GROUP_PAGE_SIZE]
-        rows = list(
-            base.filter(epoch__in=epochs).order_by("-epoch", "-created_at", "-id"))
+        rows = list(base.filter(epoch__in=epochs).order_by("-epoch", "-created_at", "-id"))
 
         groups, current = [], None
         for r in rows:

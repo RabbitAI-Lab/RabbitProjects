@@ -7,6 +7,7 @@ docstring 偏差 1），故 L2 相关用例以 ``override_settings`` 显式开�
 
 计数隔离：LocMem cache 按用例前后 ``cache.clear()``（坑 18 同纪律）。
 """
+
 from __future__ import annotations
 
 import logging
@@ -53,6 +54,7 @@ def _fake_view(slug: str = "") -> SimpleNamespace:
 
 # ── UT-01/UT-06：用户桶 60/min + 头装配（L2 端到端）───────────────────
 
+
 @override_settings(RATE_LIMIT_ENABLED=True)
 def test_ut01_user_bucket_60_per_min_61st_429(db):
     user = User.objects.create_user(email="rl-u1@rabbit.dev", password="Rabbit123!")
@@ -63,7 +65,7 @@ def test_ut01_user_bucket_60_per_min_61st_429(db):
     assert r61.status_code == 429
     body = r61.json()
     assert body["error"]["code"] == "RATE_LIMIT_EXCEEDED"
-    assert body["error"]["details"][0]["field"] == "retry_after"   # §7.3 模板
+    assert body["error"]["details"][0]["field"] == "retry_after"  # §7.3 模板
     wait = int(r61.headers["Retry-After"])
     assert wait >= 1
     assert r61.headers["X-RateLimit-Limit"] == "60"
@@ -78,11 +80,12 @@ def test_ut06_headers_on_success_response(db):
     r = _auth_client(user).get("/api/v1/users/me/")
     assert r.status_code == 200
     assert r.headers["X-RateLimit-Limit"] == "60"
-    assert int(r.headers["X-RateLimit-Remaining"]) < 60   # 本请求已计数
+    assert int(r.headers["X-RateLimit-Remaining"]) < 60  # 本请求已计数
     assert int(r.headers["X-RateLimit-Reset"]) > time.time() - 1
 
 
 # ── UT-02/UT-03/UT-04：桶隔离与窗口（类级）───────────────────────────
+
 
 def _req(user=None, api_key_id=None):
     req = APIRequestFactory().get("/api/v1/users/me/", REMOTE_ADDR="203.0.113.7")
@@ -140,12 +143,13 @@ def test_ut04_fixed_window_rollover(monkeypatch):
     th = ReportRateThrottle()
     codes = [th.allow_request(_req(user=user), None) for _ in range(11)]
     assert codes[:10] == [True] * 10
-    assert codes[10] is False                       # 本窗口已满
-    t["now"] += 61                                  # 跨入下一窗口
+    assert codes[10] is False  # 本窗口已满
+    t["now"] += 61  # 跨入下一窗口
     assert th.allow_request(_req(user=user), None) is True
 
 
 # ── UT-05：Redis 失联 fail-open ───────────────────────────────────────
+
 
 def test_ut05_fail_open_on_cache_errors(monkeypatch, caplog):
     """cache.add / cache.incr 抛错（含窗口首请求路径）→ 放行 + 告警日志。
@@ -166,6 +170,7 @@ def test_ut05_fail_open_on_cache_errors(monkeypatch, caplog):
 
 # ── UT-07：白名单路径（BR-05）────────────────────────────────────────
 
+
 @override_settings(RATE_LIMIT_ENABLED=True)
 def test_ut07_health_endpoint_exempt(db):
     """健康端点高频不被限且不消耗配额；响应三头 -1 占位（BR-02 头永不缺席）。"""
@@ -177,10 +182,11 @@ def test_ut07_health_endpoint_exempt(db):
     assert r.headers["X-RateLimit-Remaining"] == "-1"
     assert r.headers["X-RateLimit-Reset"] == "-1"
     touched = [k for k in getattr(cache, "_cache", {}) if str(k).startswith("rl:")]
-    assert touched == []                            # 未参与任何计数
+    assert touched == []  # 未参与任何计数
 
 
 # ── UT-13：分享解锁收编语义（FILE-004 §5.1 UT-13 同口径，类级）────────
+
 
 def test_ut13_share_unlock_failure_only_and_clear():
     th = ShareUnlockRateThrottle()
@@ -195,8 +201,7 @@ def test_ut13_share_unlock_failure_only_and_clear():
     with pytest.raises(Throttled) as ei:
         th.allow_request(req, view)
     info = ei.value.rate_limit_info
-    assert info == {"limit": 5, "remaining": 0, "reset": pytest.approx(
-        int(time.time()) + 600, abs=601)}
+    assert info == {"limit": 5, "remaining": 0, "reset": pytest.approx(int(time.time()) + 600, abs=601)}
     assert ei.value.wait >= 1
     # 成功清零：恢复满额
     th.clear(req, view)
@@ -209,18 +214,18 @@ def test_ut13_share_unlock_success_does_not_consume_quota():
     req = _req()
     view = _fake_view("share-slug-y")
     for _ in range(4):
-        th.hit(req, view)                     # 4 次失败
-    th.clear(req, view)                       # 成功解锁清零（不消耗配额）
+        th.hit(req, view)  # 4 次失败
+    th.clear(req, view)  # 成功解锁清零（不消耗配额）
     assert th.remaining(req, view) == 5
     assert th.allow_request(req, view) is True
 
 
 # ── 守卫断言（规格 §4.3.2：「每个子类均有 get_cache_key 覆写」入 CI）──
 
+
 def test_every_subclass_overrides_get_cache_key():
     subs = RedisRateThrottle.__subclasses__()
-    expect = ("User", "ApiKey", "OAuth", "Anon", "AuthBurst",
-              "Report", "Search", "Presign", "Bulk", "ShareUnlock")
+    expect = ("User", "ApiKey", "OAuth", "Anon", "AuthBurst", "Report", "Search", "Presign", "Bulk", "ShareUnlock")
     assert len(subs) >= len(expect), f"Throttle 家族应 ≥{len(expect)} 类（{expect}）"
     missing = [c.__name__ for c in subs if "get_cache_key" not in vars(c)]
     assert missing == [], f"未覆写 get_cache_key 的子类挂载即 500（非 429）：{missing}"

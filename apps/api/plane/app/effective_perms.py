@@ -79,6 +79,25 @@ def custom_codes(user_id, project_id) -> frozenset[str]:
     return frozenset(codes)
 
 
+def custom_codes_bulk(user_id, project_ids) -> dict[str, frozenset[str]]:
+    """挂接并集批量版（known-debt #2 收口，P4 R1）：一次 IN 查询取全部
+    项目的挂接码集——/users/me/permissions/ 快照接口原逐项目调用
+    custom_codes 成 N+1（实测 206 查询 @ 2511 项目）。"""
+    from plane.db.models import ProjectRoleAssignment
+
+    ids = list(project_ids)
+    if not ids:
+        return {}
+    result: dict[str, set[str]] = {str(pid): set() for pid in ids}
+    rows = (ProjectRoleAssignment.objects
+            .filter(project_id__in=ids, user_id=user_id,
+                    deleted_at__isnull=True)
+            .values_list("project_id", "role__permissions"))
+    for pid, perms in rows:
+        result[str(pid)].update(perms or [])
+    return {k: frozenset(v) for k, v in result.items()}
+
+
 def effective_codes(user_id, project_id) -> frozenset[str]:
     """有效权限并集（BR-01）：固定 ∪ 自定义（「我的权限」面板与排障口径）。"""
     from plane.db.models import ProjectMember

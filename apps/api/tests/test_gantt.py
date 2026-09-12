@@ -16,6 +16,7 @@ GANTT-002 后端子集（§5 中后端相关用例，前缀 g002）：
 夹具纪律（坑 18）：断言一律 filter 到本测试作用域，禁全表 count()（_issue 的
 sequence 取数是项目作用域 filter）。
 """
+
 from __future__ import annotations
 
 import time
@@ -61,22 +62,32 @@ def env(db):
     ProjectMember.objects.create(project=proj, member=viewer, role=ProjectRole.VIEWER, created_by=owner)
     states = {}
     for group, name in (
-        ("backlog", "待办"), ("unstarted", "未开始"), ("started", "进行中"),
-        ("completed", "已完成"), ("cancelled", "已取消"),
+        ("backlog", "待办"),
+        ("unstarted", "未开始"),
+        ("started", "进行中"),
+        ("completed", "已完成"),
+        ("cancelled", "已取消"),
     ):
         states[group] = State.objects.create(project=proj, name=name, group=group, color="#123456")
     return {"owner": owner, "viewer": viewer, "ws": ws, "proj": proj, "states": states}
 
 
-def _issue(env, name: str, *, start=None, target=None, state="started", parent=None,
-           priority="none", estimate=None, sort=None) -> Issue:
+def _issue(
+    env, name: str, *, start=None, target=None, state="started", parent=None, priority="none", estimate=None, sort=None
+) -> Issue:
     seq = Issue.objects.filter(project=env["proj"]).count() + 1
     return Issue.objects.create(
-        name=name, project=env["proj"], sequence_id=seq,
+        name=name,
+        project=env["proj"],
+        sequence_id=seq,
         sort_order=sort if sort is not None else seq * 100,
-        start_date=start, target_date=target,
-        state=env["states"][state], priority=priority,
-        parent=parent, estimate_minutes=estimate, created_by=env["owner"],
+        start_date=start,
+        target_date=target,
+        state=env["states"][state],
+        priority=priority,
+        parent=parent,
+        estimate_minutes=estimate,
+        created_by=env["owner"],
     )
 
 
@@ -101,7 +112,8 @@ def _rows(client, env, *, start=VP["start"], end=VP["end"], **params):
 def _bulk(client, env, ids):
     resp = client.post(
         f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/gantt/relations/bulk/",
-        {"issue_ids": [str(i) for i in ids]}, format="json",
+        {"issue_ids": [str(i) for i in ids]},
+        format="json",
     )
     assert resp.status_code == 200, resp.json()
     return resp.json()["data"], resp.json()["meta"]
@@ -157,8 +169,7 @@ def test_ut05_double_null_goes_unscheduled(env):
     data, meta = _rows(client, env)
     assert a.id not in _by_id(data)
     assert data["unscheduled_count"] == 1
-    resp = client.get(
-        f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/gantt/unscheduled/")
+    resp = client.get(f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/gantt/unscheduled/")
     assert resp.status_code == 200
     body = resp.json()
     assert [r["id"] for r in body["data"]] == [str(a.id)]
@@ -321,8 +332,7 @@ def test_ut13_viewport_and_granularity_validation(env):
 
 
 def test_ut20_invalid_tz_rejected_not_silent_fallback(env):
-    resp = _get_raw(_client(env["owner"]), env,
-                    f"?viewport_start={VP['start']}&viewport_end={VP['end']}&tz=ABC")
+    resp = _get_raw(_client(env["owner"]), env, f"?viewport_start={VP['start']}&viewport_end={VP['end']}&tz=ABC")
     assert resp.status_code == 400
     err = resp.json()["error"]
     assert err["code"] == "VALIDATION_ERROR"
@@ -360,15 +370,22 @@ def test_ut15_permission_404_for_non_member(env):
     # 另造一条跨项目脏边（TASK-005 BR-02 服务层拦、此处防御纵深）——
     # bulk 以本项目 issue id 请求也不得返回该越权边
     other_ws = Workspace.objects.create(
-        name="W2", slug=f"w-gantt2-{env['owner'].id.hex[:6]}", owner=env["owner"], created_by=env["owner"])
+        name="W2", slug=f"w-gantt2-{env['owner'].id.hex[:6]}", owner=env["owner"], created_by=env["owner"]
+    )
     other_proj = Project.objects.create(name="P2", identifier="GNT2", workspace=other_ws, created_by=env["owner"])
     foreign = Issue.objects.create(
-        name="F", project=other_proj, sequence_id=1, sort_order=100,
-        start_date="2026-09-01", target_date="2026-09-02", created_by=env["owner"])
+        name="F",
+        project=other_proj,
+        sequence_id=1,
+        sort_order=100,
+        start_date="2026-09-01",
+        target_date="2026-09-02",
+        created_by=env["owner"],
+    )
     domestic = _issue(env, "D", start="2026-09-01", target="2026-09-05")
     IssueLink.objects.create(
-        issue=domestic, related_issue=foreign,
-        relation_type=IssueLink.RelationType.BLOCKS, created_by=env["owner"])
+        issue=domestic, related_issue=foreign, relation_type=IssueLink.RelationType.BLOCKS, created_by=env["owner"]
+    )
     data, _ = _bulk(_client(env["owner"]), env, [foreign.id, domestic.id])
     assert data["edges"] == []  # 边的 related 端在项目外 → 整条不出现
 
@@ -379,9 +396,10 @@ def test_viewer_role_can_read(env):
     client = _client(env["viewer"])
     data, _ = _rows(client, env)
     assert len(data["rows"]) == 1
-    assert client.get(
-        f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/gantt/unscheduled/"
-    ).status_code == 200
+    assert (
+        client.get(f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/gantt/unscheduled/").status_code
+        == 200
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -391,17 +409,18 @@ def test_ut16_view_id_filter_reuse(env):
     urgent = _issue(env, "U", start="2026-09-01", target="2026-09-05", priority="urgent")
     _issue(env, "L", start="2026-09-01", target="2026-09-05", priority="low")
     view = IssueView.objects.create(
-        workspace=env["ws"], project=env["proj"], owner=env["owner"], name="仅紧急",
+        workspace=env["ws"],
+        project=env["proj"],
+        owner=env["owner"],
+        name="仅紧急",
         layout=IssueView.Layout.GANTT,
-        filters={"op": "AND", "conditions": [
-            {"field": "priority", "operator": "in", "value": ["urgent"]}]},
+        filters={"op": "AND", "conditions": [{"field": "priority", "operator": "in", "value": ["urgent"]}]},
     )
     client = _client(env["owner"])
     data, meta = _rows(client, env, view_id=view.id)
     assert list(_by_id(data)) == [urgent.id]  # 行集与视图筛选一致
     # 与 issues 列表（同 view_id）行集一致（BR-01 复用语义）
-    resp = client.get(
-        f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/issues/?view_id={view.id}")
+    resp = client.get(f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/issues/?view_id={view.id}")
     list_ids = {r["id"] for r in resp.json()["data"]}
     assert list_ids == {str(urgent.id)}
     # 临时筛选（?filters=）同管道
@@ -418,8 +437,7 @@ def test_ut16_view_id_filter_reuse(env):
 def test_ut17_estimate_spent_fields(env):
     a = _issue(env, "A", start="2026-09-01", target="2026-09-05", estimate=480)
     b = _issue(env, "B", start="2026-09-01", target="2026-09-05", estimate=None)
-    WorkLog.objects.create(issue=a, actor=env["owner"], worked_on="2026-09-02",
-                           minutes=240, created_by=env["owner"])
+    WorkLog.objects.create(issue=a, actor=env["owner"], worked_on="2026-09-02", minutes=240, created_by=env["owner"])
     data, _ = _rows(_client(env["owner"]), env)
     rows = _by_id(data)
     assert rows[a.id]["estimate_minutes"] == 480 and rows[a.id]["spent_minutes"] == 240
@@ -483,12 +501,14 @@ def test_ut19_request_tz_today_and_overdue(env):
     resp = client.get(
         f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/gantt/"
         f"?viewport_start={VP['start']}&viewport_end={VP['end']}",
-        headers={"X-Client-TZ": "Pacific/Pago_Pago"})
+        headers={"X-Client-TZ": "Pacific/Pago_Pago"},
+    )
     assert resp.json()["meta"]["today"] == pago_today.isoformat()
     resp2 = client.get(
         f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/gantt/"
         f"?viewport_start={VP['start']}&viewport_end={VP['end']}&tz=Pacific/Kiritimati",
-        headers={"X-Client-TZ": "Pacific/Pago_Pago"})
+        headers={"X-Client-TZ": "Pacific/Pago_Pago"},
+    )
     assert resp2.json()["meta"]["today"] == kiri_today.isoformat()
 
 
@@ -500,17 +520,40 @@ def test_row_contract_shape(env):
     data, meta = _rows(_client(env["owner"]), env)
     row = data["rows"][0]
     assert set(row) == {
-        "id", "issue_key", "name", "depth", "has_children", "collapsed",
-        "start_date", "target_date", "progress", "progress_source",
-        "state_group", "state_color", "is_overdue", "assignee_ids",
-        "is_aggregated", "relation_count", "estimate_minutes", "spent_minutes",
+        "id",
+        "issue_key",
+        "name",
+        "depth",
+        "has_children",
+        "collapsed",
+        "start_date",
+        "target_date",
+        "progress",
+        "progress_source",
+        "state_group",
+        "state_color",
+        "is_overdue",
+        "assignee_ids",
+        "is_aggregated",
+        "relation_count",
+        "estimate_minutes",
+        "spent_minutes",
     }
     assert row["issue_key"] == f"GNT-{a.sequence_id}" and row["state_color"] == "#123456"
     # meta 全字段（§6.3）+ 端点自有字段
     assert set(meta) >= {
-        "next_cursor", "prev_cursor", "next_page_results", "prev_page_results",
-        "count", "total_count", "total_pages", "page", "per_page",
-        "granularity", "viewport", "today",
+        "next_cursor",
+        "prev_cursor",
+        "next_page_results",
+        "prev_page_results",
+        "count",
+        "total_count",
+        "total_pages",
+        "page",
+        "per_page",
+        "granularity",
+        "viewport",
+        "today",
     }
     assert meta["viewport"] == {"start": VP["start"], "end": VP["end"]}
 
@@ -519,8 +562,12 @@ def test_collapsed_echo_from_view(env):
     """BR-10：collapsed 回显视图 display_props.collapsed。"""
     a = _issue(env, "A", start="2026-09-01", target="2026-09-08")
     view = IssueView.objects.create(
-        workspace=env["ws"], project=env["proj"], owner=env["owner"], name="甘特",
-        layout=IssueView.Layout.GANTT, display_props={"collapsed": [str(a.id)]},
+        workspace=env["ws"],
+        project=env["proj"],
+        owner=env["owner"],
+        name="甘特",
+        layout=IssueView.Layout.GANTT,
+        display_props={"collapsed": [str(a.id)]},
     )
     data, _ = _rows(_client(env["owner"]), env, view_id=view.id)
     assert _by_id(data)[a.id]["collapsed"] is True
@@ -544,8 +591,7 @@ def test_cursor_pagination_walk(env):
     data3, meta3 = _rows(client, env, per_page=3, cursor=meta2["next_cursor"])
     assert meta3["count"] == 1 and meta3["next_cursor"] is None
     # 非法游标 → 400 VALIDATION_INVALID_CURSOR
-    resp = _get_raw(client, env,
-                    f"?viewport_start={VP['start']}&viewport_end={VP['end']}&per_page=3&cursor=!!!bogus")
+    resp = _get_raw(client, env, f"?viewport_start={VP['start']}&viewport_end={VP['end']}&per_page=3&cursor=!!!bogus")
     assert resp.status_code == 400
     assert resp.json()["error"]["code"] == "VALIDATION_INVALID_CURSOR"
 
@@ -572,7 +618,8 @@ def test_soft_deleted_link_excluded_from_relation_count(env):
     a = _issue(env, "A", start="2026-09-01", target="2026-09-05")
     b = _issue(env, "B", start="2026-09-01", target="2026-09-05")
     forward, _mirror = create_relation(
-        issue_id=a.id, related_issue_id=b.id, relation_type="relates_to", actor_id=env["owner"].id)
+        issue_id=a.id, related_issue_id=b.id, relation_type="relates_to", actor_id=env["owner"].id
+    )
     data, _ = _rows(_client(env["owner"]), env)
     assert _by_id(data)[a.id]["relation_count"] == 1
     delete_relation(link_id=forward.id, actor_id=env["owner"].id)
@@ -617,15 +664,16 @@ def test_it07_viewport_query_uses_gantt_index(env):
     rf = RequestFactory()
     req = rf.get(
         f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/gantt/"
-        f"?viewport_start={VP['start']}&viewport_end={VP['end']}")
+        f"?viewport_start={VP['start']}&viewport_end={VP['end']}"
+    )
     req.user = env["owner"]
     with CaptureQueriesContext(connection) as ctx:
         resp = GanttRowsView.as_view()(req, slug=env["ws"].slug, project_id=env["proj"].id)
         assert resp.status_code == 200
     rows_sql = next(
-        q["sql"] for q in ctx.captured_queries
-        if q["sql"].startswith("SELECT")
-        and 'ORDER BY "issues"."sort_order"' in q["sql"]  # 行窗口主查询（BR-11 行序）
+        q["sql"]
+        for q in ctx.captured_queries
+        if q["sql"].startswith("SELECT") and 'ORDER BY "issues"."sort_order"' in q["sql"]  # 行窗口主查询（BR-11 行序）
     )
     with connection.cursor() as cur:
         cur.execute("SET LOCAL lock_timeout = '2s'")
@@ -638,7 +686,8 @@ def test_it07_viewport_query_uses_gantt_index(env):
             "JOIN pg_class i ON i.oid = x.indexrelid "
             "JOIN pg_class t ON t.oid = x.indrelid "
             "WHERE t.relname = 'issues' AND NOT x.indisprimary "
-            "AND i.relname <> 'idx_issue_gantt_viewport'")
+            "AND i.relname <> 'idx_issue_gantt_viewport'"
+        )
         for (name,) in cur.fetchall():
             cur.execute(f'DROP INDEX IF EXISTS "{name}"')  # noqa: S608 -- 名取自 pg_catalog，无注入面
         cur.execute("SET LOCAL enable_seqscan = off")
@@ -648,7 +697,8 @@ def test_it07_viewport_query_uses_gantt_index(env):
     # 索引在实库存在（迁移 0012 落地证据）
     with connection.cursor() as cur:
         cur.execute(
-            "SELECT indexname FROM pg_indexes WHERE tablename = 'issues' AND indexname = 'idx_issue_gantt_viewport'")
+            "SELECT indexname FROM pg_indexes WHERE tablename = 'issues' AND indexname = 'idx_issue_gantt_viewport'"
+        )
         assert cur.fetchone() is not None
 
 
@@ -665,8 +715,7 @@ def _today_sh() -> date:
 
 def _summary(client, env, **params):
     qs = "".join(f"&{k}={v}" for k, v in params.items())
-    return client.get(
-        f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/gantt/overdue-summary/?{qs}")
+    return client.get(f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/gantt/overdue-summary/?{qs}")
 
 
 def _summary_ok(client, env, **params):
@@ -683,6 +732,7 @@ def agg_redis_clean():
     （每次请求计数），故 autouse，前后置整体清空不留跨用例状态（坑 18；
     键自带 60s TTL 兜底自过期）。"""
     from django.core.cache import cache
+
     cache.clear()
     yield
     cache.clear()
@@ -754,8 +804,14 @@ def test_g002_it04_summary_consistent_with_row_is_overdue(env):
     _issue(env, "DN", start=None, target=None, state="started")  # 双 NULL 不可能逾期
     seq = Issue.objects.filter(project=env["proj"]).count() + 1
     no_state = Issue.objects.create(  # state FK 为 NULL → unstarted 折算 → 逾期（两端口径须一致）
-        name="NS", project=env["proj"], sequence_id=seq, sort_order=seq * 100.0,
-        start_date=t - timedelta(days=5), target_date=t - timedelta(days=2), created_by=env["owner"])
+        name="NS",
+        project=env["proj"],
+        sequence_id=seq,
+        sort_order=seq * 100.0,
+        start_date=t - timedelta(days=5),
+        target_date=t - timedelta(days=2),
+        created_by=env["owner"],
+    )
     archived = _issue(env, "ARCH", start=t - timedelta(days=8), target=t - timedelta(days=6), state="started")
     archived.archived_at = datetime.now(ZoneInfo("UTC"))
     archived.save(update_fields=["archived_at"])
@@ -808,8 +864,7 @@ def test_g002_contract_shape_and_empty(env):
     空项目零逾期形态；granularity/viewport_* 不参与聚合（忽略不报错）。"""
     client = _client(env["owner"])
     data, meta = _summary_ok(client, env)
-    assert data == {"overdue_count": 0, "max_overdue_days": 0,
-                    "by_assignee": [], "items": [], "items_truncated": False}
+    assert data == {"overdue_count": 0, "max_overdue_days": 0, "by_assignee": [], "items": [], "items_truncated": False}
     assert set(meta) == {"today"}
     _issue(env, "A", start=None, target=_today_sh() - timedelta(days=5), state="started")
     data2, _ = _summary_ok(client, env)
@@ -818,8 +873,7 @@ def test_g002_contract_shape_and_empty(env):
     assert set(item) == {"id", "issue_key", "name", "target_date", "overdue_days", "assignee_ids"}
     assert item["assignee_ids"] == []
     # 视窗/粒度参数与聚合无关——携带不改变结果（§4.2.1 注）
-    data3, _ = _summary_ok(client, env, granularity="day",
-                           viewport_start="2026-01-01", viewport_end="2026-01-31")
+    data3, _ = _summary_ok(client, env, granularity="day", viewport_start="2026-01-01", viewport_end="2026-01-31")
     assert data3 == data2
 
 
@@ -830,18 +884,20 @@ def test_g002_filter_pipeline_same_source(env):
     urgent = _issue(env, "U", start=None, target=t, state="started", priority="urgent")
     low = _issue(env, "L", start=None, target=t, state="started", priority="low")
     view = IssueView.objects.create(
-        workspace=env["ws"], project=env["proj"], owner=env["owner"], name="仅紧急",
+        workspace=env["ws"],
+        project=env["proj"],
+        owner=env["owner"],
+        name="仅紧急",
         layout=IssueView.Layout.GANTT,
-        filters={"op": "AND", "conditions": [
-            {"field": "priority", "operator": "in", "value": ["urgent"]}]})
+        filters={"op": "AND", "conditions": [{"field": "priority", "operator": "in", "value": ["urgent"]}]},
+    )
     client = _client(env["owner"])
     data, _ = _summary_ok(client, env, view_id=view.id)
     assert data["overdue_count"] == 1 and data["items"][0]["id"] == str(urgent.id)
     # 临时筛选（?filters=）同管道
     import urllib.parse
 
-    dsl = urllib.parse.quote(
-        '{"op":"AND","conditions":[{"field":"priority","operator":"in","value":["low"]}]}')
+    dsl = urllib.parse.quote('{"op":"AND","conditions":[{"field":"priority","operator":"in","value":["low"]}]}')
     data2, _ = _summary_ok(client, env, filters=dsl)
     assert data2["overdue_count"] == 1 and data2["items"][0]["id"] == str(low.id)
     # 不带筛选 → 全量
@@ -862,14 +918,15 @@ def test_g002_ut17_it07_throttle_10_per_min_per_user(env):
     body = resp.json()
     assert body["error"]["code"] == "RATE_LIMIT_EXCEEDED"
     assert int(resp.headers["Retry-After"]) >= 1
-    assert resp.headers["X-RateLimit-Limit"] == "10"      # §7.3 模板三件套
+    assert resp.headers["X-RateLimit-Limit"] == "10"  # §7.3 模板三件套
     assert resp.headers["X-RateLimit-Remaining"] == "0"
     assert int(resp.headers["X-RateLimit-Reset"]) > time.time()
     # 键维度 user_id（§4.2.1 原文键 gantt-agg:{user_id}）：另一用户不受牵连
     assert _summary(_client(env["viewer"]), env).status_code == 200
     # IT-07 窗口恢复：清计数键等价 60s 固定窗口流逝 → 配额重置
-    #（INFRA-005 收编：django cache LocMem，不再依赖真实 Valkey）
+    # （INFRA-005 收编：django cache LocMem，不再依赖真实 Valkey）
     from django.core.cache import cache
+
     cache.clear()
     assert _summary(client, env).status_code == 200
 

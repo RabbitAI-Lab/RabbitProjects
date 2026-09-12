@@ -11,6 +11,7 @@ BR-09 操作者本人抑制（同步调用 task 函数体）。
 HTTP 侧全矩阵在 tests/jmeter/sprint-2-flow.py TASK-007 段；并发认领
 （IT-02 双连接真并发）落收口专项。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -60,54 +61,68 @@ class _Env:
 
     def __init__(self, owner: User):
         self.owner = owner
-        self.ws = Workspace.objects.create(
-            name="W", slug=f"w-asg-{owner.id.hex[:8]}", owner=owner, created_by=owner
-        )
-        WorkspaceMember.objects.create(
-            workspace=self.ws, member=owner, role=WorkspaceRole.OWNER, created_by=owner
-        )
-        self.project = Project.objects.create(
-            name="P", identifier="ASG", workspace=self.ws, created_by=owner
-        )
+        self.ws = Workspace.objects.create(name="W", slug=f"w-asg-{owner.id.hex[:8]}", owner=owner, created_by=owner)
+        WorkspaceMember.objects.create(workspace=self.ws, member=owner, role=WorkspaceRole.OWNER, created_by=owner)
+        self.project = Project.objects.create(name="P", identifier="ASG", workspace=self.ws, created_by=owner)
         ProjectMember.objects.create(
-            project=self.project, workspace=self.ws, member=owner,
-            role=ProjectRole.ADMIN, is_active=True, created_by=owner,
+            project=self.project,
+            workspace=self.ws,
+            member=owner,
+            role=ProjectRole.ADMIN,
+            is_active=True,
+            created_by=owner,
         )
         self.admin = owner
         self.contributors: list[User] = []
         for i in range(3):
             u = User.objects.create_user(
-                email=f"asg-c{i}-{owner.id.hex[:6]}@rabbit.dev", password="Rabbit123!",
-                display_name=f"贡献者{i}")
-            WorkspaceMember.objects.create(
-                workspace=self.ws, member=u, role=WorkspaceRole.MEMBER, created_by=owner)
+                email=f"asg-c{i}-{owner.id.hex[:6]}@rabbit.dev", password="Rabbit123!", display_name=f"贡献者{i}"
+            )
+            WorkspaceMember.objects.create(workspace=self.ws, member=u, role=WorkspaceRole.MEMBER, created_by=owner)
             ProjectMember.objects.create(
-                project=self.project, workspace=self.ws, member=u,
-                role=ProjectRole.CONTRIBUTOR, is_active=True, created_by=owner)
+                project=self.project,
+                workspace=self.ws,
+                member=u,
+                role=ProjectRole.CONTRIBUTOR,
+                is_active=True,
+                created_by=owner,
+            )
             self.contributors.append(u)
         self.commenter = User.objects.create_user(
-            email=f"asg-cm-{owner.id.hex[:6]}@rabbit.dev", password="Rabbit123!",
-            display_name="评论者")
+            email=f"asg-cm-{owner.id.hex[:6]}@rabbit.dev", password="Rabbit123!", display_name="评论者"
+        )
         WorkspaceMember.objects.create(
-            workspace=self.ws, member=self.commenter, role=WorkspaceRole.MEMBER, created_by=owner)
+            workspace=self.ws, member=self.commenter, role=WorkspaceRole.MEMBER, created_by=owner
+        )
         ProjectMember.objects.create(
-            project=self.project, workspace=self.ws, member=self.commenter,
-            role=ProjectRole.COMMENTER, is_active=True, created_by=owner)
+            project=self.project,
+            workspace=self.ws,
+            member=self.commenter,
+            role=ProjectRole.COMMENTER,
+            is_active=True,
+            created_by=owner,
+        )
         self.viewer = User.objects.create_user(
-            email=f"asg-v-{owner.id.hex[:6]}@rabbit.dev", password="Rabbit123!",
-            display_name="查看者")
+            email=f"asg-v-{owner.id.hex[:6]}@rabbit.dev", password="Rabbit123!", display_name="查看者"
+        )
         WorkspaceMember.objects.create(
-            workspace=self.ws, member=self.viewer, role=WorkspaceRole.MEMBER, created_by=owner)
+            workspace=self.ws, member=self.viewer, role=WorkspaceRole.MEMBER, created_by=owner
+        )
         ProjectMember.objects.create(
-            project=self.project, workspace=self.ws, member=self.viewer,
-            role=ProjectRole.VIEWER, is_active=True, created_by=owner)
+            project=self.project,
+            workspace=self.ws,
+            member=self.viewer,
+            role=ProjectRole.VIEWER,
+            is_active=True,
+            created_by=owner,
+        )
         self._seq = 0
 
     def issue(self, name: str = "T") -> Issue:
         self._seq += 1
         return Issue.objects.create(
-            name=name, project=self.project, sequence_id=self._seq,
-            sort_order=self._seq * 100.0, created_by=self.owner)
+            name=name, project=self.project, sequence_id=self._seq, sort_order=self._seq * 100.0, created_by=self.owner
+        )
 
 
 @pytest.fixture()
@@ -122,9 +137,7 @@ def _ids(*users: User) -> list[uuid.UUID]:
 def _rows(issue: Issue) -> list[uuid.UUID]:
     """中间表活跃行（created_at 首键 + id 次级键稳定序，BR-03 读取口径）。"""
     return list(
-        IssueAssignee.objects.filter(issue=issue)
-        .order_by("created_at", "id")
-        .values_list("assignee_id", flat=True)
+        IssueAssignee.objects.filter(issue=issue).order_by("created_at", "id").values_list("assignee_id", flat=True)
     )
 
 
@@ -149,43 +162,46 @@ def test_sync_limit_10_and_11_rejected(env):
     """UT-03/04：恰 10 人放行、第 11 人 409 LIMIT（去重后计数）。"""
     issue = env.issue()
     # 凑满 10 个可指派成员：admin + 3 contributors + COMMENTER/VIEWER 升 CONTRIBUTOR + 新建 4 人
-    ProjectMember.objects.filter(
-        project=env.project, member__in=[env.commenter, env.viewer]
-    ).update(role=ProjectRole.CONTRIBUTOR)
+    ProjectMember.objects.filter(project=env.project, member__in=[env.commenter, env.viewer]).update(
+        role=ProjectRole.CONTRIBUTOR
+    )
     ten = [env.admin] + env.contributors + [env.commenter, env.viewer]
     for i in range(4):
-        u = User.objects.create_user(
-            email=f"asg-x{i}-{env.owner.id.hex[:6]}@rabbit.dev", password="Rabbit123!")
-        WorkspaceMember.objects.create(workspace=env.ws, member=u,
-                                       role=WorkspaceRole.MEMBER, created_by=env.owner)
-        ProjectMember.objects.create(project=env.project, workspace=env.ws, member=u,
-                                     role=ProjectRole.CONTRIBUTOR, is_active=True,
-                                     created_by=env.owner)
+        u = User.objects.create_user(email=f"asg-x{i}-{env.owner.id.hex[:6]}@rabbit.dev", password="Rabbit123!")
+        WorkspaceMember.objects.create(workspace=env.ws, member=u, role=WorkspaceRole.MEMBER, created_by=env.owner)
+        ProjectMember.objects.create(
+            project=env.project,
+            workspace=env.ws,
+            member=u,
+            role=ProjectRole.CONTRIBUTOR,
+            is_active=True,
+            created_by=env.owner,
+        )
         ten.append(u)
     assert len(ten) == MAX_ASSIGNEES
     r = sync_assignees_full(issue_id=issue.id, new_ids=_ids(*ten), actor_id=env.admin.id)
     assert len(r["assignee_ids"]) == MAX_ASSIGNEES
     # 第 11 人（CONTRIBUTOR，合法成员）→ 409 LIMIT 先于成员校验（§4.3.1 顺序）
-    eleventh = User.objects.create_user(email=f"asg-e-{env.owner.id.hex[:6]}@rabbit.dev",
-                                        password="Rabbit123!")
-    WorkspaceMember.objects.create(workspace=env.ws, member=eleventh,
-                                   role=WorkspaceRole.MEMBER, created_by=env.owner)
-    ProjectMember.objects.create(project=env.project, workspace=env.ws, member=eleventh,
-                                 role=ProjectRole.CONTRIBUTOR, is_active=True,
-                                 created_by=env.owner)
+    eleventh = User.objects.create_user(email=f"asg-e-{env.owner.id.hex[:6]}@rabbit.dev", password="Rabbit123!")
+    WorkspaceMember.objects.create(workspace=env.ws, member=eleventh, role=WorkspaceRole.MEMBER, created_by=env.owner)
+    ProjectMember.objects.create(
+        project=env.project,
+        workspace=env.ws,
+        member=eleventh,
+        role=ProjectRole.CONTRIBUTOR,
+        is_active=True,
+        created_by=env.owner,
+    )
     with pytest.raises(AssigneesLimitExceeded):
-        sync_assignees_full(issue_id=issue.id, new_ids=_ids(*ten, eleventh),
-                            actor_id=env.admin.id)
+        sync_assignees_full(issue_id=issue.id, new_ids=_ids(*ten, eleventh), actor_id=env.admin.id)
     # 同人重复 11 次：去重后 1 人 → 放行（上限按去重计数，BR-03/BR-01）
-    r2 = sync_assignees_full(issue_id=issue.id, new_ids=[env.admin.id] * 11,
-                             actor_id=env.admin.id)
+    r2 = sync_assignees_full(issue_id=issue.id, new_ids=[env.admin.id] * 11, actor_id=env.admin.id)
     assert r2["assignee_ids"] == [str(env.admin.id)]
 
 
 def test_sync_rejects_non_member_and_low_roles(env):
     """UT-05/06：非成员 / COMMENTER / VIEWER 均 400 DOES_NOT_EXIST（BR-02）。"""
-    stranger = User.objects.create_user(email=f"asg-str-{env.owner.id.hex[:6]}@rabbit.dev",
-                                        password="Rabbit123!")
+    stranger = User.objects.create_user(email=f"asg-str-{env.owner.id.hex[:6]}@rabbit.dev", password="Rabbit123!")
     issue = env.issue()
     for bad in (stranger, env.commenter, env.viewer):
         with pytest.raises(AppValidationError) as ei:
@@ -199,9 +215,10 @@ def test_sync_assigned_by_records_operator_and_clear_ok(env):
     a, b, _ = env.contributors
     issue = env.issue()
     sync_assignees_full(issue_id=issue.id, new_ids=_ids(a, b), actor_id=b.id)  # b 操作
-    assert set(
-        IssueAssignee.objects.filter(issue=issue).values_list("assignee_id", "assigned_by_id")
-    ) == {(a.id, b.id), (b.id, b.id)}
+    assert set(IssueAssignee.objects.filter(issue=issue).values_list("assignee_id", "assigned_by_id")) == {
+        (a.id, b.id),
+        (b.id, b.id),
+    }
     sync_assignees_full(issue_id=issue.id, new_ids=[], actor_id=env.admin.id)  # BR-06
     assert _rows(issue) == []
 
@@ -290,8 +307,13 @@ def test_project_member_removal_cascades_assignments(env):
     assert _rows(i2) == []
     # 移除后重新加回 → 可再次指派（不撞唯一约束的级联版证据）
     pm2 = ProjectMember.objects.create(
-        project=env.project, workspace=env.ws, member=a,
-        role=ProjectRole.CONTRIBUTOR, is_active=True, created_by=env.owner)
+        project=env.project,
+        workspace=env.ws,
+        member=a,
+        role=ProjectRole.CONTRIBUTOR,
+        is_active=True,
+        created_by=env.owner,
+    )
     assert pm2 is not None
     sync_assignees_full(issue_id=i2.id, new_ids=_ids(a), actor_id=env.admin.id)
 
@@ -313,8 +335,9 @@ def test_purge_scoped_to_single_project(env):
     i1 = env.issue("P1")
     proj2 = Project.objects.create(name="P2", identifier="AS2", workspace=env.ws, created_by=env.owner)
     seq2 = Issue.objects.filter(project=proj2).count() + 1
-    i2 = Issue.objects.create(name="P2-T", project=proj2, sequence_id=seq2,
-                              sort_order=seq2 * 100.0, created_by=env.owner)
+    i2 = Issue.objects.create(
+        name="P2-T", project=proj2, sequence_id=seq2, sort_order=seq2 * 100.0, created_by=env.owner
+    )
     sync_assignees_full(issue_id=i1.id, new_ids=_ids(a), actor_id=env.admin.id)
     IssueAssignee.objects.create(issue=i2, assignee=a, assigned_by=env.admin)
     purge_member_assignments(project_id=env.project.id, member_id=a.id, actor=env.owner)
@@ -338,11 +361,12 @@ def test_dispatch_events_differentiated_and_actor_suppressed(env):
         ],
     }
     ok = dispatch_assignment_events.run(
-        issue_id=str(issue.id), actor_id=str(env.admin.id), changes=changes, comment="联调改期")
+        issue_id=str(issue.id), actor_id=str(env.admin.id), changes=changes, comment="联调改期"
+    )
     assert ok is True
     events = set(
-        Notification.objects.filter(receiver_id__in=[a.id, b.id, env.admin.id])
-        .values_list("receiver_id", "event"))
+        Notification.objects.filter(receiver_id__in=[a.id, b.id, env.admin.id]).values_list("receiver_id", "event")
+    )
     assert events == {(a.id, "issue.unassigned"), (b.id, "issue.unassigned")}
     # title 含转交说明引用 + data 载荷必含五键
     n = Notification.objects.get(receiver=a, event="issue.unassigned")
@@ -352,12 +376,8 @@ def test_dispatch_events_differentiated_and_actor_suppressed(env):
     acts = IssueActivity.objects.filter(issue=issue, field="assignees")
     assert acts.count() == 3
     assert len({x.epoch for x in acts}) == 1
-    assert set(
-        acts.exclude(new_identifier__isnull=True).values_list("new_identifier", flat=True)
-    ) == {env.admin.id}
-    assert set(
-        acts.exclude(old_identifier__isnull=True).values_list("old_identifier", flat=True)
-    ) == {a.id, b.id}
+    assert set(acts.exclude(new_identifier__isnull=True).values_list("new_identifier", flat=True)) == {env.admin.id}
+    assert set(acts.exclude(old_identifier__isnull=True).values_list("old_identifier", flat=True)) == {a.id, b.id}
 
 
 # ───────────────────────── 其它写路径不再产生第二套逻辑 ─────────────────────────

@@ -4,6 +4,7 @@ BOARD-004 批量侧实测发现：原「软删全部 + 重建」在无条件唯�
 下，集合重叠的重提交（幂等重 PUT / 部分交集替换）必 IntegrityError。
 影响面（codegraph 圈定）：issues.py create/put/post 三调用点 + 14 个测试文件。
 """
+
 from __future__ import annotations
 
 import pytest
@@ -34,22 +35,16 @@ class TestSyncLabels:
     def test_idempotent_reput_same_set(self, env):
         """幂等重 PUT（同集重叠）—— 原缺陷的直接复现场景：不再 IntegrityError，且行 id 不变。"""
         sync_labels(env["issue"], _ids(env, 0, 1), env["owner"].id)
-        row_ids_before = set(
-            IssueLabel.objects.filter(issue=env["issue"]).values_list("id", flat=True)
-        )
+        row_ids_before = set(IssueLabel.objects.filter(issue=env["issue"]).values_list("id", flat=True))
         sync_labels(env["issue"], _ids(env, 0, 1), env["owner"].id)  # 重 PUT 同集
-        row_ids_after = set(
-            IssueLabel.objects.filter(issue=env["issue"]).values_list("id", flat=True)
-        )
+        row_ids_after = set(IssueLabel.objects.filter(issue=env["issue"]).values_list("id", flat=True))
         assert row_ids_before == row_ids_after  # 零写：行 id 不变
         assert IssueLabel.objects.filter(issue=env["issue"]).count() == 2
 
     def test_partial_overlap_replace(self, env):
         sync_labels(env["issue"], _ids(env, 0, 1), env["owner"].id)
         sync_labels(env["issue"], _ids(env, 1, 2), env["owner"].id)  # 交集 {L1}
-        got = set(
-            IssueLabel.objects.filter(issue=env["issue"]).values_list("label_id", flat=True)
-        )
+        got = set(IssueLabel.objects.filter(issue=env["issue"]).values_list("label_id", flat=True))
         assert got == {_ids(env, 1)[0], _ids(env, 2)[0]}
 
     def test_clear_all(self, env):

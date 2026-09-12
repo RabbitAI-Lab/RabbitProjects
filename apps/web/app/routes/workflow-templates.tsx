@@ -6,6 +6,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
 import { ProjectAPI, TemplateAPI, unwrap } from "../services/api";
+import { Topbar } from "../components/Topbar";
+import { SystemSidebar } from "../components/SystemSidebar";
 import { toast } from "../components/Toast";
 import type { ApiError } from "../services/axios";
 
@@ -77,8 +79,13 @@ export default function WorkflowTemplatesPage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-neutral-50" data-sb-scope="template-library">
-      <header className="h-12 border-b border-neutral-200 bg-white px-4 flex items-center gap-3">
+    <div className="flex h-screen flex-col">
+      <Topbar />
+      <div className="flex flex-1 overflow-hidden">
+        <SystemSidebar workspaceSlug={ws ?? ""} />
+        <main className="flex-1 overflow-auto bg-neutral-50" data-sb-scope="template-library">
+      <div className="flex flex-col">
+      <header className="h-12 border-b border-neutral-200 bg-white px-4 flex items-center gap-3 shrink-0">
         <h1 className="text-sm font-semibold text-neutral-800">工作流模板库</h1>
         <span className="text-xs text-neutral-400">预设四套 · 两步下发（WF-005 §3）</span>
       </header>
@@ -145,6 +152,9 @@ export default function WorkflowTemplatesPage() {
           </div>
         </div>
       )}
+      </div>
+        </main>
+      </div>
     </div>
   );
 }

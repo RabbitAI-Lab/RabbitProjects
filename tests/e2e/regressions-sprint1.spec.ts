@@ -80,6 +80,10 @@ test.describe("Sprint-1 验收缺陷回归（评论头像 / 标签 / 子任务 /
 
     // 切到评论 Tab 并发表一条（抽屉 comment 数据只在切 tab 时拉）
     await page.locator('[data-tab-key="comments"]').click();
+    // 等评论区受控挂载完成再 fill（known-debt #1 收口：挂载竞态里抢跑 fill
+    // 会被 draft="" 首渲染重置，提交钮持续禁用 → 表现为「fill 后未启用」）
+    await expect(page.locator('[data-sb-scope="drawer-comment-counter"]'))
+      .toContainText(/^0\/5000/, { timeout: 5_000 });
     await page.locator('[data-sb-scope="drawer-comment-input"]').fill("<p>头像回归</p>");
     await page.locator('[data-sb-scope="drawer-comment-submit"]').click();
 

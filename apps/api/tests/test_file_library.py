@@ -16,6 +16,7 @@ AssetService.list_for_issue 的受影响面 = 全量既有 pytest（17 文件，
 ``restrict_workspace_id``（测试安全参数），断言一律 filter 到本测试作用域。
 存储交互全部 mock（presign/head/remove），不触碰真实 MinIO。
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -58,40 +59,42 @@ REMOVE_OBJ = "plane.storage.minio.remove_object"
 # ────────────────────────────────────────────────────────────────
 @pytest.fixture()
 def env(db):
-    owner = User.objects.create_user(email="f2-owner@rabbit.dev", password="Rabbit123!",
-                                     display_name="库长")
-    admin = User.objects.create_user(email="f2-admin@rabbit.dev", password="Rabbit123!",
-                                     display_name="管理员")
-    contrib = User.objects.create_user(email="f2-contrib@rabbit.dev", password="Rabbit123!",
-                                       display_name="贡献者丙")
-    other_contrib = User.objects.create_user(email="f2-other@rabbit.dev", password="Rabbit123!",
-                                             display_name="贡献者乙")
-    viewer = User.objects.create_user(email="f2-viewer@rabbit.dev", password="Rabbit123!",
-                                      display_name="只读者")
-    member_a = User.objects.create_user(email="f2-a@rabbit.dev", password="Rabbit123!",
-                                        display_name="成员甲")
-    ws = Workspace.objects.create(name="W", slug=f"w-f2-{owner.id.hex[:8]}",
-                                  owner=owner, created_by=owner)
-    for u, ws_role in ((owner, WorkspaceRole.OWNER), (admin, WorkspaceRole.MEMBER),
-                       (contrib, WorkspaceRole.MEMBER), (other_contrib, WorkspaceRole.MEMBER),
-                       (viewer, WorkspaceRole.MEMBER), (member_a, WorkspaceRole.MEMBER)):
+    owner = User.objects.create_user(email="f2-owner@rabbit.dev", password="Rabbit123!", display_name="库长")
+    admin = User.objects.create_user(email="f2-admin@rabbit.dev", password="Rabbit123!", display_name="管理员")
+    contrib = User.objects.create_user(email="f2-contrib@rabbit.dev", password="Rabbit123!", display_name="贡献者丙")
+    other_contrib = User.objects.create_user(
+        email="f2-other@rabbit.dev", password="Rabbit123!", display_name="贡献者乙"
+    )
+    viewer = User.objects.create_user(email="f2-viewer@rabbit.dev", password="Rabbit123!", display_name="只读者")
+    member_a = User.objects.create_user(email="f2-a@rabbit.dev", password="Rabbit123!", display_name="成员甲")
+    ws = Workspace.objects.create(name="W", slug=f"w-f2-{owner.id.hex[:8]}", owner=owner, created_by=owner)
+    for u, ws_role in (
+        (owner, WorkspaceRole.OWNER),
+        (admin, WorkspaceRole.MEMBER),
+        (contrib, WorkspaceRole.MEMBER),
+        (other_contrib, WorkspaceRole.MEMBER),
+        (viewer, WorkspaceRole.MEMBER),
+        (member_a, WorkspaceRole.MEMBER),
+    ):
         WorkspaceMember.objects.create(workspace=ws, member=u, role=ws_role, created_by=owner)
     proj = Project.objects.create(name="P", identifier="F2", workspace=ws, created_by=owner)
-    ProjectMember.objects.create(project=proj, member=admin, role=ProjectRole.ADMIN,
-                                 created_by=owner)
-    ProjectMember.objects.create(project=proj, member=contrib, role=ProjectRole.CONTRIBUTOR,
-                                 created_by=owner)
-    ProjectMember.objects.create(project=proj, member=other_contrib,
-                                 role=ProjectRole.CONTRIBUTOR, created_by=owner)
-    ProjectMember.objects.create(project=proj, member=viewer, role=ProjectRole.VIEWER,
-                                 created_by=owner)
-    ProjectMember.objects.create(project=proj, member=member_a, role=ProjectRole.CONTRIBUTOR,
-                                 created_by=owner)
+    ProjectMember.objects.create(project=proj, member=admin, role=ProjectRole.ADMIN, created_by=owner)
+    ProjectMember.objects.create(project=proj, member=contrib, role=ProjectRole.CONTRIBUTOR, created_by=owner)
+    ProjectMember.objects.create(project=proj, member=other_contrib, role=ProjectRole.CONTRIBUTOR, created_by=owner)
+    ProjectMember.objects.create(project=proj, member=viewer, role=ProjectRole.VIEWER, created_by=owner)
+    ProjectMember.objects.create(project=proj, member=member_a, role=ProjectRole.CONTRIBUTOR, created_by=owner)
     # 跨项目移动目标（UT-04）
     proj2 = Project.objects.create(name="P2", identifier="F2B", workspace=ws, created_by=owner)
     return {
-        "owner": owner, "admin": admin, "contrib": contrib, "other": other_contrib,
-        "viewer": viewer, "member_a": member_a, "ws": ws, "proj": proj, "proj2": proj2,
+        "owner": owner,
+        "admin": admin,
+        "contrib": contrib,
+        "other": other_contrib,
+        "viewer": viewer,
+        "member_a": member_a,
+        "ws": ws,
+        "proj": proj,
+        "proj2": proj2,
     }
 
 
@@ -163,41 +166,60 @@ def _storage_url(env):
 
 def _mk_folder(env, name, *, parent=None, visibility="all", allowed=None, project=None):
     return FileFolder.objects.create(
-        project=project or env["proj"], parent=parent, name=name,
-        visibility=visibility, allowed_members=[str(m) for m in (allowed or [])],
-        created_by=env["owner"], updated_by=env["owner"],
+        project=project or env["proj"],
+        parent=parent,
+        name=name,
+        visibility=visibility,
+        allowed_members=[str(m) for m in (allowed or [])],
+        created_by=env["owner"],
+        updated_by=env["owner"],
     )
 
 
 _MIME_BY_EXT = {
-    ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
-    ".zip": "application/zip", ".docx": "application/vnd.openxmlformats-officedocument"
-            ".wordprocessingml.document", ".mp4": "video/mp4",
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".zip": "application/zip",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".mp4": "video/mp4",
 }
 
 
-def _mk_file(env, folder, *, name="报告.pdf", size=1024, visibility=None, allowed=None,
-             uploaded_by=None, status="uploaded", storage_path=None, issue=None,
-             project=None):
+def _mk_file(
+    env,
+    folder,
+    *,
+    name="报告.pdf",
+    size=1024,
+    visibility=None,
+    allowed=None,
+    uploaded_by=None,
+    status="uploaded",
+    storage_path=None,
+    issue=None,
+    project=None,
+):
     """直建文件库资产（绕过 presign）；visibility 缺省随目录；ext/mime 按名派生。"""
     ext = "." + name.rsplit(".", 1)[-1].lower()
     mime = _MIME_BY_EXT.get(ext, "application/octet-stream")
     return FileAsset.objects.create(
-        workspace=env["ws"], project=project or env["proj"],
+        workspace=env["ws"],
+        project=project or env["proj"],
         entity_type=FileAsset.EntityType.PROJECT_FILE,
-        entity_id=folder.id, folder=folder, issue=issue,
+        entity_id=folder.id,
+        folder=folder,
+        issue=issue,
         attributes={"name": name, "size": size, "mime": mime, "ext": ext},
         size=size,
-        storage_path=storage_path or (
-            f"{env['ws'].id}/{(project or env['proj']).id}/project_file/"
-            f"{folder.id}/{ulid_new()}{ext}"
-        ),
+        storage_path=storage_path
+        or (f"{env['ws'].id}/{(project or env['proj']).id}/project_file/{folder.id}/{ulid_new()}{ext}"),
         status=status,
         uploaded_by=uploaded_by or env["owner"],
         visibility=visibility or folder.visibility,
-        allowed_members=([str(m) for m in allowed] if allowed is not None
-                         else list(folder.allowed_members or [])),
-        created_by=uploaded_by or env["owner"], updated_by=uploaded_by or env["owner"],
+        allowed_members=([str(m) for m in allowed] if allowed is not None else list(folder.allowed_members or [])),
+        created_by=uploaded_by or env["owner"],
+        updated_by=uploaded_by or env["owner"],
     )
 
 
@@ -206,7 +228,7 @@ def _err_code(resp):
 
 
 def _detail(resp, field):
-    for item in ((resp.data.get("error") or {}).get("details") or []):
+    for item in (resp.data.get("error") or {}).get("details") or []:
         if item.get("field") == field:
             return item
     return None
@@ -232,8 +254,7 @@ def test_ut01_folder_same_name_conflict(env):
 
     with pytest.raises(IntegrityError):
         with transaction.atomic():  # savepoint：避免污染外层测试事务
-            FileFolder.objects.create(project=env["proj"], parent=None, name="设计稿",
-                                      created_by=env["owner"])
+            FileFolder.objects.create(project=env["proj"], parent=None, name="设计稿", created_by=env["owner"])
     # 非根层偏条件唯一约束：不同层同名允许（作用域到本项目，防共享库同名污染——坑 18）
     sub = _mk_folder(env, "子目录", parent=FileFolder.objects.get(project=env["proj"], name="设计稿"))
     assert sub.name == "子目录"
@@ -291,12 +312,14 @@ def test_ut05_same_name_files_coexist(env):
     c = _Client(env["contrib"])
     with patch(PUT_URL) as mock:
         mock.return_value = "http://minio/uploads/x"
-        r1 = c.post(_presign_url(env, folder.id),
-                    {"file_name": "首页改版.zip", "file_size": 1024,
-                     "content_type": "application/octet-stream"})
-        r2 = c.post(_presign_url(env, folder.id),
-                    {"file_name": "首页改版.zip", "file_size": 2048,
-                     "content_type": "application/octet-stream"})
+        r1 = c.post(
+            _presign_url(env, folder.id),
+            {"file_name": "首页改版.zip", "file_size": 1024, "content_type": "application/octet-stream"},
+        )
+        r2 = c.post(
+            _presign_url(env, folder.id),
+            {"file_name": "首页改版.zip", "file_size": 2048, "content_type": "application/octet-stream"},
+        )
     assert r1.status_code == 201 and r2.status_code == 201
     a1, a2 = r1.data["data"]["asset_id"], r2.data["data"]["asset_id"]
     assert a1 != a2
@@ -351,8 +374,7 @@ def test_ut07_visibility_admins_hidden(env):
 # ── UT-08 可见性 members（指定本人可见；他人 404）────────────────
 def test_ut08_visibility_members(env):
     folder = _mk_folder(env, "指定目录")
-    file_a = _mk_file(env, folder, visibility="members",
-                      allowed=[env["member_a"].id])
+    file_a = _mk_file(env, folder, visibility="members", allowed=[env["member_a"].id])
     a = _Client(env["member_a"])
     files = a.get(_files_url(env, folder.id))
     assert files.status_code == 200 and files.data["meta"]["total_count"] == 1
@@ -369,8 +391,7 @@ def test_ut08_visibility_members(env):
 # ── UT-09 预签名实时校验（拿链接后被移出 → 新签发 404）──────────
 def test_ut09_presign_recheck_after_removal(env):
     folder = _mk_folder(env, "目录")
-    file_a = _mk_file(env, folder, visibility="members",
-                      allowed=[env["member_a"].id])
+    file_a = _mk_file(env, folder, visibility="members", allowed=[env["member_a"].id])
     a = _Client(env["member_a"])
     with patch(GET_URL) as mock:
         mock.return_value = "http://minio/get"
@@ -392,15 +413,18 @@ def test_ut10_quota_pending_reservation(env):
     c = _Client(env["contrib"])
     # storage 端点：used=0 / pending=600 / quota=1000
     usage = c.get(_storage_url(env)).data["data"]
-    assert usage == {"quota_bytes": 1000, "used_bytes": 0, "pending_bytes": 600,
-                     "usage_ratio": 0.0}
+    assert usage == {"quota_bytes": 1000, "used_bytes": 0, "pending_bytes": 600, "usage_ratio": 0.0}
     # 临界：600(在途) + 500(新) > 1000 → 第二笔 409；300 则放行（在途计入，BR-03）
     with patch(PUT_URL) as mock:
         mock.return_value = "http://minio/uploads/x"
-        r_fail = c.post(_presign_url(env, folder.id),
-                        {"file_name": "大文件.pdf", "file_size": 500, "content_type": "application/pdf"})
-        r_ok = c.post(_presign_url(env, folder.id),
-                      {"file_name": "小文件.pdf", "file_size": 300, "content_type": "application/pdf"})
+        r_fail = c.post(
+            _presign_url(env, folder.id),
+            {"file_name": "大文件.pdf", "file_size": 500, "content_type": "application/pdf"},
+        )
+        r_ok = c.post(
+            _presign_url(env, folder.id),
+            {"file_name": "小文件.pdf", "file_size": 300, "content_type": "application/pdf"},
+        )
     assert r_ok.status_code == 201
     assert r_fail.status_code == 409
     assert _err_code(r_fail) == "QUOTA_STORAGE_EXCEEDED"
@@ -417,15 +441,15 @@ def test_ut10_quota_pending_reservation(env):
 def test_ut11_dual_mount_detach_keeps_row_and_object(env):
     folder = _mk_folder(env, "设计稿")
     file_a = _mk_file(env, folder, uploaded_by=env["contrib"])
-    issue = Issue.objects.create(name="需求任务", project=env["proj"], sequence_id=1,
-                                 sort_order=100, created_by=env["owner"])
+    issue = Issue.objects.create(
+        name="需求任务", project=env["proj"], sequence_id=1, sort_order=100, created_by=env["owner"]
+    )
     c = _Client(env["contrib"])
     # 附加到任务（双挂建立）
     r = c.patch(_asset_url(env, file_a.id), {"issue_id": str(issue.id)})
     assert r.status_code == 200
     # 任务附件区可见双挂行（§1.2：entity_type=issue 行 ∪ issue 外键非空行）
-    att = c.get(f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}"
-                f"/issues/{issue.id}/attachments/")
+    att = c.get(f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/issues/{issue.id}/attachments/")
     assert att.status_code == 200
     assert str(file_a.id) in {row["id"] for row in att.data["data"]}
     # 解除挂接：文件库行与对象存活（删除按引用计数语义）
@@ -443,18 +467,16 @@ def test_ut12_trash_expiry_reference_counting(env):
     folder = _mk_folder(env, "目录")
     shared_key = f"{env['ws'].id}/{env['proj'].id}/project_file/{folder.id}/{ulid_new()}.pdf"
     gone = _mk_file(env, folder, size=100, storage_path=shared_key)
-    FileAsset.objects.filter(pk=gone.pk).update(
-        deleted_at=timezone.now() - timedelta(days=31))
+    FileAsset.objects.filter(pk=gone.pk).update(deleted_at=timezone.now() - timedelta(days=31))
     alive = _mk_file(env, folder, size=100, storage_path=shared_key)  # 同键存活引用
     with patch(REMOVE_OBJ) as mock_rm:
         result = purge_deleted_assets(restrict_workspace_id=env["ws"].id)
     assert result["purged"] >= 1
-    assert not FileAsset.all_objects.filter(pk=gone.pk).exists()   # 元数据硬删
-    assert FileAsset.objects.filter(pk=alive.pk).exists()          # 存活引用行不动
+    assert not FileAsset.all_objects.filter(pk=gone.pk).exists()  # 元数据硬删
+    assert FileAsset.objects.filter(pk=alive.pk).exists()  # 存活引用行不动
     mock_rm.assert_not_called()  # BR-06：有存活引用 → 对象保留
     # 引用清空后期满：对象删除
-    FileAsset.objects.filter(pk=alive.pk).update(
-        deleted_at=timezone.now() - timedelta(days=31))
+    FileAsset.objects.filter(pk=alive.pk).update(deleted_at=timezone.now() - timedelta(days=31))
     with patch(REMOVE_OBJ) as mock_rm:
         purge_deleted_assets(restrict_workspace_id=env["ws"].id)
     mock_rm.assert_called_once()
@@ -468,12 +490,11 @@ def test_ut13_restore_conflict_suffix(env):
     file_c = _mk_file(env, child)
     svc.delete_folder(folder=p, actor=env["owner"])  # 整树软删
     _mk_folder(env, "P")  # 原位被同名占用
-    restored = svc.restore_folder(
-        folder=FileFolder.all_objects.get(pk=p.pk), actor=env["owner"])
-    assert restored.parent_id is None            # 落根
-    assert restored.name == "P(恢复)"            # 追加后缀（BR-07）
+    restored = svc.restore_folder(folder=FileFolder.all_objects.get(pk=p.pk), actor=env["owner"])
+    assert restored.parent_id is None  # 落根
+    assert restored.name == "P(恢复)"  # 追加后缀（BR-07）
     file_c.refresh_from_db()
-    assert file_c.deleted_at is None             # 整树恢复连带文件
+    assert file_c.deleted_at is None  # 整树恢复连带文件
     child.refresh_from_db()
     assert child.deleted_at is None and child.parent_id == restored.id
 
@@ -483,8 +504,7 @@ def test_ut13b_restore_in_place_when_no_conflict(env):
     child = _mk_folder(env, "子", parent=p)
     file_c = _mk_file(env, child)
     svc.delete_folder(folder=p, actor=env["owner"])
-    restored = svc.restore_folder(
-        folder=FileFolder.all_objects.get(pk=p.pk), actor=env["owner"])
+    restored = svc.restore_folder(folder=FileFolder.all_objects.get(pk=p.pk), actor=env["owner"])
     assert restored.parent_id is None and restored.name == "独"  # 原位（根）无冲突
     file_c.refresh_from_db()
     assert file_c.deleted_at is None
@@ -505,31 +525,38 @@ def test_ut14_folder_cascade_soft_delete(env):
     # 整树软删（folders + files），对象不动
     assert not FileFolder.objects.filter(project=env["proj"]).exists()
     assert FileFolder.all_objects.filter(project=env["proj"], deleted_at__isnull=False).count() == 3
-    assert FileAsset.all_objects.filter(
-        project=env["proj"], entity_type=FileAsset.EntityType.PROJECT_FILE,
-        deleted_at__isnull=False).count() == 12
+    assert (
+        FileAsset.all_objects.filter(
+            project=env["proj"], entity_type=FileAsset.EntityType.PROJECT_FILE, deleted_at__isnull=False
+        ).count()
+        == 12
+    )
 
 
 # ── UT-15 单文件 50MB 上限（51MB → 400 SIZE_EXCEEDED）───────────
 def test_ut15_file_size_50mb_limit(env):
     folder = _mk_folder(env, "目录")
     c = _Client(env["contrib"])
-    r = c.post(_presign_url(env, folder.id),
-               {"file_name": "方案演示.zip", "file_size": 50 * 1024 * 1024 + 1,
-                "content_type": "application/zip"})
+    r = c.post(
+        _presign_url(env, folder.id),
+        {"file_name": "方案演示.zip", "file_size": 50 * 1024 * 1024 + 1, "content_type": "application/zip"},
+    )
     assert r.status_code == 400
     assert _err_code(r) == "VALIDATION_FILE_SIZE_EXCEEDED"
     assert "分片" in _detail(r, "file_size")["message"]  # P2 文案（§2.5）
     # 恰 50MB 边界放行
     with patch(PUT_URL) as mock:
         mock.return_value = "http://minio/uploads/x"
-        r_ok = c.post(_presign_url(env, folder.id),
-                      {"file_name": "方案演示.zip", "file_size": 50 * 1024 * 1024,
-                       "content_type": "application/zip"})
+        r_ok = c.post(
+            _presign_url(env, folder.id),
+            {"file_name": "方案演示.zip", "file_size": 50 * 1024 * 1024, "content_type": "application/zip"},
+        )
     assert r_ok.status_code == 201
     # 白名单拒绝（BR-03 第一环，沿用 FILE-001 ALLOWED_EXTS）
-    r_ext = c.post(_presign_url(env, folder.id),
-                   {"file_name": "病毒.exe", "file_size": 100, "content_type": "application/x-msdownload"})
+    r_ext = c.post(
+        _presign_url(env, folder.id),
+        {"file_name": "病毒.exe", "file_size": 100, "content_type": "application/x-msdownload"},
+    )
     assert r_ext.status_code == 400
     assert _err_code(r_ext) == "VALIDATION_FILE_TYPE_NOT_ALLOWED"
 
@@ -539,13 +566,14 @@ def test_ut16_archived_project_readonly(env):
     Project.objects.filter(pk=env["proj"].pk).update(status="archived")
     env["proj"].refresh_from_db()
     c = _Client(env["contrib"])
-    assert c.get(_folders_url(env)).status_code == 200          # 浏览可
+    assert c.get(_folders_url(env)).status_code == 200  # 浏览可
     assert c.post(_folders_url(env), {"name": "新目录"}).status_code == 403
     folder = _mk_folder(env, "既有目录")
     with patch(PUT_URL) as mock:
         mock.return_value = "http://minio/uploads/x"
-        r = c.post(_presign_url(env, folder.id),
-                   {"file_name": "a.pdf", "file_size": 10, "content_type": "application/pdf"})
+        r = c.post(
+            _presign_url(env, folder.id), {"file_name": "a.pdf", "file_size": 10, "content_type": "application/pdf"}
+        )
     assert r.status_code == 403
     assert _err_code(r) == "PERM_PROJECT_ARCHIVED"
 
@@ -606,9 +634,9 @@ def test_ut18_download_count_async_flush(env):
             assert a.get(_dl_url(env, file_a.id)).status_code == 200
         assert fake.hgetall(file_stats.DOWNLOAD_COUNT_KEY) == {str(file_a.id): "3"}
         assert FileAsset.objects.get(pk=file_a.pk).download_count == 0  # 未落库（零直写）
-        file_stats.flush_download_counts()                              # 触发 beat 批量任务
+        file_stats.flush_download_counts()  # 触发 beat 批量任务
         assert FileAsset.objects.get(pk=file_a.pk).download_count == 3
-        assert fake.hgetall(file_stats.DOWNLOAD_COUNT_KEY) == {}        # 落库后清零
+        assert fake.hgetall(file_stats.DOWNLOAD_COUNT_KEY) == {}  # 落库后清零
     file_stats.reset_redis_state()
 
 
@@ -662,9 +690,9 @@ def test_ut21_tree_pruning_and_count_no_leak(env):
     v = _Client(env["viewer"])
     tree = v.get(_folders_url(env))
     names = _tree_names(tree)
-    assert "管理员目录" not in names                 # admins 态隐藏
+    assert "管理员目录" not in names  # admins 态隐藏
     assert "父全可见" in names
-    assert "子仅管理员" not in names                 # 父可见子不可见 → 子树隐藏
+    assert "子仅管理员" not in names  # 父可见子不可见 → 子树隐藏
     # 计数不透出：父级 file_count 不含不可见子孙的文件（防计数侧信道）
     parent_row = next(r for r in tree.data["data"] if r["name"] == "父全可见")
     assert parent_row["file_count"] == 1
@@ -685,7 +713,8 @@ def test_it02_complete_head_mismatch(env):
         mock.return_value = "http://minio/uploads/x"
         r = _Client(env["contrib"]).post(
             _presign_url(env, folder.id),
-            {"file_name": "半量.zip", "file_size": 1000, "content_type": "application/octet-stream"})
+            {"file_name": "半量.zip", "file_size": 1000, "content_type": "application/octet-stream"},
+        )
     asset_id = r.data["data"]["asset_id"]
     c = _Client(env["contrib"])
     # PUT 半量后 complete：HEAD 大小不匹配 → 400
@@ -713,18 +742,16 @@ def test_it03_orphan_upload_recycled(env):
     with patch(PUT_URL) as mock:
         mock.return_value = "http://minio/uploads/x"
         r = _Client(env["contrib"]).post(
-            _presign_url(env, folder.id),
-            {"file_name": "孤儿.pdf", "file_size": 66, "content_type": "application/pdf"})
+            _presign_url(env, folder.id), {"file_name": "孤儿.pdf", "file_size": 66, "content_type": "application/pdf"}
+        )
     asset_id = r.data["data"]["asset_id"]
     # presign 不 complete；加速时钟：回拨 created_at 至 31 分钟前
-    FileAsset.objects.filter(pk=asset_id).update(
-        created_at=timezone.now() - timedelta(minutes=31))
+    FileAsset.objects.filter(pk=asset_id).update(created_at=timezone.now() - timedelta(minutes=31))
     marked = mark_abandoned_uploads(restrict_workspace_id=env["ws"].id)
     assert marked == 1
     assert FileAsset.objects.get(pk=asset_id).status == "abandoned"
     # 次日：残片对象与记录物理清理
-    FileAsset.objects.filter(pk=asset_id).update(
-        created_at=timezone.now() - timedelta(days=2))
+    FileAsset.objects.filter(pk=asset_id).update(created_at=timezone.now() - timedelta(days=2))
     with patch(REMOVE_OBJ) as mock_rm:
         result = purge_deleted_assets(restrict_workspace_id=env["ws"].id)
     mock_rm.assert_called_once()
@@ -738,15 +765,15 @@ def test_it03_orphan_upload_recycled(env):
 def test_it04_folder_move_zero_object_ops(env):
     src = _mk_folder(env, "源目录")
     dst = _mk_folder(env, "目标目录")
-    big = _mk_file(env, src, name="1GB素材.zip", size=1024 ** 3)
+    big = _mk_file(env, src, name="1GB素材.zip", size=1024**3)
     key_before = big.storage_path
     with patch(REMOVE_OBJ) as mock_rm, patch(PUT_URL) as mock_put:
         r = _Client(env["contrib"]).patch(_folder_url(env, src.id), {"parent_id": str(dst.id)})
     assert r.status_code == 200
     big.refresh_from_db()
     src.refresh_from_db()
-    assert big.storage_path == key_before   # 键不变（纯元数据操作，IT-04）
-    assert big.folder_id == src.id          # 文件仍在被移动目录内（目录移动不改文件归属）
+    assert big.storage_path == key_before  # 键不变（纯元数据操作，IT-04）
+    assert big.folder_id == src.id  # 文件仍在被移动目录内（目录移动不改文件归属）
     assert src.parent_id == dst.id
     mock_rm.assert_not_called()
     mock_put.assert_not_called()
@@ -761,9 +788,9 @@ def test_it05_visibility_three_layers_consistent(env):
     c = _Client(env["contrib"])
     with patch(GET_URL) as mock:
         mock.return_value = "http://minio/get"
-        assert "受限目录" not in _tree_names(c.get(_folders_url(env)))   # 树
-        assert c.get(_files_url(env, folder.id)).status_code == 404      # 列表
-        assert c.get(_dl_url(env, file_a.id)).status_code == 404         # 预签名
+        assert "受限目录" not in _tree_names(c.get(_folders_url(env)))  # 树
+        assert c.get(_files_url(env, folder.id)).status_code == 404  # 列表
+        assert c.get(_dl_url(env, file_a.id)).status_code == 404  # 预签名
     # 单入口同源：三路判定均收敛到 can_view_file（BR-08）
     assert can_view_file(env["contrib"], folder) is False
     assert can_view_file(env["admin"], folder) is True
@@ -776,8 +803,7 @@ def test_it05_visibility_three_layers_consistent(env):
 def test_it09_tree_role_matrix(env):
     admins_dir = _mk_folder(env, "甲不可见的管理员目录", visibility="admins")
     _mk_file(env, admins_dir, name="m.pdf")
-    members_dir = _mk_folder(env, "仅甲目录", visibility="members",
-                             allowed=[env["member_a"].id])
+    members_dir = _mk_folder(env, "仅甲目录", visibility="members", allowed=[env["member_a"].id])
     _mk_file(env, members_dir, name="a.pdf")
     parent_all = _mk_folder(env, "父全可见")
     child_admins = _mk_folder(env, "子仅管理员", parent=parent_all, visibility="admins")
@@ -790,10 +816,10 @@ def test_it09_tree_role_matrix(env):
         resp = _Client(user).get(_folders_url(env))
         return _tree_names(resp)
 
-    v = visible_by(env["viewer"])           # VIEWER
-    b = visible_by(env["other"])            # CONTRIBUTOR 乙（非指定成员）
-    a = visible_by(env["admin"])            # ADMIN
-    jia = visible_by(env["member_a"])       # 甲（members 态指定成员）
+    v = visible_by(env["viewer"])  # VIEWER
+    b = visible_by(env["other"])  # CONTRIBUTOR 乙（非指定成员）
+    a = visible_by(env["admin"])  # ADMIN
+    jia = visible_by(env["member_a"])  # 甲（members 态指定成员）
     # admins 态：仅 ADMIN 可见
     for names in (v, b, jia):
         assert "甲不可见的管理员目录" not in names
@@ -806,7 +832,7 @@ def test_it09_tree_role_matrix(env):
     tree_v = _Client(env["viewer"]).get(_folders_url(env))
     parent_row = next(r for r in tree_v.data["data"] if r["name"] == "父全可见")
     assert "子仅管理员" not in v
-    assert parent_row["file_count"] == 0   # 父自身无文件、子的 ca.pdf 不透出
+    assert parent_row["file_count"] == 0  # 父自身无文件、子的 ca.pdf 不透出
 
 
 # ────────────────────────────────────────────────────────────────
@@ -845,8 +871,7 @@ def test_trash_list_and_restore_r1_scope(env):
 def test_file_move_and_list_filters(env):
     f1 = _mk_folder(env, "目录一")
     f2 = _mk_folder(env, "目录二")
-    fa = _mk_file(env, f1, name="需求评审纪要.docx", size=100,
-                  uploaded_by=env["contrib"])
+    fa = _mk_file(env, f1, name="需求评审纪要.docx", size=100, uploaded_by=env["contrib"])
     _mk_file(env, f1, name="首页改版.png", size=200, uploaded_by=env["admin"])
     _mk_file(env, f1, name="资产打包.zip", size=300, uploaded_by=env["contrib"])
     c = _Client(env["viewer"])
@@ -870,7 +895,7 @@ def test_file_move_and_list_filters(env):
     assert m.patch(_asset_url(env, fa.id), {"folder_id": str(f2.id)}).status_code == 200
     fa.refresh_from_db()
     assert fa.folder_id == f2.id
-    assert fa.entity_id == f2.id           # 多态列同值同步（§1.7 第 1 行）
+    assert fa.entity_id == f2.id  # 多态列同值同步（§1.7 第 1 行）
     assert c.get(_files_url(env, f1.id)).data["meta"]["total_count"] == 2
     assert c.get(_files_url(env, f2.id)).data["meta"]["total_count"] == 1
 
@@ -888,8 +913,7 @@ def test_list_pagination_cursor(env):
     p2 = c.get(_files_url(env, folder.id, f"?per_page=3&cursor={cursor}"))
     assert p2.data["meta"]["page"] == 2
     assert p2.data["meta"]["count"] == 3
-    p3 = c.get(_files_url(env, folder.id,
-                          f"?per_page=3&cursor={p2.data['meta']['next_cursor']}"))
+    p3 = c.get(_files_url(env, folder.id, f"?per_page=3&cursor={p2.data['meta']['next_cursor']}"))
     assert p3.data["meta"]["count"] == 1
     assert p3.data["meta"]["next_cursor"] is None
     # 非法游标 → 400（C003 同款）
@@ -902,12 +926,10 @@ def test_list_pagination_cursor(env):
 def test_folder_visibility_requires_admin(env):
     folder = _mk_folder(env, "目录")
     c = _Client(env["contrib"])
-    r = c.patch(_folder_url(env, folder.id),
-                {"visibility": "admins"})
+    r = c.patch(_folder_url(env, folder.id), {"visibility": "admins"})
     assert r.status_code == 403
     a = _Client(env["admin"])
-    r2 = a.patch(_folder_url(env, folder.id),
-                 {"visibility": "members", "allowed_members": [str(env["member_a"].id)]})
+    r2 = a.patch(_folder_url(env, folder.id), {"visibility": "members", "allowed_members": [str(env["member_a"].id)]})
     assert r2.status_code == 200
     assert r2.data["data"]["visibility"] == "members"
     assert r2.data["data"]["allowed_members"] == [str(env["member_a"].id)]

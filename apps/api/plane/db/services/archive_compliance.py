@@ -33,12 +33,12 @@ def check_archive_compliance(workspace) -> dict:
     for hold in LegalHold.objects.filter(asset__workspace=workspace, released_at__isnull=True)[:10]:
         blocking.append({"kind": "legal_hold", "hold": str(hold.id), "reason": hold.reason})
 
-    unassigned = _I.objects.filter(
+    unassigned = Issue.objects.filter(
         project__workspace=workspace, deleted_at__isnull=True, issue_assignees__isnull=True, completed_at__isnull=True
     ).count()
     if unassigned:
         warnings.append({"kind": "unassigned", "count": unassigned})
-    future = _I.objects.filter(
+    future = Issue.objects.filter(
         project__workspace=workspace, deleted_at__isnull=True, target_date__gt=now.date()
     ).count()
     if future:

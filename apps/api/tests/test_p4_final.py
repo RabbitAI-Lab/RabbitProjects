@@ -6,6 +6,7 @@ import datetime as dt
 
 import pytest
 from django.core.cache import cache
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from plane.app.views.p4_final import route_push, wf_timeout_sweep
@@ -110,7 +111,9 @@ def test_timeout_rule_and_sweep(env):
 
 
 def test_resource_scheduling(env):
-    week = dt.date.today() - dt.timedelta(days=dt.date.today().weekday())
+    # 与被测视图同口径（服务器时区 localdate）——date.today() 是机器本地时区，
+    # CI（UTC 机）与北京周一凌晨两种环境都会错位一周
+    week = timezone.localdate() - dt.timedelta(days=timezone.localdate().weekday())
     idle = User.objects.create_user(email="pf-idle@rabbit.dev", password="Rabbit123!", display_name="闲置")
     WorkspaceMember.objects.create(workspace=env["ws"], member=idle, role=WorkspaceRole.MEMBER, created_by=idle)
     WorkLogSummary.objects.create(

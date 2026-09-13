@@ -2,7 +2,10 @@ name: security-gate
 
 # QA-001 §4.3 四源扫描 + BR-06 判定（Critical 零容忍 / High 凭豁免单）。
 # 触发：PR + 每日 03:00 定期（新披露 CVE 不等下次改动）。
+# workflow_dispatch：GitHub schedule 尽力而为会整班跳过（2026-09-14 实测缺一班），
+# 补手动入口供错班后人工补跑。
 on:
+  workflow_dispatch: {}
   pull_request:
     paths: ["apps/api/**", "packages/**", "apps/*/package.json", "pnpm-lock.yaml", "security/**", "ci/**"]
   schedule:

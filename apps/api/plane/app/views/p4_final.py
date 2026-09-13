@@ -256,7 +256,10 @@ class ResourceSchedulingView(APIView):
         from plane.app.views.gantt_portfolio import DEFAULT_WEEKLY_CAPACITY
 
         ws = get_workspace_or_404(slug, request.user)[0]
-        week_start = timezone.now().date() - timedelta(days=timezone.now().weekday())
+        # 周窗口按服务器时区口径（BR-01，与 compiler._resolve_relative_date 同款
+        # localdate）——timezone.now() 是 UTC，东八区周一 0~8 点会取到上一周
+        today = timezone.localdate()
+        week_start = today - timedelta(days=today.weekday())
         rows = (
             WorkLogSummary.objects.filter(project__workspace=ws, week_start=week_start)
             .values("actor_id")

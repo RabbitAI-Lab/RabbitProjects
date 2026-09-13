@@ -7,6 +7,7 @@ resolve_initial_state）、V1.0 零行为变化、受控流转（匹配边/守�
 单事务回滚（守卫失败状态不变）、终止触发钩子（state_changed/issue_deleted/
 issue_archived）。夹具风格对照 test_comment_thread.py。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -47,35 +48,32 @@ pytestmark = pytest.mark.django_db
 # ────────────────────────────────────────────────────────────────
 @pytest.fixture()
 def env(db):
-    owner = User.objects.create_user(email="wf-owner@rabbit.dev", password="Rabbit123!",
-                                     display_name="管理者")
-    member = User.objects.create_user(email="wf-member@rabbit.dev", password="Rabbit123!",
-                                      display_name="成员甲")
-    approver2 = User.objects.create_user(email="wf-appr2@rabbit.dev", password="Rabbit123!",
-                                         display_name="审批乙")
-    ws = Workspace.objects.create(name="W", slug=f"w-wf-{owner.id.hex[:8]}",
-                                  owner=owner, created_by=owner)
-    for u, r in ((owner, WorkspaceRole.OWNER), (member, WorkspaceRole.MEMBER),
-                 (approver2, WorkspaceRole.MEMBER)):
+    owner = User.objects.create_user(email="wf-owner@rabbit.dev", password="Rabbit123!", display_name="管理者")
+    member = User.objects.create_user(email="wf-member@rabbit.dev", password="Rabbit123!", display_name="成员甲")
+    approver2 = User.objects.create_user(email="wf-appr2@rabbit.dev", password="Rabbit123!", display_name="审批乙")
+    ws = Workspace.objects.create(name="W", slug=f"w-wf-{owner.id.hex[:8]}", owner=owner, created_by=owner)
+    for u, r in ((owner, WorkspaceRole.OWNER), (member, WorkspaceRole.MEMBER), (approver2, WorkspaceRole.MEMBER)):
         WorkspaceMember.objects.create(workspace=ws, member=u, role=r, created_by=owner)
     proj = Project.objects.create(name="P", identifier="WFP", workspace=ws, created_by=owner)
-    ProjectMember.objects.create(project=proj, member=owner, role=ProjectRole.ADMIN,
-                                 created_by=owner)
-    ProjectMember.objects.create(project=proj, member=member, role=ProjectRole.CONTRIBUTOR,
-                                 created_by=owner)
-    ProjectMember.objects.create(project=proj, member=approver2, role=ProjectRole.CONTRIBUTOR,
-                                 created_by=owner)
+    ProjectMember.objects.create(project=proj, member=owner, role=ProjectRole.ADMIN, created_by=owner)
+    ProjectMember.objects.create(project=proj, member=member, role=ProjectRole.CONTRIBUTOR, created_by=owner)
+    ProjectMember.objects.create(project=proj, member=approver2, role=ProjectRole.CONTRIBUTOR, created_by=owner)
     seed_project_states(proj)
     states = {s.name: s for s in State.objects.filter(project=proj)}
     return {
-        "owner": owner, "member": member, "approver2": approver2,
-        "ws": ws, "proj": proj, "states": states,
+        "owner": owner,
+        "member": member,
+        "approver2": approver2,
+        "ws": ws,
+        "proj": proj,
+        "states": states,
     }
 
 
 def _mk_issue(env, name="任务A", state=None, actor=None, issue_type=None):
     return Issue.objects.create(
-        project=env["proj"], name=name,
+        project=env["proj"],
+        name=name,
         state=state or env["states"]["待办"],
         issue_type=issue_type,
         sequence_id=next_sequence_id(env["proj"].pk),
@@ -83,20 +81,25 @@ def _mk_issue(env, name="任务A", state=None, actor=None, issue_type=None):
     )
 
 
-def _mk_graph(env, *, issue_type=None, name="流程X", with_edge=True,
-              approval_flow=None, guards=None):
+def _mk_graph(env, *, issue_type=None, name="流程X", with_edge=True, approval_flow=None, guards=None):
     """建草稿 + 三节点两边的最小可发布图（初始=待办 → 进行中 → 已完成）。"""
-    wf = Workflow.objects.create(project=env["proj"], issue_type=issue_type,
-                                 name=name, created_by=env["owner"])
-    s = {n: WorkflowState.objects.create(
-        workflow=wf, state=env["states"][n], is_initial=(n == "待办")) for n in ("待办", "进行中", "已完成")}
+    wf = Workflow.objects.create(project=env["proj"], issue_type=issue_type, name=name, created_by=env["owner"])
+    s = {
+        n: WorkflowState.objects.create(workflow=wf, state=env["states"][n], is_initial=(n == "待办"))
+        for n in ("待办", "进行中", "已完成")
+    }
     if with_edge:
         WorkflowTransition.objects.create(
-            workflow=wf, from_state=s["待办"], to_state=s["进行中"],
-            name="开始", guards=guards or [], approval_flow=approval_flow)
+            workflow=wf,
+            from_state=s["待办"],
+            to_state=s["进行中"],
+            name="开始",
+            guards=guards or [],
+            approval_flow=approval_flow,
+        )
         WorkflowTransition.objects.create(
-            workflow=wf, from_state=s["进行中"], to_state=s["已完成"], name="完成",
-            approval_flow=approval_flow)
+            workflow=wf, from_state=s["进行中"], to_state=s["已完成"], name="完成", approval_flow=approval_flow
+        )
     return wf, s
 
 
@@ -115,10 +118,8 @@ class TestModelConstraints:
         _publish(env, wf2)  # wf1 翻 archived，wf2 成为唯一 published
         wf3, _ = _mk_graph(env, name="流程三")
         _publish(env, wf3)
-        assert Workflow.objects.filter(project=env["proj"],
-                                       status=Workflow.Status.PUBLISHED).count() == 1
-        assert Workflow.objects.filter(project=env["proj"],
-                                       status=Workflow.Status.ARCHIVED).count() == 2
+        assert Workflow.objects.filter(project=env["proj"], status=Workflow.Status.PUBLISHED).count() == 1
+        assert Workflow.objects.filter(project=env["proj"], status=Workflow.Status.ARCHIVED).count() == 2
 
     def test_br03_state_unique_per_workflow(self, env):
         wf, s = _mk_graph(env, with_edge=False)
@@ -128,27 +129,35 @@ class TestModelConstraints:
     def test_br07_self_loop_rejected(self, env):
         wf, s = _mk_graph(env, with_edge=False)
         with pytest.raises(IntegrityError):
-            WorkflowTransition.objects.create(
-                workflow=wf, from_state=s["待办"], to_state=s["待办"], name="自环")
+            WorkflowTransition.objects.create(workflow=wf, from_state=s["待办"], to_state=s["待办"], name="自环")
 
     def test_br10_pending_unique_per_edge(self, env):
-        flow = ApprovalFlow.objects.create(project=env["proj"], name="审批F",
-                                           created_by=env["owner"])
-        ApprovalNode.objects.create(flow=flow, level=1, pass_mode="any",
-                                    approver_type="users",
-                                    approver_config={"user_ids": [str(env["member"].id)]})
+        flow = ApprovalFlow.objects.create(project=env["proj"], name="审批F", created_by=env["owner"])
+        ApprovalNode.objects.create(
+            flow=flow,
+            level=1,
+            pass_mode="any",
+            approver_type="users",
+            approver_config={"user_ids": [str(env["member"].id)]},
+        )
         wf, s = _mk_graph(env, approval_flow=flow)
         _publish(env, wf)
         issue = _mk_issue(env)
         ApprovalInstance.objects.create(
-            issue=issue, transition=wf.transitions.get(name="开始"), initiator=env["member"],
+            issue=issue,
+            transition=wf.transitions.get(name="开始"),
+            initiator=env["member"],
             flow_snapshot={"name": "F", "nodes": [], "forbid_self_approve": True},
-            from_state=issue.state)
+            from_state=issue.state,
+        )
         with pytest.raises(IntegrityError):
             ApprovalInstance.objects.create(
-                issue=issue, transition=wf.transitions.get(name="开始"), initiator=env["member"],
+                issue=issue,
+                transition=wf.transitions.get(name="开始"),
+                initiator=env["member"],
                 flow_snapshot={"name": "F", "nodes": [], "forbid_self_approve": True},
-                from_state=issue.state)
+                from_state=issue.state,
+            )
 
 
 # ────────────────────────────────────────────────────────────────
@@ -163,19 +172,17 @@ class TestResolveAndV10Fallback:
         """无工作流 = V1.0 自由流转 + TASK-005 完成守卫（零行为变化锚）。"""
         blocker = _mk_issue(env, name="前置任务")
         issue = _mk_issue(env, name="被阻塞任务")
-        IssueLink.objects.create(issue=issue, related_issue=blocker,
-                                 relation_type="is_blocked_by",
-                                 created_by=env["owner"])
+        IssueLink.objects.create(
+            issue=issue, related_issue=blocker, relation_type="is_blocked_by", created_by=env["owner"]
+        )
         svc = WorkflowService()
         # 自由流转：待办 → 进行中 无边也放行
-        r = svc.transition(issue_id=issue.id, to_state_id=env["states"]["进行中"].id,
-                           actor=env["owner"])
+        r = svc.transition(issue_id=issue.id, to_state_id=env["states"]["进行中"].id, actor=env["owner"])
         assert r.issue.state_id == env["states"]["进行中"].id
         # 迁入完成被 BLOCKER 拦截（409 BLOCKED；守卫化后为结构化 TransitionError，
         # code/details 同 TASK-005 口径——WF-004 §2.1 判定域一致）
         with pytest.raises(TransitionError) as ei:
-            svc.transition(issue_id=issue.id, to_state_id=env["states"]["已完成"].id,
-                           actor=env["owner"])
+            svc.transition(issue_id=issue.id, to_state_id=env["states"]["已完成"].id, actor=env["owner"])
         assert ei.value.code == "RESOURCE_TRANSITION_BLOCKED"
         assert ei.value.status == 409
         assert ei.value.details[0]["code"] == "BLOCKED_BY"
@@ -188,8 +195,7 @@ class TestResolveAndV10Fallback:
         assert st.is_default is True  # 无工作流 → State.is_default（V1.0 行为）
 
     def test_type_specific_priority(self, env):
-        it = IssueType.objects.create(workspace=env["ws"], name="缺陷",
-                                      created_by=env["owner"])
+        it = IssueType.objects.create(workspace=env["ws"], name="缺陷", created_by=env["owner"])
         default_wf, _ = _mk_graph(env, name="项目默认流程")
         _publish(env, default_wf)
         type_wf, _ = _mk_graph(env, issue_type=it, name="缺陷专属流程")
@@ -209,9 +215,7 @@ class TestControlledTransition:
         _publish(env, wf)
         issue = _mk_issue(env)
         with pytest.raises(TransitionError) as ei:
-            WorkflowService().transition(issue_id=issue.id,
-                                         to_state_id=env["states"]["已完成"].id,
-                                         actor=env["owner"])
+            WorkflowService().transition(issue_id=issue.id, to_state_id=env["states"]["已完成"].id, actor=env["owner"])
         assert ei.value.code == "RESOURCE_TRANSITION_INVALID"
         assert ei.value.status == 409
 
@@ -219,10 +223,12 @@ class TestControlledTransition:
         wf, s = _mk_graph(env)
         _publish(env, wf)
         issue = _mk_issue(env)
-        r = WorkflowService().transition(issue_id=issue.id,
-                                         to_state_id=env["states"]["进行中"].id,
-                                         actor=env["member"],
-                                         transition_id=str(wf.transitions.get(name="开始").id))
+        r = WorkflowService().transition(
+            issue_id=issue.id,
+            to_state_id=env["states"]["进行中"].id,
+            actor=env["member"],
+            transition_id=str(wf.transitions.get(name="开始").id),
+        )
         assert r.edge.name == "开始"
         issue.refresh_from_db()
         assert issue.state_id == env["states"]["进行中"].id
@@ -230,46 +236,44 @@ class TestControlledTransition:
     def test_multi_edge_requires_transition_id(self, env):
         wf, s = _mk_graph(env)
         WorkflowTransition.objects.create(
-            workflow=wf, from_state=s["待办"], to_state=s["进行中"], name="特批开始",
-            sort_order=500)
+            workflow=wf, from_state=s["待办"], to_state=s["进行中"], name="特批开始", sort_order=500
+        )
         _publish(env, wf)
         issue = _mk_issue(env)
         with pytest.raises(TransitionError) as ei:
-            WorkflowService().transition(issue_id=issue.id,
-                                         to_state_id=env["states"]["进行中"].id,
-                                         actor=env["owner"])
+            WorkflowService().transition(issue_id=issue.id, to_state_id=env["states"]["进行中"].id, actor=env["owner"])
         assert ei.value.code == "VALIDATION_ERROR"
         assert ei.value.details[0]["field"] == "transition_id"
 
     def test_blocker_guard_on_controlled_path(self, env):
         """受控路径隐式 blocker_completed 守卫（迁入完成被拦，状态不变）。"""
         wf, s = _mk_graph(env)
-        WorkflowTransition.objects.create(
-            workflow=wf, from_state=s["待办"], to_state=s["已完成"], name="直接完成")
+        WorkflowTransition.objects.create(workflow=wf, from_state=s["待办"], to_state=s["已完成"], name="直接完成")
         _publish(env, wf)
         blocker = _mk_issue(env, name="前置")
         issue = _mk_issue(env, name="被阻")
-        IssueLink.objects.create(issue=issue, related_issue=blocker,
-                                 relation_type="is_blocked_by", created_by=env["owner"])
+        IssueLink.objects.create(
+            issue=issue, related_issue=blocker, relation_type="is_blocked_by", created_by=env["owner"]
+        )
         with pytest.raises(TransitionError) as ei:
-            WorkflowService().transition(issue_id=issue.id,
-                                         to_state_id=env["states"]["已完成"].id,
-                                         actor=env["owner"])
+            WorkflowService().transition(issue_id=issue.id, to_state_id=env["states"]["已完成"].id, actor=env["owner"])
         assert ei.value.code == "RESOURCE_TRANSITION_BLOCKED"
         issue.refresh_from_db()
         assert issue.state_id == env["states"]["待办"].id
 
     def test_state_changed_terminates_other_pending(self, env, django_capture_on_commit_callbacks):
         """§2.3：经其他边流转成功 → 本任务 pending 审批实例 terminated(state_changed)。"""
-        flow = ApprovalFlow.objects.create(project=env["proj"], name="挂起审批",
-                                           created_by=env["owner"])
-        ApprovalNode.objects.create(flow=flow, level=1, pass_mode="all",
-                                    approver_type="users",
-                                    approver_config={"user_ids": [str(env["member"].id)]})
+        flow = ApprovalFlow.objects.create(project=env["proj"], name="挂起审批", created_by=env["owner"])
+        ApprovalNode.objects.create(
+            flow=flow,
+            level=1,
+            pass_mode="all",
+            approver_type="users",
+            approver_config={"user_ids": [str(env["member"].id)]},
+        )
         wf, s = _mk_graph(env, approval_flow=flow)
         # 另加一条免审批边（取消）
-        WorkflowTransition.objects.create(
-            workflow=wf, from_state=s["待办"], to_state=s["进行中"], name="跳过审批")
+        WorkflowTransition.objects.create(workflow=wf, from_state=s["待办"], to_state=s["进行中"], name="跳过审批")
         _publish(env, wf)
         issue = _mk_issue(env, actor=env["member"])
         edge_approval = wf.transitions.get(name="开始")
@@ -281,9 +285,12 @@ class TestControlledTransition:
         # on_commit 回调（禁止 django_db(transaction=True)——其 teardown 会
         # flush 整个共享 dev 库，清掉迁移种子与演示数据）。
         with django_capture_on_commit_callbacks(execute=True):
-            WorkflowService().transition(issue_id=issue.id,
-                                         to_state_id=env["states"]["进行中"].id,
-                                         actor=env["member"], transition_id=str(edge_skip.id))
+            WorkflowService().transition(
+                issue_id=issue.id,
+                to_state_id=env["states"]["进行中"].id,
+                actor=env["member"],
+                transition_id=str(edge_skip.id),
+            )
         inst.refresh_from_db()
         assert inst.status == ApprovalInstance.Status.TERMINATED
         assert inst.terminal_reason == "state_changed"
@@ -341,6 +348,7 @@ class TestPublish:
         wf.status = Workflow.Status.ARCHIVED
         wf.save(update_fields=["status"])
         from django.core.cache import cache
+
         cache.delete(f"wf:resolved:{env['proj'].id}:None")
         issue.refresh_from_db()
         assert WorkflowService().resolve_workflow(issue) is None
@@ -349,16 +357,18 @@ class TestPublish:
 # ────────────────────────────────────────────────────────────────
 # 5. 审批五场景（WF-002）
 # ────────────────────────────────────────────────────────────────
-def _mk_approval_env(env, *, pass_mode="all", levels=1, approvers=None,
-                     forbid_self=True):
+def _mk_approval_env(env, *, pass_mode="all", levels=1, approvers=None, forbid_self=True):
     flow = ApprovalFlow.objects.create(
-        project=env["proj"], name=f"流程-{pass_mode}-{levels}-{uuid.uuid4().hex[:6]}",
-        forbid_self_approve=forbid_self, created_by=env["owner"])
+        project=env["proj"],
+        name=f"流程-{pass_mode}-{levels}-{uuid.uuid4().hex[:6]}",
+        forbid_self_approve=forbid_self,
+        created_by=env["owner"],
+    )
     ids = [str(u.id) for u in (approvers or [env["member"], env["approver2"]])]
     for lv in range(1, levels + 1):
         ApprovalNode.objects.create(
-            flow=flow, level=lv, pass_mode=pass_mode, approver_type="users",
-            approver_config={"user_ids": ids})
+            flow=flow, level=lv, pass_mode=pass_mode, approver_type="users", approver_config={"user_ids": ids}
+        )
     wf, s = _mk_graph(env, approval_flow=flow)
     _publish(env, wf)
     issue = _mk_issue(env, actor=env["owner"])
@@ -369,8 +379,11 @@ class TestApprovalScenarios:
     def test_start_returns_202_like_pending(self, env):
         flow, wf, issue, edge_start = _mk_approval_env(env)
         r = WorkflowService().transition(
-            issue_id=issue.id, to_state_id=env["states"]["进行中"].id,
-            actor=env["owner"], transition_id=str(edge_start.id))
+            issue_id=issue.id,
+            to_state_id=env["states"]["进行中"].id,
+            actor=env["owner"],
+            transition_id=str(edge_start.id),
+        )
         assert r.pending_approval is not None
         issue.refresh_from_db()
         assert issue.state_id == env["states"]["待办"].id  # 挂起：状态不变
@@ -402,8 +415,7 @@ class TestApprovalScenarios:
 
     def test_sequential_levels(self, env):
         """逐级：两级各一人，先 L1 后 L2。"""
-        flow, wf, issue, edge_start = _mk_approval_env(env, pass_mode="any", levels=2,
-                                           approvers=[env["member"]])
+        flow, wf, issue, edge_start = _mk_approval_env(env, pass_mode="any", levels=2, approvers=[env["member"]])
         svc = ApprovalService()
         inst = svc.start(edge_start, issue=issue, actor=env["owner"])
         assert inst.current_level == 1
@@ -452,19 +464,15 @@ class TestApprovalScenarios:
 
     def test_self_approve_skipped_br12(self, env):
         """禁自审：发起人自己是审批人 → 其票 skipped(self)；或签仅剩自己转交管理员。"""
-        ProjectMember.objects.filter(project=env["proj"], member=env["approver2"]) \
-            .update(role=ProjectRole.ADMIN)
-        flow, wf, issue, edge_start = _mk_approval_env(env, pass_mode="any",
-                                           approvers=[env["owner"]], forbid_self=True)
+        ProjectMember.objects.filter(project=env["proj"], member=env["approver2"]).update(role=ProjectRole.ADMIN)
+        flow, wf, issue, edge_start = _mk_approval_env(env, pass_mode="any", approvers=[env["owner"]], forbid_self=True)
         svc = ApprovalService()
         inst = svc.start(edge_start, issue=issue, actor=env["owner"])
         recs = list(inst.records.all())
         assert any(r.action == "skipped" and r.comment == "self" for r in recs)
         # 全员 skipped → 转交 PROJ_ADMIN（BR-12）：approver2（ADMIN）补票可审批
-        assert inst.records.filter(level=1, action="pending",
-                                    approver=env["approver2"]).exists()
-        ApprovalService().act(instance_id=inst.id, actor=env["approver2"],
-                              action="approve", comment="转交后通过")
+        assert inst.records.filter(level=1, action="pending", approver=env["approver2"]).exists()
+        ApprovalService().act(instance_id=inst.id, actor=env["approver2"], action="approve", comment="转交后通过")
         inst.refresh_from_db()
         assert inst.status == ApprovalInstance.Status.APPROVED
 
@@ -476,14 +484,14 @@ class TestApprovalScenarios:
         svc.act(instance_id=inst.id, actor=env["member"], action="approve", comment="ok")
         # 终审前挂一个未完成前置 → 引擎守卫失败 → guard_failed_at_complete
         blocker = _mk_issue(env, name="终审前出现的前置")
-        IssueLink.objects.create(issue=issue, related_issue=blocker,
-                                 relation_type="is_blocked_by", created_by=env["owner"])
+        IssueLink.objects.create(
+            issue=issue, related_issue=blocker, relation_type="is_blocked_by", created_by=env["owner"]
+        )
         # 目标态是进行中（非 completed）——blocker 守卫只拦 completed；换 completed 边测
         svc2 = ApprovalService()
         # 用「完成」边（进行中→已完成）构造守卫失败：把任务先正常推到进行中
         edge_done = wf.transitions.get(name="完成")
-        inst2 = svc2.start(edge_done, issue=issue, actor=env["member"]) \
-            if issue.state.name == "进行中" else None
+        inst2 = svc2.start(edge_done, issue=issue, actor=env["member"]) if issue.state.name == "进行中" else None
         if inst2 is None:
             # 当前在待办：走「开始」审批通过后到进行中，再对完成边发起
             svc.act(instance_id=inst.id, actor=env["approver2"], action="approve", comment="ok")

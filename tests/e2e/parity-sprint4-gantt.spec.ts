@@ -189,6 +189,9 @@ test.describe("Sprint-4 甘特视图（GANTT-001/002 · C.98~C.111）", () => {
     // BR-13 限流（overdue-summary）：本 spec 十余用例两分钟内连开甘特即超试错闸——
     // 被设计行为（限流不改数据语义，黄条降级）；其余端点断言不受影响
     getErrs.allow({ method: "GET", url: "/gantt/overdue-summary/", status: HTTP.TOO_MANY });
+    // P4 关键路径（跨项目甘特三件套）并入同一 report 桶（10/min·user）——
+    // 连跑同桶溢出，与 overdue-summary 同口径放行
+    getErrs.allow({ method: "GET", url: "/gantt/critical-path/", status: HTTP.TOO_MANY });
   });
   test.afterEach(async () => {
     expect.soft(getErrs?.report() ?? [], "console/net errors").toEqual([]);

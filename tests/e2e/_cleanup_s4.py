@@ -71,11 +71,13 @@ def main() -> None:
         deleted_ws += 1
     # 用户侧清理：按 FK 反查逐表处置（纯归属表 DELETE / 共享行置 NULL）——
     # ORM 删用户会连带 django_admin_log（本库 PG schema 无此表，坑 1），故走裸 SQL
+    # PER_USER_TABLES = 归属表整体 DELETE（含 NOT NULL FK 表——置 NULL 会撞约束，
+    # 如 workspace_login_daily.member_id；2026-09-11 S4G-9 排障实测）
     PER_USER_TABLES = {
         "workspace_members", "project_members", "users_groups",
         "users_user_permissions", "notifications", "password_reset_tokens",
         "project_favorites", "workspace_member_invites", "system_admins",
-        "issue_assignees",
+        "issue_assignees", "workspace_login_daily",
     }
     with connection.cursor() as cur:
         cur.execute(
@@ -102,7 +104,8 @@ def main() -> None:
     # 新注册（注册钩子自动接受邀请）全部 409 RESOURCE_LIMIT_EXCEEDED → e2e 注册流
     # 超时。规则：@rabbit.dev 且不在演示三人组（zhangsan/lisi/wangwu）的成员行移除
     # （用户与其自有工作区保留——只释放演示工作区名额）。
-    DEMO_KEEP = {"zhangsan@rabbit.dev", "lisi@rabbit.dev", "wangwu@rabbit.dev"}
+    DEMO_KEEP = {"zhangsan@rabbit.dev", "lisi@rabbit.dev", "wangwu@rabbit.dev",
+                 "sso-demo@rabbit.dev"}
     stale = WorkspaceMember.objects.filter(
         workspace__slug="workspace", is_active=True, deleted_at__isnull=True,
     ).exclude(member__email__in=DEMO_KEEP)

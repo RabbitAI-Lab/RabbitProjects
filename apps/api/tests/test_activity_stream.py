@@ -11,6 +11,7 @@ cf 族过滤（UT-09）/ actor 域外空集（UT-10）/ 可见域 404（UT-11）
 夹具风格对照 tests/test_issue_grouping.py（WorkspaceMember 必建、
 APIClient + force_authenticate、直插 IssueActivity/IssueComment 造数据）。
 """
+
 from __future__ import annotations
 
 import base64
@@ -55,28 +56,23 @@ def _next_epoch() -> float:
 # ────────────────────────────────────────────────────────────────
 @pytest.fixture()
 def env(db):
-    owner = User.objects.create_user(email="c003-owner@rabbit.dev", password="Rabbit123!",
-                                     display_name="张三")
-    lisi = User.objects.create_user(email="c003-lisi@rabbit.dev", password="Rabbit123!",
-                                    display_name="李四")
-    wangwu = User.objects.create_user(email="c003-wangwu@rabbit.dev", password="Rabbit123!",
-                                      display_name="王五")
-    viewer = User.objects.create_user(email="c003-viewer@rabbit.dev", password="Rabbit123!",
-                                      display_name="只读")
-    outsider = User.objects.create_user(email="c003-outsider@rabbit.dev", password="Rabbit123!",
-                                        display_name="外人")
-    ws = Workspace.objects.create(name="W", slug=f"w-c003-{owner.id.hex[:8]}",
-                                  owner=owner, created_by=owner)
-    for u, ws_role in ((owner, WorkspaceRole.OWNER), (lisi, WorkspaceRole.MEMBER),
-                       (wangwu, WorkspaceRole.MEMBER), (viewer, WorkspaceRole.MEMBER)):
+    owner = User.objects.create_user(email="c003-owner@rabbit.dev", password="Rabbit123!", display_name="张三")
+    lisi = User.objects.create_user(email="c003-lisi@rabbit.dev", password="Rabbit123!", display_name="李四")
+    wangwu = User.objects.create_user(email="c003-wangwu@rabbit.dev", password="Rabbit123!", display_name="王五")
+    viewer = User.objects.create_user(email="c003-viewer@rabbit.dev", password="Rabbit123!", display_name="只读")
+    outsider = User.objects.create_user(email="c003-outsider@rabbit.dev", password="Rabbit123!", display_name="外人")
+    ws = Workspace.objects.create(name="W", slug=f"w-c003-{owner.id.hex[:8]}", owner=owner, created_by=owner)
+    for u, ws_role in (
+        (owner, WorkspaceRole.OWNER),
+        (lisi, WorkspaceRole.MEMBER),
+        (wangwu, WorkspaceRole.MEMBER),
+        (viewer, WorkspaceRole.MEMBER),
+    ):
         WorkspaceMember.objects.create(workspace=ws, member=u, role=ws_role, created_by=owner)
     proj = Project.objects.create(name="P", identifier="C03", workspace=ws, created_by=owner)
-    ProjectMember.objects.create(project=proj, member=lisi, role=ProjectRole.CONTRIBUTOR,
-                                 created_by=owner)
-    ProjectMember.objects.create(project=proj, member=wangwu, role=ProjectRole.COMMENTER,
-                                 created_by=owner)
-    ProjectMember.objects.create(project=proj, member=viewer, role=ProjectRole.VIEWER,
-                                 created_by=owner)
+    ProjectMember.objects.create(project=proj, member=lisi, role=ProjectRole.CONTRIBUTOR, created_by=owner)
+    ProjectMember.objects.create(project=proj, member=wangwu, role=ProjectRole.COMMENTER, created_by=owner)
+    ProjectMember.objects.create(project=proj, member=viewer, role=ProjectRole.VIEWER, created_by=owner)
     seed_project_states(proj)
     todo = State.objects.get(project=proj, group=State.Group.UNSTARTED)
 
@@ -84,13 +80,25 @@ def env(db):
 
     def mk_issue(name):
         return Issue.objects.create(
-            name=name, project=proj, state=todo, priority="none",
-            sequence_id=next(seq), sort_order=next(seq) * 100, created_by=owner,
+            name=name,
+            project=proj,
+            state=todo,
+            priority="none",
+            sequence_id=next(seq),
+            sort_order=next(seq) * 100,
+            created_by=owner,
         )
 
     return {
-        "owner": owner, "lisi": lisi, "wangwu": wangwu, "viewer": viewer,
-        "outsider": outsider, "ws": ws, "proj": proj, "todo": todo, "mk_issue": mk_issue,
+        "owner": owner,
+        "lisi": lisi,
+        "wangwu": wangwu,
+        "viewer": viewer,
+        "outsider": outsider,
+        "ws": ws,
+        "proj": proj,
+        "todo": todo,
+        "mk_issue": mk_issue,
     }
 
 
@@ -107,32 +115,39 @@ def _url(env, query=""):
     return f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/activities/{query}"
 
 
-def _act(env, issue, actor, *, verb="updated", field=None, old=None, new=None,
-         comment=None, epoch=None, minutes_ago=None):
+def _act(
+    env, issue, actor, *, verb="updated", field=None, old=None, new=None, comment=None, epoch=None, minutes_ago=None
+):
     """直插 IssueActivity；minutes_ago 控制 created_at（auto_now_add 创建后覆写）。"""
     a = IssueActivity.objects.create(
-        issue=issue, actor=actor, verb=verb, field=field,
-        old_value=old, new_value=new,
+        issue=issue,
+        actor=actor,
+        verb=verb,
+        field=field,
+        old_value=old,
+        new_value=new,
         comment=comment or (f"更新了 {field}" if field else "操作了任务"),
         epoch=epoch if epoch is not None else _next_epoch(),
     )
     if minutes_ago is not None:
-        IssueActivity.objects.filter(pk=a.pk).update(
-            created_at=timezone.now() - timedelta(minutes=minutes_ago))
+        IssueActivity.objects.filter(pk=a.pk).update(created_at=timezone.now() - timedelta(minutes=minutes_ago))
     return a
 
 
-def _cmt(env, issue, actor, html, *, parent=None, accessory=None, deleted=False,
-         minutes_ago=None):
+def _cmt(env, issue, actor, html, *, parent=None, accessory=None, deleted=False, minutes_ago=None):
     c = IssueComment.objects.create(
-        issue=issue, actor=actor, parent=parent,
-        comment_html=f"<p>{html}</p>", comment_json={}, accessory=accessory or {},
-        created_by=actor, updated_by=actor,
+        issue=issue,
+        actor=actor,
+        parent=parent,
+        comment_html=f"<p>{html}</p>",
+        comment_json={},
+        accessory=accessory or {},
+        created_by=actor,
+        updated_by=actor,
     )
     # 覆写走 all_objects：软删后默认管理器滤掉该行，created_at 覆写会丢
     if minutes_ago is not None:
-        IssueComment.all_objects.filter(pk=c.pk).update(
-            created_at=timezone.now() - timedelta(minutes=minutes_ago))
+        IssueComment.all_objects.filter(pk=c.pk).update(created_at=timezone.now() - timedelta(minutes=minutes_ago))
     if deleted:
         IssueComment.all_objects.filter(pk=c.pk).update(deleted_at=timezone.now())
     return c
@@ -160,23 +175,21 @@ class TestStreamMerge:
         """activity × comment 混排全局时间倒序（BR-03：SQL 层归并）。"""
         i1 = env["mk_issue"]("任务一")
         _cmt(env, i1, env["lisi"], "最早的评论", minutes_ago=40)
-        _act(env, i1, env["owner"], field="state", old="待办", new="进行中",
-             comment="更新了 状态", minutes_ago=30)
+        _act(env, i1, env["owner"], field="state", old="待办", new="进行中", comment="更新了 状态", minutes_ago=30)
         _cmt(env, i1, env["wangwu"], "中间的评论", minutes_ago=20)
-        _act(env, i1, env["lisi"], field="priority", old="none", new="high",
-             comment="更新了 优先级", minutes_ago=10)
+        _act(env, i1, env["lisi"], field="priority", old="none", new="high", comment="更新了 优先级", minutes_ago=10)
 
         data, meta = _page(_Client(env["owner"]), env)
         assert [r["kind"] for r in data] == ["activity", "comment", "activity", "comment"]
         stamps = [r["created_at"] for r in data]
-        assert stamps == sorted(stamps, reverse=True)   # 全局倒序无乱序
+        assert stamps == sorted(stamps, reverse=True)  # 全局倒序无乱序
         assert meta["count"] == 4 and meta["prev_cursor"] is None
-        assert meta["prev_page_results"] is False       # is_prev 恒 0 的显式豁免
+        assert meta["prev_page_results"] is False  # is_prev 恒 0 的显式豁免
 
     def test_activity_row_shape(self, env):
         i1 = env["mk_issue"]("任务甲")
         _act(env, i1, env["lisi"], field="worklog", comment="⏱ 填报 2h", minutes_ago=5)
-        data, _ = _page(_Client(env["viewer"]), env)    # VIEWER 也可读（project.read 全员）
+        data, _ = _page(_Client(env["viewer"]), env)  # VIEWER 也可读（project.read 全员）
         row = data[0]
         assert row["kind"] == "activity"
         assert row["verb"] == "updated" and row["field"] == "worklog"
@@ -189,10 +202,15 @@ class TestStreamMerge:
         """root_id / reply_to_actor 沿 COLLAB-002 §4.2 词汇；顶层两字段 null。"""
         i1 = env["mk_issue"]("任务乙")
         top = _cmt(env, i1, env["lisi"], "顶层评论", minutes_ago=10)
-        _cmt(env, i1, env["wangwu"], "回复内容", parent=top,
-             accessory={"reply_to": {"comment_id": str(top.id),
-                                     "actor_id": str(env["lisi"].id)}},
-             minutes_ago=5)
+        _cmt(
+            env,
+            i1,
+            env["wangwu"],
+            "回复内容",
+            parent=top,
+            accessory={"reply_to": {"comment_id": str(top.id), "actor_id": str(env["lisi"].id)}},
+            minutes_ago=5,
+        )
         data, _ = _page(_Client(env["owner"]), env)
         reply, top_row = data[0], data[1]
         assert top_row["kind"] == "comment"
@@ -217,39 +235,78 @@ class TestBatchFolding:
         issues = [env["mk_issue"](f"批量任务 {n}") for n in range(3)]
         ep = _next_epoch()
         for i in issues:
-            _act(env, i, env["owner"], field="state", old="待办", new="已完成",
-                 comment="更新了 状态", epoch=ep, minutes_ago=10)
+            _act(
+                env,
+                i,
+                env["owner"],
+                field="state",
+                old="待办",
+                new="已完成",
+                comment="更新了 状态",
+                epoch=ep,
+                minutes_ago=10,
+            )
         data, meta = _page(_Client(env["owner"]), env)
         assert len(data) == 1
         row = data[0]
         assert row["kind"] == "batch" and row["batch_count"] == 3
         assert row["summary"] == "批量更新了 3 个任务"
         assert row["change_brief"] == "状态 待办 → 已完成"
-        assert isinstance(row["epoch"], int)            # 整数毫秒直出（契约示例形态）
-        assert row["issue"] is None                     # batch 行无 issue（跨任务）
+        assert isinstance(row["epoch"], int)  # 整数毫秒直出（契约示例形态）
+        assert row["issue"] is None  # batch 行无 issue（跨任务）
         assert meta["count"] == 1 and meta["total_count"] == 1
 
     def test_same_issue_same_epoch_not_folded(self, env):
         """UT-04：同任务同 epoch 多字段 = 任务级一组，直出 N 条带 issue 单行。"""
         i1 = env["mk_issue"]("多字段任务")
         ep = _next_epoch()
-        for field, old, new in (("state", "待办", "进行中"), ("priority", "none", "high"),
-                                ("target_date", None, "2026-09-30")):
-            _act(env, i1, env["owner"], field=field, old=old, new=new, epoch=ep,
-                 comment=f"更新了 {field}", minutes_ago=10)
+        for field, old, new in (
+            ("state", "待办", "进行中"),
+            ("priority", "none", "high"),
+            ("target_date", None, "2026-09-30"),
+        ):
+            _act(
+                env,
+                i1,
+                env["owner"],
+                field=field,
+                old=old,
+                new=new,
+                epoch=ep,
+                comment=f"更新了 {field}",
+                minutes_ago=10,
+            )
         data, meta = _page(_Client(env["owner"]), env)
         assert len(data) == 3 and all(r["kind"] == "activity" for r in data)
         assert all(r["issue"]["id"] == str(i1.id) for r in data)
-        assert meta["total_count"] == 3                # 同任务多字段组计 N 行（要点 4）
+        assert meta["total_count"] == 3  # 同任务多字段组计 N 行（要点 4）
 
     def test_change_brief_mixed(self, env):
         """UT-05：批量内变更不一致 → 「多种变更」。"""
         issues = [env["mk_issue"](f"混合批量 {n}") for n in range(2)]
         ep = _next_epoch()
-        _act(env, issues[0], env["owner"], field="state", old="待办", new="进行中",
-             comment="更新了 状态", epoch=ep, minutes_ago=10)
-        _act(env, issues[1], env["owner"], field="priority", old="none", new="urgent",
-             comment="更新了 优先级", epoch=ep, minutes_ago=10)
+        _act(
+            env,
+            issues[0],
+            env["owner"],
+            field="state",
+            old="待办",
+            new="进行中",
+            comment="更新了 状态",
+            epoch=ep,
+            minutes_ago=10,
+        )
+        _act(
+            env,
+            issues[1],
+            env["owner"],
+            field="priority",
+            old="none",
+            new="urgent",
+            comment="更新了 优先级",
+            epoch=ep,
+            minutes_ago=10,
+        )
         data, _ = _page(_Client(env["owner"]), env)
         assert data[0]["change_brief"] == "多种变更"
 
@@ -264,8 +321,7 @@ class TestBatchFolding:
     def test_actor_null_is_system_row(self, env):
         """BR-13：actor 为空才归系统行（is_system=true、actor=null）。"""
         i1 = env["mk_issue"]("系统任务")
-        a = _act(env, i1, None, verb="created", field=None, comment="系统创建了任务",
-                 minutes_ago=5)
+        a = _act(env, i1, None, verb="created", field=None, comment="系统创建了任务", minutes_ago=5)
         assert a.actor_id is None
         data, _ = _page(_Client(env["owner"]), env)
         assert data[0]["is_system"] is True and data[0]["actor"] is None
@@ -285,19 +341,45 @@ class TestGroupAwarePagination:
         issues = [env["mk_issue"](f"边界任务 {n}") for n in range(50)]
         # 29 个单行组（最新，minute 10~38）
         for n in range(29):
-            _act(env, issues[n % 50], env["owner"], field="priority", old="none",
-                 new="low", comment="更新了 优先级", epoch=_next_epoch(),
-                 minutes_ago=10 + n)
+            _act(
+                env,
+                issues[n % 50],
+                env["owner"],
+                field="priority",
+                old="none",
+                new="low",
+                comment="更新了 优先级",
+                epoch=_next_epoch(),
+                minutes_ago=10 + n,
+            )
         # 批量组 B30（第 30 组，minute 50，比全部单行组旧）
         ep30 = _next_epoch()
         for i in issues:
-            _act(env, i, env["owner"], field="state", old="待办", new="已完成",
-                 comment="更新了 状态", epoch=ep30, minutes_ago=50)
+            _act(
+                env,
+                i,
+                env["owner"],
+                field="state",
+                old="待办",
+                new="已完成",
+                comment="更新了 状态",
+                epoch=ep30,
+                minutes_ago=50,
+            )
         # 批量组 B31（第 31 组，minute 60，最旧）
         ep31 = _next_epoch()
         for i in issues:
-            _act(env, i, env["lisi"], field="state", old="已完成", new="进行中",
-                 comment="更新了 状态", epoch=ep31, minutes_ago=60)
+            _act(
+                env,
+                i,
+                env["lisi"],
+                field="state",
+                old="已完成",
+                new="进行中",
+                comment="更新了 状态",
+                epoch=ep31,
+                minutes_ago=60,
+            )
         return {"issues": issues, "ep30": ep30, "ep31": ep31}
 
     def test_batch_group_not_split_across_pages(self, env, boundary_env):
@@ -308,7 +390,7 @@ class TestGroupAwarePagination:
         assert meta["next_page_results"] is True and meta["next_cursor"]
         batch_rows = [r for r in data if r["kind"] == "batch"]
         assert len(batch_rows) == 1
-        assert batch_rows[0]["batch_count"] == 50      # 整组行数（非页内可见数，BR-04）
+        assert batch_rows[0]["batch_count"] == 50  # 整组行数（非页内可见数，BR-04）
         assert batch_rows[0]["epoch"] == int(boundary_env["ep30"])
         # 次页：从第 31 组（B31）起步，无第 30 组残余
         data2, meta2 = _page(client, env, f"?cursor={meta['next_cursor']}")
@@ -326,8 +408,15 @@ class TestGroupAwarePagination:
         same = timezone.now() - timedelta(minutes=5)
         for issue, ep in ((i1, 9000.0), (i2, 7000.0), (i3, 5000.0)):
             a = IssueActivity.objects.create(
-                issue=issue, actor=env["owner"], verb="updated", field="priority",
-                old_value="none", new_value="high", comment="更新了 优先级", epoch=ep)
+                issue=issue,
+                actor=env["owner"],
+                verb="updated",
+                field="priority",
+                old_value="none",
+                new_value="high",
+                comment="更新了 优先级",
+                epoch=ep,
+            )
             IssueActivity.objects.filter(pk=a.pk).update(created_at=same)
         client = _Client(env["owner"])
         data1, meta1 = _page(client, env, "?per_page=2")
@@ -340,16 +429,24 @@ class TestGroupAwarePagination:
     def test_stream_cursor_first_page_only(self, env):
         """UT-13/BR-12：stream_cursor 仅首页携带；格式 <ISO8601>:<UUID>。"""
         i1 = env["mk_issue"]("水位任务")
-        _act(env, i1, env["owner"], field="state", old="待办", new="进行中",
-             comment="更新了 状态", minutes_ago=5)
+        _act(env, i1, env["owner"], field="state", old="待办", new="进行中", comment="更新了 状态", minutes_ago=5)
         for n in range(35):  # 合计 36 组 > 30/页，保证有第二页
-            _act(env, i1, env["lisi"], field="priority", old="none", new="low",
-                 comment="更新了 优先级", epoch=_next_epoch(), minutes_ago=10 + n)
+            _act(
+                env,
+                i1,
+                env["lisi"],
+                field="priority",
+                old="none",
+                new="low",
+                comment="更新了 优先级",
+                epoch=_next_epoch(),
+                minutes_ago=10 + n,
+            )
         client = _Client(env["owner"])
         _, meta1 = _page(client, env)
         assert meta1["stream_cursor"]
         ts, _, uid = meta1["stream_cursor"].rpartition(":")
-        uuid_mod.UUID(uid)                              # 自右向左最后一段为 UUID
+        uuid_mod.UUID(uid)  # 自右向左最后一段为 UUID
         assert ts.endswith("+00:00") or ts.endswith("Z")
         _, meta2 = _page(client, env, f"?cursor={meta1['next_cursor']}")
         assert "stream_cursor" not in meta2
@@ -359,19 +456,27 @@ class TestGroupAwarePagination:
         issues = [env["mk_issue"](f"水位批量 {n}") for n in range(3)]
         ep = _next_epoch()
         rows = [
-            _act(env, i, env["owner"], field="state", old="待办", new="已完成",
-                 comment="更新了 状态", epoch=ep, minutes_ago=m)
+            _act(
+                env,
+                i,
+                env["owner"],
+                field="state",
+                old="待办",
+                new="已完成",
+                comment="更新了 状态",
+                epoch=ep,
+                minutes_ago=m,
+            )
             for i, m in zip(issues, (30, 20, 10), strict=True)
         ]
-        latest = IssueActivity.objects.get(pk=rows[-1].pk)   # minutes_ago=10 的一行
+        latest = IssueActivity.objects.get(pk=rows[-1].pk)  # minutes_ago=10 的一行
         _, meta = _page(_Client(env["owner"]), env)
         assert meta["stream_cursor"] == f"{latest.created_at.isoformat()}:{latest.id}"
 
     def test_per_page_clamped_with_degraded(self, env):
         """BR-11：per_page 按组数上限 50——超限静默截断 + meta.degraded。"""
         i1 = env["mk_issue"]("截断任务")
-        _act(env, i1, env["owner"], field="state", old="待办", new="进行中",
-             comment="更新了 状态", minutes_ago=5)
+        _act(env, i1, env["owner"], field="state", old="待办", new="进行中", comment="更新了 状态", minutes_ago=5)
         _, meta = _page(_Client(env["owner"]), env, "?per_page=100")
         assert meta["per_page"] == 50
         assert "已截断" in meta["degraded"]["per_page"]
@@ -379,8 +484,15 @@ class TestGroupAwarePagination:
     def test_meta_nine_fields_present(self, env):
         _, meta = _page(_Client(env["owner"]), env)
         assert set(meta) >= {
-            "next_cursor", "prev_cursor", "next_page_results", "prev_page_results",
-            "count", "total_count", "total_pages", "page", "per_page",
+            "next_cursor",
+            "prev_cursor",
+            "next_page_results",
+            "prev_page_results",
+            "count",
+            "total_count",
+            "total_pages",
+            "page",
+            "per_page",
         }
 
     def test_folded_counting_units(self, env):
@@ -388,15 +500,26 @@ class TestGroupAwarePagination:
         batch_issues = [env["mk_issue"](f"计数批量 {n}") for n in range(3)]
         ep = _next_epoch()
         for i in batch_issues:
-            _act(env, i, env["owner"], field="state", old="待办", new="进行中",
-                 comment="更新了 状态", epoch=ep, minutes_ago=40)
+            _act(
+                env,
+                i,
+                env["owner"],
+                field="state",
+                old="待办",
+                new="进行中",
+                comment="更新了 状态",
+                epoch=ep,
+                minutes_ago=40,
+            )
         multi = env["mk_issue"]("计数字段组")
         ep2 = _next_epoch()
         for f_ in ("state", "priority"):
-            _act(env, multi, env["owner"], field=f_, old="a", new="b", epoch=ep2,
-                 comment=f"更新了 {f_}", minutes_ago=30)
-        _act(env, multi, env["lisi"], field="priority", old="a", new="b",
-             comment="更新了 优先级", minutes_ago=20)     # 单行组
+            _act(
+                env, multi, env["owner"], field=f_, old="a", new="b", epoch=ep2, comment=f"更新了 {f_}", minutes_ago=30
+            )
+        _act(
+            env, multi, env["lisi"], field="priority", old="a", new="b", comment="更新了 优先级", minutes_ago=20
+        )  # 单行组
         _cmt(env, multi, env["wangwu"], "计数评论", minutes_ago=10)
         _, meta = _page(_Client(env["owner"]), env)
         # 1（batch）+ 2（同任务组 N 行）+ 1 + 1（comment）= 5 视觉行；总组数 4
@@ -412,12 +535,15 @@ class TestFilterMatrix:
     @pytest.fixture()
     def matrix_env(self, env):
         i1, i2 = env["mk_issue"]("过滤一"), env["mk_issue"]("过滤二")
-        self.lisi_state = _act(env, i1, env["lisi"], field="state", old="待办",
-                               new="进行中", comment="更新了 状态", minutes_ago=50)
-        self.lisi_priority = _act(env, i1, env["lisi"], field="priority", old="none",
-                                  new="high", comment="更新了 优先级", minutes_ago=40)
-        self.wangwu_state = _act(env, i2, env["wangwu"], field="state", old="进行中",
-                                 new="已完成", comment="更新了 状态", minutes_ago=30)
+        self.lisi_state = _act(
+            env, i1, env["lisi"], field="state", old="待办", new="进行中", comment="更新了 状态", minutes_ago=50
+        )
+        self.lisi_priority = _act(
+            env, i1, env["lisi"], field="priority", old="none", new="high", comment="更新了 优先级", minutes_ago=40
+        )
+        self.wangwu_state = _act(
+            env, i2, env["wangwu"], field="state", old="进行中", new="已完成", comment="更新了 状态", minutes_ago=30
+        )
         self.lisi_comment = _cmt(env, i1, env["lisi"], "李四的评论", minutes_ago=20)
         self.wangwu_comment = _cmt(env, i2, env["wangwu"], "王五的评论", minutes_ago=10)
         return env
@@ -435,22 +561,21 @@ class TestFilterMatrix:
 
     def test_actor_and_event_and_semantics(self, matrix_env):
         """IT-06：actor_id × event 恒 AND；仅李四的 state 流转 / 仅李四的评论。"""
-        data, _ = _page(_Client(matrix_env["owner"]), matrix_env,
-                        f"?actor_id={matrix_env['lisi'].id}&event=state")
+        data, _ = _page(_Client(matrix_env["owner"]), matrix_env, f"?actor_id={matrix_env['lisi'].id}&event=state")
         assert [r["id"] for r in data] == [str(self.lisi_state.id)]
-        data, _ = _page(_Client(matrix_env["owner"]), matrix_env,
-                        f"?actor_id={matrix_env['lisi'].id}&event=comment")
+        data, _ = _page(_Client(matrix_env["owner"]), matrix_env, f"?actor_id={matrix_env['lisi'].id}&event=comment")
         assert [r["id"] for r in data] == [str(self.lisi_comment.id)]
         # 无 event 时 actor 同样滤 comment 行（过滤所有行类型的本人动作）
-        data, _ = _page(_Client(matrix_env["owner"]), matrix_env,
-                        f"?actor_id={matrix_env['lisi'].id}")
+        data, _ = _page(_Client(matrix_env["owner"]), matrix_env, f"?actor_id={matrix_env['lisi'].id}")
         assert {r["id"] for r in data} == {
-            str(self.lisi_state.id), str(self.lisi_priority.id), str(self.lisi_comment.id)}
+            str(self.lisi_state.id),
+            str(self.lisi_priority.id),
+            str(self.lisi_comment.id),
+        }
 
     def test_actor_outside_domain_empty_not_404(self, matrix_env):
         """UT-10/BR-09：域外 actor_id → 空集（过滤是缩小不是寻址）。"""
-        data, meta = _page(_Client(matrix_env["owner"]), matrix_env,
-                           f"?actor_id={matrix_env['outsider'].id}")
+        data, meta = _page(_Client(matrix_env["owner"]), matrix_env, f"?actor_id={matrix_env['outsider'].id}")
         assert data == [] and meta["total_count"] == 0
 
     def test_actor_malformed_uuid_empty_set(self, matrix_env):
@@ -460,12 +585,20 @@ class TestFilterMatrix:
     def test_custom_fields_family(self, env):
         """UT-09：event=custom_fields 命中 cf_* 全部 field。"""
         i1 = env["mk_issue"]("字段任务")
-        cf_a = _act(env, i1, env["owner"], field="cf_severity", old="major",
-                    new="critical", comment="更新了 severity", minutes_ago=30)
-        cf_b = _act(env, i1, env["owner"], field="cf_risk", old="low", new="high",
-                    comment="更新了 risk", minutes_ago=20)
-        _act(env, i1, env["owner"], field="priority", old="none", new="high",
-             comment="更新了 优先级", minutes_ago=10)
+        cf_a = _act(
+            env,
+            i1,
+            env["owner"],
+            field="cf_severity",
+            old="major",
+            new="critical",
+            comment="更新了 severity",
+            minutes_ago=30,
+        )
+        cf_b = _act(
+            env, i1, env["owner"], field="cf_risk", old="low", new="high", comment="更新了 risk", minutes_ago=20
+        )
+        _act(env, i1, env["owner"], field="priority", old="none", new="high", comment="更新了 优先级", minutes_ago=10)
         data, _ = _page(_Client(env["owner"]), env, "?event=custom_fields")
         assert {r["id"] for r in data} == {str(cf_a.id), str(cf_b.id)}
 
@@ -487,8 +620,7 @@ class TestFilterMatrix:
             a = _act(env, i1, env["owner"], minutes_ago=minutes, comment="动作", **kw)
             expected[group] = str(a.id)
             minutes -= 10
-        _act(env, i1, env["owner"], field="priority", old="a", new="b",
-             comment="更新了 优先级", minutes_ago=5)
+        _act(env, i1, env["owner"], field="priority", old="a", new="b", comment="更新了 优先级", minutes_ago=5)
         for group, aid in expected.items():
             data, _ = _page(_Client(env["owner"]), env, f"?event={group}")
             assert [r["id"] for r in data] == [aid], group
@@ -522,9 +654,13 @@ class TestValidation:
 
     def test_invalid_cursor_bad_group_key_400(self, env):
         """篡改锚字段：组键 g 格式非法 → 400（要点 5 失败路径）。"""
-        payload = base64.urlsafe_b64encode(json.dumps(
-            {"a": "2026-09-05T06:32:00+00:00", "g": "zz-bad-key", "f": "da39a3ee"}
-        ).encode()).decode().rstrip("=")
+        payload = (
+            base64.urlsafe_b64encode(
+                json.dumps({"a": "2026-09-05T06:32:00+00:00", "g": "zz-bad-key", "f": "da39a3ee"}).encode()
+            )
+            .decode()
+            .rstrip("=")
+        )
         resp = _Client(env["owner"]).get(_url(env, f"?cursor={payload}:1:0"))
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "VALIDATION_INVALID_CURSOR"
@@ -533,8 +669,17 @@ class TestValidation:
         """过滤变更后复用旧游标（指纹不符）→ 400（UT-15/IT-09）。"""
         i1 = env["mk_issue"]("游标任务")
         for n in range(35):
-            _act(env, i1, env["owner"], field="priority", old="a", new="b",
-                 comment="更新了 优先级", epoch=_next_epoch(), minutes_ago=5 + n)
+            _act(
+                env,
+                i1,
+                env["owner"],
+                field="priority",
+                old="a",
+                new="b",
+                comment="更新了 优先级",
+                epoch=_next_epoch(),
+                minutes_ago=5 + n,
+            )
         client = _Client(env["owner"])
         _, meta = _page(client, env)
         resp = client.get(_url(env, f"?cursor={meta['next_cursor']}&event=state"))
@@ -549,8 +694,7 @@ class TestSoftDeleteVisibility:
     def test_soft_deleted_issue_activity_kept(self, env):
         """UT-06/BR-06：软删任务动态保留，issue.is_deleted=true。"""
         i1 = env["mk_issue"]("将被删除")
-        a = _act(env, i1, env["owner"], field="state", old="待办", new="进行中",
-                 comment="更新了 状态", minutes_ago=10)
+        a = _act(env, i1, env["owner"], field="state", old="待办", new="进行中", comment="更新了 状态", minutes_ago=10)
         Issue.objects.filter(pk=i1.pk).update(deleted_at=timezone.now())
         data, _ = _page(_Client(env["owner"]), env)
         assert len(data) == 1 and data[0]["id"] == str(a.id)
@@ -559,8 +703,9 @@ class TestSoftDeleteVisibility:
     def test_archived_issue_activity_kept(self, env):
         """UT-14/BR-07：归档任务动态保留，is_archived=true。"""
         i1 = env["mk_issue"]("将被归档")
-        _act(env, i1, env["owner"], field="archived_at", old=None, new="2026-09-05",
-             comment="归档了任务", minutes_ago=10)
+        _act(
+            env, i1, env["owner"], field="archived_at", old=None, new="2026-09-05", comment="归档了任务", minutes_ago=10
+        )
         Issue.objects.filter(pk=i1.pk).update(archived_at=timezone.now())
         data, _ = _page(_Client(env["owner"]), env)
         assert data[0]["issue"]["is_archived"] is True
@@ -578,9 +723,15 @@ class TestSoftDeleteVisibility:
         """父删子留：软删父以「删除了一条评论」行出现，子回复原样保留（§4.1）。"""
         i1 = env["mk_issue"]("父删子留")
         parent = _cmt(env, i1, env["lisi"], "父评论", minutes_ago=20, deleted=True)
-        _cmt(env, i1, env["wangwu"], "子回复", parent=parent,
-             accessory={"reply_to": {"comment_id": str(parent.id),
-                                     "actor_id": str(env["lisi"].id)}}, minutes_ago=10)
+        _cmt(
+            env,
+            i1,
+            env["wangwu"],
+            "子回复",
+            parent=parent,
+            accessory={"reply_to": {"comment_id": str(parent.id), "actor_id": str(env["lisi"].id)}},
+            minutes_ago=10,
+        )
         data, _ = _page(_Client(env["owner"]), env)
         reply = data[0]
         assert reply["text"] == "子回复" and reply["root_id"] == str(parent.id)
@@ -591,8 +742,17 @@ class TestSoftDeleteVisibility:
         i1, i2 = env["mk_issue"]("明细存活"), env["mk_issue"]("明细已删")
         ep = _next_epoch()
         for i in (i1, i2):
-            _act(env, i, env["owner"], field="state", old="待办", new="已完成",
-                 comment="更新了 状态", epoch=ep, minutes_ago=10)
+            _act(
+                env,
+                i,
+                env["owner"],
+                field="state",
+                old="待办",
+                new="已完成",
+                comment="更新了 状态",
+                epoch=ep,
+                minutes_ago=10,
+            )
         Issue.objects.filter(pk=i2.pk).update(deleted_at=timezone.now())
         data, _ = _page_detail(_Client(env["owner"]), env, ep)
         assert {r["issue_id"] for r in data} == {str(i1.id), str(i2.id)}
@@ -606,8 +766,17 @@ class TestBatchDetail:
         issues = [env["mk_issue"](f"明细任务 {n}") for n in range(3)]
         ep = _next_epoch()
         for i in issues:
-            _act(env, i, env["owner"], field="state", old="待办", new="已完成",
-                 comment="更新了 状态", epoch=ep, minutes_ago=10)
+            _act(
+                env,
+                i,
+                env["owner"],
+                field="state",
+                old="待办",
+                new="已完成",
+                comment="更新了 状态",
+                epoch=ep,
+                minutes_ago=10,
+            )
         data, meta = _page_detail(_Client(env["owner"]), env, ep)
         assert set(meta) == {"count", "total_count", "truncated", "limit"}  # 翻页九字段显式豁免
         assert meta == {"count": 3, "total_count": 3, "truncated": False, "limit": 100}
@@ -623,8 +792,17 @@ class TestBatchDetail:
         issues = [env["mk_issue"](f"截断明细 {n}") for n in range(150)]
         ep = _next_epoch()
         for i in issues:
-            _act(env, i, env["owner"], field="state", old="待办", new="已完成",
-                 comment="更新了 状态", epoch=ep, minutes_ago=10)
+            _act(
+                env,
+                i,
+                env["owner"],
+                field="state",
+                old="待办",
+                new="已完成",
+                comment="更新了 状态",
+                epoch=ep,
+                minutes_ago=10,
+            )
         data, meta = _page_detail(_Client(env["owner"]), env, ep)
         assert meta["count"] == 100 and meta["total_count"] == 150
         assert meta["truncated"] is True and meta["limit"] == 100
@@ -633,8 +811,17 @@ class TestBatchDetail:
         issues = [env["mk_issue"](f"限额明细 {n}") for n in range(5)]
         ep = _next_epoch()
         for i in issues:
-            _act(env, i, env["owner"], field="state", old="待办", new="已完成",
-                 comment="更新了 状态", epoch=ep, minutes_ago=10)
+            _act(
+                env,
+                i,
+                env["owner"],
+                field="state",
+                old="待办",
+                new="已完成",
+                comment="更新了 状态",
+                epoch=ep,
+                minutes_ago=10,
+            )
         data, meta = _page_detail(_Client(env["owner"]), env, f"{ep}&per_page=2")
         assert len(data) == 2 and meta["limit"] == 2 and meta["truncated"] is True
 
@@ -675,27 +862,44 @@ class TestIssueIdsChunking:
         翻页遍历无重复无丢失、折叠计数精确。
         """
         import plane.db.services.activity_stream as svc
+
         monkeypatch.setattr(svc, "ISSUE_IDS_CHUNK_TRIGGER", 400)
         monkeypatch.setattr(svc, "ISSUE_IDS_CHUNK_SIZE", 200)
 
-        Issue.objects.bulk_create([
-            Issue(name=f"分片任务 {n}", project=env["proj"], state=env["todo"],
-                  priority="none", sequence_id=1000 + n, sort_order=1000 + n,
-                  created_by=env["owner"])
-            for n in range(450)
-        ])
+        Issue.objects.bulk_create(
+            [
+                Issue(
+                    name=f"分片任务 {n}",
+                    project=env["proj"],
+                    state=env["todo"],
+                    priority="none",
+                    sequence_id=1000 + n,
+                    sort_order=1000 + n,
+                    created_by=env["owner"],
+                )
+                for n in range(450)
+            ]
+        )
         chunk_ids = list(
-            Issue.objects.filter(project=env["proj"], name__startswith="分片任务")
-            .values_list("id", flat=True))
-        IssueActivity.objects.bulk_create([
-            IssueActivity(issue_id=iid, actor_id=env["owner"].id, verb="updated",
-                          field="priority", old_value="none", new_value="low",
-                          comment="更新了 优先级", epoch=float(_EPOCH_BASE + n))
-            for n, iid in enumerate(chunk_ids)
-        ])
+            Issue.objects.filter(project=env["proj"], name__startswith="分片任务").values_list("id", flat=True)
+        )
+        IssueActivity.objects.bulk_create(
+            [
+                IssueActivity(
+                    issue_id=iid,
+                    actor_id=env["owner"].id,
+                    verb="updated",
+                    field="priority",
+                    old_value="none",
+                    new_value="low",
+                    comment="更新了 优先级",
+                    epoch=float(_EPOCH_BASE + n),
+                )
+                for n, iid in enumerate(chunk_ids)
+            ]
+        )
         assert len(chunk_ids) == 450
-        assert [len(c) for c in svc._chunk_issue_ids(
-            svc.project_issue_ids(env["proj"].id))] == [200, 200, 50]
+        assert [len(c) for c in svc._chunk_issue_ids(svc.project_issue_ids(env["proj"].id))] == [200, 200, 50]
 
         client = _Client(env["owner"])
         seen: set[str] = set()
@@ -712,4 +916,4 @@ class TestIssueIdsChunking:
                 break
             query = f"?cursor={meta['next_cursor']}&per_page=50"
             assert pages <= 10
-        assert pages == 9 and len(seen) == 450   # 无重复无丢失
+        assert pages == 9 and len(seen) == 450  # 无重复无丢失

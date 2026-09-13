@@ -194,9 +194,9 @@ def main() -> int:
     gate("IT-008 依赖拦截 BLOCKER_SQL", p, 2)
 
     # ── 工时列表 ─────────────────────────────────────────────────────
-    psql(f"""INSERT INTO work_logs (id, issue_id, actor_id, worked_on, minutes, note, created_at, updated_at)
+    psql(f"""INSERT INTO work_logs (id, issue_id, actor_id, worked_on, minutes, note, locked, created_at, updated_at)
            SELECT gen_random_uuid(), '{root}', (SELECT created_by_id FROM issues WHERE id='{root}'),
-           date '2026-08-10' + (g % 25), 60 + (g % 8) * 15, 'bench', now(), now()
+           date '2026-08-10' + (g % 25), 60 + (g % 8) * 15, 'bench', false, now(), now()
            FROM generate_series(1, 400) g""")
     samples, p = timed(lambda: admin.req(
         "GET", f"/api/v1/workspaces/{q(ws)}/projects/{proj}/issues/{root}/worklogs/?per_page=20"))

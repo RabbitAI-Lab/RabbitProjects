@@ -21,6 +21,7 @@
 
 夹具建 WorkspaceMember（CLAUDE.md 硬性纪律 3）。
 """
+
 from __future__ import annotations
 
 import re
@@ -67,26 +68,23 @@ def _fake_get_url(*, bucket, key, expires=300, response_headers=None):
 # ────────────────────────────────────────────────────────────────
 @pytest.fixture()
 def env(db):
-    owner = User.objects.create_user(email="f4-owner@rabbit.dev", password="Rabbit123!",
-                                     display_name="分享主")
-    admin = User.objects.create_user(email="f4-admin@rabbit.dev", password="Rabbit123!",
-                                     display_name="管理员")
-    jia = User.objects.create_user(email="f4-jia@rabbit.dev", password="Rabbit123!",
-                                   display_name="贡献者")
-    viewer = User.objects.create_user(email="f4-viewer@rabbit.dev", password="Rabbit123!",
-                                      display_name="只读者")
-    ws = Workspace.objects.create(name="W", slug=f"w-f4-{owner.id.hex[:8]}",
-                                  owner=owner, created_by=owner)
-    for u in ((owner, WorkspaceRole.OWNER), (admin, WorkspaceRole.MEMBER),
-              (jia, WorkspaceRole.MEMBER), (viewer, WorkspaceRole.MEMBER)):
+    owner = User.objects.create_user(email="f4-owner@rabbit.dev", password="Rabbit123!", display_name="分享主")
+    admin = User.objects.create_user(email="f4-admin@rabbit.dev", password="Rabbit123!", display_name="管理员")
+    jia = User.objects.create_user(email="f4-jia@rabbit.dev", password="Rabbit123!", display_name="贡献者")
+    viewer = User.objects.create_user(email="f4-viewer@rabbit.dev", password="Rabbit123!", display_name="只读者")
+    ws = Workspace.objects.create(name="W", slug=f"w-f4-{owner.id.hex[:8]}", owner=owner, created_by=owner)
+    for u in (
+        (owner, WorkspaceRole.OWNER),
+        (admin, WorkspaceRole.MEMBER),
+        (jia, WorkspaceRole.MEMBER),
+        (viewer, WorkspaceRole.MEMBER),
+    ):
         WorkspaceMember.objects.create(workspace=ws, member=u[0], role=u[1], created_by=owner)
     proj = Project.objects.create(name="P", identifier="F4", workspace=ws, created_by=owner)
-    for u, role in ((admin, ProjectRole.ADMIN), (jia, ProjectRole.CONTRIBUTOR),
-                    (viewer, ProjectRole.VIEWER)):
+    for u, role in ((admin, ProjectRole.ADMIN), (jia, ProjectRole.CONTRIBUTOR), (viewer, ProjectRole.VIEWER)):
         ProjectMember.objects.create(project=proj, member=u, role=role, created_by=owner)
     folder = flib.create_folder(project=proj, actor=owner, name="分享目录", parent_id=None)
-    return {"owner": owner, "admin": admin, "jia": jia, "viewer": viewer,
-            "ws": ws, "proj": proj, "folder": folder}
+    return {"owner": owner, "admin": admin, "jia": jia, "viewer": viewer, "ws": ws, "proj": proj, "folder": folder}
 
 
 @pytest.fixture()
@@ -94,33 +92,43 @@ def redis_clean():
     """BR-07 计数键测试隔离——INFRA-005 收编后计数走 django cache（LocMem），
     前后置整体清空即等效原「重置进程态 + 清 share-unlock:* 键」。"""
     from django.core.cache import cache
+
     cache.clear()
     yield
     cache.clear()
 
 
-def _mk_asset(env, name="首页改版-v3.fig", mime="image/png", ext=".png",
-              visibility="all", folder=None, actor=None, size=8388608):
+def _mk_asset(
+    env, name="首页改版-v3.fig", mime="image/png", ext=".png", visibility="all", folder=None, actor=None, size=8388608
+):
     from plane.base.middleware import ulid_new
 
     actor = actor or env["owner"]
     folder = folder or env["folder"]
-    key = "/".join([str(env["ws"].id), str(env["proj"].id), "project_file",
-                    str(folder.id), f"{ulid_new()}{ext}"])
+    key = "/".join([str(env["ws"].id), str(env["proj"].id), "project_file", str(folder.id), f"{ulid_new()}{ext}"])
     asset = FileAsset.objects.create(
-        workspace=env["ws"], project=env["proj"],
+        workspace=env["ws"],
+        project=env["proj"],
         entity_type=FileAsset.EntityType.PROJECT_FILE,
-        entity_id=folder.id, folder=folder,
+        entity_id=folder.id,
+        folder=folder,
         attributes={"name": name, "size": size, "mime": mime, "ext": ext},
-        size=size, storage_path=key,
-        status=FileAsset.Status.UPLOADED, is_uploaded=True,
-        uploaded_by=actor, visibility=visibility,
-        created_by=actor, updated_by=actor,
+        size=size,
+        storage_path=key,
+        status=FileAsset.Status.UPLOADED,
+        is_uploaded=True,
+        uploaded_by=actor,
+        visibility=visibility,
+        created_by=actor,
+        updated_by=actor,
     )
     version = FileVersion.objects.create(
-        asset=asset, version_number=1, object_key=key,
+        asset=asset,
+        version_number=1,
+        object_key=key,
         attributes={"name": name, "size": size, "mime": mime, "ext": ext},
-        uploaded_by_id=actor.id, created_by_id=actor.id,
+        uploaded_by_id=actor.id,
+        created_by_id=actor.id,
     )
     asset.current_version = version
     asset.save(update_fields=["current_version"])
@@ -163,21 +171,17 @@ def _pub(slug):
     return f"/api/v1/public/shares/{slug}"
 
 
-def _mk_share(env, asset, *, password=None, permission="download",
-              expires_in_days=None, actor=None):
+def _mk_share(env, asset, *, password=None, permission="download", expires_in_days=None, actor=None):
     return svc.create_share(
         asset=asset,
-        payload={"permission": permission,
-                 "password": password,
-                 "expires_in_days": expires_in_days},
+        payload={"permission": permission, "password": password, "expires_in_days": expires_in_days},
         actor=actor or env["owner"],
     )
 
 
 def _expired_link(env, asset):
     link = _mk_share(env, asset)
-    FileShareLink.objects.filter(pk=link.pk).update(
-        expires_at=timezone.now() - timedelta(hours=1))
+    FileShareLink.objects.filter(pk=link.pk).update(expires_at=timezone.now() - timedelta(hours=1))
     link.refresh_from_db()
     return link
 
@@ -203,8 +207,9 @@ def test_ut01_slug_entropy_and_alphabet(env):
 def test_ut02_password_argon2id_storage(env):
     asset = _mk_asset(env)
     client = _Client(env["owner"])
-    resp = client.post(_links_url(env, asset), {
-        "permission": "download", "password": "demo-2026", "expires_in_days": 30})
+    resp = client.post(
+        _links_url(env, asset), {"permission": "download", "password": "demo-2026", "expires_in_days": 30}
+    )
     assert resp.status_code == 201, resp.content
     slug = resp.json()["data"]["slug"]
     row = FileShareLink.objects.get(slug=slug)
@@ -238,8 +243,7 @@ def test_ut04_wrong_password_401_with_remaining(env, redis_clean):
     assert body["error"]["details"][0]["field"] == "password"
     assert "剩余 4 次尝试" in body["error"]["details"][0]["message"]
     # 失败尝试落痕（BR-09：unlock_failed，success=False）
-    assert FileShareAccess.objects.filter(
-        share__slug=slug, action="unlock_failed", success=False).count() == 1
+    assert FileShareAccess.objects.filter(share__slug=slug, action="unlock_failed", success=False).count() == 1
 
 
 def test_ut05_it08_brute_force_lockout_sixth_429(env, redis_clean):
@@ -257,7 +261,7 @@ def test_ut05_it08_brute_force_lockout_sixth_429(env, redis_clean):
     body = resp.json()
     assert body["error"]["code"] == "RATE_LIMIT_EXCEEDED"
     assert int(resp.headers["Retry-After"]) >= 1
-    assert resp.headers["X-RateLimit-Limit"] == "5"      # §7.3 模板三件套
+    assert resp.headers["X-RateLimit-Limit"] == "5"  # §7.3 模板三件套
     assert resp.headers["X-RateLimit-Remaining"] == "0"
     assert int(resp.headers["X-RateLimit-Reset"]) > timezone.now().timestamp()
     # 键维度 (IP, slug)：另一 slug 不受牵连（同 IP）
@@ -269,6 +273,7 @@ def test_ut05_it08_brute_force_lockout_sixth_429(env, redis_clean):
     from django.core.cache import cache
 
     from plane.base.throttling import ShareUnlockRateThrottle
+
     cache.delete(ShareUnlockRateThrottle().key_for(slug, "127.0.0.1"))
     assert pub.post(f"{_pub(slug)}/unlock/", {"password": "nope"}).status_code == 401
 
@@ -285,6 +290,7 @@ def test_it08_success_unlock_resets_counter(env, redis_clean):
     from django.core.cache import cache
 
     from plane.base.throttling import ShareUnlockRateThrottle
+
     key = ShareUnlockRateThrottle().key_for(slug, "127.0.0.1")
     assert int(cache.get(key) or 0) == 0
 
@@ -351,10 +357,10 @@ def test_ut17_it04_four_states_one_page(env):
     FileShareLink.objects.filter(pk=revoked.pk).update(status="revoked")
     responses = [
         _Client().get(_pub("0123456789abcdefghijklmnop") + "/"),  # 不存在（合法格式）
-        _Client().get(_pub("BAD SLUG!") + "/"),                    # 格式非法
-        _Client().get(_pub(revoked.slug) + "/"),                   # 吊销
-        _Client().get(_pub(expired.slug) + "/"),                   # 过期
-        _Client().get(_pub(soft_link.slug) + "/"),                 # 源失效
+        _Client().get(_pub("BAD SLUG!") + "/"),  # 格式非法
+        _Client().get(_pub(revoked.slug) + "/"),  # 吊销
+        _Client().get(_pub(expired.slug) + "/"),  # 过期
+        _Client().get(_pub(soft_link.slug) + "/"),  # 源失效
     ]
     bodies = [_gone_body(r) for r in responses]
     # 同码同文案（仅 request_id 不同，UT-17）——防「从未存在 / 曾有效」被区分
@@ -433,9 +439,11 @@ def test_ut20_limit_per_user_project(env):
     rows = []
     for a in assets:
         for _ in range(10):
-            rows.append(FileShareLink(asset=a, created_by=env["owner"],
-                                      updated_by=env["owner"],
-                                      permission=FileShareLink.Permission.VIEW))
+            rows.append(
+                FileShareLink(
+                    asset=a, created_by=env["owner"], updated_by=env["owner"], permission=FileShareLink.Permission.VIEW
+                )
+            )
     FileShareLink.objects.bulk_create(rows)
     eleventh_asset = _mk_asset(env, name="第 101 条宿主.png")
     resp = _Client(env["owner"]).post(_links_url(env, eleventh_asset), {"permission": "view"})
@@ -529,11 +537,14 @@ def test_ut15_share_follows_current_version(env, redis_clean):
         # 上传新版本：current_version 指针 + 行级镜像三列（_new_version 同构口径）
         v2_key = v1_key.replace(".png", "-v2.png")
         v2 = FileVersion.objects.create(
-            asset=asset, version_number=2, object_key=v2_key,
+            asset=asset,
+            version_number=2,
+            object_key=v2_key,
             attributes=dict(asset.attributes, size=999),
-            uploaded_by_id=env["owner"].id, created_by_id=env["owner"].id)
-        FileAsset.objects.filter(pk=asset.pk).update(
-            current_version=v2.id, storage_path=v2_key, size=999)
+            uploaded_by_id=env["owner"].id,
+            created_by_id=env["owner"].id,
+        )
+        FileAsset.objects.filter(pk=asset.pk).update(current_version=v2.id, storage_path=v2_key, size=999)
         second = pub.get(_pub(link.slug) + "/content/?download=1")
         assert second.status_code == 302
         assert v2_key in second.headers["Location"]  # 分享内容即新版本（不重建链接）
@@ -552,8 +563,7 @@ def test_ut16_create_permission_404_403(env):
     assert resp.status_code == 403  # 无 file.share（默认 PROJ_ADMIN）
     assert resp.json()["error"]["code"] == "PERM_ROLE_INSUFFICIENT"
     # 管理员可见且可建；admins 态对 ADMIN 亦可见
-    assert _Client(env["admin"]).post(
-        _links_url(env, hidden), {"permission": "view"}).status_code == 201
+    assert _Client(env["admin"]).post(_links_url(env, hidden), {"permission": "view"}).status_code == 201
 
 
 def test_create_validation_password_and_expiry(env):
@@ -594,13 +604,13 @@ def test_it01_anonymous_full_chain(env, redis_clean):
     # 预置就绪缩略（image 预览 200 路径）
     version = asset.current_version
     attrs = dict(version.attributes)
-    attrs["derivatives"] = {"thumbnail": {
-        "key": f"deriv/{asset.id}/{version.id}/thumbnail", "status": "ready"}}
+    attrs["derivatives"] = {"thumbnail": {"key": f"deriv/{asset.id}/{version.id}/thumbnail", "status": "ready"}}
     version.attributes = attrs
     version.save(update_fields=["attributes"])
 
-    resp = _Client(env["owner"]).post(_links_url(env, asset), {
-        "permission": "download", "password": "demo-2026", "expires_in_days": 30})
+    resp = _Client(env["owner"]).post(
+        _links_url(env, asset), {"permission": "download", "password": "demo-2026", "expires_in_days": 30}
+    )
     assert resp.status_code == 201
     data = resp.json()["data"]
     slug = data["slug"]
@@ -625,8 +635,7 @@ def test_it01_anonymous_full_chain(env, redis_clean):
     # 解锁后 meta 展示文件信息（不含项目名，BR-10）
     meta = pub.get(_pub(slug) + "/").json()["data"]
     assert meta["requires_password"] is False
-    assert meta["file"] == {"name": "首页改版-v3.fig", "size_bytes": 8388608,
-                            "type_category": "image"}
+    assert meta["file"] == {"name": "首页改版-v3.fig", "size_bytes": 8388608, "type_category": "image"}
     assert meta["permission"] == "download"
     # 预览：匿名直签（200）
     with patch(GET_URL, side_effect=_fake_get_url):
@@ -641,8 +650,7 @@ def test_it01_anonymous_full_chain(env, redis_clean):
         assert dl.headers["Location"].startswith("/uploads/rp-uploads/")
     # 留痕齐（unlock/view/download，失败 0）+ 计数
     link = FileShareLink.objects.get(slug=slug)
-    actions = sorted(FileShareAccess.objects.filter(share=link)
-                     .values_list("action", flat=True))
+    actions = sorted(FileShareAccess.objects.filter(share=link).values_list("action", flat=True))
     assert actions == ["download", "unlock", "view"]
     assert FileShareAccess.objects.filter(share=link, success=False).count() == 0
     link.refresh_from_db()
@@ -691,9 +699,12 @@ def test_it05_anonymous_cannot_call_internal(env):
 # IT-06 匿名预览排队（未转码 → 202）
 # ────────────────────────────────────────────────────────────────
 def test_it06_anonymous_preview_queued_202(env, redis_clean):
-    asset = _mk_asset(env, name="合同.docx",
-                      mime="application/vnd.openxmlformats-officedocument"
-                           ".wordprocessingml.document", ext=".docx")
+    asset = _mk_asset(
+        env,
+        name="合同.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ext=".docx",
+    )
     link = _mk_share(env, asset)
     pub = _Client()
     resp = pub.get(_pub(link.slug) + "/content/")
@@ -723,8 +734,7 @@ def test_it07_access_stats_consistency(env, redis_clean):
     rows, meta = svc.list_shares(asset=asset, params={})
     assert meta["total_count"] == 1
     assert rows[0]["access_count"] == 42  # 管理弹层计数
-    assert FileShareAccess.objects.filter(
-        share_id=link.id, action__in=["view", "download"]).count() == 42  # 明细一致
+    assert FileShareAccess.objects.filter(share_id=link.id, action__in=["view", "download"]).count() == 42  # 明细一致
 
 
 # ────────────────────────────────────────────────────────────────
@@ -734,15 +744,14 @@ def test_it09_share_events_lifecycle(env, redis_clean, django_capture_on_commit_
     asset = _mk_asset(env)
     client = _Client(env["owner"])
     events: list[tuple] = []
-    with patch("plane.bgtasks.event_publisher.dispatch_event",
-               side_effect=lambda e, p, r, o=None: events.append((e, p, r))):
+    with patch(
+        "plane.bgtasks.event_publisher.dispatch_event", side_effect=lambda e, p, r, o=None: events.append((e, p, r))
+    ):
         with django_capture_on_commit_callbacks(execute=True):
-            resp = client.post(_links_url(env, asset),
-                               {"permission": "download", "expires_in_days": 30})
+            resp = client.post(_links_url(env, asset), {"permission": "download", "expires_in_days": 30})
             assert resp.status_code == 201
             link_id = resp.json()["data"]["id"]
-            assert client.post(_extend_url(env, link_id),
-                               {"extend_days": 7}).status_code == 200
+            assert client.post(_extend_url(env, link_id), {"extend_days": 7}).status_code == 200
             assert client.delete(_revoke_url(env, link_id)).status_code == 204
     names = [e[0] for e in events]
     assert names == ["file.share.created", "file.share.extended", "file.share.revoked"]
@@ -753,8 +762,9 @@ def test_it09_share_events_lifecycle(env, redis_clean, django_capture_on_commit_
     # 匿名访问/unlock 不入事件（防刷屏）
     asset2 = _mk_asset(env, name="匿名面.pdf", mime="application/pdf", ext=".pdf")
     link2 = _mk_share(env, asset2, password="demo-2026")
-    with patch("plane.bgtasks.event_publisher.dispatch_event",
-               side_effect=lambda *a, **k: events.append(("leak", a, None))):
+    with patch(
+        "plane.bgtasks.event_publisher.dispatch_event", side_effect=lambda *a, **k: events.append(("leak", a, None))
+    ):
         with django_capture_on_commit_callbacks(execute=True):
             pub = _Client()
             assert pub.get(_pub(link2.slug) + "/").status_code == 200
@@ -781,8 +791,10 @@ def test_sweep_expired_shares_beat(env):
     assert alive.status == FileShareLink.Status.ACTIVE  # 未到期不动
     # beat 调度注册证据（§4.3.4：每小时）
     assert "sweep-expired-shares" in celery_app.conf.beat_schedule
-    assert (celery_app.conf.beat_schedule["sweep-expired-shares"]["task"]
-            == "plane.bgtasks.share_sweep.sweep_expired_shares")
+    assert (
+        celery_app.conf.beat_schedule["sweep-expired-shares"]["task"]
+        == "plane.bgtasks.share_sweep.sweep_expired_shares"
+    )
 
 
 # ────────────────────────────────────────────────────────────────
@@ -793,16 +805,14 @@ def test_list_endpoint_shape_and_states(env):
     _mk_share(env, asset, password="demo-2026", expires_in_days=30)
     _mk_share(env, asset, permission="view")
     expired = _expired_link(env, asset)
-    FileShareLink.objects.filter(pk=expired.pk).update(
-        status=FileShareLink.Status.EXPIRED)  # beat/惰性标记已跑过的终态
+    FileShareLink.objects.filter(pk=expired.pk).update(status=FileShareLink.Status.EXPIRED)  # beat/惰性标记已跑过的终态
     resp = _Client(env["owner"]).get(_links_url(env, asset))
     assert resp.status_code == 200
     body = resp.json()
     assert body["meta"]["total_count"] == 3  # 含失效态（管理弹层展示）
     assert body["meta"]["per_page"] == 100
     pw_row = next(r for r in body["data"] if r["has_password"])
-    active_plain = next(
-        r for r in body["data"] if r["status"] == "active" and not r["has_password"])
+    active_plain = next(r for r in body["data"] if r["status"] == "active" and not r["has_password"])
     expired_row = next(r for r in body["data"] if r["status"] == "expired")
     assert pw_row["permission"] == "download" and pw_row["expires_at"]
     assert active_plain["permission"] == "view" and active_plain["expires_at"] is None

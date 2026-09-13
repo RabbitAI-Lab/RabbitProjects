@@ -17,7 +17,6 @@ from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-from plane.app.effective_perms import custom_codes
 from plane.app.permissions import is_system_admin
 from plane.base.response import success_response
 from plane.db.models import Project, ProjectMember, WorkspaceMember
@@ -73,11 +72,18 @@ class UserPermissionsView(APIView):
         # ── 查询 ④ Project 单表扫描（索引 idx_project_ws_status）──
         # WS_ADMIN+ 在该 workspace 下对所有项目隐式 PROJ_ADMIN（rbac §7.4），
         # 此查询让「隐式成员项目」也进入 projects 映射并标 inherited=true。
-        candidate_projects = (
+        candidate_projects = list(
             Project.objects
             .filter(workspace_id__in=ws_role_by_id.keys())
             .values_list("id", "workspace_id")
         )
+
+        # ── 查询 ⑤ 挂接码集批量预取（known-debt #2 收口，P4 R1）──
+        # 原逐项目 custom_codes 成 N+1（206 查询 @ 2511 项目）；一次 IN 取全。
+        from plane.app.effective_perms import custom_codes_bulk
+
+        codes_by_pid = custom_codes_bulk(
+            user.id, [pid for pid, _ in candidate_projects])
 
         projects: dict[str, dict] = {}
         truncated = False
@@ -102,7 +108,8 @@ class UserPermissionsView(APIView):
                 "inherited": inherited,
                 # S8 A#5（Sprint-9 R4 前端轮收口）：自定义角色挂接并集码集下发——
                 # 前端 usePermission 码级显隐消费（rbac §11.4 委托口径）
-                "custom_codes": sorted(custom_codes(user.id, project_id)),
+                "custom_codes": sorted(codes_by_pid.get(str(project_id),
+                                                        frozenset())),
             }
 
         # ── 组装响应（序列化器只承担 shape 文档化，逻辑已在上方聚合完毕）──

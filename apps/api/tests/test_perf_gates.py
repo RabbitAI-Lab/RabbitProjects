@@ -3,6 +3,7 @@
 GATES 的单源在 perf/gates.py；本测硬拷 QA-001 §4.2 现行表值做双源比对
 （文档↔代码漂移防线），阈值改动必须两边同 PR 走评审（BR-01 冻结口径）。
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -38,7 +39,8 @@ def test_ut07_gates_match_documentation():
     assert gates.GATES == DOC_TABLE, (
         f"门禁表漂移：代码={ {k: v for k, v in gates.GATES.items() if DOC_TABLE.get(k) != v} } "
         f"文档={ {k: v for k, v in DOC_TABLE.items() if gates.GATES.get(k) != v} }——"
-        "阈值改动须 QA-001 §4.2 与 perf/gates.py 同 PR")
+        "阈值改动须 QA-001 §4.2 与 perf/gates.py 同 PR"
+    )
 
 
 def test_check_pass_fail_and_missing():
@@ -56,11 +58,11 @@ def test_check_pass_fail_and_missing():
 
 
 def test_cli_exit_codes(tmp_path):
-    dump = subprocess.run([sys.executable, str(_ROOT / "perf" / "gates.py"), "dump"],
-                          capture_output=True, text=True)
+    dump = subprocess.run([sys.executable, str(_ROOT / "perf" / "gates.py"), "dump"], capture_output=True, text=True)
     assert dump.returncode == 0 and "s2_list_p95" in json.loads(dump.stdout)["gates"]
     bad = tmp_path / "r.json"
     bad.write_text(json.dumps({"s2_list_p95": 999.0}))
-    r = subprocess.run([sys.executable, str(_ROOT / "perf" / "gates.py"),
-                        "check", str(bad)], capture_output=True, text=True)
+    r = subprocess.run(
+        [sys.executable, str(_ROOT / "perf" / "gates.py"), "check", str(bad)], capture_output=True, text=True
+    )
     assert r.returncode == 1 and "FAIL" in r.stdout

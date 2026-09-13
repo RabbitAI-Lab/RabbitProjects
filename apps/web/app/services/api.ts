@@ -1602,6 +1602,18 @@ export const SiteAuditAPI = {
     api.post(`workspaces/${slug}/audit-logs/exports/`, { password }, { responseType: "blob" }),
 };
 
+/** AUTH-012（P4 R1）§4.4 客户侧：我的租户安全四端点。 */
+export const SecurityAPI = {
+  events: (slug: string) =>
+    api.get<Array<Record<string, unknown>>>(`workspaces/${slug}/security/events/`),
+  tightenRule: (slug: string, code: string, threshold: Record<string, number>) =>
+    api.patch(`workspaces/${slug}/security/rules/${code}/`, { threshold }),
+  appeal: (slug: string, eventId: string, reason: string) =>
+    api.post(`workspaces/${slug}/security/events/${eventId}/appeals/`, { reason }),
+  decideTicket: (slug: string, ticketId: string, decision: "approve" | "reject", note = "") =>
+    api.post(`workspaces/${slug}/security/l2-tickets/${ticketId}/approval/`, { decision, note }),
+};
+
 export const AuditAPI = {
   events: (slug: string, projectId: string, params: { page?: number } = {}) =>
     api.get<Array<Record<string, unknown>>>(

@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     "django_filters",
     "drf_spectacular",
     "plane.db",
+    "plane.ai",  # AI 能力（AI-001，P4 R8）
 ]
 
 # ── 中间件：六件套顺序即 §4.6 编号（顺序敏感，禁止重排）────
@@ -74,6 +75,7 @@ MIDDLEWARE = [
     "plane.base.middleware.ResponseEnvelopeMiddleware",  # ⑤
     "plane.base.middleware.MaintenanceModeMiddleware",  # ⑥
     "plane.base.middleware.WorkspaceArchiveMiddleware",  # ⑦ Sprint-5 TEAM-003 归档写保护
+    "plane.governance.middleware.GovernanceMiddleware",  # ⑧ AUTH-012 P4：冻结写拒/IP 封禁/租户速率桶
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -139,15 +141,22 @@ REST_FRAMEWORK = {
     # [*BASE_THROTTLES, X] 展开模式冲突（dev 被带起 L2 打爆 flow/pytest，或
     # prod 静默摘除视图级 L2），偏差见 plane/base/throttling.py 模块 docstring。
     "DEFAULT_THROTTLE_CLASSES": [
-        "plane.base.throttling.ApiKeyRateThrottle",    # ① Key
+        "plane.base.throttling.ApiKeyRateThrottle",  # ① Key
         "plane.base.throttling.OAuthAppRateThrottle",  # ② OAuth（复合键）
-        "plane.base.throttling.UserRateThrottle",      # ③ Session 用户
-        "plane.base.throttling.AnonRateThrottle",      # ④ 匿名 IP
+        "plane.base.throttling.UserRateThrottle",  # ③ Session 用户
+        "plane.base.throttling.AnonRateThrottle",  # ④ 匿名 IP
     ],
     "DEFAULT_THROTTLE_RATES": {
-        "user": "60/min", "apikey": "60/min", "oauth": "60/min", "anon": "30/min",
-        "auth": "10/min", "report": "10/min", "search": "30/min",
-        "presign": "30/min", "bulk": "10/min", "share_unlock": "5/10m",
+        "user": "60/min",
+        "apikey": "60/min",
+        "oauth": "60/min",
+        "anon": "30/min",
+        "auth": "10/min",
+        "report": "10/min",
+        "search": "30/min",
+        "presign": "30/min",
+        "bulk": "10/min",
+        "share_unlock": "5/10m",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
@@ -157,6 +166,12 @@ REST_FRAMEWORK = {
 #: 不受此开关控制，保持 sprint-4/5 既有全环境生效面）；prod 置 True；验收
 #: 演示经 env ``RATE_LIMIT_ENABLED=1`` 临时开启（§7.2.1 限流矩阵压测入口）。
 RATE_LIMIT_ENABLED = env_bool("RATE_LIMIT_ENABLED", False)
+
+#: 租户治理开关（AUTH-012 BR-11，P4 R1）：SaaS 形态 True / 私有化 False。
+#: base 默认 False——私有化「零变化」基底（治理 API SERVER_NOT_IMPLEMENTED、
+#: 引擎不调度、Workspace/audit_log 回填迁移不执行）；dev/test/演示经 env
+#: ``TENANT_GOVERNANCE_ENABLED=1`` 开启；SaaS prod 置 True。
+TENANT_GOVERNANCE_ENABLED = env_bool("TENANT_GOVERNANCE_ENABLED", False)
 
 #: 备份产物三校验①的大小阈值（INFRA-005 BR-07）：低于即判「异常偏小」失败
 #:（空库/错库/半途截断）。dev 空库调试可 env 调小。
@@ -204,7 +219,7 @@ AWS_S3_BUCKET_NAME = env("AWS_S3_BUCKET_NAME", "rp-uploads")
 # ── FILE-002 工作空间存储配额（BR-11「存 WS 设置，默认 10GB，可配置」──
 # 仓库无 Workspace 设置模型，以环境级配置承载（规格 §4.1.3 DDL 清单亦无 WS 列；
 # 偏差登记见 FILE-002 任务报告 / ADR-0022）。
-WS_STORAGE_QUOTA_BYTES = int(env("WS_STORAGE_QUOTA_BYTES", str(10 * 1024 ** 3)))
+WS_STORAGE_QUOTA_BYTES = int(env("WS_STORAGE_QUOTA_BYTES", str(10 * 1024**3)))
 
 # ── 功能常量（Sprint-2 TASK-004 §4.1：层级三层防线 + 子树上限）──
 from plane.settings.features import (  # noqa: E402,F401

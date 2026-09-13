@@ -4,6 +4,7 @@ verdict 逻辑为纯 python（ci/security_verdict.py），经 importlib 跨目�
 豁免单全局读仓库 security/exemptions.yml——过期/非法日期不生效由 monkeypatch
 改写全局 ROOT 实现（不动真文件）。
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -27,11 +28,16 @@ def _write(root: Path, name: str, payload) -> None:
 
 
 PIP_OK = {"dependencies": [{"name": "django", "vulns": []}]}
-NPM_HIGH = {"advisories": {
-    "1": {"id": 1, "module_name": "semver", "severity": "high",
-          "github_advisory_id": "GHSA-aaa-bbb-ccc"}}}
-TRIVY_CRIT = {"Results": [{"Vulnerabilities": [
-    {"VulnerabilityID": "CVE-2026-0001", "PkgName": "libssl", "Severity": "CRITICAL"}]}]}
+NPM_HIGH = {
+    "advisories": {
+        "1": {"id": 1, "module_name": "semver", "severity": "high", "github_advisory_id": "GHSA-aaa-bbb-ccc"}
+    }
+}
+TRIVY_CRIT = {
+    "Results": [
+        {"Vulnerabilities": [{"VulnerabilityID": "CVE-2026-0001", "PkgName": "libssl", "Severity": "CRITICAL"}]}
+    ]
+}
 GITLEAKS_ONE = [{"RuleID": "aws-access-key", "File": ".env", "StartLine": 3}]
 
 
@@ -70,18 +76,20 @@ def test_exempted_high_passes(tmp_path, monkeypatch):
     # 未过期 → 过
     (fake_root / "security" / "exemptions.yml").write_text(
         "- id: GHSA-aaa-bbb-ccc\n  reason: 测试豁免\n  owner: qa@rabbit.dev\n"
-        "  fix_version: 1.0.1\n  expires_at: 2999-01-01\n")
+        "  fix_version: 1.0.1\n  expires_at: 2999-01-01\n"
+    )
     monkeypatch.setattr(sv, "ROOT", fake_root)
     assert sv.verdict(tmp_path) == 0
     # 过期 → 不过（防永久豁免腐化）
     (fake_root / "security" / "exemptions.yml").write_text(
         "- id: GHSA-aaa-bbb-ccc\n  reason: 测试豁免\n  owner: qa@rabbit.dev\n"
-        "  fix_version: 1.0.1\n  expires_at: 2020-01-01\n")
+        "  fix_version: 1.0.1\n  expires_at: 2020-01-01\n"
+    )
     assert sv.verdict(tmp_path) == 1
     # 非法日期 → 不过
     (fake_root / "security" / "exemptions.yml").write_text(
-        "- id: GHSA-aaa-bbb-ccc\n  reason: x\n  owner: x\n"
-        "  fix_version: x\n  expires_at: 不是日期\n")
+        "- id: GHSA-aaa-bbb-ccc\n  reason: x\n  owner: x\n  fix_version: x\n  expires_at: 不是日期\n"
+    )
     assert sv.verdict(tmp_path) == 1
     del datetime
 

@@ -3,6 +3,7 @@
 新事件须先在此登记（CI 断言全表非空且格式合法）；未注册事件 worker
 拒写 + 告警（直接入 DLQ，重试无意义）。
 """
+
 from __future__ import annotations
 
 #: category → {action: 中文描述}
@@ -18,6 +19,11 @@ EVENT_REGISTRY: dict[str, dict[str, str]] = {
         "removed": "移除成员",
         "role_changed": "成员角色变更",
         "member_assigned": "成员部门归属变更",
+        "directory_created": "目录同步开通（AUTH-011）",
+        "directory_updated": "目录同步变更",
+        "directory_disabled": "目录同步禁用",
+        "directory_restored": "目录同步复活",
+        "directory_resolved": "目录待办处置",
     },
     "department": {
         "created": "新建部门",
@@ -54,6 +60,21 @@ EVENT_REGISTRY: dict[str, dict[str, str]] = {
     "workflow": {
         "published": "工作流发布",
         "state_changed": "任务流转",
+    },
+    "governance": {
+        "quota_changed": "租户配额调整（AUTH-012 BR-12）",
+        "disposed": "风控事件人工处置",
+        "freeze_requested": "冻结/解除发起（第一签，BR-04）",
+        "freeze_approved": "冻结/解除二签生效",
+        "released": "解除处置（BR-03）",
+        "rule_tightened": "风控阈值调紧（BR-06）",
+        "appeal_filed": "误报申诉提交",
+        "appeal_reviewed": "申诉复核裁定",
+        "l2_requested": "L2 授权工单发起（BR-07）",
+        "l2_confirmed": "L2 书面授权确认",
+        "l2_decided": "L2 工单客户裁定",
+        "l2_revoked": "L2 授权撤回",
+        "boundary_report": "数据边界证明报告生成（BR-10）",
     },
     "export": {
         "generic": "通用导出",

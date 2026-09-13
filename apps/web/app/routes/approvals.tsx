@@ -6,6 +6,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
 import { ApprovalAPI, type ApprovalRow } from "../services/api";
+import { Topbar } from "../components/Topbar";
+import { Sidebar } from "../components/Sidebar";
 
 const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
   pending: { text: "审批中", cls: "bg-amber-50 text-amber-700" },
@@ -53,8 +55,12 @@ export default function ApprovalCenter() {
   ];
 
   return (
-    <div className="flex-1 flex flex-col bg-neutral-50" data-sb-scope="approval-center">
-      <header className="h-12 border-b border-neutral-200 bg-white px-4 flex items-center gap-4">
+    <div className="flex h-screen flex-col">
+      <Topbar />
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar workspaceSlug={ws ?? ""} />
+        <main className="flex-1 overflow-hidden flex flex-col bg-neutral-50" data-sb-scope="approval-center">
+      <header className="h-12 border-b border-neutral-200 bg-white px-4 flex items-center gap-4 shrink-0">
         <h1 className="text-sm font-semibold text-neutral-800">审批中心</h1>
         <nav className="flex gap-1" data-sb-scope="approval-tabs">
           {tabs.map((t) => (
@@ -123,6 +129,8 @@ export default function ApprovalCenter() {
           onOpenIssue={(pid, iid) => nav(`/${ws}/projects/${pid}?issue=${iid}`)}
         />
       )}
+        </main>
+      </div>
     </div>
   );
 }

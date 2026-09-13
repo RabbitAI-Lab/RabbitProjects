@@ -6,6 +6,7 @@
 （BR-12）、meta.applied（BR-17/UT-18）、prune 任务（BR-15/UT-19）、越权 404 回归。
 HTTP 信封全矩阵归 sprint-3-flow.py（Phase 4）。
 """
+
 from __future__ import annotations
 
 import json
@@ -64,15 +65,9 @@ OPTS_VERSIONS = [
 
 @pytest.fixture()
 def env(db):
-    owner = User.objects.create_user(
-        email="fc-owner@rabbit.dev", password="Rabbit123!", display_name="张三"
-    )
-    member = User.objects.create_user(
-        email="fc-member@rabbit.dev", password="Rabbit123!", display_name="李四"
-    )
-    viewer = User.objects.create_user(
-        email="fc-viewer@rabbit.dev", password="Rabbit123!", display_name="王五"
-    )
+    owner = User.objects.create_user(email="fc-owner@rabbit.dev", password="Rabbit123!", display_name="张三")
+    member = User.objects.create_user(email="fc-member@rabbit.dev", password="Rabbit123!", display_name="李四")
+    viewer = User.objects.create_user(email="fc-viewer@rabbit.dev", password="Rabbit123!", display_name="王五")
     ws = Workspace.objects.create(name="W", slug=f"w-fc-{owner.id.hex[:8]}", owner=owner, created_by=owner)
     proj = Project.objects.create(name="P", identifier="FC", workspace=ws, created_by=owner)
     from plane.db.models import WorkspaceRole
@@ -93,47 +88,87 @@ def env(db):
     label = Label.objects.create(project=proj, name="线上", color="#DC2626", created_by=owner)
 
     CustomFieldDefinition.objects.create(
-        workspace=ws, project=proj, name="严重等级", field_key="cf_severity",
-        field_type="select", options=OPTS_SEVERITY, created_by=owner,
+        workspace=ws,
+        project=proj,
+        name="严重等级",
+        field_key="cf_severity",
+        field_type="select",
+        options=OPTS_SEVERITY,
+        created_by=owner,
     )
     CustomFieldDefinition.objects.create(
-        workspace=ws, project=proj, name="影响版本", field_key="cf_versions",
-        field_type="multi_select", options=OPTS_VERSIONS, created_by=owner,
+        workspace=ws,
+        project=proj,
+        name="影响版本",
+        field_key="cf_versions",
+        field_type="multi_select",
+        options=OPTS_VERSIONS,
+        created_by=owner,
     )
     CustomFieldDefinition.objects.create(
-        workspace=ws, project=proj, name="点数", field_key="cf_points",
-        field_type="number", created_by=owner,
+        workspace=ws,
+        project=proj,
+        name="点数",
+        field_key="cf_points",
+        field_type="number",
+        created_by=owner,
     )
     CustomFieldDefinition.objects.create(
-        workspace=ws, project=proj, name="评审日期", field_key="cf_due",
-        field_type="date", created_by=owner,
+        workspace=ws,
+        project=proj,
+        name="评审日期",
+        field_key="cf_due",
+        field_type="date",
+        created_by=owner,
     )
     CustomFieldDefinition.objects.create(
-        workspace=ws, project=proj, name="金额", field_key="cf_price",
-        field_type="currency", created_by=owner,
+        workspace=ws,
+        project=proj,
+        name="金额",
+        field_key="cf_price",
+        field_type="currency",
+        created_by=owner,
     )
     CustomFieldDefinition.objects.create(
-        workspace=ws, project=proj, name="是否回归", field_key="cf_flag",
-        field_type="checkbox", created_by=owner,
+        workspace=ws,
+        project=proj,
+        name="是否回归",
+        field_key="cf_flag",
+        field_type="checkbox",
+        created_by=owner,
     )
     CustomFieldDefinition.objects.create(
-        workspace=ws, project=proj, name="负责人", field_key="cf_owner",
-        field_type="member", created_by=owner,
+        workspace=ws,
+        project=proj,
+        name="负责人",
+        field_key="cf_owner",
+        field_type="member",
+        created_by=owner,
     )
     CustomFieldDefinition.objects.create(
-        workspace=ws, project=proj, name="备注", field_key="cf_note",
-        field_type="text", created_by=owner,
+        workspace=ws,
+        project=proj,
+        name="备注",
+        field_key="cf_note",
+        field_type="text",
+        created_by=owner,
     )
 
     today = timezone.localdate()
     seq = iter(range(1, 100))
 
-    def mk(name, *, state=todo, pri="none", assignees=(), cf=None, target=None, est=None,
-           itype=None, creator=None):
+    def mk(name, *, state=todo, pri="none", assignees=(), cf=None, target=None, est=None, itype=None, creator=None):
         issue = Issue.objects.create(
-            name=name, project=proj, state=state, priority=pri, issue_type=itype,
-            sequence_id=next(seq), sort_order=next(seq) * 100,
-            created_by=creator or owner, target_date=target, estimate_minutes=est,
+            name=name,
+            project=proj,
+            state=state,
+            priority=pri,
+            issue_type=itype,
+            sequence_id=next(seq),
+            sort_order=next(seq) * 100,
+            created_by=creator or owner,
+            target_date=target,
+            estimate_minutes=est,
             custom_fields=cf or {},
         )
         for a in assignees:
@@ -141,36 +176,78 @@ def env(db):
         return issue
 
     a = mk(
-        "支付失败", state=todo, pri="urgent", assignees=[owner], target=today, est=60,
+        "支付失败",
+        state=todo,
+        pri="urgent",
+        assignees=[owner],
+        target=today,
+        est=60,
         itype=types["requirement"],
-        cf={"cf_severity": "critical", "cf_versions": ["v1"], "cf_points": 3,
-            "cf_due": today.isoformat(), "cf_price": {"amount": 100, "currency": "CNY"},
-            "cf_flag": True, "cf_owner": str(member.id), "cf_note": "支付失败"},
+        cf={
+            "cf_severity": "critical",
+            "cf_versions": ["v1"],
+            "cf_points": 3,
+            "cf_due": today.isoformat(),
+            "cf_price": {"amount": 100, "currency": "CNY"},
+            "cf_flag": True,
+            "cf_owner": str(member.id),
+            "cf_note": "支付失败",
+        },
     )
     b = mk(
-        "登录崩溃", state=doing, pri="high", assignees=[member], target=today - timedelta(days=1), est=120,
+        "登录崩溃",
+        state=doing,
+        pri="high",
+        assignees=[member],
+        target=today - timedelta(days=1),
+        est=120,
         itype=types["bug"],
-        cf={"cf_severity": "major", "cf_versions": ["v1", "v2"], "cf_points": 10,
+        cf={
+            "cf_severity": "major",
+            "cf_versions": ["v1", "v2"],
+            "cf_points": 10,
             "cf_due": (today - timedelta(days=1)).isoformat(),
-            "cf_price": {"amount": 500, "currency": "CNY"}, "cf_flag": False},
+            "cf_price": {"amount": 500, "currency": "CNY"},
+            "cf_flag": False,
+        },
     )
     c = mk("测试用例", state=todo, pri="none", target=today + timedelta(days=30), itype=types["test"], creator=member)
     d = mk(
-        "需求澄清", state=done, pri="medium", assignees=[owner, member], target=today + timedelta(days=5), est=240,
+        "需求澄清",
+        state=done,
+        pri="medium",
+        assignees=[owner, member],
+        target=today + timedelta(days=5),
+        est=240,
         itype=types["requirement"],
-        cf={"cf_severity": "minor", "cf_versions": ["v2"], "cf_points": 7,
+        cf={
+            "cf_severity": "minor",
+            "cf_versions": ["v2"],
+            "cf_points": 7,
             "cf_due": (today + timedelta(days=5)).isoformat(),
-            "cf_price": {"amount": 1000, "currency": "CNY"}, "cf_flag": True,
-            "cf_owner": str(member.id), "cf_note": "x"},
+            "cf_price": {"amount": 1000, "currency": "CNY"},
+            "cf_flag": True,
+            "cf_owner": str(member.id),
+            "cf_note": "x",
+        },
     )
     IssueLabel.objects.create(issue=a, label=label, created_by=owner)
     # A 被 C 阻塞（C 未完成 → A._is_blocked = True；与 ?blocked=true 同向同语义）
     IssueLink.objects.create(issue=a, related_issue=c, relation_type="is_blocked_by", created_by=owner)
 
     return {
-        "owner": owner, "member": member, "viewer": viewer, "ws": ws, "proj": proj,
-        "todo": todo, "doing": doing, "done": done, "types": types, "label": label,
-        "issues": {"A": a, "B": b, "C": c, "D": d}, "today": today,
+        "owner": owner,
+        "member": member,
+        "viewer": viewer,
+        "ws": ws,
+        "proj": proj,
+        "todo": todo,
+        "doing": doing,
+        "done": done,
+        "types": types,
+        "label": label,
+        "issues": {"A": a, "B": b, "C": c, "D": d},
+        "today": today,
     }
 
 
@@ -252,13 +329,16 @@ class TestStructureLimits:
 # UT-03/12：白名单探测免疫
 # ─────────────────────────────────────────────────────────────────────
 class TestWhitelist:
-    @pytest.mark.parametrize("probe", [
-        "project__workspace__owner__password",
-        "project__owner",
-        "password",
-        "sort_order",
-        "cf_ghost",
-    ])
+    @pytest.mark.parametrize(
+        "probe",
+        [
+            "project__workspace__owner__password",
+            "project__owner",
+            "password",
+            "sort_order",
+            "cf_ghost",
+        ],
+    )
     def test_probe_fields_rejected(self, env, probe):
         with pytest.raises(AppException) as ei:
             validate_dsl(_tree(_cond(probe, "in", ["x"])), project=env["proj"], user=env["owner"])
@@ -267,9 +347,21 @@ class TestWhitelist:
 
     def test_builtin_whitelist_shape(self):
         assert set(BUILTIN_FIELD_PATHS) == {
-            "name", "state", "state.group", "issue_type", "priority", "assignees",
-            "labels", "created_by", "start_date", "target_date", "created_at",
-            "estimate", "sequence_id", "parent", "blocked",
+            "name",
+            "state",
+            "state.group",
+            "issue_type",
+            "priority",
+            "assignees",
+            "labels",
+            "created_by",
+            "start_date",
+            "target_date",
+            "created_at",
+            "estimate",
+            "sequence_id",
+            "parent",
+            "blocked",
         }
         assert BUILTIN_FIELD_PATHS["assignees"] == {"path": "assignees__id", "type": "member_multi"}
         assert BUILTIN_FIELD_PATHS["blocked"] == {"path": "_is_blocked", "type": "checkbox"}
@@ -277,8 +369,13 @@ class TestWhitelist:
 
     def test_inactive_cf_rejected(self, env):
         CustomFieldDefinition.objects.create(
-            workspace=env["ws"], project=env["proj"], name="停用", field_key="cf_off",
-            field_type="text", is_active=False, created_by=env["owner"],
+            workspace=env["ws"],
+            project=env["proj"],
+            name="停用",
+            field_key="cf_off",
+            field_type="text",
+            is_active=False,
+            created_by=env["owner"],
         )
         with pytest.raises(AppException) as ei:
             validate_dsl(_tree(_cond("cf_off", "eq", "x")), project=env["proj"], user=env["owner"])
@@ -384,7 +481,9 @@ class TestPlaceholders:
         within = _tree(_cond("target_date", "between", ["next_7_days"]))
         assert _ids(within, env) == {"支付失败", "需求澄清"}  # today / today+5
         assert _ids(_tree(_cond("target_date", "between", ["next_30_days"])), env) == {
-            "支付失败", "需求澄清", "测试用例",
+            "支付失败",
+            "需求澄清",
+            "测试用例",
         }
         too_deep = _tree(_cond("target_date", "between", ["next_91_days"]))
         with pytest.raises(AppException):
@@ -436,9 +535,10 @@ class TestCustomFieldOperators:
         assert _ids(_tree(_cond("cf_due", "eq", t.isoformat())), env) == {"支付失败"}
         assert _ids(_tree(_cond("cf_due", "before", t.isoformat())), env) == {"登录崩溃"}
         assert _ids(_tree(_cond("cf_due", "after", t.isoformat())), env) == {"需求澄清"}
-        assert _ids(
-            _tree(_cond("cf_due", "between", [(t - timedelta(days=1)).isoformat(), t.isoformat()])), env
-        ) == {"支付失败", "登录崩溃"}
+        assert _ids(_tree(_cond("cf_due", "between", [(t - timedelta(days=1)).isoformat(), t.isoformat()])), env) == {
+            "支付失败",
+            "登录崩溃",
+        }
         # this_week 边界按服务器本地周动态锚定（用户时区口径为 P3 登记项）
         monday = t - timedelta(days=t.weekday())
         sunday = monday + timedelta(days=6)
@@ -487,9 +587,9 @@ class TestBuiltinOperators:
         assert _ids(_tree(_cond("assignees", "in", ["@me"])), env, user=env["owner"]) == {"支付失败", "需求澄清"}
         assert _ids(_tree(_cond("assignees", "not_in", ["@me"])), env, user=env["owner"]) == {"登录崩溃", "测试用例"}
         assert _ids(_tree(_cond("assignees", "is_empty")), env) == {"测试用例"}
-        assert _ids(
-            _tree(_cond("assignees", "contains_all", [str(env["owner"].id), str(env["member"].id)])), env
-        ) == {"需求澄清"}
+        assert _ids(_tree(_cond("assignees", "contains_all", [str(env["owner"].id), str(env["member"].id)])), env) == {
+            "需求澄清"
+        }
 
     def test_labels_ops(self, env):
         assert _ids(_tree(_cond("labels", "in", [str(env["label"].id)])), env) == {"支付失败"}
@@ -554,9 +654,7 @@ class TestMergeEquivalence:
         """UT-09：随机 12 棵树，逐条编译（optimize=False）与合并编译（True）结果一致。"""
         rng = random.Random(42)
         ctx = CompileContext.build(project=env["proj"], user=env["owner"])
-        base = Issue.objects.filter(
-            project=env["proj"], deleted_at__isnull=True, archived_at__isnull=True
-        )
+        base = Issue.objects.filter(project=env["proj"], deleted_at__isnull=True, archived_at__isnull=True)
         for _ in range(12):
             tree = self._random_tree(rng)
             validate_dsl(tree, project=env["proj"], user=env["owner"])
@@ -591,7 +689,8 @@ class TestMergeEquivalence:
 class TestThreeSourceAnd:
     def test_build_issue_queryset_two_trees_and(self, env):
         qs = build_issue_queryset(
-            project=env["proj"], user=env["owner"],
+            project=env["proj"],
+            user=env["owner"],
             view_filters=_tree(_cond("priority", "in", ["urgent", "high", "medium"])),
             url_filters=_tree(_cond("state.group", "in", ["unstarted", "started"])),
         )
@@ -601,7 +700,8 @@ class TestThreeSourceAnd:
         from django.db.models import Q
 
         qs = build_issue_queryset(
-            project=env["proj"], user=env["owner"],
+            project=env["proj"],
+            user=env["owner"],
             view_filters=_tree(_cond("assignees", "in", ["@me"])),
             url_filters=_tree(_cond("cf_severity", "is_not_empty")),
             extra_q=Q(priority__in=["urgent"]),
@@ -659,7 +759,10 @@ class TestIssuesEndpoint:
 
     def test_three_sources_always_and(self, env):  # BR-12：view + filters + URL 平铺
         view = IssueView.objects.create(
-            workspace=env["ws"], project=env["proj"], owner=env["owner"], name="中高优先",
+            workspace=env["ws"],
+            project=env["proj"],
+            owner=env["owner"],
+            name="中高优先",
             filters=_tree(_cond("priority", "in", ["urgent", "high", "medium"])),
         )
         tree = _tree(_cond("assignees", "in", ["@me"]))
@@ -678,7 +781,10 @@ class TestIssuesEndpoint:
 
     def test_nested_view_via_endpoint(self, env):
         view = IssueView.objects.create(
-            workspace=env["ws"], project=env["proj"], owner=env["owner"], name="嵌套",
+            workspace=env["ws"],
+            project=env["proj"],
+            owner=env["owner"],
+            name="嵌套",
             filters=_tree(
                 _cond("state.group", "in", ["unstarted", "started"]),
                 _tree(_cond("cf_severity", "in", ["critical"]), _cond("priority", "in", ["high"]), op="OR"),
@@ -691,7 +797,10 @@ class TestIssuesEndpoint:
     def test_other_personal_view_404(self, env):
         """越权 view_id 存在性隐藏回归（BR-10 口径）。"""
         view = IssueView.objects.create(
-            workspace=env["ws"], project=env["proj"], owner=env["member"], name="成员私有",
+            workspace=env["ws"],
+            project=env["proj"],
+            owner=env["member"],
+            name="成员私有",
             filters=_tree(_cond("priority", "in", ["high"])),
         )
         assert _Client(env["viewer"]).get(self._url(env), {"view_id": str(view.id)}).status_code == 404
@@ -745,23 +854,32 @@ class TestPruneTask:
             workspace=env["ws"], project=env["proj"], field_key="cf_severity"
         )
         view = IssueView.objects.create(
-            workspace=env["ws"], project=env["proj"], owner=env["owner"], name="引用视图",
+            workspace=env["ws"],
+            project=env["proj"],
+            owner=env["owner"],
+            name="引用视图",
             filters=_tree(
                 _cond("cf_severity", "in", ["critical"]),
                 _tree(_cond("cf_severity", "eq", "major"), _cond("priority", "in", ["high"]), op="OR"),
             ),
             display_props={
-                "group_by": "cf_severity", "sub_group_by": "cf_severity", "order_by": "-cf_severity",
-                "columns": ["name", "cf_severity"], "card_fields": {"cf_severity": True, "priority": False},
+                "group_by": "cf_severity",
+                "sub_group_by": "cf_severity",
+                "order_by": "-cf_severity",
+                "columns": ["name", "cf_severity"],
+                "card_fields": {"cf_severity": True, "priority": False},
             },
         )
         affected = prune_views_referencing_field(str(definition.id))
         assert affected == 1
         view.refresh_from_db()
         # filters：嵌套递归剔除，组内保留其余条件（降级而非报错）
-        assert view.filters == {"op": "AND", "conditions": [
-            {"op": "OR", "conditions": [{"field": "priority", "operator": "in", "value": ["high"]}]},
-        ]}
+        assert view.filters == {
+            "op": "AND",
+            "conditions": [
+                {"op": "OR", "conditions": [{"field": "priority", "operator": "in", "value": ["high"]}]},
+            ],
+        }
         props = view.display_props
         assert props["group_by"] == "state_id"  # 回退默认分组维度
         assert props["sub_group_by"] is None and props["order_by"] is None
@@ -772,16 +890,26 @@ class TestPruneTask:
 
     def test_global_field_prunes_across_projects(self, env):
         global_def = CustomFieldDefinition.objects.create(
-            workspace=env["ws"], project=None, name="全局", field_key="cf_global_rank",
-            field_type="number", created_by=env["owner"],
+            workspace=env["ws"],
+            project=None,
+            name="全局",
+            field_key="cf_global_rank",
+            field_type="number",
+            created_by=env["owner"],
         )
         proj2 = Project.objects.create(name="P2", identifier="F2", workspace=env["ws"], created_by=env["owner"])
         v1 = IssueView.objects.create(
-            workspace=env["ws"], project=env["proj"], owner=env["owner"], name="主项目",
+            workspace=env["ws"],
+            project=env["proj"],
+            owner=env["owner"],
+            name="主项目",
             filters=_tree(_cond("cf_global_rank", "gte", 1)),
         )
         v2 = IssueView.objects.create(
-            workspace=env["ws"], project=proj2, owner=env["owner"], name="次项目",
+            workspace=env["ws"],
+            project=proj2,
+            owner=env["owner"],
+            name="次项目",
             filters=_tree(_cond("cf_global_rank", "gte", 2)),
         )
         assert prune_views_referencing_field(str(global_def.id)) == 2
@@ -791,11 +919,12 @@ class TestPruneTask:
         assert v2.filters["conditions"] == []
 
     def test_view_without_references_untouched(self, env):
-        definition = CustomFieldDefinition.objects.get(
-            workspace=env["ws"], project=env["proj"], field_key="cf_points"
-        )
+        definition = CustomFieldDefinition.objects.get(workspace=env["ws"], project=env["proj"], field_key="cf_points")
         IssueView.objects.create(
-            workspace=env["ws"], project=env["proj"], owner=env["owner"], name="无关",
+            workspace=env["ws"],
+            project=env["proj"],
+            owner=env["owner"],
+            name="无关",
             filters=_tree(_cond("priority", "in", ["high"])),
         )
         assert prune_views_referencing_field(str(definition.id)) == 0

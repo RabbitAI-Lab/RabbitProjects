@@ -6,6 +6,7 @@ WF-005：预设四套幂等种子、模板 CRUD（is_builtin 保护）、两步�
 WF-006：哈希链 append（prev→event 链式）、全链校验（篡改检测）、
 导出 CSV 行 + 导出事实入链、触发器只增（UPDATE 拒绝）。
 """
+
 from __future__ import annotations
 
 import pytest
@@ -43,19 +44,14 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture()
 def env(db):
-    owner = User.objects.create_user(email="r5-owner@rabbit.dev", password="Rabbit123!",
-                                     display_name="负责人")
-    member = User.objects.create_user(email="r5-member@rabbit.dev", password="Rabbit123!",
-                                      display_name="成员")
-    ws = Workspace.objects.create(name="W", slug=f"w-r5-{owner.id.hex[:8]}",
-                                  owner=owner, created_by=owner)
+    owner = User.objects.create_user(email="r5-owner@rabbit.dev", password="Rabbit123!", display_name="负责人")
+    member = User.objects.create_user(email="r5-member@rabbit.dev", password="Rabbit123!", display_name="成员")
+    ws = Workspace.objects.create(name="W", slug=f"w-r5-{owner.id.hex[:8]}", owner=owner, created_by=owner)
     for u, r in ((owner, WorkspaceRole.OWNER), (member, WorkspaceRole.MEMBER)):
         WorkspaceMember.objects.create(workspace=ws, member=u, role=r, created_by=owner)
     proj = Project.objects.create(name="P", identifier="R5P", workspace=ws, created_by=owner)
-    ProjectMember.objects.create(project=proj, member=owner, role=ProjectRole.ADMIN,
-                                 created_by=owner)
-    ProjectMember.objects.create(project=proj, member=member, role=ProjectRole.CONTRIBUTOR,
-                                 created_by=owner)
+    ProjectMember.objects.create(project=proj, member=owner, role=ProjectRole.ADMIN, created_by=owner)
+    ProjectMember.objects.create(project=proj, member=member, role=ProjectRole.CONTRIBUTOR, created_by=owner)
     seed_project_states(proj)
     return {"owner": owner, "member": member, "ws": ws, "proj": proj}
 
@@ -65,8 +61,9 @@ class TestBuiltinTemplates:
     def test_seed_four_idempotent(self, env):
         assert seed_builtin_templates(env["ws"]) == 4
         assert seed_builtin_templates(env["ws"]) == 0  # 幂等
-        names = set(WorkflowTemplate.objects.filter(
-            workspace=env["ws"], is_builtin=True).values_list("name", flat=True))
+        names = set(
+            WorkflowTemplate.objects.filter(workspace=env["ws"], is_builtin=True).values_list("name", flat=True)
+        )
         assert names == {"研发需求流程", "缺陷修复流程", "测试上线流程", "日常任务流程"}
 
 
@@ -106,44 +103,44 @@ class TestUnlockRequest:
         tpl = WorkflowTemplate.objects.first()
         dist = distribute(template=tpl, project=env["proj"], actor=env["owner"])
         with pytest.raises(TemplateError) as ei:
-            request_unlock(dist=dist, project=env["proj"], actor=env["owner"],
-                           kind="unlock", reason="  ")
+            request_unlock(dist=dist, project=env["proj"], actor=env["owner"], kind="unlock", reason="  ")
         assert ei.value.status == 400
 
     def test_one_pending_per_project(self, env):
         seed_builtin_templates(env["ws"])
         tpl = WorkflowTemplate.objects.first()
         dist = distribute(template=tpl, project=env["proj"], actor=env["owner"])
-        request_unlock(dist=dist, project=env["proj"], actor=env["owner"],
-                       kind="unlock", reason="流程需本地化调整")
+        request_unlock(dist=dist, project=env["proj"], actor=env["owner"], kind="unlock", reason="流程需本地化调整")
         with pytest.raises(TemplateError) as ei:
-            request_unlock(dist=dist, project=env["proj"], actor=env["owner"],
-                           kind="upgrade", reason="想升级")
+            request_unlock(dist=dist, project=env["proj"], actor=env["owner"], kind="upgrade", reason="想升级")
         assert ei.value.status == 409
         # 处理后可再申请
         req = TemplateUnlockRequest.objects.get(project=env["proj"])
         req.status = "approved"
         req.save(update_fields=["status"])
-        request_unlock(dist=dist, project=env["proj"], actor=env["owner"],
-                       kind="upgrade", reason="模板升版")
+        request_unlock(dist=dist, project=env["proj"], actor=env["owner"], kind="upgrade", reason="模板升版")
         assert TemplateUnlockRequest.objects.filter(project=env["proj"]).count() == 2
 
 
 # ── WF-006 审计留痕 ───────────────────────────────────────────
 class TestAuditChain:
     def test_append_and_verify(self, env):
-        e1 = append_audit_event(project=env["proj"], type_="approval.started",
-                                instance=None, actor=env["owner"], payload={"k": 1})
-        e2 = append_audit_event(project=env["proj"], type_="approval.approved",
-                                instance=None, actor=env["member"], payload={"k": 2})
+        e1 = append_audit_event(
+            project=env["proj"], type_="approval.started", instance=None, actor=env["owner"], payload={"k": 1}
+        )
+        e2 = append_audit_event(
+            project=env["proj"], type_="approval.approved", instance=None, actor=env["member"], payload={"k": 2}
+        )
         assert e2.prev_hash == e1.event_hash  # 链式
         assert verify_chain(env["proj"]) == []  # 完整
 
     def test_tamper_detection(self, env):
-        append_audit_event(project=env["proj"], type_="approval.started",
-                           instance=None, actor=env["owner"], payload={"k": 1})
-        e2 = append_audit_event(project=env["proj"], type_="approval.approved",
-                                instance=None, actor=env["member"], payload={"k": 2})
+        append_audit_event(
+            project=env["proj"], type_="approval.started", instance=None, actor=env["owner"], payload={"k": 1}
+        )
+        e2 = append_audit_event(
+            project=env["proj"], type_="approval.approved", instance=None, actor=env["member"], payload={"k": 2}
+        )
         # 直接 UPDATE 被触发器拒绝（BR-01 append-only DDL 落点）
         from django.db import transaction as _tx
         from django.db.utils import ProgrammingError
@@ -151,9 +148,7 @@ class TestAuditChain:
         try:
             with _tx.atomic():
                 with connection.cursor() as cur:
-                    cur.execute(
-                        "UPDATE approval_audit_events SET payload = '{\"k\": 99}' WHERE id = %s",
-                        [e2.id])
+                    cur.execute("UPDATE approval_audit_events SET payload = '{\"k\": 99}' WHERE id = %s", [e2.id])
             raise AssertionError("触发器未拦截 UPDATE")
         except ProgrammingError as exc:
             assert "append-only" in str(exc)
@@ -161,8 +156,9 @@ class TestAuditChain:
         assert verify_chain(env["proj"]) == []
 
     def test_export_csv_and_chain_log(self, env):
-        append_audit_event(project=env["proj"], type_="approval.started",
-                           instance=None, actor=env["owner"], payload={"a": 1})
+        append_audit_event(
+            project=env["proj"], type_="approval.started", instance=None, actor=env["owner"], payload={"a": 1}
+        )
         rows = query_events(env["proj"])
         csv_text = export_rows_to_csv(rows)
         assert "approval.started" in csv_text
@@ -175,8 +171,9 @@ class TestMutationReverts:
         """突变：verify_chain 恒返回空 → 篡改场景漏检（红）→ 恢复（绿）。"""
         from unittest.mock import patch as mpatch
 
-        e1 = append_audit_event(project=env["proj"], type_="approval.started",
-                                instance=None, actor=env["owner"], payload={"k": 1})
+        e1 = append_audit_event(
+            project=env["proj"], type_="approval.started", instance=None, actor=env["owner"], payload={"k": 1}
+        )
         # DELETE 同样被触发器拒绝——链物理不可拆
         from django.db import transaction as _tx
         from django.db.utils import ProgrammingError
@@ -189,8 +186,7 @@ class TestMutationReverts:
         except ProgrammingError as exc:
             assert "append-only" in str(exc)
         # 突变：哈希函数恒零 → verify 应报全链断（红）
-        with mpatch("plane.workflow.audit_service._event_hash",
-                    return_value="0" * 64):
+        with mpatch("plane.workflow.audit_service._event_hash", return_value="0" * 64):
             assert verify_chain(env["proj"]) != []
         # 恢复（无 patch）：链自洽
         assert verify_chain(env["proj"]) == []

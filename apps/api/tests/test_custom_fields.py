@@ -6,6 +6,7 @@
 不可用自动 skip）、数量上限（UT-15）、逐键 diff（UT-16）、合并语义、cleanup 任务。
 HTTP 全矩阵（CRUD/409/202/ETag/?property./order_by）在 sprint-2-flow.py。
 """
+
 from __future__ import annotations
 
 import uuid as uuid_module
@@ -54,8 +55,11 @@ def env(db):
 
 def _mk(env, key, ftype, **kw) -> CustomFieldDefinition:
     return CustomFieldDefinition.objects.create(
-        workspace=env["ws"], project=kw.pop("project", env["proj"]),
-        name=kw.pop("name", key), field_key=key, field_type=ftype,
+        workspace=env["ws"],
+        project=kw.pop("project", env["proj"]),
+        name=kw.pop("name", key),
+        field_key=key,
+        field_type=ftype,
         options=kw.pop("options", OPTS if ftype in ("select", "multi_select") else []),
         **kw,
     )
@@ -140,7 +144,10 @@ def test_ut04_duplicate_option_value(env):
 
     # 未落库实例上做纯校验（落库路径 save→full_clean 同样拦截）
     d = CustomFieldDefinition(
-        workspace=env["ws"], project=env["proj"], name="dup", field_key="cf_dup",
+        workspace=env["ws"],
+        project=env["proj"],
+        name="dup",
+        field_key="cf_dup",
         field_type="select",
         options=[{"label": "a", "value": "x"}, {"label": "b", "value": "x"}],
     )
@@ -181,9 +188,7 @@ def test_ut09_null_value_drops_key(env):
 
 def test_ut10_required_not_retroactive(env):
     d = _mk(env, "cf_retro", "text")
-    issue = Issue.objects.create(
-        name="存量", project=env["proj"], sequence_id=1, sort_order=1, created_by=env["owner"]
-    )
+    issue = Issue.objects.create(name="存量", project=env["proj"], sequence_id=1, sort_order=1, created_by=env["owner"])
     # 存量任务缺该字段：保存其他字段（合并语义，不触碰 cf_retro）→ 通过（BR-08 不追溯）
     merged = merge_custom_fields(env["proj"], None, {}, {})
     assert merged == {}
@@ -205,9 +210,7 @@ def test_merge_semantics(env):
     _mk(env, "cf_aa", "text")
     _mk(env, "cf_bb", "select")
     current = {"cf_aa": "old", "cf_bb": "critical"}
-    merged = merge_custom_fields(
-        env["proj"], None, current, {"cf_aa": "new", "cf_bb": None}
-    )
+    merged = merge_custom_fields(env["proj"], None, current, {"cf_aa": "new", "cf_bb": None})
     assert merged == {"cf_aa": "new"}  # 未提及保留 / null 显式清空
 
 
@@ -226,8 +229,12 @@ def test_ut13_auto_increment_serial_ten_unique(env):
         for i in range(10):
             n = next_auto_increment(env["proj"].id, "cf_seq")
             Issue.objects.create(
-                name=f"seq-{i}", project=env["proj"], sequence_id=i + 1, sort_order=i + 1,
-                created_by=env["owner"], custom_fields={"cf_seq": n},
+                name=f"seq-{i}",
+                project=env["proj"],
+                sequence_id=i + 1,
+                sort_order=i + 1,
+                created_by=env["owner"],
+                custom_fields={"cf_seq": n},
             )
             numbers.append(n)
     assert numbers == list(range(1, 11))  # 1~10 无重（并发版 UT-13 在真库由 advisory lock 保证）
@@ -352,8 +359,12 @@ def test_cleanup_task_removes_key_in_batches(env):
 
     d = _mk(env, "cf_legacy", "text", project=None)  # 全局字段 → WS 范围清理
     Issue.objects.create(
-        name="a", project=env["proj"], sequence_id=1, sort_order=1,
-        created_by=env["owner"], custom_fields={"cf_legacy": "v", "cf_keep": "k"},
+        name="a",
+        project=env["proj"],
+        sequence_id=1,
+        sort_order=1,
+        created_by=env["owner"],
+        custom_fields={"cf_legacy": "v", "cf_keep": "k"},
     )
     d.deleted_at = d.created_at  # 任意非空；任务用 all_objects 取定义
     from django.utils import timezone
@@ -375,8 +386,12 @@ def _seed_issues_for_order(env):
     for seq, num in enumerate([9, 10, 100, None], start=1):
         cf = {"cf_points": num} if num is not None else {}
         Issue.objects.create(
-            name=f"o-{seq}", project=env["proj"], sequence_id=seq, sort_order=seq,
-            created_by=env["owner"], custom_fields=cf,
+            name=f"o-{seq}",
+            project=env["proj"],
+            sequence_id=seq,
+            sort_order=seq,
+            created_by=env["owner"],
+            custom_fields=cf,
         )
 
 
@@ -403,8 +418,12 @@ def test_order_by_cf_select_uses_config_order(env):
     _mk(env, "cf_grade", "select", options=opts)
     for seq, grade in enumerate(["a", "b", "c"], start=1):
         Issue.objects.create(
-            name=f"g-{seq}", project=env["proj"], sequence_id=seq, sort_order=seq,
-            created_by=env["owner"], custom_fields={"cf_grade": grade},
+            name=f"g-{seq}",
+            project=env["proj"],
+            sequence_id=seq,
+            sort_order=seq,
+            created_by=env["owner"],
+            custom_fields={"cf_grade": grade},
         )
     fs = IssueFilterSet(None, project=env["proj"])
     qs, _ = fs.apply_order(Issue.objects.filter(project=env["proj"]), "cf_grade")
@@ -429,5 +448,10 @@ def test_index_naming_idempotent():
     assert index_name_for("cf_points") == index_name_for("cf_points")
     assert len(index_name_for("cf_" + "x" * 60)) <= 63
     assert set(INDEX_EXPRESSIONS) >= {
-        "number", "auto_increment", "currency", "date", "text", "select",
+        "number",
+        "auto_increment",
+        "currency",
+        "date",
+        "text",
+        "select",
     }

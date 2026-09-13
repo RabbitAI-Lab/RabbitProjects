@@ -3,6 +3,7 @@
 UT 对应 §5：UT-14（列集合断言零 SQL 扫表——配置源直查）、UT-19（别名归一）、
 IT-01/IT-02 的服务层前置。HTTP 分组信封全矩阵在 sprint-3-flow.py（Phase 4）。
 """
+
 from __future__ import annotations
 
 import pytest
@@ -55,16 +56,27 @@ def env(db):
     todo = State.objects.get(project=proj, group=State.Group.UNSTARTED)
     doing = State.objects.get(project=proj, group=State.Group.STARTED)
     CustomFieldDefinition.objects.create(
-        workspace=ws, project=proj, name="严重等级", field_key="cf_severity",
-        field_type="select", options=OPTS, created_by=owner,
+        workspace=ws,
+        project=proj,
+        name="严重等级",
+        field_key="cf_severity",
+        field_type="select",
+        options=OPTS,
+        created_by=owner,
     )
     seq = iter(range(1, 100))
 
     def mk(name, *, state=todo, pri="none", assignees=(), cf=None, target=None):
         issue = Issue.objects.create(
-            name=name, project=proj, state=state, priority=pri,
-            sequence_id=next(seq), sort_order=next(seq) * 100, created_by=owner,
-            target_date=target, custom_fields=cf or {},
+            name=name,
+            project=proj,
+            state=state,
+            priority=pri,
+            sequence_id=next(seq),
+            sort_order=next(seq) * 100,
+            created_by=owner,
+            target_date=target,
+            custom_fields=cf or {},
         )
         from plane.db.models import IssueAssignee
 
@@ -78,8 +90,14 @@ def env(db):
         "none_unassigned": mk("N1", pri="none"),
     }
     return {
-        "owner": owner, "member": member, "viewer": viewer, "ws": ws, "proj": proj,
-        "todo": todo, "doing": doing, "issues": issues,
+        "owner": owner,
+        "member": member,
+        "viewer": viewer,
+        "ws": ws,
+        "proj": proj,
+        "todo": todo,
+        "doing": doing,
+        "issues": issues,
     }
 
 
@@ -88,7 +106,7 @@ class TestResolveDimension:
         p = env["proj"]
         assert resolve_dimension(p, "state_id") == "state_id"
         assert resolve_dimension(p, "priority") == "priority"
-        assert resolve_dimension(p, "state") == "state_id"       # Schema 键别名归一（UT-19）
+        assert resolve_dimension(p, "state") == "state_id"  # Schema 键别名归一（UT-19）
         assert resolve_dimension(p, "assignees") == "assignee_id"
         assert resolve_dimension(p, "labels") == "label_id"
         assert resolve_dimension(p, "cf_severity") == "cf_severity"
@@ -101,8 +119,12 @@ class TestResolveDimension:
 
     def test_nongroupable_cf_rejected(self, env, db):
         CustomFieldDefinition.objects.create(
-            workspace=env["ws"], project=env["proj"], name="根因",
-            field_key="cf_rca", field_type="text", created_by=env["owner"],
+            workspace=env["ws"],
+            project=env["proj"],
+            name="根因",
+            field_key="cf_rca",
+            field_type="text",
+            created_by=env["owner"],
         )
         with pytest.raises(AppException) as ei:
             resolve_dimension(env["proj"], "cf_rca")
@@ -174,7 +196,7 @@ class TestGroupedEndpoint:
         assert list(data.keys()) == ["urgent", "high", "medium", "low", "none"]
         assert data["urgent"]["total_results"] == 1
         assert data["urgent"]["results"][0]["name"] == "U1"
-        assert data["medium"]["total_results"] == 0           # 空列恒在
+        assert data["medium"]["total_results"] == 0  # 空列恒在
         assert data["medium"]["results"] == []
         assert data["urgent"]["unfiltered_total_results"] == 1
         meta = resp.json()["meta"]
@@ -221,11 +243,15 @@ class TestGroupedEndpoint:
         from plane.db.models import IssueView
 
         other_view = IssueView.objects.create(
-            workspace=env["ws"], project=env["proj"], owner=env["member"],
-            name="成员私有", filters={}, display_props={},
+            workspace=env["ws"],
+            project=env["proj"],
+            owner=env["member"],
+            name="成员私有",
+            filters={},
+            display_props={},
         )
         url = self._url(env, f"?group_by=state_id&view_id={other_view.id}")
-        assert _Client(env["member"]).get(url).status_code == 200       # 本人
+        assert _Client(env["member"]).get(url).status_code == 200  # 本人
         # 应用面收严（ADR-0021）：board.manage 审计仅限 views/{id}/ CRUD 面，
         # 列表/分组消费一律存在性隐藏——含 WS 隐式 ADMIN
         assert _Client(env["owner"]).get(url).status_code == 404

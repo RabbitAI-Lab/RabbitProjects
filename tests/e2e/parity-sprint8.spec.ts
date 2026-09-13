@@ -67,9 +67,13 @@ test.describe("S8E2E · 组织/角色/审计 parity", () => {
     expect(d2.status).toBe(201);
     const childId = d2.body!.data.department.id as string;
 
-    // 用户入口：WS 侧栏「组织」→ 组织管理页
+    // 用户入口（IA 2026-09-12 定稿）：头像下拉「系统管理」控制台 →「组织」
+    // （治理族已迁出空间侧栏——b171b70，本用例入口同步迁移）
     await page.goto(`/${WS}/projects`);
-    await page.getByRole("link", { name: "组织" }).first().click();
+    await page.getByRole("button", { name: "账号菜单" }).click();
+    await page.getByRole("menuitem", { name: "系统管理" }).click();
+    await page.waitForURL(/\/system$/);
+    await page.getByRole("link", { name: "组织", exact: true }).click();
     await page.waitForURL(/\/org$/);
     // 侧栏在场（整改回归：四页曾漏挂 Sidebar）
     await expect(page.locator("nav.w-60").first()).toBeVisible();
@@ -145,9 +149,12 @@ test.describe("S8E2E · 组织/角色/审计 parity", () => {
     await apiCall(page, "POST", `/api/v1/workspaces/${WS}/departments/`,
       { name: "S8E2E 审计触点" });
 
-    // 用户入口：WS 侧栏「审计」
+    // 用户入口（IA 2026-09-12 定稿）：头像下拉「系统管理」控制台 →「审计」
     await page.goto(`/${WS}/projects`);
-    await page.getByRole("link", { name: "审计" }).first().click();
+    await page.getByRole("button", { name: "账号菜单" }).click();
+    await page.getByRole("menuitem", { name: "系统管理" }).click();
+    await page.waitForURL(/\/system$/);
+    await page.getByRole("link", { name: "审计", exact: true }).click();
     await page.waitForURL(/\/audit-logs$/);
     // 筛选条（C.152 筛选行）
     await expect(page.locator('[data-sb-scope="audit-filter-cat"]')).toBeVisible();

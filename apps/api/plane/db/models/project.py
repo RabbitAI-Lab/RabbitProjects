@@ -174,6 +174,9 @@ class ProjectFavorite(BaseModel):
 class SystemAdmin(BaseModel):
     user = models.OneToOneField("db.User", on_delete=models.CASCADE, related_name="system_admin")
     is_active = models.BooleanField(default=True)
+    # AUTH-012（P4 R1）§4.4：tenant_ops 运营授权位——system.tenant.manage 权限码
+    # 仅 SYSTEM_ADMIN 且本位 True（rbac 附录 B 为权威载体）；默认 False 零影响。
+    is_tenant_ops = models.BooleanField(default=False)
     granted_by = models.ForeignKey(
         "db.User", on_delete=models.SET_NULL, null=True, related_name="granted_system_admins"
     )

@@ -5,6 +5,7 @@
 重算（BR-02/03）、负载窗口校验（BR-07）与矩阵口径、导出权限/同步流式/
 异步两段式状态机（S7 A#1 + S8 A#1 债范式）。夹具风格对照 test_cycles.py。
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -42,11 +43,9 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture()
 def env(db):
-    owner = User.objects.create_user(email="hlt-owner@rabbit.dev", password="Rabbit123!",
-                                     display_name="管理员")
+    owner = User.objects.create_user(email="hlt-owner@rabbit.dev", password="Rabbit123!", display_name="管理员")
     ws = Workspace.objects.create(name="HL", slug="w-hlt-test", owner=owner, created_by=owner)
-    WorkspaceMember.objects.create(workspace=ws, member=owner,
-                                   role=WorkspaceRole.OWNER, created_by=owner)
+    WorkspaceMember.objects.create(workspace=ws, member=owner, role=WorkspaceRole.OWNER, created_by=owner)
     proj = Project.objects.create(name="电商重构", identifier="RBT", workspace=ws, created_by=owner)
     seed_project_states(proj)
     ProjectMember.objects.create(project=proj, member=owner, role=ProjectRole.ADMIN, created_by=owner)
@@ -63,15 +62,20 @@ def _client(user) -> APIClient:
 
 
 def _base(env) -> str:
-    return (f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/reports/")
+    return f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/reports/"
 
 
 def _mk_issue(env, name, *, group="unstarted", estimate=None, target=None) -> Issue:
     state = State.objects.filter(project=env["proj"], group=group).first()
     return Issue.objects.create(
-        project=env["proj"], name=name, state=state,
+        project=env["proj"],
+        name=name,
+        state=state,
         sequence_id=next_sequence_id(env["proj"].pk),
-        estimate_minutes=estimate, target_date=target, created_by=env["owner"])
+        estimate_minutes=estimate,
+        target_date=target,
+        created_by=env["owner"],
+    )
 
 
 # ────────────────────────────────────────────────────────────────
@@ -82,26 +86,27 @@ class TestScores:
         """61/128 完成、时间进度 0.55、11/50 逾期、spent/est=1.15、6/67 阻塞。"""
         today = timezone.localdate()
         Cycle.objects.create(
-            project=env["proj"], name="S24",
-            start_date=today - timedelta(days=11), end_date=today + timedelta(days=2),
-            status=Cycle.Status.ACTIVE, created_by=env["owner"])
+            project=env["proj"],
+            name="S24",
+            start_date=today - timedelta(days=11),
+            end_date=today + timedelta(days=2),
+            status=Cycle.Status.ACTIVE,
+            created_by=env["owner"],
+        )
         for i in range(61):
             _mk_issue(env, f"done{i}", group="completed", estimate=480)
-        for i in range(61, 128 - 11):   # 未完成无截止 56 条
+        for i in range(61, 128 - 11):  # 未完成无截止 56 条
             _mk_issue(env, f"open{i}", group="started", estimate=480)
-        for i in range(11):              # 逾期 11 条（有截止且已过）
-            _mk_issue(env, f"late{i}", group="started", estimate=480,
-                      target=today - timedelta(days=1))
-        for i in range(39):              # 未逾期有截止 39 条 → due_open=50
-            _mk_issue(env, f"due{i}", group="started", estimate=480,
-                      target=today + timedelta(days=5))
+        for i in range(11):  # 逾期 11 条（有截止且已过）
+            _mk_issue(env, f"late{i}", group="started", estimate=480, target=today - timedelta(days=1))
+        for i in range(39):  # 未逾期有截止 39 条 → due_open=50
+            _mk_issue(env, f"due{i}", group="started", estimate=480, target=today + timedelta(days=5))
         # spent/est=1.15：est=106×480=50880（open 组），spent=42×1393=58506 → 1.1500
-        targets = Issue.objects.filter(project=env["proj"],
-                                       state__group__in=["unstarted", "started"])[:42]
+        targets = Issue.objects.filter(project=env["proj"], state__group__in=["unstarted", "started"])[:42]
         for it in targets:
-            WorkLog.objects.create(issue=it, actor=env["owner"], minutes=1393,
-                                   worked_on=timezone.localdate(),
-                                   created_by=env["owner"])  # 42×1393=58506
+            WorkLog.objects.create(
+                issue=it, actor=env["owner"], minutes=1393, worked_on=timezone.localdate(), created_by=env["owner"]
+            )  # 42×1393=58506
         return today
 
     def test_numeric_chain(self, env):
@@ -124,11 +129,15 @@ class TestScores:
     def test_effort_insufficient_renormalizes(self, env):
         """BR-05：est 样本 <3 → effort=None，其余三维权重重归一 1/3。"""
         today = timezone.localdate()
-        Cycle.objects.create(project=env["proj"], name="S",
-                             start_date=today - timedelta(days=2),
-                             end_date=today + timedelta(days=12),
-                             status=Cycle.Status.ACTIVE, created_by=env["owner"])
-        _mk_issue(env, "a", group="completed")     # 无 estimate → effort 样本 0
+        Cycle.objects.create(
+            project=env["proj"],
+            name="S",
+            start_date=today - timedelta(days=2),
+            end_date=today + timedelta(days=12),
+            status=Cycle.Status.ACTIVE,
+            created_by=env["owner"],
+        )
+        _mk_issue(env, "a", group="completed")  # 无 estimate → effort 样本 0
         _mk_issue(env, "b", group="started")
         snap = HealthReportService().compute(env["proj"], today, HealthConfig.of(env["proj"]))
         assert snap.dimensions["effort"] is None
@@ -136,27 +145,25 @@ class TestScores:
         # 槽位（突变哨兵），total 会是 Σ(三维 × 0.25) 偏低且可区分
         dims = snap.dimensions
         alive = [d["score"] for d in dims.values() if d]
-        expected = round(sum(alive) / len(alive), 1)   # 等权重归一到存活维度数
+        expected = round(sum(alive) / len(alive), 1)  # 等权重归一到存活维度数
         assert snap.total_score == expected
 
     def test_all_insufficient_band(self, env):
         """BR-10：空项目 → total None + band=insufficient。"""
-        snap = HealthReportService().compute(
-            env["proj"], timezone.localdate(), HealthConfig.of(env["proj"]))
+        snap = HealthReportService().compute(env["proj"], timezone.localdate(), HealthConfig.of(env["proj"]))
         assert snap.total_score is None
         assert snap.band == "insufficient"
 
     def test_snapshot_history_not_recomputed(self, env):
         """BR-02/03：历史快照 config 冻结——后续改配置不重算历史。"""
         today = timezone.localdate()
-        snap1 = HealthReportService().compute(
-            env["proj"], today - timedelta(days=1), HealthConfig.of(env["proj"]))
+        snap1 = HealthReportService().compute(env["proj"], today - timedelta(days=1), HealthConfig.of(env["proj"]))
         cfg = HealthConfig.of(env["proj"])
         cfg.weights = {"progress": 1.0, "overdue": 0, "effort": 0, "blocked": 0}
         cfg.save()
         snap2 = HealthReportService().compute(env["proj"], today, cfg)
         snap1.refresh_from_db()
-        assert snap1.config_snapshot["weights"]["progress"] == 0.25   # 历史不重算
+        assert snap1.config_snapshot["weights"]["progress"] == 0.25  # 历史不重算
         assert snap2.config_snapshot["weights"]["progress"] == 1.0
 
 
@@ -178,60 +185,72 @@ class TestEndpoints:
         assert resp.json()["error"]["code"] == "VALIDATION_INVALID_PARAM"
         ok = _client(env["viewer"]).get(f"{_base(env)}health/drilldown/?dimension=overdue")
         assert ok.status_code == 200
-        assert ok.json()["meta"]["as_of"] == "realtime"    # BR-04② 字面量标记
+        assert ok.json()["meta"]["as_of"] == "realtime"  # BR-04② 字面量标记
 
     def test_config_weights_validation(self, env):
         # 负权重（和恰为 1）→ 非负校验
         bad = _client(env["owner"]).patch(
             f"{_base(env)}health/config/",
             {"weights": {"progress": 0.5, "overdue": 0.5, "effort": 0.5, "blocked": -0.5}},
-            format="json")
+            format="json",
+        )
         assert bad.status_code == 400
         assert "非负" in bad.json()["error"]["details"][0]["message"]
         # 和 ≠ 1 → 总和校验
         bad2 = _client(env["owner"]).patch(
             f"{_base(env)}health/config/",
             {"weights": {"progress": 0.4, "overdue": 0.4, "effort": 0.4, "blocked": 0.4}},
-            format="json")
+            format="json",
+        )
         assert bad2.status_code == 400
         assert "≠ 1" in bad2.json()["error"]["details"][0]["message"]
         # viewer 无 project.setting.manage → 403
-        assert _client(env["viewer"]).patch(
-            f"{_base(env)}health/config/", {"weights": DEFAULT_W}, format="json"
-        ).status_code == 403
+        assert (
+            _client(env["viewer"])
+            .patch(f"{_base(env)}health/config/", {"weights": DEFAULT_W}, format="json")
+            .status_code
+            == 403
+        )
 
     def test_workload_window_validation(self, env):
         monday = timezone.localdate() - timedelta(days=timezone.localdate().weekday())
         # 非周一起始 → 400
         bad = _client(env["viewer"]).get(
-            f"{_base(env)}workload/?from={(monday + timedelta(days=1)).isoformat()}&to={monday.isoformat()}")
+            f"{_base(env)}workload/?from={(monday + timedelta(days=1)).isoformat()}&to={monday.isoformat()}"
+        )
         assert bad.status_code == 400
         # 跨度 >12 周 → 400
         bad2 = _client(env["viewer"]).get(
-            f"{_base(env)}workload/?from={(monday - timedelta(weeks=13)).isoformat()}&to={monday.isoformat()}")
+            f"{_base(env)}workload/?from={(monday - timedelta(weeks=13)).isoformat()}&to={monday.isoformat()}"
+        )
         assert bad2.status_code == 400
         ok = _client(env["viewer"]).get(
-            f"{_base(env)}workload/?from={monday.isoformat()}&to={(monday + timedelta(weeks=4)).isoformat()}")
+            f"{_base(env)}workload/?from={monday.isoformat()}&to={(monday + timedelta(weeks=4)).isoformat()}"
+        )
         assert ok.status_code == 200
         assert "capacity_minutes" in ok.json()["data"]
 
     def test_workload_matrix_cells(self, env):
         monday = timezone.localdate() - timedelta(days=timezone.localdate().weekday())
-        WorkLogSummary.objects.create(project=env["proj"], actor=env["owner"],
-                                      week_start=monday, total_minutes=1800)
-        WorkLogSummary.objects.create(project=env["proj"], actor=env["owner"],
-                                      week_start=monday + timedelta(days=7), total_minutes=2100)
-        data = _client(env["viewer"]).get(
-            f"{_base(env)}workload/?from={monday.isoformat()}&to={(monday + timedelta(days=14)).isoformat()}"
-        ).json()["data"]
-        assert data["capacity_minutes"] == 2400          # 默认 40h（无 ProjectWorklogConfig 行）
+        WorkLogSummary.objects.create(project=env["proj"], actor=env["owner"], week_start=monday, total_minutes=1800)
+        WorkLogSummary.objects.create(
+            project=env["proj"], actor=env["owner"], week_start=monday + timedelta(days=7), total_minutes=2100
+        )
+        data = (
+            _client(env["viewer"])
+            .get(f"{_base(env)}workload/?from={monday.isoformat()}&to={(monday + timedelta(days=14)).isoformat()}")
+            .json()["data"]
+        )
+        assert data["capacity_minutes"] == 2400  # 默认 40h（无 ProjectWorklogConfig 行）
         row = next(r for r in data["matrix"] if r["actor_id"] == str(env["owner"].id))
         assert row["cells"][monday.isoformat()] == 1800
         # 容量唯一源：ProjectWorklogConfig.weekly_capacity_minutes（TASK-013 归属）
         ProjectWorklogConfig.objects.create(project=env["proj"], weekly_capacity_minutes=1800)
-        data2 = _client(env["viewer"]).get(
-            f"{_base(env)}workload/?from={monday.isoformat()}&to={(monday + timedelta(days=14)).isoformat()}"
-        ).json()["data"]
+        data2 = (
+            _client(env["viewer"])
+            .get(f"{_base(env)}workload/?from={monday.isoformat()}&to={(monday + timedelta(days=14)).isoformat()}")
+            .json()["data"]
+        )
         assert data2["capacity_minutes"] == 1800
 
 
@@ -248,16 +267,19 @@ class TestExports:
 
     def test_export_requires_permission(self, env):
         monday = self._monday()
-        assert _client(env["viewer"]).get(
-            f"{_base(env)}workload/export/?from={monday.isoformat()}&to={monday.isoformat()}"
-        ).status_code == 403
+        assert (
+            _client(env["viewer"])
+            .get(f"{_base(env)}workload/export/?from={monday.isoformat()}&to={monday.isoformat()}")
+            .status_code
+            == 403
+        )
 
     def test_sync_export_small(self, env):
         monday = self._monday()
-        WorkLogSummary.objects.create(project=env["proj"], actor=env["owner"],
-                                      week_start=monday, total_minutes=1800)
+        WorkLogSummary.objects.create(project=env["proj"], actor=env["owner"], week_start=monday, total_minutes=1800)
         resp = _client(env["owner"]).get(
-            f"{_base(env)}workload/export/?from={monday.isoformat()}&to={monday.isoformat()}")
+            f"{_base(env)}workload/export/?from={monday.isoformat()}&to={monday.isoformat()}"
+        )
         assert resp.status_code == 200
         assert resp["Content-Type"].startswith("text/csv")
         assert "actor,week_start,minutes,load_ratio" in resp.content.decode()
@@ -267,11 +289,11 @@ class TestExports:
         monday = self._monday()
         # 少量数据 + 阈值 patch 为 0 → 强制走异步分支（行数边界在同步用例已测）
         from plane.db.models import User as U
-        u = U.objects.create_user(email="hlt-m0@rabbit.dev", password="Rabbit123!",
-                                  display_name="甲")
-        WorkLogSummary.objects.create(project=env["proj"], actor=u,
-                                      week_start=monday, total_minutes=600)
+
+        u = U.objects.create_user(email="hlt-m0@rabbit.dev", password="Rabbit123!", display_name="甲")
+        WorkLogSummary.objects.create(project=env["proj"], actor=u, week_start=monday, total_minutes=600)
         from plane.app.views import health as hv
+
         hv.SYNC_EXPORT_ROW_LIMIT = 0
         from plane.db.services import health as hsvc
 
@@ -286,7 +308,8 @@ class TestExports:
         try:
             resp = _client(env["owner"]).get(
                 f"{_base(env)}workload/export/?from={monday.isoformat()}"
-                f"&to={(monday + timedelta(weeks=11)).isoformat()}")
+                f"&to={(monday + timedelta(weeks=11)).isoformat()}"
+            )
             assert resp.status_code == 202, resp.content[:200]
             data = resp.json()["data"]
             assert {"task_id", "state", "status_url"} <= set(data)
@@ -298,12 +321,12 @@ class TestExports:
             assert task.status == ExportTask.Status.SUCCEEDED
             assert task.download_url.startswith("http://minio.local/")
             # 轮询端点：succeeded 下发 URL；仅创建人可见
-            poll = _client(env["owner"]).get(
-                f"/api/v1/workspaces/{env['ws'].slug}/exports/{task.id}/")
+            poll = _client(env["owner"]).get(f"/api/v1/workspaces/{env['ws'].slug}/exports/{task.id}/")
             assert poll.status_code == 200
             assert poll.json()["data"]["download_url"].startswith("http://minio.local/")
-            assert _client(env["viewer"]).get(
-                f"/api/v1/workspaces/{env['ws'].slug}/exports/{task.id}/").status_code == 404
+            assert (
+                _client(env["viewer"]).get(f"/api/v1/workspaces/{env['ws'].slug}/exports/{task.id}/").status_code == 404
+            )
         finally:
             hsvc._render_export_csv, hsvc._put_minio_and_presign = original
             hv.SYNC_EXPORT_ROW_LIMIT = 2000

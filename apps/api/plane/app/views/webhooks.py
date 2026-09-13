@@ -5,6 +5,7 @@
   POST / GET 列表（≤20/项目，无分页）/ PATCH / disable / enable / DELETE /
   ping（202 异步）/ deliveries 列表（游标）/ deliveries/{id} 详情。
 """
+
 from __future__ import annotations
 
 from rest_framework import status
@@ -42,8 +43,7 @@ def _row(e: WebhookEndpoint, *, secret: str | None = None) -> dict:
 
 
 def _get_endpoint(project, endpoint_id) -> WebhookEndpoint:
-    row = WebhookEndpoint.objects.filter(
-        pk=endpoint_id, project=project, deleted_at__isnull=True).first()
+    row = WebhookEndpoint.objects.filter(pk=endpoint_id, project=project, deleted_at__isnull=True).first()
     if row is None:
         raise NotFound("RESOURCE_NOT_FOUND") from None
     return row
@@ -54,30 +54,35 @@ class WebhookListCreateView(APIView):
 
     @require_permission("integration.config", scope="project")
     def get(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user)
-        rows = WebhookEndpoint.objects.filter(
-            project=project, deleted_at__isnull=True).order_by("-created_at")
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
+        rows = WebhookEndpoint.objects.filter(project=project, deleted_at__isnull=True).order_by("-created_at")
         return success_response(
-            [_row(e) for e in rows],
-            meta={"count": rows.count(), "event_choices": list(EVENT_CHOICES)})
+            [_row(e) for e in rows], meta={"count": rows.count(), "event_choices": list(EVENT_CHOICES)}
+        )
 
     @require_permission("integration.config", scope="project")
     def post(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user)
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
+        # AUTH-012 §4.5 Webhook 订阅数配额（UT-25；BR-11 门控内置）
+        from plane.governance.enforcement import check_webhook_quota
+
+        check_webhook_quota(project.workspace)
         clean = validate_endpoint_payload(request.data, project=project)
         secret = new_endpoint_secret()
         endpoint = WebhookEndpoint.objects.create(
-            project=project, workspace_id=project.workspace_id,
-            url=clean["url"], events=clean["events"],
+            project=project,
+            workspace_id=project.workspace_id,
+            url=clean["url"],
+            events=clean["events"],
             secret_encrypted=encrypt_secret(secret),
-            created_by=request.user)
+            created_by=request.user,
+        )
         return created_response(
             _row(endpoint, secret=secret),
             location=request.build_absolute_uri(
-                f"/api/v1/workspaces/{kwargs['slug']}/projects/{project.id}/"
-                f"webhooks/{endpoint.id}/"))
+                f"/api/v1/workspaces/{kwargs['slug']}/projects/{project.id}/webhooks/{endpoint.id}/"
+            ),
+        )
 
 
 class WebhookDetailView(APIView):
@@ -85,13 +90,11 @@ class WebhookDetailView(APIView):
 
     @require_permission("integration.config", scope="project")
     def patch(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user)
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         endpoint = _get_endpoint(project, kwargs["endpoint_id"])
         if "events" in request.data:
             events = request.data["events"] or []
-            unknown = [e for e in events
-                       if e not in EVENT_CHOICES or e == "webhook.ping"]
+            unknown = [e for e in events if e not in EVENT_CHOICES or e == "webhook.ping"]
             if unknown or not events:
                 raise AppException("VALIDATION_ERROR", message="events 非法")
             endpoint.events = sorted(set(events))
@@ -99,9 +102,15 @@ class WebhookDetailView(APIView):
             url = str(request.data["url"] or "").strip()
             if not url.startswith(("http://", "https://")):
                 raise AppException("VALIDATION_ERROR", message="url 非法")
-            if WebhookEndpoint.objects.filter(
-                    project=project, url=url, deleted_at__isnull=True,
-                ).exclude(pk=endpoint.pk).exists():
+            if (
+                WebhookEndpoint.objects.filter(
+                    project=project,
+                    url=url,
+                    deleted_at__isnull=True,
+                )
+                .exclude(pk=endpoint.pk)
+                .exists()
+            ):
                 raise AppException("RESOURCE_ALREADY_EXISTS", message="同项目同 URL 已存在")
             endpoint.url = url
         endpoint.updated_by = request.user
@@ -112,8 +121,7 @@ class WebhookDetailView(APIView):
     def delete(self, request, *args, **kwargs):
         from django.utils import timezone
 
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user)
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         endpoint = _get_endpoint(project, kwargs["endpoint_id"])
         endpoint.deleted_at = timezone.now()
         endpoint.updated_by = request.user
@@ -128,13 +136,12 @@ class WebhookDisableView(APIView):
 
     @require_permission("integration.config", scope="project")
     def post(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user)
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         endpoint = _get_endpoint(project, kwargs["endpoint_id"])
-        WebhookEndpoint.objects.filter(pk=endpoint.pk).exclude(
-            is_active="active").update(is_active="disabled")  # 幂等 SQL（并发约束）
-        WebhookEndpoint.objects.filter(pk=endpoint.pk, is_active="active").update(
-            is_active="disabled")
+        WebhookEndpoint.objects.filter(pk=endpoint.pk).exclude(is_active="active").update(
+            is_active="disabled"
+        )  # 幂等 SQL（并发约束）
+        WebhookEndpoint.objects.filter(pk=endpoint.pk, is_active="active").update(is_active="disabled")
         endpoint.refresh_from_db()
         return success_response(_row(endpoint))
 
@@ -146,11 +153,9 @@ class WebhookEnableView(APIView):
 
     @require_permission("integration.config", scope="project")
     def post(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user)
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         endpoint = _get_endpoint(project, kwargs["endpoint_id"])
-        WebhookEndpoint.objects.filter(pk=endpoint.pk).update(
-            is_active="active", consecutive_failures=0)
+        WebhookEndpoint.objects.filter(pk=endpoint.pk).update(is_active="active", consecutive_failures=0)
         endpoint.refresh_from_db()
         return success_response(_row(endpoint))
 
@@ -162,20 +167,19 @@ class WebhookPingView(APIView):
 
     @require_permission("integration.config", scope="project")
     def post(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user)
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         endpoint = _get_endpoint(project, kwargs["endpoint_id"])
-        transaction_marker = {"ping": True, "endpoint_id": str(endpoint.id),
-                              "actor": request.user.display_name}
+        transaction_marker = {"ping": True, "endpoint_id": str(endpoint.id), "actor": request.user.display_name}
         from django.db import transaction
 
-        transaction.on_commit(lambda: dispatch_events(
-            "webhook.ping",
-            {"data": transaction_marker, "event_id": None},
-            project_id=project.id))
+        transaction.on_commit(
+            lambda: dispatch_events(
+                "webhook.ping", {"data": transaction_marker, "event_id": None}, project_id=project.id
+            )
+        )
         return success_response(
-            {"ping": "queued", "endpoint_id": str(endpoint.id)},
-            status_code=status.HTTP_202_ACCEPTED)
+            {"ping": "queued", "endpoint_id": str(endpoint.id)}, status_code=status.HTTP_202_ACCEPTED
+        )
 
 
 class WebhookDeliveriesView(APIView):
@@ -185,8 +189,7 @@ class WebhookDeliveriesView(APIView):
 
     @require_permission("integration.config", scope="project")
     def get(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user)
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         endpoint = _get_endpoint(project, kwargs["endpoint_id"])
         qs = WebhookDelivery.objects.filter(endpoint=endpoint)
         if s := request.query_params.get("status"):
@@ -199,25 +202,30 @@ class WebhookDeliveriesView(APIView):
         qs = qs.order_by(ordering, "-id")
         per_page = min(int(request.query_params.get("per_page", 30) or 30), 100)
         offset = max(int(request.query_params.get("offset", 0) or 0), 0)
-        rows = list(qs[offset:offset + per_page])
+        rows = list(qs[offset : offset + per_page])
         import base64
 
         def _cursor(off: int) -> str | None:
-            return base64.b64encode(f"c:{off}:0".encode()).decode() \
-                if 0 <= off < qs.count() else None
+            return base64.b64encode(f"c:{off}:0".encode()).decode() if 0 <= off < qs.count() else None
 
-        return success_response([_delivery_row(r) for r in rows], meta={
-            "next_cursor": _cursor(offset + per_page)
-            if offset + per_page < qs.count() else None,
-            "prev_cursor": _cursor(offset - per_page) if offset > 0 else None,
-            "count": len(rows), "total_count": qs.count(),
-        })
+        return success_response(
+            [_delivery_row(r) for r in rows],
+            meta={
+                "next_cursor": _cursor(offset + per_page) if offset + per_page < qs.count() else None,
+                "prev_cursor": _cursor(offset - per_page) if offset > 0 else None,
+                "count": len(rows),
+                "total_count": qs.count(),
+            },
+        )
 
 
 def _delivery_row(r: WebhookDelivery) -> dict:
     return {
-        "id": str(r.id), "event": r.event, "event_id": str(r.event_id),
-        "status": r.status, "attempts": r.attempts,
+        "id": str(r.id),
+        "event": r.event,
+        "event_id": str(r.event_id),
+        "status": r.status,
+        "attempts": r.attempts,
         "attempt_count": len(r.attempts),
         "next_retry_at": r.next_retry_at.isoformat() if r.next_retry_at else None,
         "replay_of": str(r.replay_of) if r.replay_of else None,
@@ -231,11 +239,9 @@ class WebhookDeliveryDetailView(APIView):
 
     @require_permission("integration.config", scope="project")
     def get(self, request, *args, **kwargs):
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user)
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         endpoint = _get_endpoint(project, kwargs["endpoint_id"])
-        row = WebhookDelivery.objects.filter(
-            pk=kwargs["delivery_id"], endpoint=endpoint).first()
+        row = WebhookDelivery.objects.filter(pk=kwargs["delivery_id"], endpoint=endpoint).first()
         if row is None:
             raise NotFound("RESOURCE_NOT_FOUND") from None
         return success_response(_delivery_row(row))
@@ -243,8 +249,7 @@ class WebhookDeliveryDetailView(APIView):
     @require_permission("integration.config", scope="project")
     def post(self, request, *args, **kwargs):
         """死信重放（BR-07）：新建 pending 行，原 dead 行不动。"""
-        project, _, _ = get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user)
+        project, _, _ = get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         endpoint = _get_endpoint(project, kwargs["endpoint_id"])
         row = replay_delivery(kwargs["delivery_id"], actor=request.user)
         if row is None or str(row.endpoint_id) != str(endpoint.id):

@@ -3,6 +3,7 @@
 contextvar 与访问器集中定义于 plane.base.request_context；本模块只负责
 在合适生命周期调用 bind / reset。
 """
+
 from __future__ import annotations
 
 import logging
@@ -47,7 +48,7 @@ def _error_code_of(response) -> str | None:
     return None
 
 
-ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")   # Crockford Base32，排除 I/L/O/U
+ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")  # Crockford Base32，排除 I/L/O/U
 
 
 class RequestIDMiddleware:
@@ -63,8 +64,8 @@ class RequestIDMiddleware:
         try:
             response = self.get_response(request)
         finally:
-            reset_request_id(token)      # worker 线程复用，必须清理
-        response.headers["X-Request-Id"] = request.request_id   # 成功响应也带（C3）
+            reset_request_id(token)  # worker 线程复用，必须清理
+        response.headers["X-Request-Id"] = request.request_id  # 成功响应也带（C3）
         return response
 
 
@@ -72,9 +73,9 @@ class RequestIDMiddleware:
 class StructuredLoggingMiddleware:
     """每请求一行结构化 access 日志；携带 §13.5 全部字段。"""
 
-    SLOW_REQUEST_WARN_MS = 1000     # > 1s 记 WARN
-    SLOW_REQUEST_ERROR_MS = 3000    # > 3s 记 ERROR
-    QUERY_COUNT_WARN = 30           # 单请求查询数预警（N+1 早期信号）
+    SLOW_REQUEST_WARN_MS = 1000  # > 1s 记 WARN
+    SLOW_REQUEST_ERROR_MS = 3000  # > 3s 记 ERROR
+    QUERY_COUNT_WARN = 30  # 单请求查询数预警（N+1 早期信号）
 
     def __init__(self, get_response):
         self.get_response = get_response
@@ -82,14 +83,20 @@ class StructuredLoggingMiddleware:
     def __call__(self, request):
         start = time.perf_counter()
         from django.db import connection, reset_queries
+
         if settings_debug():
             reset_queries()
         response = self.get_response(request)
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
 
         log = structlog.get_logger("plane.api.access")
-        level = "error" if duration_ms > self.SLOW_REQUEST_ERROR_MS else \
-                "warning" if duration_ms > self.SLOW_REQUEST_WARN_MS else "info"
+        level = (
+            "error"
+            if duration_ms > self.SLOW_REQUEST_ERROR_MS
+            else "warning"
+            if duration_ms > self.SLOW_REQUEST_WARN_MS
+            else "info"
+        )
         # path 用路由模板而非实际 URL（避免 ID 爆炸日志基数，§13.5）
         route_template = getattr(request.resolver_match, "route", request.path)
         # workspace_id 取自 URL 路径参数（slash 前缀的 URL 解析）；命中后写入日志维度
@@ -100,15 +107,18 @@ class StructuredLoggingMiddleware:
         query_count = len(connection.queries) if settings_debug() else None
         if query_count is not None and query_count > self.QUERY_COUNT_WARN:
             log = log.bind(query_count_warn=True)
-        log.log(getattr(logging, level.upper()), "http_request",
-                method=request.method,
-                path="/" + route_template,
-                status=response.status_code,
-                error_code=_error_code_of(response),
-                duration_ms=duration_ms,
-                db_query_count=query_count,
-                user_id=_actor_var_user_id(),
-                workspace_id=workspace_id)
+        log.log(
+            getattr(logging, level.upper()),
+            "http_request",
+            method=request.method,
+            path="/" + route_template,
+            status=response.status_code,
+            error_code=_error_code_of(response),
+            duration_ms=duration_ms,
+            db_query_count=query_count,
+            user_id=_actor_var_user_id(),
+            workspace_id=workspace_id,
+        )
         return response
 
 
@@ -119,6 +129,7 @@ def _actor_var_user_id():
     可变对象作 default），直接 _actor_var.get().get() 在未绑定时会 AttributeError。
     """
     from plane.base.request_context import current_actor
+
     return current_actor().get("user_id")
 
 
@@ -146,7 +157,7 @@ class RateLimitHeaderMiddleware:
         if state:
             response.headers["X-RateLimit-Limit"] = str(state["limit"])
             response.headers["X-RateLimit-Remaining"] = str(state["remaining"])
-            response.headers["X-RateLimit-Reset"] = str(state["reset"])   # Unix 秒
+            response.headers["X-RateLimit-Reset"] = str(state["reset"])  # Unix 秒
         else:
             response.headers.setdefault("X-RateLimit-Limit", "-1")
             response.headers.setdefault("X-RateLimit-Remaining", "-1")
@@ -155,14 +166,15 @@ class RateLimitHeaderMiddleware:
             # Retry-After 来源优先级：异常处理器装配值（INFRA-004 §2.3 异常收敛
             # 决策表第 11 行）→ throttle 写入的窗口剩余 wait → 静态兜底 60。
             # 绝不读客户端入站头（META["HTTP_RETRY_AFTER"] 是对方发来的请求头，方向相反）
-            wait = response.headers.get("Retry-After") \
-                or (state or {}).get("wait") or 60
+            wait = response.headers.get("Retry-After") or (state or {}).get("wait") or 60
             response.headers["Retry-After"] = str(max(1, int(wait)))
             _rl_logger.info(
                 "event=rate_limited path=%s scope=%s subject=%s request_id=%s",
-                request.path, (state or {}).get("scope", "-"),
+                request.path,
+                (state or {}).get("scope", "-"),
                 (state or {}).get("subject", "-"),
-                current_request_id())                    # BR-14（request_context 同源）
+                current_request_id(),
+            )  # BR-14（request_context 同源）
         return response
 
 
@@ -175,12 +187,14 @@ class AuditContextMiddleware:
 
     def __call__(self, request):
         user = getattr(request, "user", None)
-        token = bind_actor({
-            "user_id": str(user.id) if getattr(user, "is_authenticated", False) else None,
-            "ip": request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0].strip()
-                  or request.META.get("REMOTE_ADDR"),
-            "user_agent": request.META.get("HTTP_USER_AGENT", "")[:256],
-        })
+        token = bind_actor(
+            {
+                "user_id": str(user.id) if getattr(user, "is_authenticated", False) else None,
+                "ip": request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0].strip()
+                or request.META.get("REMOTE_ADDR"),
+                "user_agent": request.META.get("HTTP_USER_AGENT", "")[:256],
+            }
+        )
         try:
             return self.get_response(request)
         finally:
@@ -204,23 +218,36 @@ class ResponseEnvelopeMiddleware:
         response = self.get_response(request)
         if response.status_code in (204, 304) or getattr(response, "streaming", False):
             return response
+        if request.path.startswith("/scim/v2/"):
+            return response  # SCIM 协议端点豁免统一信封（AUTH-011 §2.5⑥：RFC 7643/7644 schema）
         if 200 <= response.status_code < 300:
             content_type = response.headers.get("Content-Type", "")
-            if "application/json" not in content_type:      # 非 JSON（健康检查等）放行
+            if "application/json" not in content_type:  # 非 JSON（健康检查等）放行
                 return response
             body = getattr(response, "data", None)
             if isinstance(body, dict) and body.get("status") == "success":
-                return response                              # 已包装
+                return response  # 已包装
             if settings_debug() and body is not None:
                 raise RuntimeError(
                     f"[Envelope] {request.method} {request.path} 返回了未包装的 2xx JSON："
-                    f"请使用 plane.base.response.success_response（C1）")
+                    f"请使用 plane.base.response.success_response（C1）"
+                )
             if isinstance(body, (dict, list)) or body is None:
                 response.data = {"status": "success", "data": body}
         return response
 
 
 # ── ⑥ MaintenanceModeMiddleware（最内层，P2 启用开关）────────
+def _license_state(hostname: str) -> dict:
+    """License 状态读取（LicenseStatus.MISSING 全功能——dev/test 零阻断）。"""
+    try:
+        from plane.license import verify_license
+
+        return verify_license(hostname=hostname)
+    except Exception:  # noqa: BLE001 —— 校验面缺陷不阻断服务
+        return {"state": "missing", "readonly": False}
+
+
 class MaintenanceModeMiddleware:
     """维护模式下白名单外统一 503 SERVER_MAINTENANCE（§4.3 / §8.6）。"""
 
@@ -231,14 +258,37 @@ class MaintenanceModeMiddleware:
 
     def __call__(self, request):
         from django.conf import settings as dj_settings
-        if getattr(dj_settings, "MAINTENANCE_MODE", False) \
-                and not request.path.startswith(self.WHITELIST):
+
+        # INFRA-006（P4 R9）BR-06：License 失效只读模式——写请求拒（读与
+        # 导出白名单放行，数据永不锁死）；优先于 MAINTENANCE_MODE 判定。
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            host = request.get_host().split(":")[0]
+            status = _license_state(host)
+            if status.get("readonly"):
+                return JsonResponse(
+                    {
+                        "status": "error",
+                        "error": {
+                            "code": "LICENSE_EXPIRED" if status["state"] == "expired" else "LICENSE_INVALID",
+                            "message": "License 已失效：系统进入只读模式（数据完整、导出可用；续期后自动恢复，BR-06）",
+                            "details": [],
+                            "request_id": current_request_id() or "unknown",
+                        },
+                    },
+                    status=409,
+                )
+
+        if getattr(dj_settings, "MAINTENANCE_MODE", False) and not request.path.startswith(self.WHITELIST):
             req_id = current_request_id() or "unknown"
             return JsonResponse(
-                {"status": "error",
-                 "error": {"code": "SERVER_MAINTENANCE",
-                           "message": DEFAULT_MESSAGES["SERVER_MAINTENANCE"],
-                           "request_id": req_id}},
+                {
+                    "status": "error",
+                    "error": {
+                        "code": "SERVER_MAINTENANCE",
+                        "message": DEFAULT_MESSAGES["SERVER_MAINTENANCE"],
+                        "request_id": req_id,
+                    },
+                },
                 status=HTTP_503_SERVICE_UNAVAILABLE,
                 headers={"Retry-After": "300", "X-Request-Id": req_id},
             )
@@ -265,9 +315,14 @@ class WorkspaceArchiveMiddleware:
                 rest = m.group(2) or "/"
                 from plane.db.models import Workspace
 
-                ws = Workspace.objects.filter(
-                    slug=m.group("slug"), deleted_at__isnull=True,
-                ).only("archived_at").first()
+                ws = (
+                    Workspace.objects.filter(
+                        slug=m.group("slug"),
+                        deleted_at__isnull=True,
+                    )
+                    .only("archived_at")
+                    .first()
+                )
                 if ws is not None and ws.archived_at and not _WS_ARCHIVE_EXEMPT.match(rest):
                     from rest_framework.status import HTTP_403_FORBIDDEN
 
@@ -279,10 +334,12 @@ class WorkspaceArchiveMiddleware:
                                 "code": "PERM_WORKSPACE_ARCHIVED",
                                 "message": "工作空间已归档，当前操作被禁止",
                                 "details": [
-                                    {"field": "archived_at", "code": "READ_ONLY",
-                                     "message": ws.archived_at.isoformat()},
-                                    {"field": "restore_hint", "code": "INFO",
-                                     "message": "请联系工作空间所有者恢复"},
+                                    {
+                                        "field": "archived_at",
+                                        "code": "READ_ONLY",
+                                        "message": ws.archived_at.isoformat(),
+                                    },
+                                    {"field": "restore_hint", "code": "INFO", "message": "请联系工作空间所有者恢复"},
                                 ],
                                 "request_id": request_id,
                             },

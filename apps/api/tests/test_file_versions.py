@@ -19,6 +19,7 @@ mark_abandoned）一律带 ``restrict_workspace_id``；断言一律 filter 到�
 on_commit 钩子（BR-13 事件 / derive 排队）经 ``django_capture_on_commit_callbacks``
 捕获。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -72,34 +73,45 @@ CHUNK = usvc.CHUNK_SIZE
 # ────────────────────────────────────────────────────────────────
 @pytest.fixture()
 def env(db):
-    owner = User.objects.create_user(email="f3-owner@rabbit.dev", password="Rabbit123!",
-                                     display_name="库长")
-    admin = User.objects.create_user(email="f3-admin@rabbit.dev", password="Rabbit123!",
-                                     display_name="管理员")
-    jia = User.objects.create_user(email="f3-jia@rabbit.dev", password="Rabbit123!",
-                                   display_name="贡献者甲")
-    yi = User.objects.create_user(email="f3-yi@rabbit.dev", password="Rabbit123!",
-                                  display_name="贡献者乙")
-    viewer = User.objects.create_user(email="f3-viewer@rabbit.dev", password="Rabbit123!",
-                                      display_name="只读者")
-    commenter = User.objects.create_user(email="f3-cm@rabbit.dev", password="Rabbit123!",
-                                         display_name="评论者")
-    ws = Workspace.objects.create(name="W", slug=f"w-f3-{owner.id.hex[:8]}",
-                                  owner=owner, created_by=owner)
-    for u, ws_role in ((owner, WorkspaceRole.OWNER), (admin, WorkspaceRole.MEMBER),
-                       (jia, WorkspaceRole.MEMBER), (yi, WorkspaceRole.MEMBER),
-                       (viewer, WorkspaceRole.MEMBER), (commenter, WorkspaceRole.MEMBER)):
+    owner = User.objects.create_user(email="f3-owner@rabbit.dev", password="Rabbit123!", display_name="库长")
+    admin = User.objects.create_user(email="f3-admin@rabbit.dev", password="Rabbit123!", display_name="管理员")
+    jia = User.objects.create_user(email="f3-jia@rabbit.dev", password="Rabbit123!", display_name="贡献者甲")
+    yi = User.objects.create_user(email="f3-yi@rabbit.dev", password="Rabbit123!", display_name="贡献者乙")
+    viewer = User.objects.create_user(email="f3-viewer@rabbit.dev", password="Rabbit123!", display_name="只读者")
+    commenter = User.objects.create_user(email="f3-cm@rabbit.dev", password="Rabbit123!", display_name="评论者")
+    ws = Workspace.objects.create(name="W", slug=f"w-f3-{owner.id.hex[:8]}", owner=owner, created_by=owner)
+    for u, ws_role in (
+        (owner, WorkspaceRole.OWNER),
+        (admin, WorkspaceRole.MEMBER),
+        (jia, WorkspaceRole.MEMBER),
+        (yi, WorkspaceRole.MEMBER),
+        (viewer, WorkspaceRole.MEMBER),
+        (commenter, WorkspaceRole.MEMBER),
+    ):
         WorkspaceMember.objects.create(workspace=ws, member=u, role=ws_role, created_by=owner)
     proj = Project.objects.create(name="P", identifier="F3", workspace=ws, created_by=owner)
-    for u, role in ((admin, ProjectRole.ADMIN), (jia, ProjectRole.CONTRIBUTOR),
-                    (yi, ProjectRole.CONTRIBUTOR), (viewer, ProjectRole.VIEWER),
-                    (commenter, ProjectRole.COMMENTER)):
+    for u, role in (
+        (admin, ProjectRole.ADMIN),
+        (jia, ProjectRole.CONTRIBUTOR),
+        (yi, ProjectRole.CONTRIBUTOR),
+        (viewer, ProjectRole.VIEWER),
+        (commenter, ProjectRole.COMMENTER),
+    ):
         ProjectMember.objects.create(project=proj, member=u, role=role, created_by=owner)
     folder = flib.create_folder(project=proj, actor=owner, name="分片目录", parent_id=None)
     folder2 = flib.create_folder(project=proj, actor=owner, name="第二目录", parent_id=None)
-    return {"owner": owner, "admin": admin, "jia": jia, "yi": yi, "viewer": viewer,
-            "commenter": commenter, "ws": ws, "proj": proj,
-            "folder": folder, "folder2": folder2}
+    return {
+        "owner": owner,
+        "admin": admin,
+        "jia": jia,
+        "yi": yi,
+        "viewer": viewer,
+        "commenter": commenter,
+        "ws": ws,
+        "proj": proj,
+        "folder": folder,
+        "folder2": folder2,
+    }
 
 
 class _Client:
@@ -179,10 +191,7 @@ def _fake_mpu_parts(session, parts_map: dict[int, str] | None = None):
         parts_map = {c["n"]: c["etag"] for c in chunks}
 
     def _list(*, bucket, key, upload_id):
-        return [
-            {"PartNumber": n, "ETag": e, "Size": CHUNK}
-            for n, e in sorted(parts_map.items())
-        ]
+        return [{"PartNumber": n, "ETag": e, "Size": CHUNK} for n, e in sorted(parts_map.items())]
 
     return _list
 
@@ -228,22 +237,33 @@ def _chunk_md5s(size: int) -> tuple[dict[int, str], str]:
 def _mk_versioned_asset(env, *, name="v链.zip", versions=1, key_prefix="k"):
     """直造 uploaded 资产 + N 个版本（服务层直连，便于淘汰/回滚量程用例）。"""
     asset = FileAsset.objects.create(
-        workspace=env["ws"], project=env["proj"],
+        workspace=env["ws"],
+        project=env["proj"],
         entity_type=FileAsset.EntityType.PROJECT_FILE,
-        entity_id=env["folder"].id, folder=env["folder"],
+        entity_id=env["folder"].id,
+        folder=env["folder"],
         attributes={"name": name, "size": 100, "mime": "application/octet-stream", "ext": ".bin"},
-        size=100, storage_path=f"{key_prefix}-0", status=FileAsset.Status.UPLOADED,
-        is_uploaded=True, uploaded_by=env["jia"], created_by=env["jia"],
+        size=100,
+        storage_path=f"{key_prefix}-0",
+        status=FileAsset.Status.UPLOADED,
+        is_uploaded=True,
+        uploaded_by=env["jia"],
+        created_by=env["jia"],
     )
     from types import SimpleNamespace
 
     for i in range(1, versions + 1):
         usvc._new_version(
             asset,
-            SimpleNamespace(file_name=name, file_size=100 + i,
-                            content_type="application/octet-stream",
-                            content_md5=None, created_by=env["jia"]),
-            key=f"{key_prefix}-{i}", actor=env["jia"],
+            SimpleNamespace(
+                file_name=name,
+                file_size=100 + i,
+                content_type="application/octet-stream",
+                content_md5=None,
+                created_by=env["jia"],
+            ),
+            key=f"{key_prefix}-{i}",
+            actor=env["jia"],
         )
     asset.refresh_from_db()  # _new_version 内部重取行写镜像——外层实例需刷新
     return asset
@@ -262,8 +282,11 @@ def test_ut01_threshold_split(env):
         with patch(PUT_URL, return_value="http://minio/put"):
             flib.presign_file(
                 folder=env["folder"],
-                payload={"file_name": "51mb.zip", "file_size": 51 * 1024 * 1024,
-                         "content_type": "application/octet-stream"},
+                payload={
+                    "file_name": "51mb.zip",
+                    "file_size": 51 * 1024 * 1024,
+                    "content_type": "application/octet-stream",
+                },
                 actor=env["jia"],
             )
     assert ei.value.error_code == "VALIDATION_FILE_SIZE_EXCEEDED"
@@ -313,8 +336,7 @@ def test_ut04_md5_mismatch_rejected(env):
     with patch(MPU_PART_URL, return_value="http://minio/p1"):
         assert c.post(_chunk_url(env, sid, 1)).status_code == 200
     # 篡改片：前端算得 md5 与 MinIO ETag 不符 → 400 INVALID（该片重传由前端 ≤3 次）
-    resp = c.patch(_chunk_url(env, sid, 1),
-                   {"etag": etags[1], "md5": "0" * 32})
+    resp = c.patch(_chunk_url(env, sid, 1), {"etag": etags[1], "md5": "0" * 32})
     assert resp.status_code == 400
     assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
     session = UploadSession.objects.get(pk=sid)
@@ -332,15 +354,16 @@ def test_ut05_complete_missing_and_mismatch(env):
     _upload_all_chunks(env, c, sid, 3, etags)
     session = UploadSession.objects.get(pk=sid)
     # 场景 1：MinIO 缺片 2（登记 3 片）
-    with patch(MPU_LIST, side_effect=_fake_mpu_parts(session, {1: etags[1], 3: etags[3]})), \
-         patch(MPU_COMPLETE) as m_complete:
+    with (
+        patch(MPU_LIST, side_effect=_fake_mpu_parts(session, {1: etags[1], 3: etags[3]})),
+        patch(MPU_COMPLETE) as m_complete,
+    ):
         resp = c.post(_complete_url(env, sid))
     assert resp.status_code == 400
     assert resp.json()["error"]["code"] == "VALIDATION_FILE_UPLOAD_MISMATCH"
     m_complete.assert_not_called()  # 核对不过不合并不落库
     # 场景 2：片在但 ETag 与登记值不符（片 3 被覆盖为异值）
-    with patch(MPU_LIST, side_effect=_fake_mpu_parts(
-            session, {1: etags[1], 2: etags[2], 3: "f" * 32})):
+    with patch(MPU_LIST, side_effect=_fake_mpu_parts(session, {1: etags[1], 2: etags[2], 3: "f" * 32})):
         resp = c.post(_complete_url(env, sid))
     assert resp.status_code == 400
 
@@ -357,9 +380,7 @@ def test_ut06_session_expiry(env):
     # 在途预留以会话行计（扩展口径）：init 后 pending == size
     assert flib._inflight_pending(env["ws"].id) == size
 
-    UploadSession.objects.filter(pk=sid).update(
-        created_at=timezone.now() - timedelta(hours=25)
-    )
+    UploadSession.objects.filter(pk=sid).update(created_at=timezone.now() - timedelta(hours=25))
     with patch(MPU_ABORT) as m_abort:
         result = dp.expire_upload_sessions.run(restrict_workspace_id=env["ws"].id)
     assert result["expired"] == 1
@@ -391,8 +412,7 @@ def _complete_one(env, c, name, size, folder=None, actor_etags=None):
     sid = data["session_id"]
     _upload_all_chunks(env, c, sid, data["total_chunks"], etags)
     session = UploadSession.objects.get(pk=sid)
-    with patch(MPU_LIST, side_effect=_fake_mpu_parts(session)), \
-         patch(MPU_COMPLETE), patch(MPU_ABORT):
+    with patch(MPU_LIST, side_effect=_fake_mpu_parts(session)), patch(MPU_COMPLETE), patch(MPU_ABORT):
         resp = c.post(_complete_url(env, sid))
     assert resp.status_code == 201, resp.content
     return resp.json()["data"], whole
@@ -485,10 +505,15 @@ def test_ut11_eviction_reference_guard(env):
     for i in range(17):
         usvc._new_version(
             asset,
-            SimpleNamespace(file_name="v链.zip", file_size=1,
-                            content_type="application/octet-stream",
-                            content_md5=None, created_by=env["jia"]),
-            key=f"guard-{i}", actor=env["jia"],
+            SimpleNamespace(
+                file_name="v链.zip",
+                file_size=1,
+                content_type="application/octet-stream",
+                content_md5=None,
+                created_by=env["jia"],
+            ),
+            key=f"guard-{i}",
+            actor=env["jia"],
         )
     with patch(REMOVE_OBJ) as m_rm:
         usvc.evict_old_versions(asset.id)
@@ -505,10 +530,15 @@ def test_ut17_version_number_after_eviction(env):
 
     v = usvc._new_version(
         asset,
-        SimpleNamespace(file_name="v链.zip", file_size=1,
-                        content_type="application/octet-stream",
-                        content_md5=None, created_by=env["jia"]),
-        key="post-evict", actor=env["jia"],
+        SimpleNamespace(
+            file_name="v链.zip",
+            file_size=1,
+            content_type="application/octet-stream",
+            content_md5=None,
+            created_by=env["jia"],
+        ),
+        key="post-evict",
+        actor=env["jia"],
     )
     assert v.version_number == 22  # max(21)+1，不复用被淘汰的 1
 
@@ -549,8 +579,13 @@ def test_ut13_preview_visibility_hidden(env):
 def test_ut14_text_over_2mb_fallback(env):
     asset = _mk_versioned_asset(env, versions=1, key_prefix="t")
     v = asset.current_version
-    v.attributes = {**v.attributes, "name": "大日志.log", "mime": "text/plain",
-                    "ext": ".log", "size": 2 * 1024 * 1024 + 1}
+    v.attributes = {
+        **v.attributes,
+        "name": "大日志.log",
+        "mime": "text/plain",
+        "ext": ".log",
+        "size": 2 * 1024 * 1024 + 1,
+    }
     v.save(update_fields=["attributes"])
     status_code, data = usvc.preview_dispatch(asset=FileAsset.objects.get(pk=asset.id))
     assert status_code == 200
@@ -569,9 +604,13 @@ def test_ut14_text_over_2mb_fallback(env):
 def test_ut15_transcode_tool_missing_failed_and_retry(env):
     asset = _mk_versioned_asset(env, versions=1)
     v = asset.current_version
-    v.attributes = {**v.attributes, "name": "文档.docx", "mime":
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    "ext": ".docx", "size": 1024}
+    v.attributes = {
+        **v.attributes,
+        "name": "文档.docx",
+        "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "ext": ".docx",
+        "size": 1024,
+    }
     v.save(update_fields=["attributes"])
     usvc.ensure_derivative(v, "preview")
     assert v.attributes["derivatives"]["preview"]["status"] == "pending"
@@ -581,9 +620,12 @@ def test_ut15_transcode_tool_missing_failed_and_retry(env):
 
         P(dest).write_bytes(b"fake-docx")
 
-    with patch.object(dp, "SOFFICE_BIN", None), \
-         patch.object(dp, "_download_streaming", side_effect=_fake_download), \
-         patch(PUT_OBJ) as m_put, patch(DISPATCH):
+    with (
+        patch.object(dp, "SOFFICE_BIN", None),
+        patch.object(dp, "_download_streaming", side_effect=_fake_download),
+        patch(PUT_OBJ) as m_put,
+        patch(DISPATCH),
+    ):
         result = dp.derive_preview.run(str(v.id))
     assert result["failed"] == "soffice"
     v.refresh_from_db()
@@ -616,7 +658,8 @@ def test_ut16_cold_derivative_sweep(env):
     usvc.mark_derivative(v, "thumbnail", status="ready")
     attrs = dict(v.attributes)
     attrs["derivatives"]["thumbnail"].update(
-        {"key": f"derivatives/{asset.id}/{v.id}/thumb.webp", "last_access_at": stale})
+        {"key": f"derivatives/{asset.id}/{v.id}/thumb.webp", "last_access_at": stale}
+    )
     v.attributes = attrs
     v.save(update_fields=["attributes"])
     with patch(REMOVE_OBJ) as m_rm:
@@ -646,8 +689,7 @@ def test_it01_full_chain(env):
     session = UploadSession.objects.get(pk=sid)
     # 合并对象 MD5（演示侧等价校验）：分片拼接的 MD5 == 声明整件 MD5
     assert hashlib.md5(b"x" * size).hexdigest() == session.content_md5
-    with patch(MPU_LIST, side_effect=_fake_mpu_parts(session)), \
-         patch(MPU_COMPLETE) as m_complete:
+    with patch(MPU_LIST, side_effect=_fake_mpu_parts(session)), patch(MPU_COMPLETE) as m_complete:
         resp = c.post(_complete_url(env, sid))
     assert resp.status_code == 201, resp.content
     m_complete.assert_called_once()
@@ -678,9 +720,7 @@ def test_it02_active_session_limit(env):
     assert err["details"][0]["code"] == "LIMIT"
     # 其他用户不受该用户上限影响
     with patch(MPU_CREATE, return_value="mpu-yi-1"):
-        assert _Client(env["yi"]).post(
-            _sessions_url(env), _init_payload(env, "other.zip", 100)
-        ).status_code == 201
+        assert _Client(env["yi"]).post(_sessions_url(env), _init_payload(env, "other.zip", 100)).status_code == 201
 
 
 # ────────────────────────────────────────────────────────────────
@@ -712,10 +752,14 @@ def test_it03_version_chain(env):
 def test_it04_direct_upload_wires_version_and_queue(env):
     c = _Client(env["jia"])
     with patch(PUT_URL, return_value="http://minio/put"):
-        resp = c.post(f"{_base(env)}/folders/{env['folder'].id}/files/presign/", {
-            "file_name": "设计稿.docx", "file_size": 5 * 1024 * 1024,
-            "content_type": "application/docx",
-        })
+        resp = c.post(
+            f"{_base(env)}/folders/{env['folder'].id}/files/presign/",
+            {
+                "file_name": "设计稿.docx",
+                "file_size": 5 * 1024 * 1024,
+                "content_type": "application/docx",
+            },
+        )
     assert resp.status_code == 201, resp.content
     asset_id = resp.json()["data"]["asset_id"]
     with patch(HEAD_SIZE, return_value=5 * 1024 * 1024):
@@ -728,8 +772,10 @@ def test_it04_direct_upload_wires_version_and_queue(env):
     assert asset.current_version.attributes["size"] == 5 * 1024 * 1024  # HEAD 实测为准
     # 同名直传二次（8.2MB 量程，BR-07 complete 侧收口）→ v2，暂存行硬删（E2E-02）
     with patch(PUT_URL, return_value="http://minio/put"):
-        resp = c.post(f"{_base(env)}/folders/{env['folder'].id}/files/presign/", {
-            "file_name": "设计稿.docx", "file_size": 8_200_000, "content_type": "x/y"})
+        resp = c.post(
+            f"{_base(env)}/folders/{env['folder'].id}/files/presign/",
+            {"file_name": "设计稿.docx", "file_size": 8_200_000, "content_type": "x/y"},
+        )
     staging_id = resp.json()["data"]["asset_id"]
     with patch(HEAD_SIZE, return_value=8_200_000):
         c.post(f"{_base(env)}/files/{staging_id}/complete/")
@@ -750,8 +796,7 @@ def test_it04_direct_upload_wires_version_and_queue(env):
 def test_it05_video_poster_and_event(env):
     asset = _mk_versioned_asset(env, versions=1)
     v = asset.current_version
-    v.attributes = {**v.attributes, "name": "clip.mp4", "mime": "video/mp4",
-                    "ext": ".mp4", "size": 1024}
+    v.attributes = {**v.attributes, "name": "clip.mp4", "mime": "video/mp4", "ext": ".mp4", "size": 1024}
     v.save(update_fields=["attributes"])
 
     def _fake_download(*, bucket, key, dest, chunk=CHUNK):
@@ -770,9 +815,12 @@ def test_it05_video_poster_and_event(env):
     assert status_code == 200 and data["kind"] == "video"
     assert data["poster_state"] == "pending"  # 封面未就绪不阻塞播放
     assert data["preview_url"].endswith("/content/")
-    with patch.object(dp, "_download_streaming", side_effect=_fake_download), \
-         patch.object(dp, "_run_tool", side_effect=_fake_run_tool), \
-         patch(PUT_OBJ) as m_put, patch(DISPATCH) as m_dispatch:
+    with (
+        patch.object(dp, "_download_streaming", side_effect=_fake_download),
+        patch.object(dp, "_run_tool", side_effect=_fake_run_tool),
+        patch(PUT_OBJ) as m_put,
+        patch(DISPATCH) as m_dispatch,
+    ):
         result = dp.derive_preview.run(str(v.id))
     assert result["derived"] == "poster"
     m_put.assert_called_once()
@@ -795,32 +843,26 @@ def test_it05_video_poster_and_event(env):
 # ────────────────────────────────────────────────────────────────
 def test_it06_version_events(env, django_capture_on_commit_callbacks):
     c = _Client(env["jia"])
-    with patch(DISPATCH) as m_dispatch, \
-         django_capture_on_commit_callbacks(execute=True):
+    with patch(DISPATCH) as m_dispatch, django_capture_on_commit_callbacks(execute=True):
         etags, whole = _chunk_md5s(100)
         data = _do_init(env, c, _init_payload(env, "事件.zip", 100, md5=whole))
         sid = data["session_id"]
         _upload_all_chunks(env, c, sid, 1, etags)
         session = UploadSession.objects.get(pk=sid)
-        with patch(MPU_LIST, side_effect=_fake_mpu_parts(session)), \
-             patch(MPU_COMPLETE), patch(MPU_ABORT):
+        with patch(MPU_LIST, side_effect=_fake_mpu_parts(session)), patch(MPU_COMPLETE), patch(MPU_ABORT):
             assert c.post(_complete_url(env, sid)).status_code == 201
-    upload_events = [call for call in m_dispatch.call_args_list
-                     if call.args[0] == "file.version.created"]
+    upload_events = [call for call in m_dispatch.call_args_list if call.args[0] == "file.version.created"]
     assert len(upload_events) == 1
     payload = upload_events[0].args[1]
     assert payload["version_number"] == 1
     assert payload["actor_id"] == str(env["jia"].id)
-    assert upload_events[0].args[2] == [f"project:{env['proj'].id}",
-                                        f"file:{payload['asset_id']}"]
+    assert upload_events[0].args[2] == [f"project:{env['proj'].id}", f"file:{payload['asset_id']}"]
     # 回滚 → 第二类事件（source_version_number 携带）
     asset = FileAsset.objects.get(pk=payload["asset_id"])
     v1 = asset.current_version
-    with patch(DISPATCH) as m_dispatch2, \
-         django_capture_on_commit_callbacks(execute=True):
+    with patch(DISPATCH) as m_dispatch2, django_capture_on_commit_callbacks(execute=True):
         c.post(_rollback_url(env, asset.id, v1.id))
-    rb = [call for call in m_dispatch2.call_args_list
-          if call.args[0] == "file.version.created"]
+    rb = [call for call in m_dispatch2.call_args_list if call.args[0] == "file.version.created"]
     assert len(rb) == 1
     assert rb[0].args[1]["source_version_number"] == 1
 
@@ -830,13 +872,10 @@ def test_it06_version_events(env, django_capture_on_commit_callbacks):
 # ────────────────────────────────────────────────────────────────
 def test_it07_purge_with_versions(env):
     asset = _mk_versioned_asset(env, versions=4)  # 4 版 4 键
-    keys = set(FileVersion.objects.filter(asset=asset)
-               .values_list("object_key", flat=True))
+    keys = set(FileVersion.objects.filter(asset=asset).values_list("object_key", flat=True))
     keys.add(asset.storage_path)
     flib.soft_delete_file(asset=asset, actor=env["admin"])
-    FileAsset.all_objects.filter(pk=asset.id).update(
-        deleted_at=timezone.now() - timedelta(days=31)
-    )
+    FileAsset.all_objects.filter(pk=asset.id).update(deleted_at=timezone.now() - timedelta(days=31))
     with patch(REMOVE_OBJ) as m_rm:
         result = purge_deleted_assets.run(restrict_workspace_id=env["ws"].id)
     assert result["purged"] == 1
@@ -852,9 +891,7 @@ def test_it07b_rollback_key_not_deleted_twice(env):
     v1 = FileVersion.objects.get(asset=asset, version_number=1)
     usvc.rollback(asset=asset, target=v1, actor=env["jia"])
     flib.soft_delete_file(asset=asset, actor=env["admin"])
-    FileAsset.all_objects.filter(pk=asset.id).update(
-        deleted_at=timezone.now() - timedelta(days=31)
-    )
+    FileAsset.all_objects.filter(pk=asset.id).update(deleted_at=timezone.now() - timedelta(days=31))
     with patch(REMOVE_OBJ) as m_rm:
         purge_deleted_assets.run(restrict_workspace_id=env["ws"].id)
     keys = [call.kwargs["key"] for call in m_rm.call_args_list]
@@ -900,12 +937,10 @@ def test_it08_role_matrix_and_ownership(env):
     assert _Client(env["admin"]).get(_session_url(env, sid)).status_code == 200
     # 乙调 complete：201（#5 免属主校验，协作续传语义）+ uploaded_by=乙留痕
     session = UploadSession.objects.get(pk=sid)
-    with patch(MPU_LIST, side_effect=_fake_mpu_parts(session)), \
-         patch(MPU_COMPLETE), patch(MPU_ABORT):
+    with patch(MPU_LIST, side_effect=_fake_mpu_parts(session)), patch(MPU_COMPLETE), patch(MPU_ABORT):
         resp = yi.post(_complete_url(env, sid))
     assert resp.status_code == 201, resp.content
-    v_new = FileVersion.objects.get(
-        asset_id=session.asset_id, version_number=1)
+    v_new = FileVersion.objects.get(asset_id=session.asset_id, version_number=1)
     assert v_new.uploaded_by_id == env["yi"].id  # 操作者留痕（§4.3.2）
 
 
@@ -929,13 +964,12 @@ def test_it09_session_exemption_three_stages(env):
     UploadSession.objects.filter(pk=sid).update(created_at=old)
     # 对照组：无会话直传暂存行（presign 后弃传）
     with patch(PUT_URL, return_value="http://minio/put"):
-        flib.presign_file(folder=env["folder2"],
-                          payload={"file_name": "弃传.zip", "file_size": 100,
-                                   "content_type": "application/octet-stream"},
-                          actor=env["jia"])
-    stray = FileAsset.objects.get(
-        workspace_id=ws_id, folder=env["folder2"], attributes__name="弃传.zip"
-    )
+        flib.presign_file(
+            folder=env["folder2"],
+            payload={"file_name": "弃传.zip", "file_size": 100, "content_type": "application/octet-stream"},
+            actor=env["jia"],
+        )
+    stray = FileAsset.objects.get(workspace_id=ws_id, folder=env["folder2"], attributes__name="弃传.zip")
     _backdate(FileAsset, stray.id, created_at=old)
 
     # 第一段：30min 扫描——分片在途行豁免，无会话行标 abandoned
@@ -964,10 +998,8 @@ def test_it09_session_exemption_three_stages(env):
     with patch(REMOVE_OBJ) as m_rm:
         result = purge_deleted_assets.run(restrict_workspace_id=ws_id)
     assert result["purged"] == 2
-    assert {call.kwargs["key"] for call in m_rm.call_args_list} == {
-        session.object_key, stray.storage_path}
-    assert not FileAsset.all_objects.filter(
-        pk__in=[session.asset_id, stray.id]).exists()
+    assert {call.kwargs["key"] for call in m_rm.call_args_list} == {session.object_key, stray.storage_path}
+    assert not FileAsset.all_objects.filter(pk__in=[session.asset_id, stray.id]).exists()
     # 会话行 SET_NULL 存续为历史账本（BR-15：不随资产硬删），asset 引用置空
     session_row = UploadSession.all_objects.get(pk=sid)
     assert session_row.status == UploadSession.Status.ABORTED
@@ -1011,8 +1043,7 @@ def test_image_thumbnail_real_pil(env):
     Image.new("RGB", (1024, 768), (200, 30, 30)).save(buf, format="PNG")
     status_code, data = usvc.preview_dispatch(asset=asset)
     assert status_code == 202  # 未生成排队
-    with patch(GET_BYTES, return_value=buf.getvalue()), \
-         patch(PUT_OBJ) as m_put, patch(DISPATCH):
+    with patch(GET_BYTES, return_value=buf.getvalue()), patch(PUT_OBJ) as m_put, patch(DISPATCH):
         result = dp.derive_preview.run(str(v.id))
     assert result["derived"] == "thumbnail"
     body = m_put.call_args.kwargs["body"]

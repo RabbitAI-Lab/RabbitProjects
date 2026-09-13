@@ -137,7 +137,7 @@ test.describe("Sprint-7 UI 补口（C.144~C.149 · 入口与管理面）", () =>
     const graph = await apiCall(page, "PUT", `/workspaces/${WS}/projects/${pid}/workflows/${wf.body.data.id}/graph/`, {
       states: [
         { id: "n1", state_id: s[0].id, is_initial: true, layout_x: 80, layout_y: 200, field_locks: [] },
-        { id: "n2", state_id: s[1].id, is_initial: false, layout_x: 360, layout_y: 200, field_locks: [] },
+        { id: "n2", state_id: s[1].id, is_initial: false, layout_x: 360, layout_y: 280, field_locks: [] },
       ],
       transitions: [
         { id: "e1", from_state_id: "n1", to_state_id: "n2", name: "冒烟边", guards: [], side_effects: [], approval_flow_id: null, sort_order: 100 },
@@ -146,7 +146,11 @@ test.describe("Sprint-7 UI 补口（C.144~C.149 · 入口与管理面）", () =>
     expect(graph.status, JSON.stringify(graph.body).slice(0, 200)).toBe(HTTP.OK);
 
     await page.goto(`/${WS}/projects/${pid}/workflows/${wf.body.data.id}/canvas`);
-    await page.locator(".react-flow__edge").first().click({ force: true, timeout: 10_000 });
+    // 同 y 两节点的边 settled 后是零高直线（SVG path bbox 高 0 → Playwright 恒判
+    // hidden，force click 也过不了）——上图已错开 y 让边成常规曲线；这里只等挂载
+    const smokeEdge = page.locator(".react-flow__edge").first();
+    await expect(smokeEdge).toBeAttached({ timeout: 15_000 });
+    await smokeEdge.click({ force: true, timeout: 10_000 });
     const aside = page.locator('[data-sb-scope="edge-config"]');
     await expect(aside).toBeVisible({ timeout: 5_000 });
     // C.147 审批流下拉 + 四类守卫控件在场（required_fields 勾选展开字段 chips）

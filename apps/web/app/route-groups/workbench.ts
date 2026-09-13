@@ -27,4 +27,6 @@ export const workbenchRoutes: RouteConfigEntry[] = [
   route(":workspaceSlug/settings/sso", "routes/sso-config.tsx"),
   // 系统管理枢纽（2026-09-12 用户走查）：头像下拉入口——治理/身份/安全族导览
   route(":workspaceSlug/system", "routes/system.tsx"),
+  // RPT-001 §3（C.35 个人工作台）：我的任务——后端 Sprint-1 既有，前端 2026-09-12 补齐
+  route(":workspaceSlug/my-tasks", "routes/my-tasks.tsx"),
 ];

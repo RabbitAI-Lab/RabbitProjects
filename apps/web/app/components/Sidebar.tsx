@@ -61,7 +61,7 @@ const GROUPS: Group[] = [
     items: [
       // WF-002 §3.1（Sprint-7 / C.140）：审批中心——个人事务归「个人」组
       { to: "approvals", label: "审批", enabled: true },
-      { to: "my-tasks", label: "我的任务", enabled: false, hint: "RPT-001 交付" },
+      { to: "my-tasks", label: "我的任务", enabled: true },
     ],
   },
   {

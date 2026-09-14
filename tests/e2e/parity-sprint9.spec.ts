@@ -35,6 +35,30 @@ async function apiCall(page: Page, method: string, path: string, data?: unknown)
 
 type Proj = { id: string; name: string; identifier: string };
 
+type Call = (method: string, path: string, data?: unknown) => Promise<{ status: number; body: Record<string, any> | null }>;
+
+/** 按 TAG 精确清数：组合节点（卸载→删）+ 泄漏的种子项目（软删）。
+ *  旧版「全工作区前 100 项目 × 每残留节点」盲扫 DELETE 是 O(节点×100)：18 个残留
+ *  组合时单次清理 1300+ 请求，把 30s 测试预算烧穿（20260915 每夜 V-PORT 根因）；
+ *  且 per_page=100 之外的项目永远卸不掉 → 节点删除恒 409（BR-11）→ 残留只增不减。
+ *  挂载清单取自 summary.progress.by_project（本 TAG 泄漏项目都带 4 个议题，必在内）；
+ *  零议题挂载项 API 侧无枚举端点（登记 known-debt），本 TAG 造数路径不产生该形态。 */
+async function purgeTagResidue(call: Call) {
+  const tree = await call("GET", `/api/v1/workspaces/${WS}/portfolios/`);
+  for (const node of ((tree.body?.data as Array<{ id: string; name: string }>) ?? [])
+    .filter((n) => n.name.startsWith(TAG))) {
+    const sum = await call("GET", `/api/v1/workspaces/${WS}/portfolios/${node.id}/summary/`);
+    for (const p of ((sum.body?.data?.progress?.by_project ?? []) as Array<{ project_id: string }>)) {
+      await call("DELETE", `/api/v1/workspaces/${WS}/portfolios/${node.id}/projects/${p.project_id}/`).catch(() => {});
+    }
+    await call("DELETE", `/api/v1/workspaces/${WS}/portfolios/${node.id}/`).catch(() => {});
+  }
+  const leaks = await call("GET", `/api/v1/workspaces/${WS}/projects/?q=${TAG}-proj&per_page=100`);
+  for (const prj of ((leaks.body?.data as Array<{ id: string }>) ?? [])) {
+    await call("DELETE", `/api/v1/workspaces/${WS}/projects/${prj.id}/`).catch(() => {});
+  }
+}
+
 /** 造一个排期齐全的项目（CPM/报表可用），返回项目与关键 id 集。 */
 async function seedProject(page: Page): Promise<{
   proj: Proj; issues: string[]; issueKeys: string[];
@@ -67,21 +91,40 @@ async function purgeProject(page: Page, projId: string) {
 }
 
 test.describe("S9E2E · 项目集/报表/Wiki/关键路径 parity", () => {
+  // 坑 22：造数自动清理——worker 级独立会话兜底（测试体超时/断言失败时，测试内
+  // 收尾不会执行；此处保证任何失败路径都不向下一夜残留）。登录后 Django 轮换
+  // CSRF（CLAUDE.md 坑 ②），须重取 token 再发写请求。
+  test.afterAll(async ({ playwright }) => {
+    const req = await playwright.request.newContext({ baseURL: API_ORIGIN });
+    try {
+      const csrf0 = ((await (await req.get(`${API_ORIGIN}/api/v1/auth/csrf-token/`)).json()) as Record<string, any>)?.data?.csrf_token ?? "";
+      await req.post(`${API_ORIGIN}/api/v1/auth/sign-in/`, {
+        data: { email: "zhangsan@rabbit.dev", password: "Rabbit123" },
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrf0 },
+      });
+      const csrf = ((await (await req.get(`${API_ORIGIN}/api/v1/auth/csrf-token/`)).json()) as Record<string, any>)?.data?.csrf_token ?? "";
+      const call: Call = async (method, path, data) => {
+        const r = await req.fetch(`${API_ORIGIN}${path}`, {
+          method,
+          data: data === undefined ? undefined : JSON.stringify(data),
+          headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
+        });
+        let body: Record<string, any> | null = null;
+        try { body = (await r.json()) as Record<string, any>; } catch { /* 非 JSON */ }
+        return { status: r.status(), body };
+      };
+      await purgeTagResidue(call);
+    } finally {
+      await req.dispose();
+    }
+  });
+
   test("V-PORT 项目集：侧栏入口 + 组合树 + 新建 + 挂载弹窗 + 汇总三卡（PROJ-004 §3.1）", async ({ page }) => {
     const guards = attachGuards(page);
     guards.allow({ method: "POST", url: "/portfolios/", status: 409 });
     await loginDemo(page);
-    // 幂等清理旧名
-    const old = await apiCall(page, "GET", `/api/v1/workspaces/${WS}/portfolios/`);
-    for (const node of ((old.body?.data as Array<{ id: string; name: string; children?: unknown[] }>) ?? [])
-      .filter((n) => n.name.startsWith(TAG))) {
-      // 先卸载挂载项目（BR-11 非空阻断）再删节点；409 无妨（两轮）
-      const mounted = await apiCall(page, "GET", `/api/v1/workspaces/${WS}/projects/?per_page=100`).catch(() => null);
-      for (const prj of ((mounted?.body?.data as Array<{ id: string; portfolio?: string }>) ?? [])) {
-        await apiCall(page, "DELETE", `/api/v1/workspaces/${WS}/portfolios/${node.id}/projects/${prj.id}/`).catch(() => {});
-      }
-      await apiCall(page, "DELETE", `/api/v1/workspaces/${WS}/portfolios/${node.id}/`).catch(() => {});
-    }
+    // 幂等清理旧名（精确清数，见 purgeTagResidue 注）
+    await purgeTagResidue((method, path, data) => apiCall(page, method, path, data));
     // 造项目 + 组合
     const { proj } = await seedProject(page);
     const pfName = `${TAG}-组合-${Date.now() % 10000}`;
@@ -107,6 +150,9 @@ test.describe("S9E2E · 项目集/报表/Wiki/关键路径 parity", () => {
     await page.locator('[data-sb-scope="pf-mount-modal"], [data-sb-scope="pf-projects"] button', { hasText: "挂载项目" }).first().click();
     await expect(page.getByText("一个项目至多挂载一个项目集")).toBeVisible();
     await page.keyboard.press("Escape");
+    // 收尾：拆掉本次建的组合节点（卸载→删节点，成功路径零残留）+ 项目软删
+    await apiCall(page, "DELETE", `/api/v1/workspaces/${WS}/portfolios/${pfId}/projects/${proj.id}/`).catch(() => {});
+    await apiCall(page, "DELETE", `/api/v1/workspaces/${WS}/portfolios/${pfId}/`).catch(() => {});
     await purgeProject(page, proj.id);
   });
 

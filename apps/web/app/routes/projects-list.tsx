@@ -54,6 +54,17 @@ export default function ProjectsList() {
 
   const slug = workspaceSlug ?? "";
 
+  // 切空间即清列表（React 渲染期重置模式，须赶在同次提交的子 effect 重 fire 之前）：
+  // 路由参数变化不重挂载本组件，旧空间项目卡片若在新 slug 下续渲染，卡片会拿
+  // 旧 project_id 打新 slug 的 members/ → 404（INT-C1 e2e 守卫实测）。
+  // 同 slug 的搜索/状态/tab 刷新不走此分支，列表保留不清。
+  const [prevSlug, setPrevSlug] = useState(slug);
+  if (prevSlug !== slug) {
+    setPrevSlug(slug);
+    setProjects([]);
+    setMeta(null);
+  }
+
   // 300ms 防抖（PROJ-002 §3.5）
   useEffect(() => {
     const t = window.setTimeout(() => setSearch(searchInput.trim()), 300);

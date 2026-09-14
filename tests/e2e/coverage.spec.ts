@@ -39,14 +39,23 @@ test.describe("覆盖补全（原 Nightly / 占位用例）", () => {
     getErrs?.allow({ method: "GET", url: "/workspaces/", status: HTTP.UNAUTHORIZED });
     await registerAndLandProjects(page);
     const url = page.url(); // 受保护页
-    // 断言：登出后 /users/me/ 返回 401/403（HTTP.OK 不匹配）
+    // 断言：登出后受拦截面（users/me / workspaces，与 allow 口径对称）返回 401/403
     const meBefore = await page.context().cookies();
     expect(meBefore.find((c) => c.name === "sessionid"), "登录后应写入 sessionid cookie").toBeDefined();
+    // 先武装监听再清 cookie：清 cookie 前在途的后台请求，其 401 响应可能恰在
+    // 「clearCookies 之后、goto 之前」落地并触发拦截器跳登录（满载下实测）——
+    // 后武装会整窗等空；拦截面含 workspaces 是本用例注释既认的第二拦截面。
+    // 监听挂 context 级而非 page 级：拦截器是 location.href 全量重载，匹配响应
+    // 恰逢旧 document 销毁时 page 级事件会被吞（每夜满载实测两轮）。
+    const sawAuthFail = page
+      .context()
+      .waitForEvent("response", {
+        predicate: (r) =>
+          (r.url().includes("/api/v1/users/me/") || r.url().includes("/api/v1/workspaces/")) &&
+          (r.status() === 401 || r.status() === 403),
+        timeout: 25_000,
+      });
     await context.clearCookies();
-    const sawAuthFail = page.waitForResponse(
-      (r) => r.url().includes("/api/v1/users/me/") && (r.status() === 401 || r.status() === 403),
-      { timeout: 10_000 },
-    );
     await page.goto(url);
     await sawAuthFail;
     // 稳定替代 waitForURL（同 auth.spec.ts）：Guard 跳转是 pushState，无 load 事件，

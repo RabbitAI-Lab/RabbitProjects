@@ -105,7 +105,8 @@ class ResourceLoadView(APIView):
             weeks = 8
         import datetime as _dt
 
-        today = timezone.now().date()
+        # 服务器时区口径（BR-01 周一起始）——UTC now 在东八区周一 0~8 点取到上一周
+        today = timezone.localdate()
         week_start = today - _dt.timedelta(days=today.weekday())
         starts = [week_start - _dt.timedelta(weeks=i) for i in range(weeks - 1, -1, -1)]
         # 周容量：项目级配置缺省 2400（BR-01）

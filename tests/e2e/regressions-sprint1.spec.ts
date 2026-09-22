@@ -84,8 +84,14 @@ test.describe("Sprint-1 验收缺陷回归（评论头像 / 标签 / 子任务 /
     // 会被 draft="" 首渲染重置，提交钮持续禁用 → 表现为「fill 后未启用」）
     await expect(page.locator('[data-sb-scope="drawer-comment-counter"]'))
       .toContainText(/^0\/5000/, { timeout: 5_000 });
-    await page.locator('[data-sb-scope="drawer-comment-input"]').fill("<p>头像回归</p>");
-    await page.locator('[data-sb-scope="drawer-comment-submit"]').click();
+    // counter 就绪后满载下仍可能整块重挂载再吞一次 fill（每夜回归实测）——
+    // fill→点击 整段重试（click 与 fill 之间还可能插进一次重挂载，分开写会漏）
+    const commentInput = page.locator('[data-sb-scope="drawer-comment-input"]');
+    const commentSubmit = page.locator('[data-sb-scope="drawer-comment-submit"]');
+    await expect(async () => {
+      await commentInput.fill("<p>头像回归</p>");
+      await commentSubmit.click();
+    }).toPass({ timeout: 15_000 });
 
     const row = page.locator('[data-sb-scope="drawer-comment-row"]').first();
     await expect(row).toBeVisible({ timeout: 10_000 });

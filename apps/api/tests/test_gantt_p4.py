@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from plane.db.models import (
@@ -69,7 +70,8 @@ def test_portfolio_gantt_range_and_milestone(env):
 
 def test_resource_load_bands(env):
 
-    week = dt.date(2026, 9, 7)  # 周一
+    # 固定日期会跌出滚动周窗（2026-09-21 起必炸）——用本周周一（服务器时区口径）
+    week = timezone.localdate() - dt.timedelta(days=timezone.localdate().weekday())
     WorkLogSummary.objects.create(
         project=env["proj"], actor=env["owner"], week_start=week, total_minutes=2600, created_by=env["owner"]
     )

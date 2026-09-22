@@ -44,9 +44,9 @@ VIDEO_SRC = "docs/sprint-3-acceptance/videos/scene-02-四布局切换.webm"
 # 直接 import 复用，避免双源 base64 漂移
 sys.path.insert(0, "scripts")
 from seed_acceptance_s3 import PNG_B64  # noqa: E402
+from _psql_env import psql_args  # noqa: E402
 
-PSQL = ["docker", "exec", "-i", "rp-pg", "psql", "-U", "rp", "-d", "rabbit_projects",
-        "-v", "ON_ERROR_STOP=1"]
+PSQL = psql_args(["-v", "ON_ERROR_STOP=1"])
 
 
 def psql(sql: str, *, unaligned: bool = False) -> str:
@@ -146,6 +146,10 @@ def purge_demo() -> None:
       (SELECT id FROM issues WHERE project_id IN (SELECT id FROM sp));
     DELETE FROM issue_labels WHERE issue_id IN
       (SELECT id FROM issues WHERE project_id IN (SELECT id FROM sp));
+    -- worker 异步补写的活动行可能落在上一条 DELETE 之后提交（READ COMMITTED
+    -- 每语句新快照）——贴着 issues 删除再清一次，收窄 FK 竞态窗口
+    DELETE FROM issue_activities WHERE issue_id IN
+      (SELECT id FROM issues WHERE project_id IN (SELECT id FROM sp));
     DELETE FROM issues WHERE project_id IN (SELECT id FROM sp);
     DELETE FROM issue_views WHERE project_id IN (SELECT id FROM sp);
     DELETE FROM states WHERE project_id IN (SELECT id FROM sp);
@@ -153,6 +157,60 @@ def purge_demo() -> None:
     DELETE FROM custom_field_definitions WHERE project_id IN (SELECT id FROM sp);
     DELETE FROM project_members WHERE project_id IN (SELECT id FROM sp);
     DELETE FROM project_favorites WHERE project_id IN (SELECT id FROM sp);
+    -- 动态兜底（20260923 每夜：P4 之后 project 子表涨到 40+，显式列举追不平——
+    -- project_status_logs 首个翻车）。①全部 FK→projects 的子表按其 project_id
+    -- 列扫除：带重试环，同层互引（评论→议题先删父被 FK 拒）下一轮再清；
+    -- ②无 project_id 的孙表（comment_reactions 等）按「引用任一 sp 子表行」扫除。
+    DO $$
+    DECLARE
+      c record; gone integer; moved integer;
+    BEGIN
+      moved := 1;
+      WHILE moved > 0 LOOP
+        moved := 0;
+        FOR c IN
+          SELECT con.conrelid::regclass AS child,
+                 (SELECT attname FROM pg_attribute
+                   WHERE attrelid = con.conrelid AND attnum = con.conkey[1]) AS col
+            FROM pg_constraint con
+           WHERE con.contype = 'f' AND con.confrelid = 'projects'::regclass
+             AND con.conrelid <> 'projects'::regclass
+        LOOP
+          BEGIN
+            EXECUTE format('DELETE FROM %s WHERE %I IN (SELECT id FROM sp)',
+                           c.child, c.col);
+            GET DIAGNOSTICS gone = ROW_COUNT;
+            moved := moved + gone;
+          EXCEPTION WHEN foreign_key_violation THEN NULL;  -- 下一轮再清
+          END;
+        END LOOP;
+      END LOOP;
+      FOR c IN
+        SELECT con.conrelid::regclass AS child,
+               (SELECT attname FROM pg_attribute
+                 WHERE attrelid = con.conrelid AND attnum = con.conkey[1]) AS ccol,
+               con.confrelid::regclass AS parent,
+               (SELECT attname FROM pg_attribute
+                 WHERE attrelid = con.confrelid AND attnum = con.confkey[1]) AS pcol
+          FROM pg_constraint con
+          JOIN pg_constraint up
+            ON up.conrelid = con.confrelid AND up.contype = 'f'
+           AND up.confrelid = 'projects'::regclass
+         WHERE con.contype = 'f'
+           AND con.confrelid <> 'projects'::regclass
+           AND con.conrelid <> 'projects'::regclass
+           AND NOT EXISTS (SELECT 1 FROM pg_attribute a
+                            WHERE a.attrelid = con.conrelid AND a.attname = 'project_id')
+      LOOP
+        BEGIN
+          EXECUTE format(
+            'DELETE FROM %s s WHERE EXISTS (SELECT 1 FROM %s p '
+            'WHERE p.%I = s.%I AND p.project_id IN (SELECT id FROM sp))',
+            c.child, c.parent, c.pcol, c.ccol);
+        EXCEPTION WHEN foreign_key_violation THEN NULL;
+        END;
+      END LOOP;
+    END $$;
     DELETE FROM projects WHERE id IN (SELECT id FROM sp);
     DROP TABLE sp;
     COMMIT;
@@ -425,6 +483,7 @@ def purge_g10k() -> None:
     DELETE FROM states WHERE project_id IN (SELECT id FROM sp);
     DELETE FROM project_members WHERE project_id IN (SELECT id FROM sp);
     DELETE FROM project_favorites WHERE project_id IN (SELECT id FROM sp);
+    DELETE FROM issue_activities WHERE project_id IN (SELECT id FROM sp);
     DELETE FROM projects WHERE id IN (SELECT id FROM sp);
     DROP TABLE sp;
     COMMIT;

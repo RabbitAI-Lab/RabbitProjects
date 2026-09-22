@@ -33,7 +33,7 @@ for s in seed_acceptance seed_acceptance_s3 seed_acceptance_s4 seed_acceptance_s
          seed_acceptance_s7 seed_acceptance_s8 seed_acceptance_s9 seed_acceptance_p4r2; do
   echo "── $s"
   uv run --project apps/api python "scripts/$s.py" "$BASE" > /tmp/e2e-seed-$s.log 2>&1 \
-    || { echo "✗ $s 失败：" >&2; tail -5 /tmp/e2e-seed-$s.log >&2; exit 1; }
+    || { echo "✗ $s 失败：" >&2; tail -n 40 /tmp/e2e-seed-$s.log >&2; echo "── API 访问日志尾部：" >&2; grep -E '40[0-9]' /tmp/api.log | tail -n 10 >&2; exit 1; }
 done
 
 # ③ 近 7 日完成事件（C.35 统计卡非零 + 趋势非平线）

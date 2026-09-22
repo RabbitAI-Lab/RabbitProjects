@@ -1,17 +1,155 @@
 name: e2e
+
+# Playwright 全量 UI 回归真跑——替换 sprint-0 的 echo 占位（占位期间「e2e 门禁
+# 绿」实为零覆盖，20260923 每夜 CI 扫描定位；此前全量只在本机每夜班次跑）。
+# 触发：workflow_dispatch + 每夜定期；暂不挂 pull_request（全栈 job ~20min，
+# 是否进 PR 门禁待裁定——先由每夜班次供真信号）。
+# 栈口径 = dev 同构：PG/Redis/RabbitMQ/MinIO 服务容器 + schema bootstrap
+# （ci/api_db_bootstrap.sh，与 api-ci 同配方）+ 演示数据种子（ci/e2e_seed.sh）
+# + API 8000 / worker / web 3001 / live 3000 / admin 台 3002。
 on:
-  pull_request:
-  push: { branches: [main] }
+  workflow_dispatch: {}
+  schedule:
+    - cron: "30 21 * * *"   # UTC 21:30 = 本地 05:30（security-gate 之后错峰）
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    needs: []
+    timeout-minutes: 45
+    env:
+      SECRET_KEY: dev
+      DATABASE_URL: postgresql://rp:rp@127.0.0.1:5432/rabbit_projects
+      REDIS_URL: redis://127.0.0.1:6379/0
+      CELERY_BROKER_URL: amqp://rp:rp@127.0.0.1:5672//
+      AWS_ACCESS_KEY_ID: rpminio
+      AWS_SECRET_ACCESS_KEY: rpminio123
+      AWS_S3_BUCKET_NAME: rp-uploads
+      AWS_S3_ENDPOINT_URL: http://127.0.0.1:9000
+      # turbo passthrough 只透传父环境已存在变量——live 三件套必须 job 级声明
+      LIVE_PORT: "3000"
+      API_INTERNAL_URL: http://127.0.0.1:8000
+      INTERNAL_KEY: rp-live-internal-dev
+      PGHOST: 127.0.0.1
+      PGUSER: rp
+      PGPASSWORD: rp
+      PGDATABASE: rabbit_projects
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: rp
+          POSTGRES_PASSWORD: rp
+          POSTGRES_DB: rabbit_projects
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rp -d rabbit_projects"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: rp
+          RABBITMQ_DEFAULT_PASS: rp
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 20
+      minio:
+        # 与 deploy/compose/docker-compose.yml 同口径精确 tag（BR-11 禁 latest）
+        image: minio/minio:RELEASE.2025-01-20T15-22-18Z
+        env:
+          MINIO_ROOT_USER: rpminio
+          MINIO_ROOT_PASSWORD: rpminio123
+        ports:
+          - 9000:9000
+        # 无 health-cmd：UBI-micro 底无 curl，探活由 runner 侧建桶步承担
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with: { node-version-file: ".nvmrc" }
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      # Playwright 用例由 E2E-xx 交付后接入（P0 骨架占位）
-      - run: echo "e2e placeholder — Playwright suites land with sprint-0 feature docs"
+
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --project apps/api
+
+      # Django 5.1 + swappable User 在 PG 上 migrate 必炸（CLAUDE.md 坑 ①）——
+      # 与 api-ci 同配方：sqlmigrate 拓扑序 DDL + 手工附加 + migrate --fake
+      - name: bootstrap PG schema
+        run: bash ci/api_db_bootstrap.sh
+
+      - name: create MinIO bucket
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:9000/minio/health/live > /dev/null && break
+            [ "$i" = 30 ] && { echo "✗ MinIO 未就绪"; exit 1; }
+            sleep 2
+          done
+          docker run --rm --network host minio/mc:RELEASE.2025-01-20T15-22-18Z \
+            sh -c "mc alias set rp http://127.0.0.1:9000 rpminio rpminio123 && mc mb --ignore-existing rp/rp-uploads"
+
+      - name: install Playwright chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: generate live keys
+        run: |
+          bash scripts/gen_live_keys.sh > /tmp/keys.env
+          {
+            echo "LIVE_JWT_PRIVATE_KEY<<EOF_PEM"
+            cat deploy/keys/live_jwt_private_key.pem
+            echo "EOF_PEM"
+            echo "LIVE_JWT_PUBLIC_KEY<<EOF_PEM"
+            cat deploy/keys/live_jwt_public_key.pem
+            echo "EOF_PEM"
+          } >> "$GITHUB_ENV"
+
+      - name: seed demo data
+        run: bash ci/e2e_seed.sh
+
+      - name: start stack (API / worker / web / live / admin)
+        run: |
+          nohup uv run --project apps/api python apps/api/manage.py runserver 0.0.0.0:8000 > /tmp/api.log 2>&1 &
+          nohup uv run --project apps/api celery -A plane worker -Q activity,celery --concurrency=2 > /tmp/worker.log 2>&1 &
+          nohup pnpm dev > /tmp/web-dev.log 2>&1 &
+          nohup pnpm dev:admin > /tmp/admin-dev.log 2>&1 &
+          for spec in "8000 /api/v1/auth/csrf-token/" "3001 /" "3002 /god-mode/" "3000 /health"; do
+            set -- $spec
+            for i in $(seq 1 90); do
+              curl -sf "http://127.0.0.1:$1$2" > /dev/null 2>&1 && { echo "✓ $1 up"; break; }
+              [ "$i" = 90 ] && { echo "✗ $1 未就绪"; tail -20 /tmp/web-dev.log /tmp/admin-dev.log /tmp/api.log; exit 1; }
+              sleep 1
+            done
+          done
+
+      - name: run Playwright suite
+        run: E2E_NO_SERVER=1 pnpm exec playwright test
+
+      - name: upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore

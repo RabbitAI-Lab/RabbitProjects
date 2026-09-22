@@ -48,7 +48,8 @@ python3 tests/jmeter/sprint-4-bench.py                         # sprint-4 性能
 # 2) L1/L2 静态检查（含 api-ci 平价三件套：与 .github/workflows/api-ci.yml 同 cwd 同命令）
 bash tests/run-ci-checks.sh   # ruff/mypy/pytest 必须在 apps/api 目录跑（uv run --project 不变 cwd）
 
-# 3) Playwright e2e（web dev server 需已在 3001；API 在 8000）
+# 3) Playwright e2e（整栈前置：API 8000 + web 3001 + live 3000 + admin 台 3002；
+#    live 需 export LIVE_JWT_PUBLIC_KEY/INTERNAL_KEY/REDIS_URL/LIVE_PORT/API_INTERNAL_URL）
 E2E_NO_SERVER=1 pnpm exec playwright test   # auth.spec.ts + coverage.spec.ts + interactions.spec.ts + parity.spec.ts
 
 # 4) JMeter 性能压测
@@ -58,7 +59,7 @@ jmeter -n -t tests/jmeter/sprint-0-flow.jmx -l result.jtl -e -o report
 
 **契约常量唯一定义点：`tests/jmeter/_contract.py`**（HTTP 状态码表 / 错误码 / 信封字段路径 / `Client` / 断言辅助）。sprint-0 把状态码表写在 `sprint-0-flow.py` 顶部，但该脚本无 `__main__` 守卫、一 import 就跑完整条流程，导致「唯一真相源」实际无法复用；新脚本一律 import `_contract`，禁止各自硬编码（ADR-0012 E4）。
 
-PG schema 准备（Django migrate 在 PG 上有已知问题，见下面"坑"）：按 `tests/e2e/PG_README.md` 走 sqlmigrate + 手工建扩展/索引 + `migrate --fake`。
+PG schema 准备（Django migrate 在 PG 上有已知问题，见下面"坑"）：按 `tests/e2e/PG_README.md` 走 sqlmigrate + 手工建扩展/索引 + `migrate --fake`。全新库一键口径（CI/彩排同款）：`ci/api_db_bootstrap.sh`（schema）+ `ci/e2e_seed.sh`（演示数据基线；zhangsan 须为全库首用户，slug=workspace）。
 
 测试用例文档：`docs/sprint-0-poc/test-cases.md`（114 条用例 + **附录 C UI 表面清单 C.1~C.36**，全迭代共用）｜`docs/sprint-1-mvp/test-cases.md`（sprint-1 用例，含回归锚点附录）。
 

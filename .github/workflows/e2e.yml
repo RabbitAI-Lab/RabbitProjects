@@ -123,9 +123,6 @@ jobs:
             echo "EOF_PEM"
           } >> "$GITHUB_ENV"
 
-      - name: seed demo data
-        run: bash ci/e2e_seed.sh
-
       - name: start stack (API / worker / web / live / admin)
         run: |
           nohup uv run --project apps/api python apps/api/manage.py runserver 0.0.0.0:8000 > /tmp/api.log 2>&1 &
@@ -140,6 +137,10 @@ jobs:
               sleep 1
             done
           done
+
+      # 种子走 API（zhangsan 注册）——必须在起栈之后
+      - name: seed demo data
+        run: bash ci/e2e_seed.sh
 
       - name: run Playwright suite
         run: E2E_NO_SERVER=1 pnpm exec playwright test

@@ -129,11 +129,12 @@ jobs:
           nohup uv run --project apps/api celery -A plane worker -Q activity,celery --concurrency=2 > /tmp/worker.log 2>&1 &
           nohup pnpm dev > /tmp/web-dev.log 2>&1 &
           nohup pnpm dev:admin > /tmp/admin-dev.log 2>&1 &
-          for spec in "8000 /api/v1/auth/csrf-token/" "3001 /" "3002 /god-mode/" "3000 /health"; do
-            set -- $spec
-            for i in $(seq 1 90); do
-              curl -sf "http://127.0.0.1:$1$2" > /dev/null 2>&1 && { echo "✓ $1 up"; break; }
-              [ "$i" = 90 ] && { echo "✗ $1 未就绪"; tail -20 /tmp/web-dev.log /tmp/admin-dev.log /tmp/api.log; exit 1; }
+          # 探测走 localhost（curl 自动回退 IPv4/IPv6）——vite 可能只绑 [::1]
+          for spec in "8000 api /api/v1/auth/csrf-token/" "3001 web /" "3002 admin /god-mode/" "3000 live /health"; do
+            set -- $spec; port=$1; name=$2; path=$3
+            for i in $(seq 1 240); do
+              curl -sf "http://localhost:${port}${path}" > /dev/null 2>&1 && { echo "✓ $name($port) up"; break; }
+              [ "$i" = 240 ] && { echo "✗ $name($port) 未就绪"; tail -n 30 /tmp/web-dev.log; tail -n 30 /tmp/admin-dev.log; tail -n 30 /tmp/api.log; exit 1; }
               sleep 1
             done
           done

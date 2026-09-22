@@ -24,9 +24,9 @@ CSRF=$(curl -fsS "$BASE/api/v1/auth/csrf-token/" \
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/v1/auth/sign-up/" \
   -H "X-CSRFToken: $CSRF" -H "Content-Type: application/json" \
   -d '{"email":"zhangsan@rabbit.dev","password":"Rabbit123","display_name":"张三"}')
-# 400=已存在（幂等重跑口径）
-[ "$CODE" = "201" ] || [ "$CODE" = "400" ] || { echo "✗ zhangsan 注册失败 http $CODE" >&2; exit 1; }
-echo "✓ zhangsan@rabbit.dev 就绪（http $CODE，slug=workspace）"
+# 400/409=已存在（幂等重跑口径）
+[ "$CODE" = "201" ] || [ "$CODE" = "400" ] || [ "$CODE" = "409" ] || { echo "✗ zhangsan 注册失败 http $CODE" >&2; exit 1; }
+echo "✓ zhangsan@rabbit.dev 就绪（http ${CODE}，slug=workspace）"
 
 # ② 各迭代验收种子（全部幂等可重跑；s8/p4r2 走 ORM 直写库，收 BASE 参数的脚本多传无害）
 for s in seed_acceptance seed_acceptance_s3 seed_acceptance_s4 seed_acceptance_s5 \

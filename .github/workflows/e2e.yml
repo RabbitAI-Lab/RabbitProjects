@@ -28,7 +28,10 @@ jobs:
       AWS_ACCESS_KEY_ID: rpminio
       AWS_SECRET_ACCESS_KEY: rpminio123
       AWS_S3_BUCKET_NAME: rp-uploads
-      AWS_S3_ENDPOINT_URL: http://127.0.0.1:9000
+      # 必须 localhost 而非 127.0.0.1：SigV4 把 Host 纳入签名，种子直传
+      # （seed_acceptance_s3 的 MINIO 常量）用的是 localhost:9000——host 不一致
+      # 会 SignatureDoesNotMatch 403
+      AWS_S3_ENDPOINT_URL: http://localhost:9000
       # turbo passthrough 只透传父环境已存在变量——live 三件套必须 job 级声明
       LIVE_PORT: "3000"
       API_INTERNAL_URL: http://127.0.0.1:8000

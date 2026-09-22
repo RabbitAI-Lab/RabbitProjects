@@ -103,8 +103,10 @@ jobs:
             [ "$i" = 60 ] && { echo "✗ MinIO 未就绪"; docker logs rp-minio-ci; exit 1; }
             sleep 2
           done
-          docker run --rm --network host quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z \
-            sh -c "mc alias set rp http://127.0.0.1:9000 rpminio rpminio123 && mc mb --ignore-existing rp/rp-uploads"
+          # mc 镜像 entrypoint=mc 且微底无 sh——凭据经 MC_HOST_* 注入，免 shell/alias
+          docker run --rm --network host \
+            -e MC_HOST_rp=http://rpminio:rpminio123@127.0.0.1:9000 \
+            quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z mb --ignore-existing rp/rp-uploads
 
       - name: install Playwright chromium
         run: pnpm exec playwright install --with-deps chromium

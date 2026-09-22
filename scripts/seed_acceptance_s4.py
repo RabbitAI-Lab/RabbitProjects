@@ -408,8 +408,11 @@ def main() -> None:
         with open(VIDEO_SRC, "rb") as fh:
             video_blob = fh.read()
     except OSError as exc:
-        raise SystemExit(f"✗ 视频样本缺失：{VIDEO_SRC}（sprint-3 验收产物）——{exc}") from exc
-    upload_chunked(f_q3, "产品演示录屏.webm", "video/webm", video_blob)
+        # 视频样本按用户裁定永不入库（sprint-3 验收产物，仅录屏机持有）——
+        # CI/异机没有该文件，降级跳过视频附件段（e2e 套件不消费该演示资产）
+        print(f"⊘ 视频样本缺失，跳过「产品演示录屏.webm」：{exc}")
+    else:
+        upload_chunked(f_q3, "产品演示录屏.webm", "video/webm", video_blob)
     upload(f_q3, "转码排队.docx", "application/msword",
            "PK\x03\x04office-placeholder（本机无 soffice → 202 排队态如实展示）".encode())
 

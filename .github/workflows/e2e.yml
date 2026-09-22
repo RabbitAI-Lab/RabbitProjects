@@ -72,17 +72,8 @@ jobs:
           --health-interval 10s
           --health-timeout 10s
           --health-retries 20
-      minio:
-        # MinIO 2025-05 起 Docker Hub 全量清库（含 compose 钉的 2025-01-20 tag），
-        # 官方镜像仅存 quay.io；取现存最接近 tag，与 dev compose 的版本偏差已接受
-        # （精确 tag 口径 BR-11 合规；compose 钉 tag 失效问题另案登记）
-        image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z.hotfix.c630804a1
-        env:
-          MINIO_ROOT_USER: rpminio
-          MINIO_ROOT_PASSWORD: rpminio123
-        ports:
-          - 9000:9000
-        # 无 health-cmd：UBI-micro 底无 curl，探活由 runner 侧建桶步承担
+    # MinIO 不走 services（service 容器无法自定义 command，且失败时看不到容器日志），
+    # 用下方 docker run 步骤显式起——显式 server /data + 失败打日志
     steps:
       - uses: actions/checkout@v4
 
@@ -99,11 +90,17 @@ jobs:
       - name: bootstrap PG schema
         run: bash ci/api_db_bootstrap.sh
 
-      - name: create MinIO bucket
+      # MinIO 2025-05 起 Docker Hub 全量清库（含 compose 钉的 2025-01-20 tag），
+      # 官方镜像仅存 quay.io；取现存最接近 tag（精确 tag 口径 BR-11 合规；
+      # compose 钉 tag 已不可拉取，灾备重建会踩，另案登记）
+      - name: start MinIO + create bucket
         run: |
-          for i in $(seq 1 30); do
-            curl -sf http://127.0.0.1:9000/minio/health/live > /dev/null && break
-            [ "$i" = 30 ] && { echo "✗ MinIO 未就绪"; exit 1; }
+          docker run -d --name rp-minio-ci -p 9000:9000 \
+            -e MINIO_ROOT_USER=rpminio -e MINIO_ROOT_PASSWORD=rpminio123 \
+            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z.hotfix.c630804a1 server /data
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:9000/minio/health/live > /dev/null && { echo "✓ MinIO up"; break; }
+            [ "$i" = 60 ] && { echo "✗ MinIO 未就绪"; docker logs rp-minio-ci; exit 1; }
             sleep 2
           done
           docker run --rm --network host quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z \

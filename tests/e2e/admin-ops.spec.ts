@@ -24,13 +24,24 @@ test.describe("admin 运维台（C.134~C.136）", () => {
     });
     await ctx.dispose();
     const { execSync } = await import("node:child_process");
-    execSync(
-      `docker exec rp-pg psql -U rp -d rabbit_projects -tAc `
-      + `"INSERT INTO system_admins(id, user_id, is_active, allowed_ip_cidrs, created_at, updated_at) `
-      + `SELECT gen_random_uuid(), id, true, '[]'::jsonb, NOW(), NOW() FROM users `
+    // 库名从 DATABASE_URL 推导（dev/CI=rabbit_projects；本地彩排可指向 scratch 库，
+    // 必须与 API 实际连接的库一致——20260923 彩排时硬编码库名把授权插错库的教训）
+    const DB = process.env.DATABASE_URL?.split("/").pop()?.split("?")[0] || "rabbit_projects";
+    // is_tenant_ops 必须显式 false：P4（AUTH-012）加了 NOT NULL 无 DB 默认列，
+    // dev 库列约束松掩盖了这一点——全新 bootstrap 库（CI）裸 INSERT 会炸
+    const sql = `INSERT INTO system_admins(id, user_id, is_tenant_ops, is_active, allowed_ip_cidrs, created_at, updated_at) `
+      + `SELECT gen_random_uuid(), id, false, true, '[]'::jsonb, NOW(), NOW() FROM users `
       + `WHERE email='${OPS_EMAIL}' AND NOT EXISTS `
       + `(SELECT 1 FROM system_admins sa JOIN users u2 ON u2.id=sa.user_id `
-      + `WHERE u2.email='${OPS_EMAIL}');"`);
+      + `WHERE u2.email='${OPS_EMAIL}');`;
+    // dev 走 rp-pg 容器；CI（GitHub runner 服务容器）无该容器名，回退本机 psql
+    try {
+      execSync(`docker exec rp-pg psql -U rp -d ${DB} -tAc "${sql}"`);
+    } catch {
+      execSync(`psql -h ${process.env.PGHOST ?? "127.0.0.1"} -U rp -d ${DB} -tAc "${sql}"`, {
+        env: { ...process.env, PGPASSWORD: process.env.PGPASSWORD ?? "rp" },
+      });
+    }
   });
 
   let getErrs: ReturnType<typeof attachGuards> | undefined;

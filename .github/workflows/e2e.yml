@@ -22,6 +22,10 @@ jobs:
     timeout-minutes: 45
     env:
       SECRET_KEY: dev
+      # runserver 每 keep-alive 连接一线程，CONN_MAX_AGE=60 会把 PG 连接水印推到
+      # max_connections（sporadic SERVER_DATABASE_ERROR，20261010 每夜定位）——
+      # e2e 改每请求连接
+      DB_CONN_MAX_AGE: "0"
       DATABASE_URL: postgresql://rp:rp@127.0.0.1:5432/rabbit_projects
       REDIS_URL: redis://127.0.0.1:6379/0
       CELERY_BROKER_URL: amqp://rp:rp@127.0.0.1:5672//
@@ -160,5 +164,12 @@ jobs:
           path: |
             test-results/
             playwright-report/
+            # vite dev 日志：排查「套件中途重新预打包 → 新旧 React 副本混载 →
+            # invalid hook call 崩溃」（20261010 每夜定位）必备——"new dependencies
+            # optimized" 的轮次与触发依赖全在这份日志里
+            /tmp/web-dev.log
+            /tmp/admin-dev.log
+            /tmp/api.log
+            /tmp/worker.log
           retention-days: 7
           if-no-files-found: ignore

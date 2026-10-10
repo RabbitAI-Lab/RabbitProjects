@@ -90,6 +90,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - uses: astral-sh/setup-uv@v5
+        with:
+          # 关缓存：post 步骤 uv cache prune 在 runner 上挂 5 分钟后 exit 2（基建
+          # 抖动，20261010 实测把全绿套件整 run 标红）；装机省时 <20s 不值得
+          enable-cache: false
       - run: uv sync --project apps/api
 
       # Django 5.1 + swappable User 在 PG 上 migrate 必炸（CLAUDE.md 坑 ①）——

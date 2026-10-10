@@ -36,6 +36,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import os
 import time
 import urllib.request
 import uuid as uuid_mod
@@ -49,7 +50,9 @@ FAIL = 0
 SKIP = 0
 FAILURES: list[str] = []
 
-MINIO_BASE = "http://localhost:9000"
+# 直连目标与 presign 签名 host 同源（4d8b6bb 同类）：默认 9000，错峰端口
+# 副栈经 AWS_S3_ENDPOINT_URL 注入（20261010 每夜）
+MINIO_BASE = os.environ.get("AWS_S3_ENDPOINT_URL", "http://localhost:9000").rstrip("/")
 
 #: 1×1 真 PNG（预览派生 worker 用 PIL 解码，假字节会 giveup）
 PNG_1PX = base64.b64decode(

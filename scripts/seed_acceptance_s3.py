@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -26,7 +27,9 @@ BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
 TAG = "S3 验收演示"
 IDENT = "S3AC"
 WS = "workspace"
-MINIO = "http://localhost:9000"
+# 直传目标与 presign 签名 host 必须同源（4d8b6bb 同类）：默认 9000，错峰端口
+# 副栈经 AWS_S3_ENDPOINT_URL 注入（与 API settings 同一真相源）
+MINIO = os.environ.get("AWS_S3_ENDPOINT_URL", "http://localhost:9000").rstrip("/")
 LISI = {"email": "lisi@rabbit.dev", "password": "Rabbit123!", "name": "李四"}
 WANGWU = {"email": "wangwu@rabbit.dev", "password": "Rabbit123!", "name": "王五"}
 

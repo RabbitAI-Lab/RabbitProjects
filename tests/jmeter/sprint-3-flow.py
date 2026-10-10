@@ -1039,7 +1039,7 @@ def collab2_segment(admin, member, viewer, outsider, ws, admin_id, member_id, vi
 
     uploaded = False
     try:
-        direct = "http://localhost:9000" + d["upload_url"][len("/uploads"):]
+        direct = os.environ.get("AWS_S3_ENDPOINT_URL", "http://localhost:9000").rstrip("/") + d["upload_url"][len("/uploads"):]
         req = urllib.request.Request(direct, data=b"\x89PNG" + b"0" * (size - 4), method="PUT",
                                      headers={"Content-Type": "image/png"})
         with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310

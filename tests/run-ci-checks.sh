@@ -3,6 +3,11 @@
 # 用法：bash tests/run-ci-checks.sh   （仓库根执行；DB 实库检查需 rp-pg 容器在跑，未跑则自动跳过）
 # 退出码：0 全过；1 有失败（失败清单见输出）
 set -uo pipefail
+
+# 测试库 URL 环境自适应（20261010 每夜）：错峰端口副栈/彩排库经 DATABASE_URL
+# 注入即全链一致；缺省回退 dev 正典（rp-pg@5432）。此前三处硬编码 5432，
+# 5432 被其它项目占用时 pytest/shell 断言连错库（静态检查 2 项假红）。
+RP_TEST_DB_URL="${DATABASE_URL:-postgresql://rp:rp@localhost:5432/rabbit_projects}"
 PASS=0; FAIL=0; FAILED_IDS=()
 
 check() {  # check <TC-ID> <描述> <命令...>
@@ -103,7 +108,7 @@ check TC-BOARD1-007 "DEFAULT_GAP=65535" \
 # ── Sprint 1 · INFRA-004 信封与错误码注册表（L1）──
 # 这几条走 Django shell 做集合断言：注册表 / 文案 / 权限矩阵是「双源一致」的守护点，
 # 光靠 grep 断言不了集合相等（CLAUDE.md 测试脚本规范 ①）。
-S1_PY_ENV="DATABASE_URL=postgresql://rp:rp@localhost:5432/rabbit_projects SECRET_KEY=dev DJANGO_SETTINGS_MODULE=plane.settings.dev"
+S1_PY_ENV="DATABASE_URL=$RP_TEST_DB_URL SECRET_KEY=dev DJANGO_SETTINGS_MODULE=plane.settings.dev"
 s1py() {  # s1py <python 表达式，需 print 出 OK 才算通过>
   cd apps/api && env $S1_PY_ENV uv run --project . python -c "
 import django; django.setup()
@@ -166,7 +171,7 @@ check TC-AUTH6-001 "行级可见性守护（AC-01~05 + AC-06 视图直改 status
 # docker 未跑则跳过——与上方 TC-INF3-*-db 同策略。
 if docker exec rp-pg pg_isready -U rp -d rabbit_projects >/dev/null 2>&1; then
   check TC-AUTH6-002 "越权矩阵四主体×四资源层笛卡尔积全绿" \
-    "(cd apps/api && DATABASE_URL=postgresql://rp:rp@localhost:5432/rabbit_projects SECRET_KEY=dev uv run --project . pytest tests/test_auth006.py -q -k 'matrix or permission')"
+    "(cd apps/api && DATABASE_URL=$RP_TEST_DB_URL SECRET_KEY=dev uv run --project . pytest tests/test_auth006.py -q -k 'matrix or permission')"
 fi
 
 # ── Sprint-5 · 覆盖率门禁（TC-COVER-001/002，§6 工程质量 · BR-01 收口）──
@@ -202,7 +207,7 @@ fi
 # （ruff 红也恒报 ✓）。pytest 依赖 dev PG（settings/test 复用 dev 库、事务回滚零残留），
 # 容器未跑则跳过（与上方 TC-INF3-*-db 同策略）。汇总块在所有 check 之后，任何
 # 一条 ✗ 都计入退出码（原版汇总在 TC-INF4-016 之前，其失败不拦门）。
-API_CI_ENV="DATABASE_URL=postgresql://rp:rp@localhost:5432/rabbit_projects SECRET_KEY=dev"
+API_CI_ENV="DATABASE_URL=$RP_TEST_DB_URL SECRET_KEY=dev"
 check TC-API-CI-001 "api-ci 平价：ruff（apps/api cwd，与 CI 同命令）" \
   "(cd apps/api && uv run --project . ruff check .)"
 check TC-API-CI-002 "api-ci 平价：mypy plane 全绿" \

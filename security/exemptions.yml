@@ -12,3 +12,13 @@
 #   owner: backend@rabbit.dev
 #   fix_version: 1.0.1
 #   expires_at: 2026-10-01
+
+# braces <3.0.4 ReDoS（GHSA-vfj7-8cjw-p6xm）：修复版 3.0.4 尚未发布（registry 3.0.x
+# 最新 3.0.3，2026-10-10 查证）。受影响链 lint-staged>micromatch>braces 纯构建链
+# （本地 lint-staged 钩子与 CI lint），不进任何运行时产物。3.0.4 发布后移除本单、
+# 升级收口（pnpm update braces 即可，micromatch ^3.0.3 范围已覆盖）。
+- id: GHSA-vfj7-8cjw-p6xm
+  reason: 修复版未发布；构建链传递依赖，运行时不可达（20261010 每夜回归评审）
+  owner: mail@xujialiang.net
+  fix_version: 3.0.4
+  expires_at: 2026-11-10

@@ -147,10 +147,10 @@ jobs:
           nohup python3 scripts/mock_github_receiver.py 8090 > /tmp/mock-gh.log 2>&1 &
           nohup python3 scripts/mock_500_receiver.py 8091 > /tmp/mock-500.log 2>&1 &
           # worker 就绪断言（fail-fast：celery 打印 "ready." 才算活，否则 20 分钟后
-          # Playwright 才以断粮形态暴露）
-          for i in $(seq 1 120); do
+          # Playwright 才以断粮形态暴露；2 核 runner 冷 import 实测 >120s，给 300s）
+          for i in $(seq 1 300); do
             grep -q "ready" /tmp/worker.log 2>/dev/null && { echo "✓ worker ready"; break; }
-            [ "$i" = 120 ] && { echo "✗ worker 未就绪"; tail -n 40 /tmp/worker.log; exit 1; }
+            [ "$i" = 300 ] && { echo "✗ worker 未就绪"; tail -n 40 /tmp/worker.log; exit 1; }
             sleep 1
           done
           # 探测走 localhost（curl 自动回退 IPv4/IPv6）——vite 可能只绑 [::1]

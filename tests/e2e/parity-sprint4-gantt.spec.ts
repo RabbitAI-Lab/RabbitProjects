@@ -518,6 +518,9 @@ test.describe("Sprint-4 甘特视图（GANTT-001/002 · C.98~C.111）", () => {
     await expect(page.locator('[data-sb-scope="gantt-drag-badge"]')).toContainText("⚠ 依赖冲突"); // 拖动中徽标追加冲突（C.106）
     const dlg = page.locator('[data-sb-scope="gantt-conflict-dialog"]');
     await page.mouse.up();
+    // CI 偶发吞 window mouseup（失败快照徽标滞留「Δ -5d ⚠」自证 setBadge(null) 未执行）
+    // ——补一发合成 mouseup 兜底；会话已结束时 onUp 走 dragRef 空的静默分支，等价 no-op
+    await page.evaluate(() => window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
     await expect(dlg).toBeVisible({ timeout: 15_000 }); // 2 核负载下弹窗渲染窗口放宽
     await expect(dlg).toHaveAttribute("role", "alertdialog"); // C.107 role
     await expect(dlg).toContainText(`新排期使该任务早于其前置 ${a.key} 的完成日`); // C.107 文案
@@ -535,6 +538,7 @@ test.describe("Sprint-4 甘特视图（GANTT-001/002 · C.98~C.111）", () => {
     const patch = page.waitForResponse((r: Response) => new RegExp(`/issues/${b.id}/`).test(r.url()) && r.request().method() === "PATCH");
     await dragBarBy(page, b.id, -5 * 36);
     await page.mouse.up(); // 松手出弹层（dragBarBy 不含 up）
+    await page.evaluate(() => window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }))); // 同上兜底
     await expect(dlg).toBeVisible({ timeout: 15_000 });
     await page.locator('[data-sb-scope="gantt-conflict-ok"]').click();
     const resp = await patch;

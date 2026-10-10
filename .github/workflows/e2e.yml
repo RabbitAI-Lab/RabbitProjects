@@ -139,8 +139,11 @@ jobs:
           # worker 必须 cwd=apps/api——`celery -A plane` 按 CWD 导入 plane 模块，仓库根
           # 起会 "Unable to load celery application" 秒死且无探测即静默（20261010 每夜
           # 定位：CI 全部 dispatch 的 worker 均未活过，stream/时间线/预览派生/审计导出
-          # 全断粮）；dev 启动配方同款（见 dev-stack 启动记忆）
-          (cd apps/api && nohup uv run --project . celery -A plane worker -Q activity,celery --concurrency=2 > /tmp/worker.log 2>&1 &)
+          # 全断粮）；dev 启动配方同款（见 dev-stack 启动记忆）。
+          # 池用 threads 不用默认 prefork：GH runner 上 fork 后 broker 连接悬挂
+          # （banner 停在 [queues]，5 分钟无 "connected"，fork-after-threads 死锁
+          # 典型形态，本地 macOS 不复现）；e2e 活动消费量级下线程池足够
+          (cd apps/api && nohup uv run --project . celery -A plane worker -Q activity,celery --pool=threads --concurrency=4 > /tmp/worker.log 2>&1 &)
           nohup pnpm dev > /tmp/web-dev.log 2>&1 &
           nohup pnpm dev:admin > /tmp/admin-dev.log 2>&1 &
           # s5 种子的 webhook/GitHub 绑定演示依赖两个 mock receiver（dev 常驻，CI 补起）

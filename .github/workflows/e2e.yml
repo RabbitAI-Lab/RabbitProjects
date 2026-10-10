@@ -97,14 +97,17 @@ jobs:
       - name: bootstrap PG schema
         run: bash ci/api_db_bootstrap.sh
 
-      # MinIO 2025-05 起 Docker Hub 全量清库（含 compose 钉的 2025-01-20 tag），
-      # 官方镜像仅存 quay.io；取现存最接近 tag（精确 tag 口径 BR-11 合规；
-      # compose 钉 tag 已不可拉取，灾备重建会踩，另案登记）
+      # MinIO 镜像源三迁（20261010）：Docker Hub 2025-05 全量清库 → quay 钉 tag
+      # （quay.io/minio/minio:RELEASE.2025-04-22…）→ 2026-10-10 起 quay minio org
+      # 整体 401（tag 列表已空）。现用 chainguard 免费镜像（latest 浮动 tag——
+      # 免费层不提供历史 tag 钉版；如需可再改 digest 钉）。server 以 MINIO_ROOT_*
+      # 环境变量起、/minio/health/live 就绪探测、mc 经 MC_HOST_* 注入凭据建桶，
+      # 三者与 quay 版行为一致（本地实测）。
       - name: start MinIO + create bucket
         run: |
           docker run -d --name rp-minio-ci -p 9000:9000 \
             -e MINIO_ROOT_USER=rpminio -e MINIO_ROOT_PASSWORD=rpminio123 \
-            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z.hotfix.c630804a1 server /data
+            cgr.dev/chainguard/minio:latest server /data
           for i in $(seq 1 60); do
             curl -sf http://127.0.0.1:9000/minio/health/live > /dev/null && { echo "✓ MinIO up"; break; }
             [ "$i" = 60 ] && { echo "✗ MinIO 未就绪"; docker logs rp-minio-ci; exit 1; }
@@ -113,7 +116,7 @@ jobs:
           # mc 镜像 entrypoint=mc 且微底无 sh——凭据经 MC_HOST_* 注入，免 shell/alias
           docker run --rm --network host \
             -e MC_HOST_rp=http://rpminio:rpminio123@127.0.0.1:9000 \
-            quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z mb --ignore-existing rp/rp-uploads
+            cgr.dev/chainguard/minio-client:latest mb --ignore-existing rp/rp-uploads
 
       - name: install Playwright chromium
         run: pnpm exec playwright install --with-deps chromium

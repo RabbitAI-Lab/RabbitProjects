@@ -125,8 +125,11 @@ def test_stats_aggregation(env):
     _mk_issue(env, 3, "延三天", target=dt.date(2026, 9, 19))
     baseline = Baseline.objects.create(project=env["proj"], name="V1", reason="统计", created_by=env["owner"])
     fill_baseline_sync(str(baseline.id))
-    Issue.objects.filter(sequence_id=2).update(target_date=dt.date(2026, 9, 20))
-    Issue.objects.filter(sequence_id=3).update(target_date=dt.date(2026, 9, 22))
+    # 作用域必须带 project（CLAUDE.md 坑 #18 同类）：共享 dev PG 下裸 sequence_id
+    # 会命中其它项目的同序号任务——跨项目误改且撞 chk_issue_start_before_target
+    # （CI 全新库只有本测试的行，从未暴露）
+    Issue.objects.filter(project=env["proj"], sequence_id=2).update(target_date=dt.date(2026, 9, 20))
+    Issue.objects.filter(project=env["proj"], sequence_id=3).update(target_date=dt.date(2026, 9, 22))
     stats = compute_stats(baseline)
     assert stats["dated_count"] == 3
     assert stats["delayed_count"] == 2

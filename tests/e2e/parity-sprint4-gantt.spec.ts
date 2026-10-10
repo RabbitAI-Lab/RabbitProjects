@@ -527,6 +527,10 @@ test.describe("Sprint-4 甘特视图（GANTT-001/002 · C.98~C.111）", () => {
     await page.locator('[data-sb-scope="gantt-conflict-cancel"]').click();
     await expect(dlg).toBeHidden();
     await expect.poll(() => barLeft(page, b.id)).toBe(before); // 回位（§3.1 取消语义）
+    // 会话复位断言：拖拽徽标消失 = 应用侧拖拽会话已终结。CI 上 poll（条位置）
+    // 可能在会话 teardown 完成前通过，第二拖被半死会话吞掉、pointerup 不落子
+    // → 弹窗不出且徽标滞留「Δ -5d ⚠ 依赖冲突」（20261010 CI 失败快照自证）
+    await expect(page.locator('[data-sb-scope="gantt-drag-badge"]')).toBeHidden({ timeout: 10_000 });
     // 再拖一次 → 仍按此排期 → PATCH 200 + 红点持续提示
     const patch = page.waitForResponse((r: Response) => new RegExp(`/issues/${b.id}/`).test(r.url()) && r.request().method() === "PATCH");
     await dragBarBy(page, b.id, -5 * 36);

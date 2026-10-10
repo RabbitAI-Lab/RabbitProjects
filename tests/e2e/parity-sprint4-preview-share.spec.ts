@@ -341,7 +341,9 @@ test.describe("Sprint-4 预览/版本/分享 + space（FILE-003/004 · C.119~C.1
     // 释放悬停片 → 上传收尾（complete：ListParts 片级 ETag×MD5 全量核对）
     holdRest = false;
     await Promise.allSettled(heldRoutes.map((r) => r.continue()));
-    const completeDone = page.waitForResponse((r) => /\/upload-sessions\/[^/]+\/complete\/$/.test(r.url()) && r.request().method() === "POST");
+    // complete 合并 51MB 分片 + ListParts 全量核对：2 核 runner 上与 vite/api/worker/
+    // minio 同机抢 CPU 实测超全局 10s（actionTimeout），与续传 complete 的 240s 同口径
+    const completeDone = page.waitForResponse((r) => /\/upload-sessions\/[^/]+\/complete\/$/.test(r.url()) && r.request().method() === "POST", { timeout: 240_000 });
     expect((await completeDone).status(), "complete 201（片级 ETag×MD5 全量核对通过）").toBe(HTTP.CREATED);
     await expect(rowByName(page, "索引整库导出1.zip")).toBeVisible({ timeout: 15_000 }); // 完成即入列表
     // 失败片有自动重传（同片号 ≥2 次 PUT——BR-03 片级重试）

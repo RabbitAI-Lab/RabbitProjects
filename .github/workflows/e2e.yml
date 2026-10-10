@@ -142,7 +142,9 @@ jobs:
           # 全断粮）；dev 启动配方同款（见 dev-stack 启动记忆）。
           # 池用 threads 不用默认 prefork：GH runner 上 fork 后 broker 连接悬挂
           # （banner 停在 [queues]，5 分钟无 "connected"，fork-after-threads 死锁
-          # 典型形态，本地 macOS 不复现）；e2e 活动消费量级下线程池足够
+          # 典型形态，本地 macOS 不复现）；e2e 活动消费量级下线程池足够。
+          # -l debug 兼当缓冲冲刷：非 debug 下 worker.log 块缓冲，banner 停在
+          # [queues] 后 ready 信号永不可见（就绪断言必假红）
           (cd apps/api && nohup uv run --project . celery -A plane worker -Q activity,celery --pool=threads --concurrency=4 -l debug > /tmp/worker.log 2>&1 &)
           nohup pnpm dev > /tmp/web-dev.log 2>&1 &
           nohup pnpm dev:admin > /tmp/admin-dev.log 2>&1 &

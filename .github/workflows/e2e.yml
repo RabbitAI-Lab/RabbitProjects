@@ -143,7 +143,7 @@ jobs:
           # 池用 threads 不用默认 prefork：GH runner 上 fork 后 broker 连接悬挂
           # （banner 停在 [queues]，5 分钟无 "connected"，fork-after-threads 死锁
           # 典型形态，本地 macOS 不复现）；e2e 活动消费量级下线程池足够
-          (cd apps/api && nohup uv run --project . celery -A plane worker -Q activity,celery --pool=threads --concurrency=4 > /tmp/worker.log 2>&1 &)
+          (cd apps/api && nohup uv run --project . celery -A plane worker -Q activity,celery --pool=threads --concurrency=4 -l debug > /tmp/worker.log 2>&1 &)
           nohup pnpm dev > /tmp/web-dev.log 2>&1 &
           nohup pnpm dev:admin > /tmp/admin-dev.log 2>&1 &
           # s5 种子的 webhook/GitHub 绑定演示依赖两个 mock receiver（dev 常驻，CI 补起）

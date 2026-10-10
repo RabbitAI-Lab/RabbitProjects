@@ -33,7 +33,11 @@ def _parse_db_url(url: str) -> dict:
         "PASSWORD": parsed.password or "",
         "HOST": parsed.hostname or "localhost",
         "PORT": str(parsed.port or 5432),
-        "CONN_MAX_AGE": 60,
+        # 连接持久秒数可 env 覆盖：runserver（dev / e2e）每 keep-alive 连接一线程，
+        # 60s 持久化会把连接水印推到 max_connections 量级（20261010 每夜实测震荡
+        # 至 81+，sporadic SERVER_DATABASE_ERROR）——e2e.yml 注入 DB_CONN_MAX_AGE=0
+        # 改每请求连接；gunicorn 生产保持 60 不受影响
+        "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", "60")),
     }
 
 

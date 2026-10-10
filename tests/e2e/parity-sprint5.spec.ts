@@ -21,8 +21,10 @@ const WS = "workspace";
 
 test.afterAll(() => {
   if (process.env.S5_E2E_NO_CLEANUP) return;
+  // 清理脚本自身 psql 环境自适应（scripts/_psql_env.py：dev 走 rp-pg 容器，CI 回退
+  // 本机 psql）——原 `docker exec rp-pg true &&` 守卫在 CI 无该容器名，静默跳过清理。
   try {
-    execSync("docker exec -i rp-pg true && python3 tests/e2e/_cleanup_s5.py", { stdio: "pipe", timeout: 180_000 });
+    execSync("python3 tests/e2e/_cleanup_s5.py", { stdio: "pipe", timeout: 180_000 });
   } catch (e) {
     console.warn("[cleanup] S5E2E 残留清理失败（不阻断报告；gate 以零残留为准）", e);
   }

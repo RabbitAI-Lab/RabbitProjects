@@ -76,7 +76,9 @@ type IORedis = { publish(ch: string, msg: string): Promise<number>; disconnect()
 let publisherPromise: Promise<IORedis> | null = null;
 function redis(): Promise<IORedis> {
   if (!publisherPromise) {
-    const url = process.env.E2E_REDIS_URL ?? "redis://localhost:6379/0";
+    // Redis 直灌发布器与 live 同库：优先 E2E_REDIS_URL，回落 REDIS_URL（e2e.yml
+    // job env 同名注入）——错峰端口副栈/异机彩排只改 REDIS_URL 即全链一致
+    const url = process.env.E2E_REDIS_URL ?? process.env.REDIS_URL ?? "redis://localhost:6379/0";
     // ioredis 只在 apps/live 的依赖树内——动态 import 其 CJS 入口（目录导入不被
     // ESM resolver 支持，直接指到 built/index.js）
     const modPath = path.resolve(here, "apps/live/node_modules/ioredis/built/index.js");

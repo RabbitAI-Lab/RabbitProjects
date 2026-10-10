@@ -13,6 +13,18 @@ const ADMIN = "http://localhost:3002/god-mode";
 test.describe("admin 运维台（C.134~C.136）", () => {
   const OPS_EMAIL = "ops-parity@rabbit.dev";
 
+  // 坑 #22：C.136 经 UI 创建的 release_gates（全局表）必须 afterAll 收尾——
+  // 残留会让下一轮「创建卡」分支变形，waitForResponse(/release-gates/create/)
+  // 永不命中（20261010 每夜本地四连挂；CI 全新库不复现，dev 长期栈必踩）
+  test.afterAll(async () => {
+    const { execSync } = await import("node:child_process");
+    try {
+      execSync("python3 tests/e2e/_cleanup_admin_ops.py", { stdio: "pipe", timeout: 120_000 });
+    } catch (e) {
+      console.warn("[cleanup] admin-ops 残留清理失败（不阻断报告）", e);
+    }
+  });
+
   test.beforeAll(async ({ playwright }) => {
     // 专用 SystemAdmin 账号：注册（幂等——已存在则 400 忽略）+ psql 授予
     //（_cleanup_s* 脚本同款 docker exec 先例；不入库数据仅 dev 栈）

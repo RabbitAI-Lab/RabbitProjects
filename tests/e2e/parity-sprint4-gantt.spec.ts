@@ -177,8 +177,10 @@ async function dragBarBy(page: Page, issueId: string, dxPx: number) {
   const y = box!.y + box!.height / 2;
   await page.mouse.move(x0, y);
   await page.mouse.down();
-  await page.mouse.move(x0 + 10, y, { steps: 2 }); // 过 4px 阈值 → 拖拽会话激活
-  await page.mouse.move(x0 + dxPx, y, { steps: 6 });
+  // delay 每 40ms 一发：CI 2 核负载下紧循环 pointermove 会被合帧/饿死主线程，
+  // 松手时应用还停在旧位置 → 冲突弹窗不出现（S4G-7 CI flake 根因）
+  await page.mouse.move(x0 + 10, y, { steps: 2, delay: 40 }); // 过 4px 阈值 → 拖拽会话激活
+  await page.mouse.move(x0 + dxPx, y, { steps: 6, delay: 40 });
 }
 
 test.describe("Sprint-4 甘特视图（GANTT-001/002 · C.98~C.111）", () => {
@@ -516,7 +518,7 @@ test.describe("Sprint-4 甘特视图（GANTT-001/002 · C.98~C.111）", () => {
     await expect(page.locator('[data-sb-scope="gantt-drag-badge"]')).toContainText("⚠ 依赖冲突"); // 拖动中徽标追加冲突（C.106）
     const dlg = page.locator('[data-sb-scope="gantt-conflict-dialog"]');
     await page.mouse.up();
-    await expect(dlg).toBeVisible();
+    await expect(dlg).toBeVisible({ timeout: 15_000 }); // 2 核负载下弹窗渲染窗口放宽
     await expect(dlg).toHaveAttribute("role", "alertdialog"); // C.107 role
     await expect(dlg).toContainText(`新排期使该任务早于其前置 ${a.key} 的完成日`); // C.107 文案
     // 取消 → 无 PATCH + 弹回原位
@@ -529,7 +531,7 @@ test.describe("Sprint-4 甘特视图（GANTT-001/002 · C.98~C.111）", () => {
     const patch = page.waitForResponse((r: Response) => new RegExp(`/issues/${b.id}/`).test(r.url()) && r.request().method() === "PATCH");
     await dragBarBy(page, b.id, -5 * 36);
     await page.mouse.up(); // 松手出弹层（dragBarBy 不含 up）
-    await expect(dlg).toBeVisible();
+    await expect(dlg).toBeVisible({ timeout: 15_000 });
     await page.locator('[data-sb-scope="gantt-conflict-ok"]').click();
     const resp = await patch;
     expect(resp.status()).toBe(HTTP.OK); // BR-06 提示非拦截：确认后放行

@@ -136,12 +136,23 @@ jobs:
       - name: start stack (API / worker / web / live / admin)
         run: |
           nohup uv run --project apps/api python apps/api/manage.py runserver 0.0.0.0:8000 > /tmp/api.log 2>&1 &
-          nohup uv run --project apps/api celery -A plane worker -Q activity,celery --concurrency=2 > /tmp/worker.log 2>&1 &
+          # worker 必须 cwd=apps/api——`celery -A plane` 按 CWD 导入 plane 模块，仓库根
+          # 起会 "Unable to load celery application" 秒死且无探测即静默（20261010 每夜
+          # 定位：CI 全部 dispatch 的 worker 均未活过，stream/时间线/预览派生/审计导出
+          # 全断粮）；dev 启动配方同款（见 dev-stack 启动记忆）
+          (cd apps/api && nohup uv run --project . celery -A plane worker -Q activity,celery --concurrency=2 > /tmp/worker.log 2>&1 &)
           nohup pnpm dev > /tmp/web-dev.log 2>&1 &
           nohup pnpm dev:admin > /tmp/admin-dev.log 2>&1 &
           # s5 种子的 webhook/GitHub 绑定演示依赖两个 mock receiver（dev 常驻，CI 补起）
           nohup python3 scripts/mock_github_receiver.py 8090 > /tmp/mock-gh.log 2>&1 &
           nohup python3 scripts/mock_500_receiver.py 8091 > /tmp/mock-500.log 2>&1 &
+          # worker 就绪断言（fail-fast：celery 打印 "ready." 才算活，否则 20 分钟后
+          # Playwright 才以断粮形态暴露）
+          for i in $(seq 1 120); do
+            grep -q "ready" /tmp/worker.log 2>/dev/null && { echo "✓ worker ready"; break; }
+            [ "$i" = 120 ] && { echo "✗ worker 未就绪"; tail -n 40 /tmp/worker.log; exit 1; }
+            sleep 1
+          done
           # 探测走 localhost（curl 自动回退 IPv4/IPv6）——vite 可能只绑 [::1]
           for spec in "8000 api /api/v1/auth/csrf-token/" "3001 web /" "3002 admin /god-mode/" "3000 live /health" "8090 mock-gh /" "8091 mock-500 /"; do
             set -- $spec; port=$1; name=$2; path=$3

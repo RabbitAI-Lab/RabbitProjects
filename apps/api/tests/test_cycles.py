@@ -6,6 +6,7 @@
 速率终版锚/CFD 空窗）、度量配置（BR-07）、导出权限。夹具风格对照
 test_portfolio.py。
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -43,11 +44,9 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture()
 def env(db):
-    owner = User.objects.create_user(email="cyc-owner@rabbit.dev", password="Rabbit123!",
-                                     display_name="空间管理员")
+    owner = User.objects.create_user(email="cyc-owner@rabbit.dev", password="Rabbit123!", display_name="空间管理员")
     ws = Workspace.objects.create(name="CY", slug="w-cyc-test", owner=owner, created_by=owner)
-    WorkspaceMember.objects.create(workspace=ws, member=owner,
-                                   role=WorkspaceRole.OWNER, created_by=owner)
+    WorkspaceMember.objects.create(workspace=ws, member=owner, role=WorkspaceRole.OWNER, created_by=owner)
     proj = Project.objects.create(name="电商重构", identifier="RBT", workspace=ws, created_by=owner)
     seed_project_states(proj)
     ProjectMember.objects.create(project=proj, member=owner, role=ProjectRole.ADMIN, created_by=owner)
@@ -70,17 +69,25 @@ def _base(env) -> str:
 def _mk_cycle(env, name="Sprint 24", start=None, end=None, status=Cycle.Status.PLANNED) -> Cycle:
     today = timezone.localdate()
     return Cycle.objects.create(
-        project=env["proj"], name=name,
+        project=env["proj"],
+        name=name,
         start_date=start or today - timedelta(days=2),
         end_date=end or today + timedelta(days=11),
-        status=status, created_by=env["owner"])
+        status=status,
+        created_by=env["owner"],
+    )
 
 
 def _mk_issue(env, name, *, group="unstarted", estimate=240) -> Issue:
     state = State.objects.filter(project=env["proj"], group=group).first()
-    return Issue.objects.create(project=env["proj"], name=name, state=state,
-                                sequence_id=next_sequence_id(env["proj"].pk),
-                                estimate_minutes=estimate, created_by=env["owner"])
+    return Issue.objects.create(
+        project=env["proj"],
+        name=name,
+        state=state,
+        sequence_id=next_sequence_id(env["proj"].pk),
+        estimate_minutes=estimate,
+        created_by=env["owner"],
+    )
 
 
 # ────────────────────────────────────────────────────────────────
@@ -89,18 +96,20 @@ def _mk_issue(env, name, *, group="unstarted", estimate=240) -> Issue:
 class TestCycleCRUD:
     def test_date_range_inverted(self, env):
         today = timezone.localdate()
-        resp = _client(env["owner"]).post(_base(env), {
-            "name": "倒挂", "start_date": today + timedelta(days=10),
-            "end_date": today}, format="json")
+        resp = _client(env["owner"]).post(
+            _base(env), {"name": "倒挂", "start_date": today + timedelta(days=10), "end_date": today}, format="json"
+        )
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "VALIDATION_INVALID_DATE_RANGE"
 
     def test_duplicate_name(self, env):
         _mk_cycle(env, "Sprint 24")
         today = timezone.localdate()
-        resp = _client(env["owner"]).post(_base(env), {
-            "name": "Sprint 24", "start_date": today,
-            "end_date": today + timedelta(days=14)}, format="json")
+        resp = _client(env["owner"]).post(
+            _base(env),
+            {"name": "Sprint 24", "start_date": today, "end_date": today + timedelta(days=14)},
+            format="json",
+        )
         assert resp.status_code == 409
 
     def test_start_unique_active(self, env):
@@ -135,30 +144,26 @@ class TestBatchAssign:
         i1 = _mk_issue(env, "t1")
         i2 = _mk_issue(env, "t2")
         resp = _client(env["owner"]).put(
-            f"{_base(env)}{c1.id}/issues/", {"issue_ids": [str(i1.id), str(i2.id)]},
-            format="json")
+            f"{_base(env)}{c1.id}/issues/", {"issue_ids": [str(i1.id), str(i2.id)]}, format="json"
+        )
         assert resp.status_code == 200
         assert set(c1.issues.values_list("id", flat=True)) == {i1.id, i2.id}
         assert IssueActivity.objects.filter(field="cycles", new_identifier=c1.id).count() == 2
         # 再整批去掉 i2 → 移出事件（old_identifier）
-        resp = _client(env["owner"]).put(
-            f"{_base(env)}{c1.id}/issues/", {"issue_ids": [str(i1.id)]}, format="json")
+        resp = _client(env["owner"]).put(f"{_base(env)}{c1.id}/issues/", {"issue_ids": [str(i1.id)]}, format="json")
         assert resp.status_code == 200
-        assert IssueActivity.objects.filter(
-            field="cycles", old_identifier=c1.id, new_identifier=None).count() == 1
+        assert IssueActivity.objects.filter(field="cycles", old_identifier=c1.id, new_identifier=None).count() == 1
         i2.refresh_from_db()
         assert i2.cycle_id is None
 
     def test_cross_project_issue_rejected(self, env):
-        proj2 = Project.objects.create(name="他项目", identifier="OTH",
-                                       workspace=env["ws"], created_by=env["owner"])
+        proj2 = Project.objects.create(name="他项目", identifier="OTH", workspace=env["ws"], created_by=env["owner"])
         seed_project_states(proj2)
-        other = Issue.objects.create(project=proj2, name="外部任务",
-                                     sequence_id=next_sequence_id(proj2.pk),
-                                     created_by=env["owner"])
+        other = Issue.objects.create(
+            project=proj2, name="外部任务", sequence_id=next_sequence_id(proj2.pk), created_by=env["owner"]
+        )
         c = _mk_cycle(env)
-        resp = _client(env["owner"]).put(
-            f"{_base(env)}{c.id}/issues/", {"issue_ids": [str(other.id)]}, format="json")
+        resp = _client(env["owner"]).put(f"{_base(env)}{c.id}/issues/", {"issue_ids": [str(other.id)]}, format="json")
         assert resp.status_code == 400
 
 
@@ -180,8 +185,7 @@ class TestSnapshotPipeline:
         assert snap["scope_total"] == 3
 
     def test_backfill_idempotent(self, env):
-        c = _mk_cycle(env, start=timezone.localdate() - timedelta(days=4),
-                      status=Cycle.Status.ACTIVE)
+        c = _mk_cycle(env, start=timezone.localdate() - timedelta(days=4), status=Cycle.Status.ACTIVE)
         _mk_issue(env, "x", group="started")
         c.issues.set(Issue.objects.filter(project=env["proj"]))
         n1 = backfill_cycle_snapshots(c, timezone.localdate(), "count")
@@ -200,14 +204,12 @@ class TestSnapshotPipeline:
 # ────────────────────────────────────────────────────────────────
 class TestCompleteAndImmutability:
     def _complete(self, env, carry="backlog"):
-        c = _mk_cycle(env, start=timezone.localdate() - timedelta(days=3),
-                      status=Cycle.Status.ACTIVE)
+        c = _mk_cycle(env, start=timezone.localdate() - timedelta(days=3), status=Cycle.Status.ACTIVE)
         i1 = _mk_issue(env, "done", group="completed")
         i2 = _mk_issue(env, "unfinished", group="started")
         c.issues.set([i1, i2])
         backfill_cycle_snapshots(c, timezone.localdate(), "count")
-        resp = _client(env["owner"]).post(
-            f"{_base(env)}{c.id}/complete/", {"carry_over": carry}, format="json")
+        resp = _client(env["owner"]).post(f"{_base(env)}{c.id}/complete/", {"carry_over": carry}, format="json")
         return c, i1, i2, resp
 
     def test_complete_backlog(self, env):
@@ -243,9 +245,8 @@ class TestCompleteAndImmutability:
         assert final_after.pk == final_before.pk
 
     def test_completed_cycle_rejects_changes(self, env):
-        c, *_ , resp = self._complete(env, "backlog")
-        resp = _client(env["owner"]).patch(
-            f"{_base(env)}{c.id}/", {"name": "改名"}, format="json")
+        c, *_, resp = self._complete(env, "backlog")
+        resp = _client(env["owner"]).patch(f"{_base(env)}{c.id}/", {"name": "改名"}, format="json")
         assert resp.status_code == 409
 
 
@@ -255,10 +256,13 @@ class TestCompleteAndImmutability:
 class TestCharts:
     def _archive_cycle(self, env, name, done, total, end_days=6):
         c = Cycle.objects.create(
-            project=env["proj"], name=name,
+            project=env["proj"],
+            name=name,
             start_date=timezone.localdate() - timedelta(days=20),
             end_date=timezone.localdate() - timedelta(days=end_days),
-            status=Cycle.Status.ACTIVE, created_by=env["owner"])
+            status=Cycle.Status.ACTIVE,
+            created_by=env["owner"],
+        )
         for i in range(total):
             group = "completed" if i < done else "started"
             issue = _mk_issue(env, f"{name}-{i}", group=group)
@@ -268,8 +272,8 @@ class TestCharts:
         c.status = Cycle.Status.COMPLETED
         c.save()
         from plane.db.services.agile_reports import on_cycle_completed
-        on_cycle_completed(c, list(c.issues.filter(
-            state__group__in=["started"])))
+
+        on_cycle_completed(c, list(c.issues.filter(state__group__in=["started"])))
         return c
 
     def test_burndown_active_has_realtime_point(self, env):
@@ -286,8 +290,8 @@ class TestCharts:
         payload = AgileReportService().velocity(env["proj"].id)
         assert [b["cycle"] for b in payload["bars"]] == ["S22", "S23"]
         assert payload["bars"][0]["completed"] == 8  # count 度量：completed 组任务数
-        assert payload["bars"][0]["planned"] == 10   # 首日快照 scope_total
-        assert payload["moving_avg"][-1] == 7.0      # (8+6)/2
+        assert payload["bars"][0]["planned"] == 10  # 首日快照 scope_total
+        assert payload["moving_avg"][-1] == 7.0  # (8+6)/2
         # BR-04 唯一锚：complete 后 beat 迟到补跑多出更新快照——velocity 仍取
         # is_final 终版而非 last()（对 last() 取值突变红，UT-14 变体）
         later = AgileReportService()._first_day_snapshot.__self__  # noqa: F841 语义锚注释
@@ -295,9 +299,10 @@ class TestCharts:
             cycle=payload["bars"][0] and Cycle.objects.get(name="S22"),
             snapshot_date=timezone.localdate(),  # 迟到补跑：比终版更新的日快照
             measure="count",
-            remaining_by_group={"backlog": 0, "unstarted": 0, "started": 3,
-                                "completed": 99, "cancelled": 0},
-            remaining_total=3, scope_total=102)
+            remaining_by_group={"backlog": 0, "unstarted": 0, "started": 3, "completed": 99, "cancelled": 0},
+            remaining_total=3,
+            scope_total=102,
+        )
         payload2 = AgileReportService().velocity(env["proj"].id)
         assert payload2["bars"][0]["completed"] == 8  # 终版锚值不变，非 last() 的 99
 
@@ -305,20 +310,17 @@ class TestCharts:
         cycle_daily_snapshot()
         svc = AgileReportService()
         from datetime import date
-        payload = svc.cumulative_flow(
-            env["proj"].id, date(2026, 1, 1), timezone.localdate(), "count")
+
+        payload = svc.cumulative_flow(env["proj"].id, date(2026, 1, 1), timezone.localdate(), "count")
         assert len(payload["series"]) >= 1
 
     def test_config_patch_and_validation(self, env):
         base = f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/reports/"
-        assert _client(env["owner"]).get(f"{base}config/").json()["data"] == {
-            "report_measure": "count"}
-        resp = _client(env["owner"]).patch(
-            f"{base}config/", {"report_measure": "estimate_minutes"}, format="json")
+        assert _client(env["owner"]).get(f"{base}config/").json()["data"] == {"report_measure": "count"}
+        resp = _client(env["owner"]).patch(f"{base}config/", {"report_measure": "estimate_minutes"}, format="json")
         assert resp.status_code == 200
         assert resp.json()["data"]["report_measure"] == "estimate_minutes"
-        bad = _client(env["owner"]).patch(
-            f"{base}config/", {"report_measure": "bogus"}, format="json")
+        bad = _client(env["owner"]).patch(f"{base}config/", {"report_measure": "bogus"}, format="json")
         assert bad.status_code == 400
 
     def test_export_requires_permission(self, env):

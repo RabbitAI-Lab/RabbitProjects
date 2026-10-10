@@ -12,7 +12,10 @@
     "REDIS_URL",
     "LIVE_JWT_PUBLIC_KEY",
     "LIVE_HEARTBEAT",
-    "INTERNAL_KEY"
+    "INTERNAL_KEY",
+    "API_PROXY_TARGET",
+    "LIVE_PROXY_TARGET",
+    "UPLOADS_PROXY_TARGET"
   ],
   "tasks": {
     "build": {

@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from _psql_env import psql_args  # noqa: E402
 
 STEPS = [
     "DELETE FROM comment_reactions WHERE comment_id IN (SELECT id FROM issue_comments WHERE issue_id IN (SELECT id FROM issues WHERE project_id IN (SELECT id FROM projects WHERE name LIKE 'S5E2E%')))",
@@ -38,7 +42,7 @@ STEPS = [
 
 def run(sql: str) -> str:
     r = subprocess.run(
-        ["docker", "exec", "-i", "rp-pg", "psql", "-U", "rp", "-d", "rabbit_projects", "-Atc", sql],
+        psql_args(["-Atc", sql]),
         capture_output=True, text=True, timeout=120,
     )
     if r.returncode != 0:

@@ -1,4 +1,5 @@
 """TASK-010 审计单元测试（diff builder / Worker 三层幂等 / 死信元数据推导）。"""
+
 from __future__ import annotations
 
 import uuid as uuid_mod
@@ -29,12 +30,17 @@ def env(db):
 def test_builder_scalar_fk_m2m_custom_and_marker(env):
     owner, proj, issue = env
     rows = build_activities(
-        issue_id=issue.id, actor_id=owner.id,
-        before={"name": "旧", "priority": "low", "description_html": "<p>a</p>",
-                "custom_fields": {"sev": "major"}},
-        after={"name": "新", "priority": "urgent", "description_html": "<p>b</p>",
-               "custom_fields": {"sev": "critical"}},
-        epoch=1000.0)
+        issue_id=issue.id,
+        actor_id=owner.id,
+        before={"name": "旧", "priority": "low", "description_html": "<p>a</p>", "custom_fields": {"sev": "major"}},
+        after={
+            "name": "新",
+            "priority": "urgent",
+            "description_html": "<p>b</p>",
+            "custom_fields": {"sev": "critical"},
+        },
+        epoch=1000.0,
+    )
     fields = {r.field for r in rows}
     assert {"name", "priority", "description", "cf_sev"} <= fields
     desc = next(r for r in rows if r.field == "description")
@@ -44,9 +50,9 @@ def test_builder_scalar_fk_m2m_custom_and_marker(env):
 
 
 def test_clip_sensitive_and_truncation():
-    assert clip("cf_webhook_url", "https://x") == "***"      # 字段名命中
-    assert clip("note", "password=123") == "***"             # 值命中
-    assert clip("name", "长" * 600).endswith("…")            # 500 截断
+    assert clip("cf_webhook_url", "https://x") == "***"  # 字段名命中
+    assert clip("note", "password=123") == "***"  # 值命中
+    assert clip("name", "长" * 600).endswith("…")  # 500 截断
     assert clip("name", None) is None
     assert SENSITIVE_PATTERNS.search("My_Secret_Token")
 
@@ -54,9 +60,14 @@ def test_clip_sensitive_and_truncation():
 def test_worker_idempotent_double_dispatch(env):
     """② DB 同键去重：同一 payload 派发两次落库恰一次（at-least-once 语义）。"""
     owner, proj, issue = env
-    payload = {"issue_id": str(issue.id), "actor_id": str(owner.id), "verb": "updated",
-               "epoch": 2000.0,
-               "before": {"name": "a"}, "after": {"name": "b"}}
+    payload = {
+        "issue_id": str(issue.id),
+        "actor_id": str(owner.id),
+        "verb": "updated",
+        "epoch": 2000.0,
+        "before": {"name": "a"},
+        "after": {"name": "b"},
+    }
     issue_activity.apply(args=[payload], kwargs={})  # eager 同步执行
     issue_activity.apply(args=[payload], kwargs={})  # 重复投递
     n = IssueActivity.objects.filter(issue=issue, epoch=2000.0, field="name").count()
@@ -68,8 +79,14 @@ def test_worker_lock_conflict_retries(env):
     owner, proj, issue = env
     from django.core.cache import cache
 
-    payload = {"issue_id": str(issue.id), "actor_id": str(owner.id), "verb": "updated",
-               "epoch": 3000.0, "before": {"name": "a"}, "after": {"name": "b"}}
+    payload = {
+        "issue_id": str(issue.id),
+        "actor_id": str(owner.id),
+        "verb": "updated",
+        "epoch": 3000.0,
+        "before": {"name": "a"},
+        "after": {"name": "b"},
+    }
     key = f"activity-lock:{build_event_key(payload)}"
     cache.add(key, 1, timeout=300)  # 模拟他方持有（硬崩溃锁残留）
     # apply() 本地同步：锁占用 → retry 轨道（RETRY/FAILURE 状态而非静默成功），
@@ -90,13 +107,11 @@ def test_dead_letter_metadata_retries_inference():
         name = "plane.bgtasks.issue_activity.issue_activity"
         max_retries = 3
 
-    payload = {"issue_id": str(uuid_mod.uuid4()), "actor_id": str(uuid_mod.uuid4()),
-               "verb": "updated", "epoch": 1.0}
+    payload = {"issue_id": str(uuid_mod.uuid4()), "actor_id": str(uuid_mod.uuid4()), "verb": "updated", "epoch": 1.0}
     mid = str(uuid_mod.uuid4())
     r = dlq_client()
     r.delete(f"{DLQ_KEY_PREFIX}{mid}")
-    record_dead_letter(sender=FakeTask(), task_id=mid,
-                       exception=MaxRetriesExceededError(), args=(payload,))
+    record_dead_letter(sender=FakeTask(), task_id=mid, exception=MaxRetriesExceededError(), args=(payload,))
     h = {k.decode(): v.decode() for k, v in r.hgetall(f"{DLQ_KEY_PREFIX}{mid}").items()}
     assert h["retries"] == "3" and "error_summary" in h and "payload" in h
     r.delete(f"{DLQ_KEY_PREFIX}{mid}")

@@ -13,6 +13,7 @@ space 公开 3 / gantt 3 / overdue 1 —— 端点路径走 `_contract.ENDPOINTS
 """
 import json
 import sys
+import os
 import time
 import urllib.request
 
@@ -449,7 +450,7 @@ expect("FL-7", "presign 51MB → 400", "POST", presign, HTTP["BAD_REQUEST"],
        {"X-CSRFToken": csrf()})
 put_ok = False
 try:
-    _r = urllib.request.Request("http://localhost:9000" + put_url[len("/uploads"):],
+    _r = urllib.request.Request(os.environ.get("AWS_S3_ENDPOINT_URL", "http://localhost:9000").rstrip("/") + put_url[len("/uploads"):],
                                 data=FL_BODY, method="PUT",
                                 headers={"Content-Type": "text/plain"})
     with urllib.request.urlopen(_r, timeout=30) as resp:  # noqa: S310
@@ -554,7 +555,7 @@ if put_ok:
               {"X-CSRFToken": csrf()})
     _a2 = _pb[1]["data"]["asset_id"]
     with urllib.request.urlopen(urllib.request.Request(  # noqa: S310
-        "http://localhost:9000" + _pb[1]["data"]["upload_url"][len("/uploads"):],
+        os.environ.get("AWS_S3_ENDPOINT_URL", "http://localhost:9000").rstrip("/") + _pb[1]["data"]["upload_url"][len("/uploads"):],
         data=FV_BODY, method="PUT", headers={"Content-Type": "text/plain"}), timeout=30):
         pass
     _c2 = req("POST", ENDPOINTS["file_complete"].format(ws=ws, proj=proj, asset=_a2),

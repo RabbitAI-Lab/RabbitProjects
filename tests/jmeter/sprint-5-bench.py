@@ -159,9 +159,9 @@ def main() -> int:
     """)
     # 工时（30 天窗口内的登记）
     psql(f"""
-    INSERT INTO work_logs (id, issue_id, actor_id, worked_on, minutes, note, created_at, updated_at)
+    INSERT INTO work_logs (id, issue_id, actor_id, worked_on, minutes, note, locked, created_at, updated_at)
     SELECT gen_random_uuid(), i.id, '{admin_id}',
-           date '2026-08-15' + (g % 20), 60 + (g % 8) * 15, 'bench', now(), now()
+           date '2026-08-15' + (g % 20), 60 + (g % 8) * 15, 'bench', false, now(), now()
     FROM (SELECT id FROM issues WHERE project_id='{proj}' AND name LIKE '{BENCH_TAG}-w%' LIMIT 300) i,
          generate_series(1, 1) g
     """)

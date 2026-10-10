@@ -250,6 +250,7 @@ export function FileLibrary({ slug, projectId, canUpload, isAdmin }: {
     setStaleSessions(readStored(slug, projectId, curFolderId));
   }, [slug, projectId, curFolderId]);
   useEffect(() => {
+    if (!noChunkActive) return; // 在途任务不探测（空闲/刚完成才刷，BR-01 断点恢复口径）
     const t = setTimeout(refreshStale, 0);
     return () => clearTimeout(t);
   }, [refreshStale, noChunkActive]);

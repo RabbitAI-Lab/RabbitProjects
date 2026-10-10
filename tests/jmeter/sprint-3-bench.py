@@ -242,8 +242,9 @@ def main() -> int:
     INSERT INTO issue_assignees (id, issue_id, assignee_id, created_by_id, created_at, updated_at)
     SELECT gen_random_uuid(), i.id, '{admin_id}', '{admin_id}', now(), now()
       FROM issues i WHERE i.project_id = '{proj_g}' AND i.sequence_id % 2 = 0;
-    INSERT INTO issue_labels (id, issue_id, label_id, created_by_id, created_at, updated_at)
-    SELECT gen_random_uuid(), i.id, '{L[f"{BENCH}-L1"]}', '{admin_id}', now(), now()
+    INSERT INTO issue_labels (id, issue_id, label_id, name_snapshot, created_by_id, created_at, updated_at)
+    SELECT gen_random_uuid(), i.id, '{L[f"{BENCH}-L1"]}',
+           (SELECT name FROM labels WHERE id='{L[f"{BENCH}-L1"]}'), '{admin_id}', now(), now()
       FROM issues i WHERE i.project_id = '{proj_g}' AND i.sequence_id % 3 = 0;
     """)
     print("  数据集就绪：GROUP 项目 10,000 行（cf/指派/标签就位）")

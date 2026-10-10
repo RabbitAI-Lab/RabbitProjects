@@ -177,8 +177,10 @@ async function dragBarBy(page: Page, issueId: string, dxPx: number) {
   const y = box!.y + box!.height / 2;
   await page.mouse.move(x0, y);
   await page.mouse.down();
-  await page.mouse.move(x0 + 10, y, { steps: 2 }); // 过 4px 阈值 → 拖拽会话激活
-  await page.mouse.move(x0 + dxPx, y, { steps: 6 });
+  // delay 每 40ms 一发：CI 2 核负载下紧循环 pointermove 会被合帧/饿死主线程，
+  // 松手时应用还停在旧位置 → 冲突弹窗不出现（S4G-7 CI flake 根因）
+  await page.mouse.move(x0 + 10, y, { steps: 2, delay: 40 }); // 过 4px 阈值 → 拖拽会话激活
+  await page.mouse.move(x0 + dxPx, y, { steps: 6, delay: 40 });
 }
 
 test.describe("Sprint-4 甘特视图（GANTT-001/002 · C.98~C.111）", () => {
@@ -189,6 +191,9 @@ test.describe("Sprint-4 甘特视图（GANTT-001/002 · C.98~C.111）", () => {
     // BR-13 限流（overdue-summary）：本 spec 十余用例两分钟内连开甘特即超试错闸——
     // 被设计行为（限流不改数据语义，黄条降级）；其余端点断言不受影响
     getErrs.allow({ method: "GET", url: "/gantt/overdue-summary/", status: HTTP.TOO_MANY });
+    // P4 关键路径（跨项目甘特三件套）并入同一 report 桶（10/min·user）——
+    // 连跑同桶溢出，与 overdue-summary 同口径放行
+    getErrs.allow({ method: "GET", url: "/gantt/critical-path/", status: HTTP.TOO_MANY });
   });
   test.afterEach(async () => {
     expect.soft(getErrs?.report() ?? [], "console/net errors").toEqual([]);
@@ -513,7 +518,10 @@ test.describe("Sprint-4 甘特视图（GANTT-001/002 · C.98~C.111）", () => {
     await expect(page.locator('[data-sb-scope="gantt-drag-badge"]')).toContainText("⚠ 依赖冲突"); // 拖动中徽标追加冲突（C.106）
     const dlg = page.locator('[data-sb-scope="gantt-conflict-dialog"]');
     await page.mouse.up();
-    await expect(dlg).toBeVisible();
+    // CI 偶发吞 window mouseup（失败快照徽标滞留「Δ -5d ⚠」自证 setBadge(null) 未执行）
+    // ——补一发合成 mouseup 兜底；会话已结束时 onUp 走 dragRef 空的静默分支，等价 no-op
+    await page.evaluate(() => window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    await expect(dlg).toBeVisible({ timeout: 15_000 }); // 2 核负载下弹窗渲染窗口放宽
     await expect(dlg).toHaveAttribute("role", "alertdialog"); // C.107 role
     await expect(dlg).toContainText(`新排期使该任务早于其前置 ${a.key} 的完成日`); // C.107 文案
     // 取消 → 无 PATCH + 弹回原位
@@ -522,11 +530,16 @@ test.describe("Sprint-4 甘特视图（GANTT-001/002 · C.98~C.111）", () => {
     await page.locator('[data-sb-scope="gantt-conflict-cancel"]').click();
     await expect(dlg).toBeHidden();
     await expect.poll(() => barLeft(page, b.id)).toBe(before); // 回位（§3.1 取消语义）
+    // 会话复位断言：拖拽徽标消失 = 应用侧拖拽会话已终结。CI 上 poll（条位置）
+    // 可能在会话 teardown 完成前通过，第二拖被半死会话吞掉、pointerup 不落子
+    // → 弹窗不出且徽标滞留「Δ -5d ⚠ 依赖冲突」（20261010 CI 失败快照自证）
+    await expect(page.locator('[data-sb-scope="gantt-drag-badge"]')).toBeHidden({ timeout: 10_000 });
     // 再拖一次 → 仍按此排期 → PATCH 200 + 红点持续提示
     const patch = page.waitForResponse((r: Response) => new RegExp(`/issues/${b.id}/`).test(r.url()) && r.request().method() === "PATCH");
     await dragBarBy(page, b.id, -5 * 36);
     await page.mouse.up(); // 松手出弹层（dragBarBy 不含 up）
-    await expect(dlg).toBeVisible();
+    await page.evaluate(() => window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }))); // 同上兜底
+    await expect(dlg).toBeVisible({ timeout: 15_000 });
     await page.locator('[data-sb-scope="gantt-conflict-ok"]').click();
     const resp = await patch;
     expect(resp.status()).toBe(HTTP.OK); // BR-06 提示非拦截：确认后放行

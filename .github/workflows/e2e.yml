@@ -1,17 +1,198 @@
 name: e2e
+
+# Playwright 全量 UI 回归真跑——替换 sprint-0 的 echo 占位（占位期间「e2e 门禁
+# 绿」实为零覆盖，20260923 每夜 CI 扫描定位；此前全量只在本机每夜班次跑）。
+# 触发：workflow_dispatch + 每夜定期；暂不挂 pull_request（全栈 job ~20min，
+# 是否进 PR 门禁待裁定——先由每夜班次供真信号）。
+# 栈口径 = dev 同构：PG/Redis/RabbitMQ/MinIO 服务容器 + schema bootstrap
+# （ci/api_db_bootstrap.sh，与 api-ci 同配方）+ 演示数据种子（ci/e2e_seed.sh）
+# + API 8000 / worker / web 3001 / live 3000 / admin 台 3002。
 on:
-  pull_request:
-  push: { branches: [main] }
+  workflow_dispatch: {}
+  schedule:
+    - cron: "30 21 * * *"   # UTC 21:30 = 本地 05:30（security-gate 之后错峰）
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    needs: []
+    timeout-minutes: 45
+    env:
+      SECRET_KEY: dev
+      # runserver 每 keep-alive 连接一线程，CONN_MAX_AGE=60 会把 PG 连接水印推到
+      # max_connections（sporadic SERVER_DATABASE_ERROR，20261010 每夜定位）——
+      # e2e 改每请求连接
+      DB_CONN_MAX_AGE: "0"
+      DATABASE_URL: postgresql://rp:rp@127.0.0.1:5432/rabbit_projects
+      REDIS_URL: redis://127.0.0.1:6379/0
+      CELERY_BROKER_URL: amqp://rp:rp@127.0.0.1:5672//
+      AWS_ACCESS_KEY_ID: rpminio
+      AWS_SECRET_ACCESS_KEY: rpminio123
+      AWS_S3_BUCKET_NAME: rp-uploads
+      # 必须 localhost 而非 127.0.0.1：SigV4 把 Host 纳入签名，种子直传
+      # （seed_acceptance_s3 的 MINIO 常量）用的是 localhost:9000——host 不一致
+      # 会 SignatureDoesNotMatch 403
+      AWS_S3_ENDPOINT_URL: http://localhost:9000
+      # turbo passthrough 只透传父环境已存在变量——live 三件套必须 job 级声明
+      LIVE_PORT: "3000"
+      API_INTERNAL_URL: http://127.0.0.1:8000
+      INTERNAL_KEY: rp-live-internal-dev
+      PGHOST: 127.0.0.1
+      PGUSER: rp
+      PGPASSWORD: rp
+      PGDATABASE: rabbit_projects
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: rp
+          POSTGRES_PASSWORD: rp
+          POSTGRES_DB: rabbit_projects
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rp -d rabbit_projects"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: rp
+          RABBITMQ_DEFAULT_PASS: rp
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 20
+    # MinIO 不走 services（service 容器无法自定义 command，且失败时看不到容器日志），
+    # 用下方 docker run 步骤显式起——显式 server /data + 失败打日志
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with: { node-version-file: ".nvmrc" }
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      # Playwright 用例由 E2E-xx 交付后接入（P0 骨架占位）
-      - run: echo "e2e placeholder — Playwright suites land with sprint-0 feature docs"
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          # 关缓存：post 步骤 uv cache prune 在 runner 上挂 5 分钟后 exit 2（基建
+          # 抖动，20261010 实测把全绿套件整 run 标红）；装机省时 <20s 不值得
+          enable-cache: false
+      - run: uv sync --project apps/api
+
+      # Django 5.1 + swappable User 在 PG 上 migrate 必炸（CLAUDE.md 坑 ①）——
+      # 与 api-ci 同配方：sqlmigrate 拓扑序 DDL + 手工附加 + migrate --fake
+      - name: bootstrap PG schema
+        run: bash ci/api_db_bootstrap.sh
+
+      # MinIO 镜像源三迁（20261010）：Docker Hub 2025-05 全量清库 → quay 钉 tag
+      # （quay.io/minio/minio:RELEASE.2025-04-22…）→ 2026-10-10 起 quay minio org
+      # 整体 401（tag 列表已空）。现用 chainguard 免费镜像（latest 浮动 tag——
+      # 免费层不提供历史 tag 钉版；如需可再改 digest 钉）。server 以 MINIO_ROOT_*
+      # 环境变量起、/minio/health/live 就绪探测、mc 经 MC_HOST_* 注入凭据建桶，
+      # 三者与 quay 版行为一致（本地实测）。
+      - name: start MinIO + create bucket
+        run: |
+          docker run -d --name rp-minio-ci -p 9000:9000 \
+            -e MINIO_ROOT_USER=rpminio -e MINIO_ROOT_PASSWORD=rpminio123 \
+            cgr.dev/chainguard/minio:latest server /data
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:9000/minio/health/live > /dev/null && { echo "✓ MinIO up"; break; }
+            [ "$i" = 60 ] && { echo "✗ MinIO 未就绪"; docker logs rp-minio-ci; exit 1; }
+            sleep 2
+          done
+          # mc 镜像 entrypoint=mc 且微底无 sh——凭据经 MC_HOST_* 注入，免 shell/alias
+          docker run --rm --network host \
+            -e MC_HOST_rp=http://rpminio:rpminio123@127.0.0.1:9000 \
+            cgr.dev/chainguard/minio-client:latest mb --ignore-existing rp/rp-uploads
+
+      - name: install Playwright chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: generate live keys
+        run: |
+          bash scripts/gen_live_keys.sh > /tmp/keys.env
+          {
+            echo "LIVE_JWT_PRIVATE_KEY<<EOF_PEM"
+            cat deploy/keys/live_jwt_private_key.pem
+            echo "EOF_PEM"
+            echo "LIVE_JWT_PUBLIC_KEY<<EOF_PEM"
+            cat deploy/keys/live_jwt_public_key.pem
+            echo "EOF_PEM"
+          } >> "$GITHUB_ENV"
+
+      - name: start stack (API / worker / web / live / admin)
+        run: |
+          nohup uv run --project apps/api python apps/api/manage.py runserver 0.0.0.0:8000 > /tmp/api.log 2>&1 &
+          # worker 必须 cwd=apps/api——`celery -A plane` 按 CWD 导入 plane 模块，仓库根
+          # 起会 "Unable to load celery application" 秒死且无探测即静默（20261010 每夜
+          # 定位：CI 全部 dispatch 的 worker 均未活过，stream/时间线/预览派生/审计导出
+          # 全断粮）；dev 启动配方同款（见 dev-stack 启动记忆）。
+          # 池用 threads 不用默认 prefork：GH runner 上 fork 后 broker 连接悬挂
+          # （banner 停在 [queues]，5 分钟无 "connected"，fork-after-threads 死锁
+          # 典型形态，本地 macOS 不复现）；e2e 活动消费量级下线程池足够。
+          # -l debug 兼当缓冲冲刷：非 debug 下 worker.log 块缓冲，banner 停在
+          # [queues] 后 ready 信号永不可见（就绪断言必假红）
+          (cd apps/api && nohup uv run --project . celery -A plane worker -Q activity,celery --pool=threads --concurrency=4 -l debug > /tmp/worker.log 2>&1 &)
+          nohup pnpm dev > /tmp/web-dev.log 2>&1 &
+          nohup pnpm dev:admin > /tmp/admin-dev.log 2>&1 &
+          # s5 种子的 webhook/GitHub 绑定演示依赖两个 mock receiver（dev 常驻，CI 补起）
+          nohup python3 scripts/mock_github_receiver.py 8090 > /tmp/mock-gh.log 2>&1 &
+          nohup python3 scripts/mock_500_receiver.py 8091 > /tmp/mock-500.log 2>&1 &
+          # worker 就绪断言（fail-fast：celery 打印 "ready." 才算活，否则 20 分钟后
+          # Playwright 才以断粮形态暴露；2 核 runner 冷 import 实测 >120s，给 300s）
+          for i in $(seq 1 300); do
+            grep -q "ready" /tmp/worker.log 2>/dev/null && { echo "✓ worker ready"; break; }
+            [ "$i" = 300 ] && { echo "✗ worker 未就绪"; tail -n 40 /tmp/worker.log; exit 1; }
+            sleep 1
+          done
+          # 探测走 localhost（curl 自动回退 IPv4/IPv6）——vite 可能只绑 [::1]
+          for spec in "8000 api /api/v1/auth/csrf-token/" "3001 web /" "3002 admin /god-mode/" "3000 live /health" "8090 mock-gh /" "8091 mock-500 /"; do
+            set -- $spec; port=$1; name=$2; path=$3
+            for i in $(seq 1 240); do
+              curl -s -o /dev/null "http://localhost:${port}${path}" && { echo "✓ $name($port) up"; break; }
+              [ "$i" = 240 ] && { echo "✗ $name($port) 未就绪"; tail -n 30 /tmp/web-dev.log; tail -n 30 /tmp/admin-dev.log; tail -n 30 /tmp/api.log; exit 1; }
+              sleep 1
+            done
+          done
+
+      # 种子走 API（zhangsan 注册）——必须在起栈之后
+      - name: seed demo data
+        run: bash ci/e2e_seed.sh
+
+      - name: run Playwright suite
+        run: E2E_NO_SERVER=1 pnpm exec playwright test
+
+      - name: upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: |
+            test-results/
+            playwright-report/
+            # vite dev 日志：排查「套件中途重新预打包 → 新旧 React 副本混载 →
+            # invalid hook call 崩溃」（20261010 每夜定位）必备——"new dependencies
+            # optimized" 的轮次与触发依赖全在这份日志里
+            /tmp/web-dev.log
+            /tmp/admin-dev.log
+            /tmp/api.log
+            /tmp/worker.log
+          retention-days: 7
+          if-no-files-found: ignore

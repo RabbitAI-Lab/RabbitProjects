@@ -27,6 +27,13 @@ overrides:
   # GHSA-p9ff-h696-f583 / GHSA-fx2h-pf6j-xcff：任意文件读/fs.deny 绕过，
   # patched 6.4.2/6.4.3（storybook 8 builder 链锁定残留 6.3.7，统一到 6.4.x）
   vite: "6.4.x"
+  # GHSA-jqcg-44mw-7w3h：IPv4-mapped IPv6 信任子网编译错误 → X-Forwarded-For IP 伪造，
+  # patched 2.0.8（express@4 钉 ~2.0.7）
+  proxy-addr: "^2.0.8"
+  # GHSA-5gmw-xhrv-c9v3 / GHSA-85c8-ppgw-ccpr：worker options 原型污染 → RCE，
+  # patched 2.1.1/2.1.2（vitest@3 钉 ^1.1.1、oxfmt@0.65 钉 2.1.0，均超父级 semver 范围，
+  # 只能 override；vitest 3.2.7 与 tinypool 2.1.2 兼容性已本地实证——见 20261010 每夜）
+  tinypool: "^2.1.2"
 
 # ── 允许执行构建脚本的包（pnpm 11 用 allowBuilds 对象形式；
 #    文档 §4.2 的 onlyBuiltDependencies 为 pnpm 10 字段，登记为文档待回改项）──

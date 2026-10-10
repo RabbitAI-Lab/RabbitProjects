@@ -4,6 +4,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router";
 
+import { Topbar } from "../components/Topbar";
+import { ProjectSidebar } from "../components/ProjectSidebar";
+import { ProjectAPI } from "../services/api";
+
 import { WorklogAPI } from "../services/api";
 
 const STATUS_BADGE: Record<string, string> = {
@@ -27,6 +31,8 @@ function mondayOf(d: Date): string {
 export default function WorklogPage() {
   const { workspaceSlug: ws, projectId } = useParams();
   const [view, setView] = useState<"mine" | "queue" | "ledger">("mine");
+  const [projName, setProjName] = useState("…");
+  const [projIdentifier, setProjIdentifier] = useState("");
   const [weekStart, setWeekStart] = useState(mondayOf(new Date()));
   const [batches, setBatches] = useState<Array<{ id: string; actor_name: string; week_start: string; status: string; review_note: string }>>([]);
   const [ledger, setLedger] = useState<Array<{ actor_name: string; week_start: string; total_minutes: number; task_count: number; over_8h_days: number; is_frozen: boolean }>>([]);
@@ -46,6 +52,14 @@ export default function WorklogPage() {
     } catch { /* 错误态在页内呈现 */ }
   }, [ws, projectId]);
 
+  useEffect(() => {
+    if (!ws || !projectId) return;
+    ProjectAPI.detail(ws, projectId).then((r) => {
+      const d = (r as unknown as { data?: { name?: string; identifier?: string } }).data;
+      setProjName(d?.name ?? "…");
+      setProjIdentifier(d?.identifier ?? "");
+    }).catch(() => {});
+  }, [ws, projectId]);
   // oxlint-disable-next-line react/set-state-in-effect -- 同 approvals.tsx：服务端 loader 误报面
   useEffect(() => { load(); /* eslint-disable-line react-hooks/set-state-in-effect -- 同 approvals.tsx */ }, [load]);
 
@@ -75,8 +89,12 @@ export default function WorklogPage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-neutral-50" data-sb-scope="worklog-page">
-      <header className="h-12 border-b border-neutral-200 bg-white px-4 flex items-center gap-4">
+    <div className="flex flex-col h-screen">
+      <Topbar />
+      <div className="flex flex-1 min-h-0">
+        <ProjectSidebar projectName={projName} identifier={projIdentifier} />
+        <main className="flex-1 min-w-0 flex flex-col overflow-hidden bg-neutral-50" data-sb-scope="worklog-page">
+      <header className="h-12 border-b border-neutral-200 bg-white px-4 flex items-center gap-4 shrink-0">
         <h1 className="text-sm font-semibold">工时</h1>
         <nav className="flex gap-1" data-sb-scope="worklog-tabs">
           {([["mine", "我的周"], ["queue", "审批队列"], ["ledger", "团队台账"]] as const).map(([k, label]) => (
@@ -206,6 +224,8 @@ export default function WorklogPage() {
           )}
         </section>
       )}
+        </main>
+      </div>
     </div>
   );
 }

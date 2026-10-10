@@ -12,6 +12,7 @@ API 真相源唯一，禁止各自硬编码状态码 / 字段名 / 错误码）�
 from __future__ import annotations
 
 import sys
+import os
 import time
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
@@ -45,7 +46,7 @@ def _gateway_to_minio(url: str) -> str:
     同源零跨域）。本地跑接口流程时没有网关，需还原后在 9000 端口直接访问。
     """
     if url.startswith("/uploads/"):
-        return "http://localhost:9000/" + url[len("/uploads/"):]
+        return os.environ.get("AWS_S3_ENDPOINT_URL", "http://localhost:9000").rstrip("/") + "/" + url[len("/uploads/"):]
     return url
 
 

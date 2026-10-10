@@ -36,6 +36,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import os
 import time
 import urllib.request
 import uuid as uuid_mod
@@ -49,7 +50,9 @@ FAIL = 0
 SKIP = 0
 FAILURES: list[str] = []
 
-MINIO_BASE = "http://localhost:9000"
+# 直连目标与 presign 签名 host 同源（4d8b6bb 同类）：默认 9000，错峰端口
+# 副栈经 AWS_S3_ENDPOINT_URL 注入（20261010 每夜）
+MINIO_BASE = os.environ.get("AWS_S3_ENDPOINT_URL", "http://localhost:9000").rstrip("/")
 
 #: 1×1 真 PNG（预览派生 worker 用 PIL 解码，假字节会 giveup）
 PNG_1PX = base64.b64decode(
@@ -676,10 +679,10 @@ def file2_segment(admin, member, viewer, ws, admin_id, member_id, viewer_id):
     _pg_exec(
         "INSERT INTO file_assets (id, workspace_id, project_id, entity_type, entity_id, "
         " folder_id, attributes, size, storage_path, status, is_uploaded, uploaded_by_id, "
-        " visibility, allowed_members, download_count, created_by_id, updated_by_id, "
+        " visibility, allowed_members, dlp_hits, download_count, created_by_id, updated_by_id, "
         " created_at, updated_at) "
         "VALUES (%s, (SELECT workspace_id FROM projects WHERE id=%s), %s, 'project_file', "
-        " %s, %s, %s::jsonb, 15, %s, 'uploaded', true, %s, 'all', '[]'::jsonb, 0, "
+        " %s, %s, %s::jsonb, 15, %s, 'uploaded', true, %s, 'all', '[]'::jsonb, '[]'::jsonb, 0, "
         " %s, %s, now(), now())",
         (dup_id, proj, proj, v_all, v_all,
          json.dumps({"name": "S4FL-ref-b.txt", "size": 15, "mime": "text/plain", "ext": ".txt"}),
@@ -708,9 +711,9 @@ def file2_segment(admin, member, viewer, ws, admin_id, member_id, viewer_id):
         _pg_exec(
             "INSERT INTO file_assets (id, workspace_id, project_id, entity_type, entity_id, "
             " attributes, size, storage_path, status, is_uploaded, uploaded_by_id, visibility, "
-            " allowed_members, download_count, created_by_id, updated_by_id, created_at, updated_at) "
+            " allowed_members, dlp_hits, download_count, created_by_id, updated_by_id, created_at, updated_at) "
             "VALUES (%s, %s, %s, 'project_file', %s, %s::jsonb, %s, %s, 'uploaded', true, "
-            " %s, 'all', '[]'::jsonb, 0, %s, %s, now(), now())",
+            " %s, 'all', '[]'::jsonb, '[]'::jsonb, 0, %s, %s, now(), now())",
             (hog, ws_id, proj, v_all,
              json.dumps({"name": "S4FL-quota-hog.bin", "size": hog_size, "mime": "", "ext": ".bin"}),
              str(hog_size), f"s4flow-quota-hog/{hog}", admin_id, admin_id, admin_id))

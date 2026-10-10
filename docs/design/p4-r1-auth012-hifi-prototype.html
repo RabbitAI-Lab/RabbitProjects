@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RabbitProjects · P4 R1 高保真原型 · AUTH-012 多租户隔离与风控</title>
+<!--
+════════════════════════════════════════════════════════════════════════════════
+RabbitProjects · P4 R1 高保真可交互原型（AUTH-012 多租户隔离与风控告警溯源）
+════════════════════════════════════════════════════════════════════════════════
+状态：FROZEN 2026-09-11（用户复审通过）——UI 实现以此为准；任何改动需重新
+      走评审解冻（CLAUDE.md 硬门槛）。
+
+评审记录
+  2026-09-11 一审（用户走查）：两条意见——①左侧菜单乱：三个管理面侧栏结构
+    不一致、基线侧栏样式（.side-item/.side-label/.p-id）漏移植靠内联补丁、
+    跨视角演示跳转混入真实 IA；②冻结审批弹窗步骤条与连接线重叠（空
+    inline-flex 基线顶偏 + 连接线画在圆点上层）。当日修订 #1 收口（abae793）。
+  2026-09-11 复审（用户）：「没问题」——冻结生效。O1~O8 开放点全部按本
+    原型实现；侧栏 IA 以「平台治理三面同构 / 客户侧设置组」为准。
+
+评审修订 2026-09-11 #1（用户走查两条）：
+  ① 侧栏 IA 重构：三个管理面（总览/租户详情/事件中心）统一为「运营身份块 +
+     平台治理组（租户总览 / 风控事件中心 / 边界报告台账 R1+ 置灰）」同构侧栏；
+     客户侧 V-SEC 收敛为工作空间身份块 + 设置组。根因是基线 .psidebar/.side-item/
+     .side-label/.p-id 样式漏移植，此前靠内联 justify-content 逐个补丁且各面
+     结构不一致；跨视角跳转（运营↔客户）移出演示 dock 专属，不再混入真实 IA。
+  ② 冻结审批步骤条（O5）修复：.n 圆点改块级 flex 居中（原先空 inline-flex 的
+     基线对齐会把圆点顶偏）+ position:relative;z-index:1 压住连接线（原先定位
+     元素 ::before 画在圆点上层，连接线横穿圆点）。
+
+基线与依据
+  · 视觉语言基线：docs/design/sprint-9-hifi-prototype.html（FROZEN 2026-09-10）
+    token / 控件 / 外壳 / dock 模式全部延续，零漂移。
+  · 表面定义：AUTH-012-multi-tenant.md §3.1~§3.4（五页 + 冻结横幅）。
+  · 数值自洽：Beta Ltd R-03 事件 102,340/100,000=102.3%（§3.3 线框原值）；
+    总览水位 42/78/96% 与配额表 §2.3 档位一致（企业 1TB·标准 100GB·免费 5GB）；
+    近 24h 汇总「12（R-01×2 R-03×4 R-06×6）· 冻结 0 · 限流 1」＝线框原值；
+    未处置徽标 3 = Beta R-03×1 + Gamma R-06×2。
+
+原型自定开放点（规格未规定视觉细节，原型先行定义，评审时可改）
+  O1 水位条三档色：<80% 品牌蓝 / 80-94% 琥珀（§3.4 黄）/ ≥95% 红 + ! 角标。
+  O2 规则徽标 R-xx：胶囊式，触发未处置=红底白字，已处置=灰底；悬停出规则全名。
+  O3 事件级别：🔴 高（处置含冻结）/ 🟡 中（限流/降速）/ ⚪ 低（仅告警）三档。
+  O4 租户详情布局：页头（档位徽标/下挂 WS chips/状态）+ 配额六项双水位卡
+     （WS 层浅条 + 租户层深条同格，两层模型 §2.3 可视化）+ 事件表 + 处置区。
+  O5 冻结审批三步条：发起 → 待审批 → 审批确认；审批人下拉系统预置≠发起人
+     （BR-04 演出：选「与发起人相同」即红字拦截）；租户名匹配输入才解锁按钮。
+  O6 阈值调紧控件：六规则行式（平台默认只读 + 租户当前值可改），放宽即
+     红字 + 提交禁用（BR-06）；保存后 toast「已生效（只会更严格）」。
+  O7 L2 授权工单双侧：运营侧申请弹窗（对象 ID 清单 + 理由 + 24h 时效）；
+     客户侧「我的租户安全」待办卡（批准/拒绝，批准后运营视角变绿标）。
+  O8 冻结横幅：琥珀静默条置顶（非阻断），右侧 15:00 缓冲倒计时（BR-09）；
+     写操作被拒 toast RESOURCE_STATE_INVALID；倒计时归零后整页只读遮罩演出。
+
+视图 / 弹窗 ID → 表面覆盖映射（AUTH-012 §3 逐条）
+  V-TENANTS  #/admin/tenants      平台租户总览（§3.2 线框：水位/风控/状态/汇总条）
+  V-TENANT   #/admin/tenants/beta 租户详情（§3.1 行 2：配额调整/事件/处置）
+  V-RISK     #/admin/risk-events  风控事件中心（§3.1 行 3：筛选/事件流/处置）
+  V-SEC      #/ws/settings/security 我的租户安全（§3.1 行 5：事件/阈值调紧/审计包）
+  V-FROZEN   #/ws/projects        冻结横幅演出（§3.4：安全审查期文案 + 只读过渡）
+  M-DISPOSE  处置弹窗             §3.3 线框全量（证据快照/三档处置/BR-07 L2）
+  M-FREEZE   冻结审批弹窗         §3.4 双人审批链（BR-04）
+  M-QUOTA    配额调整弹窗         §2.3 档位/配额 + BR-12 审计提示
+  M-L2       L2 授权工单弹窗      §2.5 最小知情（运营侧申请）
+  DOCK       演示面板             页面直达 · 五组演出（R-03 处置 / 冻结链 /
+                                水位预警 / 阈值调紧 / L2 工单）
+════════════════════════════════════════════════════════════════════════════════
+-->
+<style>
+/* ═════════ 设计 token · 与 sprint-0~4/8/9 冻结基线一致 ═════════ */
+:root{
+  --brand-50:#eef4ff;--brand-100:#dbe7fe;--brand-500:#3f76ff;--brand-600:#2f5fe0;
+  --state-unstarted:#9ca3af;--state-started:#3b82f6;--state-completed:#10b981;--state-cancelled:#6b7280;
+  --danger:#ef4444;--danger-bg:#fef2f2;--danger-line:#fecaca;--ok:#059669;--ok-bg:#ecfdf5;
+  --warn:#f59e0b;--amber-bg:#fffbeb;--amber-line:#fde68a;--amber-ink:#b45309;
+  --info-bg:#eff6ff;--info-line:#bfdbfe;--info-ink:#1d4ed8;
+  --bg:#fafafa;--surface:#ffffff;--surface-2:#f5f5f5;--surface-3:#ececec;
+  --line:#e5e5e5;--line-strong:#d4d4d4;
+  --ink:#262626;--ink-2:#525252;--ink-3:#8c8c8c;--ink-4:#a3a3a3;
+  --radius-card:.5rem;--radius-md:6px;--radius-lg:8px;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.05);--shadow-md:0 4px 12px rgba(0,0,0,.08);--shadow-lg:0 12px 32px rgba(0,0,0,.14);
+  --font-ui:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --header-h:48px;--ease-spring:cubic-bezier(.2,.9,.3,1.1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--font-ui);background:var(--bg);color:var(--ink);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,textarea,select{font:inherit;color:inherit}
+svg{flex-shrink:0}
+:focus-visible{outline:2px solid var(--brand-500);outline-offset:1px;border-radius:4px}
+[hidden]{display:none!important}
+.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+
+/* ═════════ 基础控件（基线沿用） ═════════ */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 14px;border-radius:var(--radius-md);font-weight:500;font-size:13px;transition:background .12s,border-color .12s,opacity .12s;white-space:nowrap}
+.btn-primary{background:var(--brand-500);color:#fff}
+.btn-primary:hover{background:var(--brand-600)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-ghost{background:var(--surface);border:1px solid var(--line-strong);color:var(--ink-2)}
+.btn-ghost:hover{background:var(--surface-2)}
+.btn-ghost:disabled{opacity:.5;cursor:not-allowed}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-danger:hover{background:#dc2626}
+.btn-danger:disabled{opacity:.5;cursor:not-allowed}
+.btn-sm{height:28px;padding:0 10px;font-size:12px}
+.icon-btn{width:30px;height:30px;border-radius:var(--radius-md);display:inline-flex;align-items:center;justify-content:center;color:var(--ink-3)}
+.icon-btn:hover{background:var(--surface-2);color:var(--ink)}
+.input{width:100%;height:36px;border:1px solid var(--line-strong);border-radius:var(--radius-md);padding:0 10px;background:var(--surface);transition:border-color .12s,box-shadow .12s}
+.input:focus{outline:none;border-color:var(--brand-500);box-shadow:0 0 0 3px var(--brand-50)}
+textarea.input{height:auto;padding:8px 10px;resize:vertical;line-height:1.6}
+.label{display:block;font-size:13px;font-weight:500;color:var(--ink-2);margin-bottom:6px}
+.hint{font-size:12px;color:var(--ink-3)}
+.badge-id{font-family:var(--font-mono);font-size:11px;padding:1px 6px;background:var(--surface-2);border-radius:4px;color:var(--ink-2);white-space:nowrap}
+.avatar{width:28px;height:28px;border-radius:50%;color:#fff;font-size:12px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.avatar-sm{width:20px;height:20px;font-size:10px}
+a{color:var(--brand-600);text-decoration:none}
+a:hover{text-decoration:underline}
+[data-tip]{position:relative}
+[data-tip]:hover::after,[data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#262626;color:#fff;font-size:12px;font-weight:400;padding:4px 9px;border-radius:6px;white-space:nowrap;z-index:300;pointer-events:none;text-decoration:none}
+
+/* ═════════ 弹层 / Toast（基线沿用） ═════════ */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.32);backdrop-filter:blur(2px);z-index:90;display:flex;align-items:center;justify-content:center;padding:16px;animation:fade .15s ease}
+.modal{background:var(--surface);border-radius:12px;box-shadow:var(--shadow-lg);width:480px;max-width:100%;max-height:88vh;overflow:auto;padding:24px;animation:pop .18s var(--ease-spring)}
+.modal.w520{width:520px}.modal.w640{width:640px}
+.modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.modal-title{font-size:16px;font-weight:600}
+.modal-foot{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}
+.toast-wrap{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:400;display:flex;flex-direction:column;gap:8px;align-items:center}
+.toast{background:#262626;color:#fff;font-size:13px;padding:9px 16px;border-radius:8px;box-shadow:var(--shadow-md);animation:pop .18s var(--ease-spring)}
+.toast-ok{background:var(--ok)}
+.toast-err{background:var(--danger)}
+.toast-warn{background:var(--amber-ink)}
+
+/* ═════════ 应用壳（基线沿用） ═════════ */
+.app{height:100vh;display:flex;flex-direction:column}
+.topbar{height:var(--header-h);background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 16px;flex-shrink:0}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.shell{flex:1;display:flex;min-height:0}
+.pmain{flex:1;overflow:auto;min-width:0}
+.page{padding:22px 26px;max-width:1280px;margin:0 auto}
+.page-head{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.page-title{font-size:17px;font-weight:600}
+.page-sub{font-size:12.5px;color:var(--ink-3)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-card);box-shadow:var(--shadow-sm)}
+.seg{display:inline-flex;background:var(--surface-2);border-radius:8px;padding:3px;gap:2px}
+.seg-btn{height:28px;padding:0 12px;border-radius:6px;font-size:12.5px;color:var(--ink-2)}
+.seg-btn.active{background:var(--surface);color:var(--ink);font-weight:500;box-shadow:var(--shadow-sm)}
+
+/* ═════════ 表格（基线沿用） ═════════ */
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{font-size:12px;font-weight:500;color:var(--ink-3);text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+.tbl td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tbody tr:hover{background:var(--surface-2)}
+
+/* ═════════ AUTH-012 组件（O1~O8 定义） ═════════ */
+/* O1 水位条 */
+.water{display:flex;align-items:center;gap:8px;min-width:150px}
+.water .bar{flex:1;height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden}
+.water .bar>i{display:block;height:100%;border-radius:4px;background:var(--brand-500);transition:width .4s var(--ease-spring)}
+.water .bar>i.warn{background:var(--warn)}
+.water .bar>i.danger{background:var(--danger)}
+.water .pct{width:38px;text-align:right;font-family:var(--font-mono);font-size:12px;color:var(--ink-2)}
+.water .pct.hot{color:var(--danger);font-weight:600}
+/* O2 规则徽标 */
+.rule-pill{font-family:var(--font-mono);font-size:11px;padding:1px 7px;border-radius:99px;white-space:nowrap}
+.rule-open{background:var(--danger);color:#fff}
+.rule-done{background:var(--surface-2);color:var(--ink-3)}
+.rule-info{background:var(--info-bg);color:var(--info-ink)}
+/* 套餐档位徽标 */
+.plan-pill{font-size:11px;padding:1px 8px;border-radius:4px;white-space:nowrap}
+.plan-free{background:var(--surface-2);color:var(--ink-2)}
+.plan-standard{background:var(--info-bg);color:var(--info-ink)}
+.plan-enterprise{background:var(--brand-100);color:var(--brand-600)}
+.plan-flagship{background:#f5f3ff;color:#6d28d9;border:1px solid #ddd6fe}
+/* 租户状态 */
+.tstate{display:inline-flex;align-items:center;gap:6px;font-size:12.5px}
+.tstate .dot{width:8px;height:8px;border-radius:50%}
+.ts-ok .dot{background:var(--ok)}
+.ts-limited .dot{background:var(--warn)}
+.ts-frozen .dot{background:var(--danger)}
+.alert-badge{background:var(--danger-bg);color:var(--danger);border:1px solid var(--danger-line);font-size:12px;padding:3px 10px;border-radius:99px;display:inline-flex;align-items:center;gap:5px}
+/* 汇总条（§3.2 底部） */
+.sum-strip{margin-top:14px;padding:9px 14px;font-size:12.5px;color:var(--ink-2);display:flex;gap:18px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-card)}
+.sum-strip b{font-family:var(--font-mono)}
+/* O3 事件行 / 证据快照 */
+.ev-row{display:flex;gap:12px;align-items:center;padding:11px 14px;border-bottom:1px solid var(--line)}
+.ev-row:last-child{border-bottom:none}
+.ev-row:hover{background:var(--surface-2)}
+.ev-id{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+.ev-lv{font-size:12px;white-space:nowrap;width:44px}
+.ev-tenant{font-weight:500;white-space:nowrap}
+.ev-snap{font-size:12px;color:var(--ink-3);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ev-act{display:flex;gap:8px;align-items:center}
+.evidence{background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:12px 0}
+.evidence h5{font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:8px}
+.evidence ul{list-style:none}
+.evidence li{font-size:12.5px;color:var(--ink-2);padding:3px 0;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.evidence li::before{content:"·";margin-right:8px;color:var(--ink-4)}
+/* 处置三选（§3.3） */
+.disp-opt{display:flex;align-items:flex-start;gap:9px;padding:10px 12px;border:1px solid var(--line-strong);border-radius:8px;margin-bottom:8px;cursor:pointer;transition:border-color .12s,background .12s}
+.disp-opt:hover{border-color:var(--brand-500)}
+.disp-opt.sel{border-color:var(--brand-500);background:var(--brand-50)}
+.disp-opt input{margin-top:3px}
+.disp-opt .t{font-size:13px;font-weight:500}
+.disp-opt .d{font-size:11.5px;color:var(--ink-3)}
+.disp-opt .tag-need{font-size:11px;color:var(--amber-ink);background:var(--amber-bg);border:1px solid var(--amber-line);padding:0 6px;border-radius:4px;margin-left:6px}
+/* O5 审批步骤条（修订#1：圆点块级居中 + 压线层级，连接线不再与圆点重叠） */
+.steps{display:flex;gap:0;margin:6px 0 20px}
+.step{flex:1;text-align:center;position:relative;font-size:12px;color:var(--ink-3)}
+.step .n{width:26px;height:26px;border-radius:50%;background:var(--surface-2);color:var(--ink-3);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;margin:0 auto 6px;border:2px solid var(--line-strong);position:relative;z-index:1}
+.step::before{content:"";position:absolute;top:12px;left:-50%;width:100%;height:2px;background:var(--line)}
+.step:first-child::before{display:none}
+.step.on{color:var(--brand-600);font-weight:500}
+.step.on .n{background:var(--brand-500);border-color:var(--brand-500);color:#fff}
+.step.done{color:var(--ok)}
+.step.done .n{background:var(--ok);border-color:var(--ok);color:#fff}
+.step.done::before,.step.on::before{background:var(--ok)}
+.step.on::before{background:var(--brand-500)}
+/* O4 双水位格 */
+.qcard{padding:13px 15px}
+.qcard h4{font-size:12px;font-weight:500;color:var(--ink-2);margin-bottom:9px;display:flex;align-items:center;gap:6px}
+.qcard .val{font-size:19px;font-weight:600;font-family:var(--font-mono)}
+.qcard .val small{font-size:11px;color:var(--ink-3);font-weight:400}
+.dual{margin-top:8px}
+.dual .lbl{display:flex;justify-content:space-between;font-size:10.5px;color:var(--ink-4);margin-bottom:2px}
+.dual .lbl b{color:var(--ink-3);font-weight:500}
+/* O6 阈值调紧行 */
+.th-row{display:grid;grid-template-columns:150px 1fr 1fr 92px;gap:10px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line);font-size:12.5px}
+.th-row:last-child{border-bottom:none}
+.th-row .rn{font-weight:500}
+.th-row .rn small{display:block;font-size:11px;color:var(--ink-3);font-weight:400}
+.th-num{font-family:var(--font-mono);color:var(--ink-2);text-align:right}
+.th-input{height:30px;border:1px solid var(--line-strong);border-radius:6px;padding:0 8px;font-family:var(--font-mono);font-size:12.5px;width:100%;background:var(--surface)}
+.th-input.err{border-color:var(--danger);background:var(--danger-bg)}
+/* O8 冻结横幅 */
+.frozen-banner{background:var(--amber-bg);border-bottom:1px solid var(--amber-line);color:var(--amber-ink);font-size:13px;padding:9px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0}
+.frozen-banner .cd{margin-left:auto;font-family:var(--font-mono);font-size:12.5px}
+.readonly-veil{position:absolute;inset:0;background:rgba(250,250,250,.72);backdrop-filter:grayscale(.6);z-index:40;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--ink-3)}
+/* L2 工单（§2.5） */
+.l2card{padding:12px 14px;border:1px solid var(--amber-line);background:var(--amber-bg);border-radius:8px;margin-bottom:10px}
+.l2card.ok{border-color:#a7f3d0;background:var(--ok-bg)}
+.kv{display:grid;grid-template-columns:96px 1fr;gap:4px 10px;font-size:12.5px}
+.kv .k{color:var(--ink-3)}
+/* admin 侧栏（修订#1：基线 .psidebar/.side-item 同构移植，宽 200） */
+.asidebar{width:200px;border-right:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:2px;padding:12px;flex-shrink:0;overflow:auto}
+.p-id{display:flex;gap:10px;align-items:center;padding:4px 8px 12px}
+.p-id .nm{font-size:13.5px;font-weight:600}
+.side-item{display:flex;align-items:center;gap:9px;height:34px;padding:0 10px;border-radius:var(--radius-md);font-size:13.5px;color:var(--ink-2);text-align:left}
+.side-item:hover{background:var(--surface-2)}
+.side-item.active{background:var(--brand-50);color:var(--brand-600);font-weight:500}
+.side-item:disabled{color:var(--ink-4)}
+.side-item:disabled:hover{background:none}
+.side-label{font-size:11px;color:var(--ink-4);letter-spacing:.05em;margin:12px 0 4px 8px}
+/* dock（基线沿用） */
+.dock{position:fixed;right:18px;bottom:18px;width:242px;background:var(--surface);border:1px solid var(--line-strong);border-radius:12px;box-shadow:var(--shadow-lg);z-index:80;overflow:hidden}
+.dock-head{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--surface-2);font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer;user-select:none}
+.dock-body{max-height:420px;overflow:auto;padding:8px;display:none}
+.dock.open .dock-body{display:block}
+.dock.open .dock-head::before{content:"▼"}
+.dock:not(.open) .dock-head::before{content:"▶"}
+.dock-sec{font-size:11px;color:var(--ink-4);margin:8px 6px 4px}
+.dock-item{display:block;width:100%;text-align:left;padding:6px 10px;border-radius:6px;font-size:12.5px;color:var(--ink-2)}
+.dock-item:hover{background:var(--surface-2)}
+.dock-play{display:flex;width:100%;align-items:center;gap:6px;text-align:left;padding:7px 10px;border-radius:6px;font-size:12.5px;color:var(--brand-600)}
+.dock-play:hover{background:var(--brand-50)}
+.dock-play .pf{margin-left:auto;font-size:10px;color:var(--ink-4);white-space:nowrap}
+@keyframes fade{from{opacity:0}}
+@keyframes pop{from{opacity:0;transform:scale(.96) translateY(6px)}}
+@keyframes slidein{from{opacity:0;transform:translateX(14px)}}
+.ev-new{animation:slidein .3s var(--ease-spring)}
+</style>
+</head>
+<body>
+<div id="toasts" class="toast-wrap"></div>
+
+<!-- ══════════════════ V-TENANTS 平台租户总览（§3.2） ══════════════════ -->
+<div class="app" id="v-tenants">
+  <header class="topbar">
+    <b style="font-size:14px">RabbitProjects</b><span class="hint">平台管理 · 租户治理</span>
+    <div class="topbar-right">
+      <span class="alert-badge">风控事件 3 未处置</span>
+      <div class="avatar" style="background:#6d28d9">运</div>
+      <span class="hint" style="font-size:12.5px">张运营（tenant_ops）</span>
+    </div>
+  </header>
+  <div class="shell">
+    <aside class="asidebar">
+      <div class="p-id"><div class="avatar" style="background:#262626;border-radius:8px;font-size:11px">RP</div><div><div class="nm">平台运营后台</div><div class="hint" style="font-size:11px">tenant_ops · SaaS 治理</div></div></div>
+      <div class="side-label" style="margin-top:0">平台治理</div>
+      <button class="side-item active">▦ 租户总览</button>
+      <button class="side-item" onclick="go('#/admin/risk-events')">⚠ 风控事件中心</button>
+      <button class="side-item" disabled>🧾 边界报告台账 <span class="hint" style="margin-left:auto;font-size:10px">R1+</span></button>
+    </aside>
+    <main class="pmain">
+      <div class="page">
+        <div class="page-head">
+          <div class="page-title">平台租户总览</div>
+          <span class="page-sub">SaaS 实例 5 租户 · 治理引擎运行中</span>
+          <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+            <input class="input" style="width:200px;height:32px" placeholder="搜索租户名 / ID">
+            <select class="input" style="width:110px;height:32px"><option>套餐：全部</option><option>免费</option><option>标准</option><option>企业</option><option>旗舰</option></select>
+            <select class="input" style="width:110px;height:32px"><option>状态：全部</option><option>正常</option><option>限流中</option><option>冻结中</option></select>
+          </div>
+        </div>
+        <div class="card">
+          <table class="tbl">
+            <thead><tr>
+              <th style="width:190px">租户</th><th style="width:76px">套餐</th><th>存储水位</th><th>API 水位</th><th style="width:120px">风控</th><th style="width:150px">状态</th>
+            </tr></thead>
+            <tbody id="tenant-rows">
+              <tr onclick="go('#/admin/tenants/beta')" style="cursor:pointer">
+                <td><b>Beta Ltd</b><div class="hint mono" style="font-size:10.5px">t_01J8BETA</div></td>
+                <td><span class="plan-pill plan-standard">标准</span></td>
+                <td><div class="water"><div class="bar"><i class="warn" style="width:78%"></i></div><span class="pct">78%</span></div></td>
+                <td><div class="water"><div class="bar"><i style="width:61%"></i></div><span class="pct">61%</span></div></td>
+                <td><span class="rule-pill rule-open" data-tip="R-03 批量导出（80% 预警线）">R-03 ⚠</span></td>
+                <td><span class="tstate ts-ok"><span class="dot"></span>正常</span></td>
+              </tr>
+              <tr onclick="go('#/admin/tenants/gamma')" style="cursor:pointer">
+                <td><b>Gamma Inc</b><div class="hint mono" style="font-size:10.5px">t_01J8GAMM</div></td>
+                <td><span class="plan-pill plan-free">免费</span></td>
+                <td><div class="water"><div class="bar"><i class="danger" style="width:96%"></i></div><span class="pct hot">96%!</span></div></td>
+                <td><div class="water"><div class="bar"><i class="danger" style="width:92%"></i></div><span class="pct hot">92%</span></div></td>
+                <td><span class="rule-pill rule-open" data-tip="R-06 API 爬虫模式">R-06 ×2 🔴</span></td>
+                <td><span class="tstate ts-limited"><span class="dot"></span>限流中</span> <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();toast('解除限流需与施加同等级审批（BR-03）→ 已提交审批','warn')">解除</button></td>
+              </tr>
+              <tr style="cursor:pointer">
+                <td><b>Acme Corp</b><div class="hint mono" style="font-size:10.5px">t_01J8ACME</div></td>
+                <td><span class="plan-pill plan-enterprise">企业</span></td>
+                <td><div class="water"><div class="bar"><i style="width:42%"></i></div><span class="pct">42%</span></div></td>
+                <td><div class="water"><div class="bar"><i style="width:18%"></i></div><span class="pct">18%</span></div></td>
+                <td><span class="hint">0</span></td>
+                <td><span class="tstate ts-ok"><span class="dot"></span>正常</span></td>
+              </tr>
+              <tr style="cursor:pointer">
+                <td><b>Delta Group</b><div class="hint mono" style="font-size:10.5px">t_01J8DLTA</div></td>
+                <td><span class="plan-pill plan-flagship" data-tip="旗舰档：FILE-006 高级合规位（DCT 暗水印）开启">旗舰</span></td>
+                <td><div class="water"><div class="bar"><i style="width:31%"></i></div><span class="pct">31%</span></div></td>
+                <td><div class="water"><div class="bar"><i style="width:12%"></i></div><span class="pct">12%</span></div></td>
+                <td><span class="hint">0</span></td>
+                <td><span class="tstate ts-ok"><span class="dot"></span>正常</span></td>
+              </tr>
+              <tr style="cursor:pointer">
+                <td><b>Epsilon Lab</b><div class="hint mono" style="font-size:10.5px">t_01J8EPSI</div></td>
+                <td><span class="plan-pill plan-free">免费</span></td>
+                <td><div class="water"><div class="bar"><i style="width:22%"></i></div><span class="pct">22%</span></div></td>
+                <td><div class="water"><div class="bar"><i style="width:35%"></i></div><span class="pct">35%</span></div></td>
+                <td><span class="hint">0</span></td>
+                <td><span class="tstate ts-ok"><span class="dot"></span>正常</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="sum-strip">近 24h 全站：<span>风控事件 <b>12</b>（R-01×2 R-03×4 R-06×6）</span><span>冻结 <b>0</b></span><span>限流 <b>1</b></span><span style="margin-left:auto" class="hint">数据源：RiskRuleEngine 聚合窗口（UTC 整点桶）</span></div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ══════════════════ V-TENANT 租户详情（O4 · §3.1 行 2） ══════════════════ -->
+<div class="app" id="v-tenant" hidden>
+  <header class="topbar">
+    <b style="font-size:14px">RabbitProjects</b><span class="hint">平台管理 · 租户治理</span>
+    <div class="topbar-right"><div class="avatar" style="background:#6d28d9">运</div><span class="hint" style="font-size:12.5px">张运营（tenant_ops）</span></div>
+  </header>
+  <div class="shell">
+    <aside class="asidebar">
+      <div class="p-id"><div class="avatar" style="background:#262626;border-radius:8px;font-size:11px">RP</div><div><div class="nm">平台运营后台</div><div class="hint" style="font-size:11px">tenant_ops · SaaS 治理</div></div></div>
+      <div class="side-label" style="margin-top:0">平台治理</div>
+      <button class="side-item active" onclick="go('#/admin/tenants')">▦ 租户总览</button>
+      <button class="side-item" onclick="go('#/admin/risk-events')">⚠ 风控事件中心</button>
+      <button class="side-item" disabled>🧾 边界报告台账 <span class="hint" style="margin-left:auto;font-size:10px">R1+</span></button>
+    </aside>
+    <main class="pmain">
+      <div class="page">
+        <div class="page-head">
+          <button class="btn btn-ghost btn-sm" onclick="go('#/admin/tenants')">← 返回</button>
+          <div class="page-title" id="tn-name">Beta Ltd</div>
+          <span class="plan-pill plan-standard" id="tn-plan">标准</span>
+          <span class="tstate ts-ok" id="tn-state"><span class="dot"></span>正常</span>
+          <span class="page-sub mono" id="tn-id">t_01J8BETA</span>
+          <div style="margin-left:auto;display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="openModal('m-quota')">⚙ 配额调整</button>
+            <button class="btn btn-ghost btn-sm" onclick="toast('《数据边界证明报告》生成任务已创建（202）· 完成后 1h 预签名下载','ok');toast('报告内容全部由系统生成（BR-10），运营仅可触发','warn')">🧾 生成边界报告</button>
+            <button class="btn btn-danger btn-sm" onclick="openFreeze()">⏸ 发起冻结</button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px" id="tn-quota">
+          <div class="card qcard"><h4>存储（两层模型 §2.3）<span class="hint" style="margin-left:auto">租户配额 100 GB</span></h4>
+            <div class="val">78.2 <small>GB / 100 GB</small></div>
+            <div class="dual">
+              <div class="lbl"><b>L-WS 工作空间层</b><span>4 个 WS · Σ 配额 120 GB</span></div>
+              <div class="water"><div class="bar"><i class="warn" style="width:65%"></i></div><span class="pct">65%</span></div>
+              <div class="lbl" style="margin-top:4px"><b>L-T 租户层（硬上限）</b><span>78%</span></div>
+              <div class="water"><div class="bar"><i class="warn" style="width:78%"></i></div><span class="pct">78%</span></div>
+            </div>
+          </div>
+          <div class="card qcard"><h4>API 请求速率<span class="hint" style="margin-left:auto">3,000 req/min</span></h4>
+            <div class="val">1,830 <small>req/min 峰值</small></div>
+            <div class="dual"><div class="water" style="margin-top:10px"><div class="bar"><i style="width:61%"></i></div><span class="pct">61%</span></div></div>
+          </div>
+          <div class="card qcard"><h4>成员 / 项目 / Webhook</h4>
+            <div class="val">86 <small>/ 100 成员</small></div>
+            <div class="dual"><div class="water" style="margin-top:10px"><div class="bar"><i style="width:86%"></i></div><span class="pct">86%</span></div>
+            <div class="hint" style="margin-top:8px">项目 37（标准版不限）· Webhook 订阅 12/50</div></div>
+          </div>
+          <div class="card qcard"><h4>单日导出行数<span class="hint" style="margin-left:auto">R-03 监测中</span></h4>
+            <div class="val" style="color:var(--danger)">102,340 <small>/ 100,000</small></div>
+            <div class="dual"><div class="water" style="margin-top:10px"><div class="bar"><i class="danger" style="width:100%"></i></div><span class="pct hot">102.3%</span></div>
+            <div class="hint" style="margin-top:8px;color:var(--danger)">已过 100% 硬拒线 → 后续导出请求 409 RESOURCE_LIMIT_EXCEEDED</div></div>
+          </div>
+          <div class="card qcard"><h4>下挂工作空间</h4>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+              <span class="badge-id">beta-main（主）</span><span class="badge-id">beta-rd</span><span class="badge-id">beta-ops</span><span class="badge-id">beta-lab</span>
+            </div><div class="hint" style="margin-top:10px">多空间归一治理：配额共享池（§2.3）</div>
+          </div>
+          <div class="card qcard"><h4>风控参数（租户覆盖）</h4>
+            <div class="kv" style="margin-top:6px">
+              <span class="k">R-03 预警线</span><span>80%（租户调紧 60% <span class="hint">BR-06</span>）</span>
+              <span class="k">R-01 阈值</span><span>平台默认 200 次/10min</span>
+              <span class="k">R-06 阈值</span><span>平台默认 50% 配额/h</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="padding:12px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
+            <b style="font-size:13.5px">本租户风控事件</b><span class="hint">证据快照按 BR-05 固化</span>
+            <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="go('#/admin/risk-events')">全部事件 →</button>
+          </div>
+          <div class="ev-row">
+            <span class="ev-id">#E-20260901-0042</span><span class="rule-pill rule-open">R-03</span>
+            <span class="ev-tenant">批量导出 102.3%</span><span class="ev-snap">3 账号 · 01:30-02:14 集中爆发 · 47 条关联审计</span>
+            <span class="ev-lv">🔴 高</span>
+            <span class="ev-act"><button class="btn btn-primary btn-sm" onclick="openModal('m-dispose')">处置</button></span>
+          </div>
+          <div class="ev-row">
+            <span class="ev-id">#E-20260828-0117</span><span class="rule-pill rule-done">R-02</span>
+            <span class="ev-tenant">异地登录（跨度 1,860 km）</span><span class="ev-snap">已通知本人 + 管理员 · 强制重登已执行</span>
+            <span class="ev-lv">⚪ 低</span>
+            <span class="ev-act"><span class="hint">已处置 08-28</span></span>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ══════════════════ V-RISK 风控事件中心（§3.1 行 3） ══════════════════ -->
+<div class="app" id="v-risk" hidden>
+  <header class="topbar">
+    <b style="font-size:14px">RabbitProjects</b><span class="hint">平台管理 · 风控事件中心</span>
+    <div class="topbar-right"><span class="alert-badge">3 未处置</span><div class="avatar" style="background:#6d28d9">运</div><span class="hint" style="font-size:12.5px">张运营（tenant_ops）</span></div>
+  </header>
+  <div class="shell">
+    <aside class="asidebar">
+      <div class="p-id"><div class="avatar" style="background:#262626;border-radius:8px;font-size:11px">RP</div><div><div class="nm">平台运营后台</div><div class="hint" style="font-size:11px">tenant_ops · SaaS 治理</div></div></div>
+      <div class="side-label" style="margin-top:0">平台治理</div>
+      <button class="side-item" onclick="go('#/admin/tenants')">▦ 租户总览</button>
+      <button class="side-item active">⚠ 风控事件中心</button>
+      <button class="side-item" disabled>🧾 边界报告台账 <span class="hint" style="margin-left:auto;font-size:10px">R1+</span></button>
+    </aside>
+    <main class="pmain">
+      <div class="page">
+        <div class="page-head">
+          <div class="page-title">风控事件中心</div>
+          <span class="page-sub">平台最小知情（BR-07）：默认仅行为统计与 ID，业务内容需 L2 工单</span>
+          <div style="margin-left:auto;display:flex;gap:8px">
+            <select class="input" style="width:130px;height:32px"><option>规则：全部</option><option>R-01 登录风暴</option><option>R-02 异地登录</option><option>R-03 批量导出</option><option>R-04 权限提升</option><option>R-05 深夜删除</option><option>R-06 API 爬虫</option></select>
+            <select class="input" style="width:100px;height:32px"><option>级别：全部</option><option>🔴 高</option><option>🟡 中</option><option>⚪ 低</option></select>
+            <select class="input" style="width:120px;height:32px"><option>租户：全部</option><option>Beta Ltd</option><option>Gamma Inc</option><option>Acme Corp</option></select>
+            <select class="input" style="width:110px;height:32px"><option>状态：全部</option><option>未处置</option><option>处置中</option><option>已处置</option></select>
+          </div>
+        </div>
+        <div class="card" id="ev-list">
+          <div class="ev-row">
+            <span class="ev-id">#E-20260901-0042</span><span class="rule-pill rule-open" data-tip="R-03 批量导出">R-03</span>
+            <span class="ev-tenant">Beta Ltd</span><span class="ev-snap">当日导出 102,340 / 100,000（102.3%）· 3 账号 · 47 条审计</span>
+            <span class="ev-lv">🔴 高</span><span class="hint" style="white-space:nowrap">02:14 UTC</span>
+            <span class="ev-act"><button class="btn btn-primary btn-sm" onclick="openModal('m-dispose')">处置</button><button class="btn btn-ghost btn-sm" onclick="openModal('m-l2')">L2 工单</button></span>
+          </div>
+          <div class="ev-row">
+            <span class="ev-id">#E-20260901-0039</span><span class="rule-pill rule-open" data-tip="R-06 API 爬虫模式">R-06</span>
+            <span class="ev-tenant">Gamma Inc</span><span class="ev-snap">单 token 1h 55,100 次（92% GET 列表）→ 已自动降速 10%</span>
+            <span class="ev-lv">🟡 中</span><span class="hint" style="white-space:nowrap">01:58 UTC</span>
+            <span class="ev-act"><button class="btn btn-primary btn-sm" onclick="toast('R-06 自动处置已生效（降速 10% · 1h），人工复核补充备注','warn')">复核</button></span>
+          </div>
+          <div class="ev-row">
+            <span class="ev-id">#E-20260901-0031</span><span class="rule-pill rule-open" data-tip="R-06 API 爬虫模式">R-06</span>
+            <span class="ev-tenant">Gamma Inc</span><span class="ev-snap">单 token 1h 51,870 次（96% GET 列表）· 触发主体 tk_9F02…</span>
+            <span class="ev-lv">🟡 中</span><span class="hint" style="white-space:nowrap">00:47 UTC</span>
+            <span class="ev-act"><button class="btn btn-primary btn-sm" onclick="toast('同一 aggregate_key 聚合窗口内（BR-08）→ 并入 #0039 处置','warn')">并案处置</button></span>
+          </div>
+          <div class="ev-row" style="opacity:.72">
+            <span class="ev-id">#E-20260831-0218</span><span class="rule-pill rule-done" data-tip="R-01 登录风暴">R-01</span>
+            <span class="ev-tenant">Acme Corp</span><span class="ev-snap">10min 失败登录 243 次 → IP 段 203.0.113.0/24 封禁 30min（已自动处置）</span>
+            <span class="ev-lv">🟡 中</span><span class="hint" style="white-space:nowrap">08-31 22:40</span>
+            <span class="ev-act"><span class="hint">已处置 · 自动</span></span>
+          </div>
+          <div class="ev-row" style="opacity:.72">
+            <span class="ev-id">#E-20260830-0155</span><span class="rule-pill rule-done" data-tip="R-04 权限批量提升">R-04</span>
+            <span class="ev-tenant">Beta Ltd</span><span class="ev-snap">操作者 u_01J6… 1h 授予管理员 6 人 → 二次验证已通过（本人确认）</span>
+            <span class="ev-lv">⚪ 低</span><span class="hint" style="white-space:nowrap">08-30 14:02</span>
+            <span class="ev-act"><span class="hint">已处置 · 人工</span></span>
+          </div>
+        </div>
+        <div class="sum-strip"><span>同一租户同一规则同一主体 UTC 小时桶内聚合告警（BR-08）</span><span style="margin-left:auto" class="hint">CSV 台账导出（§2.6）</span></div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ══════════════════ V-SEC 我的租户安全（§3.1 行 5 · 客户 WS_ADMIN） ══════════════════ -->
+<div class="app" id="v-sec" hidden>
+  <header class="topbar">
+    <b style="font-size:14px">RabbitProjects</b><span class="hint">Beta Ltd · 工作空间设置</span>
+    <div class="topbar-right"><div class="avatar" style="background:var(--brand-500)">李</div><span class="hint" style="font-size:12.5px">李四（WS_ADMIN）</span></div>
+  </header>
+  <div class="shell">
+    <aside class="asidebar">
+      <div class="p-id"><div class="avatar" style="background:var(--brand-500)">B</div><div><div class="nm">Beta Ltd</div><div class="hint" style="font-size:11px">beta-main · 标准版</div></div></div>
+      <div class="side-label" style="margin-top:0">设置</div>
+      <button class="side-item">👥 成员</button>
+      <button class="side-item">🏷 标签与状态</button>
+      <button class="side-item active">🛡 我的租户安全</button>
+    </aside>
+    <main class="pmain">
+      <div class="page">
+        <div class="page-head">
+          <div class="page-title">我的租户安全</div>
+          <span class="page-sub">Beta Ltd（标准版）· 本租户风控与配额 · 平台只见统计不见内容（BR-07）</span>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:14px;margin-bottom:14px">
+          <div class="card" style="padding:14px 16px">
+            <b style="font-size:13.5px">配额水位</b><span class="hint" style="margin-left:8px">≥80% 黄 · ≥95% 红并通知 WS_ADMIN（§3.4）</span>
+            <div style="margin-top:10px;display:flex;flex-direction:column;gap:9px">
+              <div class="water"><span style="width:96px;font-size:12.5px;color:var(--ink-2)">存储 78.2/100GB</span><div class="bar"><i class="warn" style="width:78%"></i></div><span class="pct">78%</span></div>
+              <div class="water"><span style="width:96px;font-size:12.5px;color:var(--ink-2)">API 1,830/3,000</span><div class="bar"><i style="width:61%"></i></div><span class="pct">61%</span></div>
+              <div class="water"><span style="width:96px;font-size:12.5px;color:var(--ink-2)">成员 86/100</span><div class="bar"><i class="warn" style="width:86%"></i></div><span class="pct">86%</span></div>
+              <div class="water"><span style="width:96px;font-size:12.5px;color:var(--ink-2)">今日导出 60.1/100k</span><div class="bar"><i style="width:60%"></i></div><span class="pct">60%</span></div>
+            </div>
+          </div>
+          <div class="card" style="padding:14px 16px">
+            <b style="font-size:13.5px">审计包导出</b><span class="hint" style="margin-left:8px">§2.6 租户自身审计包</span>
+            <div class="hint" style="margin-top:10px">包含：本租户 4 个工作空间 AuditLog 逐空间导出合并 + SHA-256 清单签名；任务创建后 1h 预签名下载链接（邮件发送 WS_ADMIN）。</div>
+            <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="toast('审计包导出任务已创建（202）· 链接 1h 内有效','ok')">生成审计包</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:14px">
+          <div style="padding:12px 14px;border-bottom:1px solid var(--line)"><b style="font-size:13.5px">风控规则阈值（调紧）</b><span class="hint" style="margin-left:8px">此操作只会更严格，平台默认值不可放宽（BR-06）· 即时生效</span></div>
+          <div class="th-row" style="color:var(--ink-3);font-size:11.5px;border-bottom:1px solid var(--line)"><span>规则</span><span style="text-align:right">平台默认</span><span style="text-align:right">本租户（可调紧）</span><span></span></div>
+          <div class="th-row"><span class="rn">R-01 登录风暴<small>失败登录次数 / 10min</small></span><span class="th-num">200</span><span><input class="th-input" value="200" data-def="200" style="text-align:right"></span><span></span></div>
+          <div class="th-row"><span class="rn">R-03 批量导出预警<small>日导出行数预警线</small></span><span class="th-num">80%</span><span><input class="th-input" value="60%" data-def="80%" style="text-align:right"></span><span class="hint">已调紧 ✓</span></div>
+          <div class="th-row"><span class="rn">R-04 权限提升<small>1h 授予管理员人数</small></span><span class="th-num">5</span><span><input class="th-input" value="5" data-def="5" style="text-align:right"></span><span></span></div>
+          <div class="th-row"><span class="rn">R-05 深夜删除<small>00:00-06:00 删除对象数</small></span><span class="th-num">50</span><span><input class="th-input" value="30" data-def="50" style="text-align:right"></span><span class="hint">已调紧 ✓</span></div>
+          <div style="padding:10px 14px;display:flex;align-items:center;gap:10px">
+            <span class="hint" id="th-msg"></span>
+            <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="saveTighten()">保存阈值</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="padding:12px 14px;border-bottom:1px solid var(--line)"><b style="font-size:13.5px">本租户风控事件</b><span class="hint" style="margin-left:8px">与平台侧同源（您租户的完整视角）</span></div>
+          <div class="ev-row"><span class="ev-id">#E-20260901-0042</span><span class="rule-pill rule-open">R-03</span><span class="ev-tenant">批量导出预警（60% 调紧线触发）</span><span class="ev-snap">02:14 · 平台处置中</span><span class="ev-act"><button class="btn btn-ghost btn-sm" onclick="toast('客户侧仅见本租户事件统计与处置状态（与平台 L1 同口径）','info')">详情</button></span></div>
+          <div class="ev-row" style="opacity:.72"><span class="ev-id">#E-20260830-0155</span><span class="rule-pill rule-done">R-04</span><span class="ev-tenant">权限批量提升告警</span><span class="ev-snap">08-30 · 二次验证通过</span><span class="ev-act"><span class="hint">已处置</span></span></div>
+        </div>
+
+        <div style="margin-top:14px">
+          <b style="font-size:13.5px">L2 授权工单（平台请求查看业务内容）</b>
+          <div class="l2card" id="l2-card" style="margin-top:8px">
+            <div class="kv">
+              <span class="k">申请方</span><span>平台运营 张运营 · 工单 GT-2026-0031</span>
+              <span class="k">对象</span><span class="mono" style="font-size:11.5px">u_01J6…（3 账号）· 导出对象 47 条审计记录关联</span>
+              <span class="k">理由</span><span>R-03 事件复核需确认导出对象清单</span>
+              <span class="k">时效</span><span>批准后 24h 有效 · 全程审计（§2.5）</span>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
+              <button class="btn btn-ghost btn-sm" onclick="l2Done(false)">拒绝</button>
+              <button class="btn btn-primary btn-sm" onclick="l2Done(true)">批准（24h）</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ══════════════════ V-FROZEN 冻结横幅演出（§3.4 · 租户成员视角） ══════════════════ -->
+<div class="app" id="v-frozen" hidden>
+  <header class="topbar">
+    <b style="font-size:14px">RabbitProjects</b><span class="hint">Beta Ltd · 工作区</span>
+    <div class="topbar-right"><div class="avatar" style="background:var(--brand-500)">王</div><span class="hint" style="font-size:12.5px">王五（成员）</span></div>
+  </header>
+  <div class="frozen-banner">
+    <span>⚠ 租户处于安全审查期，功能暂时受限</span>
+    <span class="hint" style="color:var(--amber-ink)">已建立会话可读，写操作缓冲后转入全只读</span>
+    <span class="cd" id="frozen-cd">14:32</span>
+  </div>
+  <div class="shell">
+    <aside class="asidebar"><div class="side-label" style="margin-top:2px">视图</div>
+      <button class="side-item active">☰ 任务列表</button>
+      <button class="side-item">▦ 看板</button>
+      <button class="side-item">▤ 表格</button>
+    </aside>
+    <main class="pmain" style="position:relative">
+      <div class="page">
+        <div class="page-head"><div class="page-title">任务列表</div><span class="page-sub">1,204 个任务 · 只读可访问</span>
+          <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="toast('写操作被拒（RESOURCE_STATE_INVALID）· 租户安全审查期','err')">＋ 新建任务</button>
+        </div>
+        <div class="card">
+          <table class="tbl">
+            <thead><tr><th style="width:90px">编号</th><th>标题</th><th style="width:90px">状态</th><th style="width:110px">负责人</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">BETA-401</td><td>季度营收对账</td><td><span class="st-pill st-doing">进行中</span></td><td>王五</td></tr>
+              <tr><td class="mono">BETA-398</td><td>供应商门户改版</td><td><span class="st-pill st-doing">进行中</span></td><td>赵六</td></tr>
+              <tr><td class="mono">BETA-391</td><td>合规材料归档</td><td><span class="st-pill st-done">已完成</span></td><td>王五</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="readonly-veil" id="frozen-veil" hidden>
+        <div style="text-align:center"><div style="font-size:15px;font-weight:600;color:var(--ink-2)">缓冲期结束 · 当前为全只读</div><div class="hint" style="margin-top:6px">数据完整保留；审查结束后由平台运营解除（BR-03 处置可逆）</div></div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ══════════════════ M-DISPOSE 处置弹窗（§3.3 线框全量） ══════════════════ -->
+<div class="overlay" id="m-dispose" hidden onclick="if(event.target===this)closeModal('m-dispose')">
+  <div class="modal w520">
+    <div class="modal-head"><div class="modal-title">风控事件 #E-20260901-0042 <span style="color:var(--danger);font-size:13px">🔴 高</span></div><button class="icon-btn" onclick="closeModal('m-dispose')">✕</button></div>
+    <div class="kv" style="margin-bottom:4px">
+      <span class="k">规则</span><span><span class="rule-pill rule-open">R-03</span> 批量导出</span>
+      <span class="k">租户</span><span>Beta Ltd（标准版）</span>
+      <span class="k">触发</span><span class="mono">2026-09-01 02:14 UTC</span>
+    </div>
+    <div class="evidence">
+      <h5>证据快照（BR-05 · 触发即固化）</h5>
+      <ul>
+        <li>当日导出行数 102,340 / 配额 100,000（102.3%）</li>
+        <li>操作账号 3 个（u_01J6… 贡献 81%）</li>
+        <li>时间分布 01:30-02:14 集中爆发</li>
+        <li>关联审计 47 条 <a href="#" onclick="toast('ID 列表展开（L1 可见：仅 ID 与统计）','info');return false">[查看 ID 列表]</a></li>
+      </ul>
+    </div>
+    <div class="label">处置</div>
+    <div class="disp-opt sel" onclick="pickDisp(this,'alert')"><input type="radio" name="disp" checked><div><div class="t">仅告警</div><div class="d">记录处置备注，不限制租户功能</div></div></div>
+    <div class="disp-opt" onclick="pickDisp(this,'limit')"><input type="radio" name="disp"><div><div class="t">限流 24h</div><div class="d">API 速率临时降至配额 10% · 到期自动恢复 · 可提前解除（BR-03）</div></div></div>
+    <div class="disp-opt" onclick="pickDisp(this,'freeze')"><input type="radio" name="disp"><div><div class="t">冻结租户<span class="tag-need">需双人审批</span></div><div class="d">拒绝全部新写操作 · 会话 15 分钟缓冲后全只读（BR-09）· 数据完整保留</div></div></div>
+    <div class="label" style="margin-top:12px">备注</div>
+    <textarea class="input" rows="2" placeholder="处置说明（落审计）"></textarea>
+    <div style="margin-top:14px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:12px;color:var(--ink-3);display:flex;align-items:center;gap:8px">
+      🔒 平台最小知情（BR-07）：业务内容不可见。如需查看
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('m-dispose');openModal('m-l2')">申请 L2 授权工单</button>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('m-dispose')">取消</button>
+      <button class="btn btn-primary" onclick="submitDispose()">执行处置</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════ M-FREEZE 冻结审批（§3.4 · BR-04 双人） ══════════════════ -->
+<div class="overlay" id="m-freeze" hidden>
+  <div class="modal w520">
+    <div class="modal-head"><div class="modal-title">冻结租户 · 双人审批（BR-04）</div><button class="icon-btn" onclick="closeModal('m-freeze')">✕</button></div>
+    <div class="steps" id="fz-steps">
+      <div class="step on" data-s="1"><div class="n">1</div>发起</div>
+      <div class="step" data-s="2"><div class="n">2</div>待审批</div>
+      <div class="step" data-s="3"><div class="n">3</div>审批确认</div>
+    </div>
+
+    <div id="fz-s1">
+      <div class="kv" style="margin-bottom:12px">
+        <span class="k">目标租户</span><span><b>Beta Ltd</b> <span class="mono hint">t_01J8BETA</span> · 标准版 · 4 个工作空间 · 86 成员</span>
+        <span class="k">发起人</span><span>张运营（tenant_ops）</span>
+      </div>
+      <div class="label">冻结理由（必填 · 落审计）</div>
+      <textarea class="input" rows="2" placeholder="例：R-03 事件复核期间防止数据继续外流">R-03 批量导出事件复核期间，防止数据继续外流</textarea>
+      <div class="hint" style="margin-top:10px">⚠ 冻结期间：拒绝新写（RESOURCE_STATE_INVALID）· 会话 15 分钟缓冲后全只读 · 数据完整保留 · 可逆（BR-03/09）</div>
+      <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal('m-freeze')">取消</button><button class="btn btn-danger" onclick="fzGo(2)">提交发起</button></div>
+    </div>
+
+    <div id="fz-s2" hidden>
+      <div class="l2card" style="margin-top:2px">
+        <div class="kv">
+          <span class="k">状态</span><span><b style="color:var(--amber-ink)">待审批</b> · 发起人张运营已提交</span>
+          <span class="k">发起时间</span><span class="mono">2026-09-11 10:24 UTC</span>
+        </div>
+      </div>
+      <div class="label" style="margin-top:12px">审批人（系统校验：不得与发起人同人）</div>
+      <select class="input" id="fz-approver" onchange="fzCheckApprover()">
+        <option value="">选择审批人…</option>
+        <option value="li">李运营（tenant_ops）</option>
+        <option value="wang">王运营（tenant_ops）</option>
+        <option value="zhang">张运营（tenant_ops · 发起人）</option>
+      </select>
+      <div class="hint" id="fz-ap-msg" style="margin-top:8px;color:var(--danger)" hidden>审批人与发起人不得同人（BR-04）</div>
+      <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal('m-freeze')">待办保留</button><button class="btn btn-primary" id="fz-s2-next" disabled onclick="fzGo(3)">以审批人身份继续</button></div>
+    </div>
+
+    <div id="fz-s3" hidden>
+      <div class="kv" style="margin-bottom:12px">
+        <span class="k">审批人</span><span id="fz-who">李运营</span>
+        <span class="k">理由复核</span><span>R-03 批量导出事件复核期间，防止数据继续外流</span>
+      </div>
+      <div class="label">输入租户名确认（<b>Beta Ltd</b>）</div>
+      <input class="input" id="fz-name" placeholder="Beta Ltd" oninput="fzCheckName()">
+      <div class="hint" style="margin-top:8px">冻结立即生效；解除需同等级双人审批（BR-03）</div>
+      <div class="modal-foot"><button class="btn btn-ghost" onclick="fzGo(2)">返回</button><button class="btn btn-danger" id="fz-confirm" disabled onclick="fzApply()">确认冻结</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════ M-QUOTA 配额调整（§2.3 · BR-12） ══════════════════ -->
+<div class="overlay" id="m-quota" hidden onclick="if(event.target===this)closeModal('m-quota')">
+  <div class="modal">
+    <div class="modal-head"><div class="modal-title">配额调整 · Beta Ltd</div><button class="icon-btn" onclick="closeModal('m-quota')">✕</button></div>
+    <div class="label">套餐档位</div>
+    <div class="seg" style="margin-bottom:14px">
+      <button class="seg-btn">免费</button><button class="seg-btn active">标准</button><button class="seg-btn">企业</button><button class="seg-btn">旗舰</button>
+    </div>
+    <div class="label">存储硬上限（GB）</div>
+    <input class="input" value="100" style="width:160px">
+    <div class="hint" style="margin-top:6px">升级即时生效；降级 30 天宽限期（只告警不硬拒）——§2.3</div>
+    <div style="margin-top:12px;padding:9px 12px;border:1px solid var(--info-line);background:var(--info-bg);border-radius:8px;font-size:12px;color:var(--info-ink)">任何配额调整产生 AuditLog（新旧值 + 操作主体）· BR-12</div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal('m-quota')">取消</button><button class="btn btn-primary" onclick="closeModal('m-quota');toast('配额变更已生效并落审计（BR-12）','ok')">保存</button></div>
+  </div>
+</div>
+
+<!-- ══════════════════ M-L2 L2 授权工单（§2.5 · 运营侧申请） ══════════════════ -->
+<div class="overlay" id="m-l2" hidden onclick="if(event.target===this)closeModal('m-l2')">
+  <div class="modal">
+    <div class="modal-head"><div class="modal-title">申请 L2 授权工单</div><button class="icon-btn" onclick="closeModal('m-l2')">✕</button></div>
+    <div class="kv" style="margin-bottom:12px">
+      <span class="k">最小知情</span><span>L1 行为统计与 ID（默认）→ L2 业务内容（工单）→ L3 正文永不（§2.5）</span>
+    </div>
+    <div class="label">申请对象（ID 清单）</div>
+    <textarea class="input" rows="3" style="font-family:var(--font-mono);font-size:12px">u_01J6AB8C…, u_01J7D2E3…, u_01J8F4G5…
+audit_ids: #41872…#41918（47 条）</textarea>
+    <div class="label" style="margin-top:12px">理由</div>
+    <textarea class="input" rows="2">R-03 事件复核：确认导出对象清单是否包含敏感项目</textarea>
+    <div class="hint" style="margin-top:10px">生效条件：客户 WS_ADMIN 在线批准 或 客户书面授权工单号；授权 24h 有效，访问全程审计。</div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal('m-l2')">取消</button><button class="btn btn-primary" onclick="closeModal('m-l2');toast('工单 GT-2026-0031 已提交客户 WS_ADMIN（李四）审批','ok');go('#/ws/settings/security')">提交工单</button></div>
+  </div>
+</div>
+
+<!-- ══════════════════ DOCK 演示面板 ══════════════════ -->
+<aside class="dock open" id="dock">
+  <div class="dock-head" onclick="document.getElementById('dock').classList.toggle('open')">P4·R1 原型演示 <span style="margin-left:auto;font-size:11px;color:var(--ink-4)">FROZEN · O1~O8</span></div>
+  <div class="dock-body">
+    <div class="dock-sec">页面直达（AUTH-012 §3.1 五页）</div>
+    <button class="dock-item" onclick="go('#/admin/tenants')">▦ 平台租户总览（§3.2）</button>
+    <button class="dock-item" onclick="go('#/admin/tenants/beta')">◆ 租户详情（Beta Ltd）</button>
+    <button class="dock-item" onclick="go('#/admin/risk-events')">⚠ 风控事件中心</button>
+    <button class="dock-item" onclick="go('#/ws/settings/security')">🛡 我的租户安全（客户侧）</button>
+    <button class="dock-item" onclick="go('#/ws/projects')">⏸ 冻结横幅（成员视角）</button>
+    <div class="dock-sec">演出（规格条款）</div>
+    <button class="dock-play" onclick="playR03()">▶ R-03 事件滑入 → 处置弹窗<span class="pf">§3.3</span></button>
+    <button class="dock-play" onclick="openFreeze()">▶ 冻结双人审批全链<span class="pf">BR-04</span></button>
+    <button class="dock-play" onclick="playWater()">▶ 水位 ≥95% 红档 + 通知<span class="pf">§3.4</span></button>
+    <button class="dock-play" onclick="playTighten()">▶ 阈值放宽被拒（只紧不松）<span class="pf">BR-06</span></button>
+    <button class="dock-play" onclick="playL2()">▶ L2 工单：申请→客户批准<span class="pf">§2.5</span></button>
+    <button class="dock-play" onclick="playFrozen()">▶ 缓冲倒计时 → 全只读<span class="pf">BR-09</span></button>
+  </div>
+</aside>
+
+<script>
+/* ═══ hash 路由（基线沿用） ═══ */
+const VIEWS = {
+  '#/admin/tenants':'v-tenants', '#/admin/tenants/beta':'v-tenant', '#/admin/tenants/gamma':'v-tenant',
+  '#/admin/risk-events':'v-risk', '#/ws/settings/security':'v-sec', '#/ws/projects':'v-frozen' };
+function route(){
+  const h = location.hash || '#/admin/tenants';
+  const id = VIEWS[h] || 'v-tenants';
+  Object.values(VIEWS).forEach(v=>document.getElementById(v)&&(document.getElementById(v).hidden = v!==id || (v==='v-tenant' && !h.startsWith('#/admin/tenants/'))));
+  if(h.startsWith('#/admin/tenants/')){ document.getElementById('v-tenant').hidden=false; const g = h.endsWith('gamma');
+    document.getElementById('tn-name').textContent = g?'Gamma Inc':'Beta Ltd';
+    document.getElementById('tn-plan').textContent = g?'免费':'标准';
+    document.getElementById('tn-plan').className = 'plan-pill '+(g?'plan-free':'plan-standard');
+    document.getElementById('tn-id').textContent = g?'t_01J8GAMM':'t_01J8BETA';
+  }
+  window.scrollTo(0,0);
+}
+function go(h){ location.hash=h; }
+addEventListener('hashchange', route);
+
+/* ═══ toast / 弹窗（基线沿用） ═══ */
+function toast(msg,type){ const t=document.createElement('div'); t.className='toast'+(type?' toast-'+type:''); t.textContent=msg;
+  document.getElementById('toasts').appendChild(t); setTimeout(()=>t.remove(),3600); }
+function openModal(id){ document.getElementById(id).hidden=false; }
+function closeModal(id){ document.getElementById(id).hidden=true; }
+
+/* ═══ M-DISPOSE 处置（§3.3） ═══ */
+let dispPick='alert';
+function pickDisp(el,kind){ document.querySelectorAll('.disp-opt').forEach(o=>{o.classList.remove('sel');o.querySelector('input').checked=false;});
+  el.classList.add('sel'); el.querySelector('input').checked=true; dispPick=kind; }
+function openDispose(){ openModal('m-dispose'); }
+function submitDispose(){
+  closeModal('m-dispose');
+  if(dispPick==='freeze'){ openFreeze(); return; }
+  if(dispPick==='limit'){ toast('限流 24h 已生效 · Beta Ltd API 降至配额 10%','ok'); toast('处置与解除同等级审批（BR-03）','warn'); }
+  else toast('处置完成：仅告警 · 已落审计','ok');
+  const row=document.querySelector('#ev-list .ev-row');
+  row && row.classList.add('ev-new');
+}
+
+/* ═══ M-FREEZE 冻结审批（O5 · BR-04） ═══ */
+function openFreeze(){ ['fz-s1','fz-s2','fz-s3'].forEach((i,n)=>document.getElementById(i).hidden=n!==0); fzStep(1); openModal('m-freeze'); }
+function fzStep(n){ document.querySelectorAll('#fz-steps .step').forEach(s=>{ const k=+s.dataset.s;
+    s.classList.toggle('on',k===n); s.classList.toggle('done',k<n); }); }
+function fzGo(n){ ['fz-s1','fz-s2','fz-s3'].forEach((i,x)=>document.getElementById(i).hidden=x!==n-1); fzStep(n); }
+function fzCheckApprover(){ const v=document.getElementById('fz-approver').value;
+  const bad=v==='zhang'; document.getElementById('fz-ap-msg').hidden=!bad;
+  document.getElementById('fz-s2-next').disabled=bad||!v;
+  document.getElementById('fz-who').textContent = v==='li'?'李运营':v==='wang'?'王运营':'—'; }
+function fzCheckName(){ document.getElementById('fz-confirm').disabled = document.getElementById('fz-name').value.trim()!=='Beta Ltd'; }
+function fzApply(){ closeModal('m-freeze');
+  toast('冻结已生效 · Beta Ltd 拒绝新写（BR-09 15 分钟缓冲）','ok');
+  setTimeout(()=>{ toast('客户 Admin 与成员已收到通知','info'); go('#/ws/projects'); },700); }
+
+/* ═══ 演出脚本 ═══ */
+function playR03(){ go('#/admin/risk-events');
+  setTimeout(()=>{ toast('RiskRuleEngine：R-03 预警线触发（租户调紧 60%）','warn'); },300);
+  setTimeout(()=>{ const l=document.getElementById('ev-list');
+    const r=document.createElement('div'); r.className='ev-row ev-new';
+    r.innerHTML='<span class="ev-id">#E-20260911-0007</span><span class="rule-pill rule-open">R-03</span><span class="ev-tenant">Beta Ltd</span><span class="ev-snap">当日导出 60,120 / 100,000（调紧线 60k 触发）· 2 账号</span><span class="ev-lv">🟡 中</span><span class="hint">刚刚</span><span class="ev-act"><button class="btn btn-primary btn-sm" onclick="openDispose()">处置</button></span>';
+    l.prepend(r); },900);
+  setTimeout(openDispose,1600); }
+function playWater(){ go('#/admin/tenants');
+  setTimeout(()=>toast('Gamma Inc 存储水位 96% ≥ 95% · 已通知 WS_ADMIN（§3.4）','err'),400);
+  setTimeout(()=>{ document.querySelectorAll('#tenant-rows .water .bar i')[4].style.width='96%'; },600); }
+function playTighten(){ go('#/ws/settings/security');
+  setTimeout(()=>{ const inp=document.querySelectorAll('.th-input')[0]; inp.value='300'; inp.classList.add('err');
+    document.getElementById('th-msg').textContent='300 > 平台默认 200：不可放宽（BR-06）';
+    document.getElementById('th-msg').style.color='var(--danger)'; },500); }
+function saveTighten(){ let bad=false;
+  document.querySelectorAll('.th-input').forEach(i=>{ const v=parseFloat(i.value), d=parseFloat(i.dataset.def);
+    if(v>d){ i.classList.add('err'); bad=true; } else i.classList.remove('err'); });
+  if(bad){ toast('存在宽于平台默认的值，已标红：不可保存（BR-06）','err'); return; }
+  document.getElementById('th-msg').textContent='已生效（此操作只会更严格）'; document.getElementById('th-msg').style.color='var(--ok)';
+  toast('阈值已保存并即时生效 · 落审计','ok'); }
+function playL2(){ go('#/admin/risk-events');
+  setTimeout(()=>openModal('m-l2'),400); }
+function l2Done(ok){ const c=document.getElementById('l2-card');
+  if(ok){ c.classList.add('ok'); c.innerHTML='<div class="kv"><span class="k">状态</span><span><b style="color:var(--ok)">已批准</b> · 24h 内平台可查看对象清单（全程审计）</span><span class="k">工单</span><span class="mono">GT-2026-0031 · 李四 2026-09-11 批准</span></div>';
+    toast('L2 授权已批准（24h）· 平台运营将收到通知','ok'); }
+  else { c.innerHTML='<div class="kv"><span class="k">状态</span><span>已拒绝 · 平台运营保持 L1 最小知情</span></div>'; toast('已拒绝 L2 工单','warn'); } }
+function playFrozen(){ go('#/ws/projects');
+  let s=14*60+32; const el=document.getElementById('frozen-cd'), veil=document.getElementById('frozen-veil');
+  veil.hidden=true; toast('写操作缓冲倒计时（BR-09）→ 演示加速','warn');
+  clearInterval(window.__cd);
+  window.__cd=setInterval(()=>{ s-=10; if(s<=0){ clearInterval(window.__cd); el.textContent='00:00'; veil.hidden=false;
+      toast('缓冲期结束 · 全只读生效（数据完整保留，BR-03 可解除）','err'); return; }
+    el.textContent=String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0'); },120); }
+
+route();
+</script>
+</body>
+</html>

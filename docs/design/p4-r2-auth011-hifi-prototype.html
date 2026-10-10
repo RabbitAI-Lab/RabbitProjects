@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RabbitProjects · P4 R2 高保真原型 · AUTH-011 LDAP/SCIM 目录同步</title>
+<!--
+════════════════════════════════════════════════════════════════════════════════
+RabbitProjects · P4 R2 高保真原型（AUTH-011 LDAP/SCIM 目录同步）
+════════════════════════════════════════════════════════════════════════════════
+状态：FROZEN 2026-09-12（自冻——2026-09-11 用户授权 P4 全程免确认，
+      见 memory p4-full-autonomy-until-r18；后续改动需重新走评审）。
+
+基线与依据
+  · 视觉语言基线：docs/design/sprint-9-hifi-prototype.html（FROZEN）与
+    p4-r1-auth012-hifi-prototype.html（FROZEN）token/控件/外壳零漂移。
+  · 表面定义：AUTH-011-ldap-scim.md §3.1~§3.4（五页）。
+
+评审记录
+  2026-09-12 自冻（免确认授权）：O1~O5 开放点按本原型实现。
+    O1 通道卡：状态点（绿启用/灰未启用）+ 目录地址 + 最近同步摘要条。
+    O2 待办卡三态：待开通（席位）/人工裁决（邮箱变更）/跳过明细——
+       计数徽标 + 处理按钮四 action（provision/expand_seats/merge/dismiss）。
+    O3 干跑确认页：影响清单表（账号/动作/明细）+ 摘要计数条 + 双按钮。
+    O4 SCIM 令牌一次性展示：明文框 + 「仅此一次」提示 + 前缀掩码回显。
+    O5 台账行内五计数徽标 + status 色点（success 绿/failed 红/dry_run 琥珀）。
+════════════════════════════════════════════════════════════════════════════════
+-->
+<style>
+:root{
+  --brand-50:#eef4ff;--brand-100:#dbe7fe;--brand-500:#3f76ff;--brand-600:#2f5fe0;
+  --danger:#ef4444;--danger-bg:#fef2f2;--danger-line:#fecaca;--ok:#059669;--ok-bg:#ecfdf5;
+  --warn:#f59e0b;--amber-bg:#fffbeb;--amber-line:#fde68a;--amber-ink:#b45309;
+  --bg:#fafafa;--surface:#ffffff;--surface-2:#f5f5f5;--line:#e5e5e5;--line-strong:#d4d4d4;
+  --ink:#262626;--ink-2:#525252;--ink-3:#8c8c8c;--ink-4:#a3a3a3;
+  --radius-card:.5rem;--radius-md:6px;--shadow-sm:0 1px 2px rgba(0,0,0,.05);
+  --font-ui:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --header-h:48px;--ease-spring:cubic-bezier(.2,.9,.3,1.1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--font-ui);background:var(--bg);color:var(--ink);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,textarea,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--brand-500);outline-offset:1px;border-radius:4px}
+[hidden]{display:none!important}
+.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 14px;border-radius:var(--radius-md);font-weight:500;font-size:13px;white-space:nowrap}
+.btn-primary{background:var(--brand-500);color:#fff}.btn-primary:hover{background:var(--brand-600)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-ghost{background:var(--surface);border:1px solid var(--line-strong);color:var(--ink-2)}
+.btn-ghost:hover{background:var(--surface-2)}.btn-ghost:disabled{opacity:.5;cursor:not-allowed}
+.btn-danger{background:var(--danger);color:#fff}.btn-danger:hover{background:#dc2626}
+.btn-sm{height:28px;padding:0 10px;font-size:12px}
+.input{width:100%;height:36px;border:1px solid var(--line-strong);border-radius:var(--radius-md);padding:0 10px;background:var(--surface)}
+textarea.input{height:auto;padding:8px 10px;resize:vertical;line-height:1.6}
+.label{display:block;font-size:13px;font-weight:500;color:var(--ink-2);margin-bottom:6px}
+.hint{font-size:12px;color:var(--ink-3)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-card);box-shadow:var(--shadow-sm)}
+.app{height:100vh;display:flex;flex-direction:column}
+.topbar{height:var(--header-h);background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 16px;flex-shrink:0}
+.shell{flex:1;display:flex;min-height:0}
+.asidebar{width:220px;border-right:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:2px;padding:12px;flex-shrink:0;overflow:auto}
+.side-item{display:flex;align-items:center;gap:9px;height:34px;padding:0 10px;border-radius:var(--radius-md);font-size:13.5px;color:var(--ink-2);text-align:left}
+.side-item:hover{background:var(--surface-2)}
+.side-item.active{background:var(--brand-50);color:var(--brand-600);font-weight:500}
+.side-label{font-size:11px;color:var(--ink-4);letter-spacing:.05em;margin:12px 0 4px 8px}
+.pmain{flex:1;overflow:auto;min-width:0}
+.page{padding:22px 26px;max-width:1080px;margin:0 auto}
+.page-title{font-size:17px;font-weight:600}.page-sub{font-size:12.5px;color:var(--ink-3)}
+.pill{font-size:11px;padding:1px 8px;border-radius:99px;white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;display:inline-block}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{font-size:12px;font-weight:500;color:var(--ink-3);text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+.tbl td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tbody tr:hover{background:var(--surface-2)}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:4px 10px;font-size:12.5px}
+.kv .k{color:var(--ink-3)}
+.count-badge{font-size:11px;font-family:var(--font-mono);padding:1px 6px;border-radius:4px;background:var(--surface-2);color:var(--ink-2)}
+.dock{position:fixed;right:18px;bottom:18px;width:242px;background:var(--surface);border:1px solid var(--line-strong);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.14);z-index:80;overflow:hidden}
+.dock-head{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--surface-2);font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer;user-select:none}
+.dock-body{max-height:420px;overflow:auto;padding:8px;display:none}
+.dock.open .dock-body{display:block}
+.dock-item{display:block;width:100%;text-align:left;padding:6px 10px;border-radius:6px;font-size:12.5px;color:var(--ink-2)}
+.dock-item:hover{background:var(--surface-2)}
+</style>
+</head>
+<body>
+<div class="app" id="v-dir">
+  <header class="topbar">
+    <b style="font-size:14px">RabbitProjects</b><span class="hint">Acme Corp · 工作空间设置</span>
+    <div class="topbar-right" style="margin-left:auto;display:flex;gap:10px;align-items:center">
+      <div style="width:28px;height:28px;border-radius:50%;background:var(--brand-500);color:#fff;font-size:12px;font-weight:600;display:inline-flex;align-items:center;justify-content:center">李</div>
+      <span class="hint" style="font-size:12.5px">李四（WS_ADMIN）</span>
+    </div>
+  </header>
+  <div class="shell">
+    <aside class="asidebar">
+      <div class="side-label" style="margin-top:2px">设置</div>
+      <button class="side-item">👥 成员</button>
+      <button class="side-item">🏷 标签与状态</button>
+      <button class="side-item active">🗂 身份源</button>
+      <button class="side-item">🛡 安全中心</button>
+    </aside>
+    <main class="pmain">
+      <div class="page">
+
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
+          <div class="page-title">身份源 · 目录同步</div>
+          <span class="page-sub">离职当天自动禁用 · 漏禁 = 安全事故（AUTH-011）</span>
+        </div>
+
+        <!-- O1 通道卡 -->
+        <div class="card" style="padding:14px 16px;margin-bottom:14px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="dot" style="background:var(--ok)"></span>
+            <b style="font-size:13.5px">LDAP/AD 同步</b>
+            <span class="pill" style="background:var(--ok-bg);color:var(--ok)">已启用 · 每 15 分钟</span>
+            <div style="margin-left:auto;display:flex;gap:8px">
+              <button class="btn btn-primary btn-sm">⟳ 立即同步</button>
+              <button class="btn btn-ghost btn-sm">◌ 干跑一次</button>
+              <button class="btn btn-ghost btn-sm">修改配置</button>
+              <button class="btn btn-ghost btn-sm">停用通道…</button>
+            </div>
+          </div>
+          <div class="kv" style="margin-top:8px">
+            <span class="k">目录</span><span class="mono" style="font-size:12px">ldaps://ad.corp.example:636 · base: OU=Staff,DC=corp</span>
+            <span class="k">最近同步</span><span>2026-09-12 14:30 · <b style="color:var(--ok)">成功</b> · <span class="count-badge">+3 新增</span> <span class="count-badge">12 变更</span> <span class="count-badge">0 禁用</span> <span class="count-badge">1 跳过</span></span>
+          </div>
+        </div>
+
+        <!-- O2 待办卡 -->
+        <div class="card" style="padding:14px 16px;margin-bottom:14px">
+          <b style="font-size:13.5px">待办</b>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--amber-line);background:var(--amber-bg);border-radius:8px">
+              <span style="color:var(--amber-ink)">⚠</span>
+              <span style="font-size:13px;color:var(--amber-ink)">待开通 (5)　席位不足，请扩容或选择不开通</span>
+              <button class="btn btn-ghost btn-sm" style="margin-left:auto">处理</button>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px">
+              <span style="color:var(--ink-3)">⚠</span>
+              <span style="font-size:13px">人工裁决 (2)　邮箱变更疑似同人，需确认（老邮箱缺席 + 新邮箱出现）</span>
+              <button class="btn btn-ghost btn-sm" style="margin-left:auto">裁决</button>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px">
+              <span style="color:var(--ink-3)">ⓘ</span>
+              <span style="font-size:13px;color:var(--ink-3)">跳过 (1)　目录记录缺邮箱 (CN=svc-printer)</span>
+              <button class="btn btn-ghost btn-sm" style="margin-left:auto">详情</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- O5 台账 -->
+        <div class="card">
+          <div style="padding:12px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
+            <b style="font-size:13.5px">同步台账</b>
+            <span class="hint">最近 7 天 ▁▃▅▃▆▅▃ · 成功 96/96</span>
+          </div>
+          <table class="tbl">
+            <thead><tr><th style="width:170px">批次</th><th style="width:80px">类型</th><th>计数</th><th style="width:90px">状态</th><th style="width:80px"></th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="mono" style="font-size:12px">2026-09-12 14:30</td>
+                <td>全量</td>
+                <td><span class="count-badge" style="background:var(--ok-bg);color:var(--ok)">+3</span> <span class="count-badge">12 变更</span> <span class="count-badge">0 禁用</span> <span class="count-badge">1 跳过</span></td>
+                <td><span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ok)"><span class="dot" style="background:var(--ok)"></span>成功</span></td>
+                <td><button class="btn btn-ghost btn-sm">明细</button></td>
+              </tr>
+              <tr>
+                <td class="mono" style="font-size:12px">2026-09-12 14:15</td>
+                <td>增量</td>
+                <td><span class="count-badge">2 变更</span> <span class="count-badge">0 其余</span></td>
+                <td><span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ok)"><span class="dot" style="background:var(--ok)"></span>成功</span></td>
+                <td><button class="btn btn-ghost btn-sm">明细</button></td>
+              </tr>
+              <tr>
+                <td class="mono" style="font-size:12px">2026-09-12 10:02</td>
+                <td>干跑</td>
+                <td><span class="count-badge">0 新增</span> <span class="count-badge" style="background:var(--amber-bg);color:var(--amber-ink)">23 变更</span> <span class="count-badge">0 禁用</span></td>
+                <td><span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--amber-ink)"><span class="dot" style="background:var(--warn)"></span>待确认</span></td>
+                <td><button class="btn btn-primary btn-sm">去确认</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ══════════════════ 干跑确认页（O3）══════════════════ -->
+<div class="app" id="v-dry" hidden>
+  <header class="topbar">
+    <b style="font-size:14px">RabbitProjects</b><span class="hint">身份源 · 干跑确认</span>
+  </header>
+  <div class="shell"><main class="pmain"><div class="page" style="max-width:840px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+      <div class="page-title">干跑结果 · 组映射变更</div>
+      <span class="page-sub mono">2026-09-12</span>
+    </div>
+    <p style="font-size:13px;color:var(--ink-2);margin-bottom:14px">变更摘要：组「CN=QA-Team」映射从 <b>部门:质量部</b> 改为 <b>部门:测试中心</b>（BR-07：确认后才生效）</p>
+    <div class="card">
+      <div style="padding:12px 14px;border-bottom:1px solid var(--line)"><b style="font-size:13.5px">将影响 23 个账号</b></div>
+      <table class="tbl">
+        <thead><tr><th>账号</th><th style="width:110px">动作</th><th>明细</th></tr></thead>
+        <tbody>
+          <tr><td class="mono" style="font-size:12.5px">wang.fang@corp.example</td><td>部门变更</td><td class="hint">质量部 → 测试中心</td></tr>
+          <tr><td class="mono" style="font-size:12.5px">li.wei@corp.example</td><td>部门变更</td><td class="hint">质量部 → 测试中心</td></tr>
+          <tr><td colspan="3" class="hint" style="text-align:center;padding:14px">…（展开全部 23 条）</td></tr>
+        </tbody>
+      </table>
+      <div style="padding:10px 14px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-2)">
+        新增 0 · 变更 23 · 禁用 0 · 跳过 0　<span class="hint" style="margin-left:8px">确认应用时影响清单内映射缺席计数清零重计（BR-04 豁免）</span>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
+      <button class="btn btn-ghost">放弃变更</button>
+      <button class="btn btn-primary">确认并应用 →</button>
+    </div>
+  </div></main></div>
+</div>
+
+<!-- ══════════════════ SCIM 配置（O4）══════════════════ -->
+<div class="app" id="v-scim" hidden>
+  <header class="topbar">
+    <b style="font-size:14px">RabbitProjects</b><span class="hint">身份源 · SCIM 配置</span>
+  </header>
+  <div class="shell"><main class="pmain"><div class="page" style="max-width:720px">
+    <div class="page-title" style="margin-bottom:16px">SCIM 2.0 推送通道</div>
+    <div class="card" style="padding:16px">
+      <div class="label">推送端点（提供给 IdP 配置）</div>
+      <div class="mono" style="font-size:12.5px;background:var(--surface-2);border-radius:6px;padding:8px 10px;margin-bottom:14px">https://your-instance/api/scim/v2/Users</div>
+      <div class="label">Bearer Token（O4：仅创建时展示一次）</div>
+      <div class="mono" style="font-size:12.5px;background:var(--amber-bg);border:1px solid var(--amber-line);border-radius:6px;padding:8px 10px">scim_Kj9x…（完整明文一次性展示）</div>
+      <p class="hint" style="margin-top:6px">令牌仅此前缀回显（scim_Kj9x）；泄露可吊销重签。</p>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn btn-danger btn-sm">吊销令牌</button>
+        <button class="btn btn-ghost btn-sm">重新签发</button>
+      </div>
+    </div>
+  </div></main></div>
+</div>
+
+<aside class="dock open">
+  <div class="dock-head">P4·R2 原型演示 <span style="margin-left:auto;font-size:11px;color:var(--ink-4)">FROZEN · O1~O5</span></div>
+  <div class="dock-body">
+    <button class="dock-item" onclick="go('#dir')">🗂 身份源总览（§3.2）</button>
+    <button class="dock-item" onclick="go('#dry')">◌ 干跑确认（§3.3）</button>
+    <button class="dock-item" onclick="go('#scim')">🔗 SCIM 配置（§2.5）</button>
+  </div>
+</aside>
+
+<script>
+const VIEWS = { '#dir': 'v-dir', '#dry': 'v-dry', '#scim': 'v-scim' };
+function route(){ const h = location.hash || '#dir';
+  Object.values(VIEWS).forEach(v => document.getElementById(v).hidden = v !== VIEWS[h]); }
+function go(h){ location.hash = h; }
+addEventListener('hashchange', route);
+route();
+</script>
+</body>
+</html>

@@ -5,6 +5,7 @@
 已开始不叠今日）、缓存指纹（BR-07 同日命中零写/跨日必失配）、预警配置
 （BR-13/14）、逾期预警幂等（BR-08）、外部前置标记（BR-03）。
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -37,11 +38,9 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture()
 def env(db):
-    owner = User.objects.create_user(email="cpm-owner@rabbit.dev", password="Rabbit123!",
-                                     display_name="管理员")
+    owner = User.objects.create_user(email="cpm-owner@rabbit.dev", password="Rabbit123!", display_name="管理员")
     ws = Workspace.objects.create(name="CP", slug="w-cpm-test", owner=owner, created_by=owner)
-    WorkspaceMember.objects.create(workspace=ws, member=owner,
-                                   role=WorkspaceRole.OWNER, created_by=owner)
+    WorkspaceMember.objects.create(workspace=ws, member=owner, role=WorkspaceRole.OWNER, created_by=owner)
     proj = Project.objects.create(name="电商重构", identifier="RBT", workspace=ws, created_by=owner)
     seed_project_states(proj)
     ProjectMember.objects.create(project=proj, member=owner, role=ProjectRole.ADMIN, created_by=owner)
@@ -57,8 +56,14 @@ def _client(user) -> APIClient:
 def _sched(env, name, start, target, *, group="unstarted") -> Issue:
     state = State.objects.filter(project=env["proj"], group=group).first()
     return Issue.objects.create(
-        project=env["proj"], name=name, state=state, sequence_id=next_sequence_id(env["proj"].pk),
-        start_date=start, target_date=target, created_by=env["owner"])
+        project=env["proj"],
+        name=name,
+        state=state,
+        sequence_id=next_sequence_id(env["proj"].pk),
+        start_date=start,
+        target_date=target,
+        created_by=env["owner"],
+    )
 
 
 def _mk_net(env):
@@ -72,10 +77,8 @@ def _mk_net(env):
     d = _sched(env, "D", "2026-09-03", "2026-09-08")
     # E：零浮动（es=9/1、duration=12、deadline 9/13 → ls=9/1，float=0）——突变哨兵
     e = _sched(env, "E", "2026-09-01", "2026-09-13")
-    create_relation(issue_id=a.id, related_issue_id=b.id, relation_type="blocks",
-                    actor_id=env["owner"].id)
-    create_relation(issue_id=b.id, related_issue_id=c.id, relation_type="blocks",
-                    actor_id=env["owner"].id)
+    create_relation(issue_id=a.id, related_issue_id=b.id, relation_type="blocks", actor_id=env["owner"].id)
+    create_relation(issue_id=b.id, related_issue_id=c.id, relation_type="blocks", actor_id=env["owner"].id)
     return a, b, c, d, e
 
 
@@ -85,6 +88,7 @@ def _mk_net(env):
 class TestCPMEngine:
     def test_known_network(self, env):
         import datetime
+
         a, b, c, d, e = _mk_net(env)
         r = CPMEngine().compute(env["proj"].id, anchor_today=datetime.date(2026, 9, 1))
         rows = {row.issue_id: row for row in r.rows}
@@ -99,7 +103,7 @@ class TestCPMEngine:
         assert rows[c.id].es.isoformat() == "2026-09-10"
         # 逆推 deadline=9/13：C lf=9/13 → float(C) = ls - es = (9/13-6) - 9/10 = 9/7-9/10 = -3
         assert rows[c.id].float_days == -3
-        assert rows[c.id].is_critical is True          # 负浮动 = 关键（§1.4）
+        assert rows[c.id].is_critical is True  # 负浮动 = 关键（§1.4）
         assert rows[a.id].is_critical is True
         # D 无依赖：es=9/3（今日 9/1 < start 9/3 取 start）——有正浮动
         assert rows[d.id].es.isoformat() == "2026-09-03"
@@ -121,18 +125,20 @@ class TestCPMEngine:
 
     def test_cancelled_excluded_completed_anchored(self, env):
         import datetime
+
         _sched(env, "cancelled", "2026-09-01", "2026-09-05", group="cancelled")
         _sched(env, "done", "2026-09-01", "2026-09-05", group="completed")
         r = CPMEngine().compute(env["proj"].id, anchor_today=datetime.date(2026, 9, 1))
-        assert r.rows == []                             # 完成/取消档都不进 rows（BR-12）
+        assert r.rows == []  # 完成/取消档都不进 rows（BR-12）
 
     def test_started_no_today_floor(self, env):
         """BR-04：已开始未完成不叠加今日锚点（start 保留）。"""
         import datetime
+
         s = _sched(env, "S", "2026-08-20", "2026-08-30", group="started")
         r = CPMEngine().compute(env["proj"].id, anchor_today=datetime.date(2026, 9, 10))
         row = next(row for row in r.rows if row.issue_id == s.id)
-        assert row.es.isoformat() == "2026-08-20"       # 未被今日顶起
+        assert row.es.isoformat() == "2026-08-20"  # 未被今日顶起
 
 
 # ────────────────────────────────────────────────────────────────
@@ -141,29 +147,33 @@ class TestCPMEngine:
 class TestCacheFingerprint:
     def test_fingerprint_hit_zero_write(self, env, settings):
         from django.core.cache import cache as dj_cache
+
         _mk_net(env)
-        dj_cache.delete(f"cpm:run:{env['proj'].id}")     # 直通 debounce 窗口
+        dj_cache.delete(f"cpm:run:{env['proj'].id}")  # 直通 debounce 窗口
         r1 = cpm_recompute(str(env["proj"].id))
         assert r1["rows"] == 5
         dj_cache.delete(f"cpm:run:{env['proj'].id}")
-        r2 = cpm_recompute(str(env["proj"].id))          # 同日同输入 → 指纹命中
+        r2 = cpm_recompute(str(env["proj"].id))  # 同日同输入 → 指纹命中
         assert r2 == {"skipped": "fingerprint-hit"}
         assert IssueCPMCache.objects.filter(project=env["proj"]).count() == 5
 
     def test_external_pred_marked(self, env):
         """BR-03：跨项目阻塞源不进 CPM，但行标 has_external_preds。"""
-        proj2 = Project.objects.create(name="外部", identifier="EXT",
-                                       workspace=env["ws"], created_by=env["owner"])
+        proj2 = Project.objects.create(name="外部", identifier="EXT", workspace=env["ws"], created_by=env["owner"])
         seed_project_states(proj2)
-        ext = Issue.objects.create(project=proj2, name="外部任务",
-                                   sequence_id=next_sequence_id(proj2.pk),
-                                   start_date="2026-09-01", target_date="2026-09-05",
-                                   created_by=env["owner"])
+        ext = Issue.objects.create(
+            project=proj2,
+            name="外部任务",
+            sequence_id=next_sequence_id(proj2.pk),
+            start_date="2026-09-01",
+            target_date="2026-09-05",
+            created_by=env["owner"],
+        )
         a, b, c, d, e = _mk_net(env)
         # 外部前置：EXT（proj2）blocks A（本项目）——A 被外部任务阻塞（BR-03 ⚓ 语义）
-        create_relation(issue_id=ext.id, related_issue_id=a.id, relation_type="blocks",
-                        actor_id=env["owner"].id)
+        create_relation(issue_id=ext.id, related_issue_id=a.id, relation_type="blocks", actor_id=env["owner"].id)
         from django.core.cache import cache as dj_cache
+
         dj_cache.delete(f"cpm:run:{env['proj'].id}")
         cpm_recompute(str(env["proj"].id))
         row = IssueCPMCache.objects.get(issue=a)
@@ -175,7 +185,7 @@ class TestCacheFingerprint:
 # ────────────────────────────────────────────────────────────────
 class TestEndpoints:
     def _base(self, env):
-        return (f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/gantt/")
+        return f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/gantt/"
 
     def _rel_net(self, env):
         """相对今天的三链网络（端点 anchor=服务端当日，静态日期会被今日锚点顶起）。"""
@@ -183,31 +193,32 @@ class TestEndpoints:
         a = _sched(env, "A", (t + timedelta(days=1)).isoformat(), (t + timedelta(days=3)).isoformat())
         b = _sched(env, "B", (t + timedelta(days=2)).isoformat(), (t + timedelta(days=6)).isoformat())
         c = _sched(env, "C", (t + timedelta(days=5)).isoformat(), (t + timedelta(days=12)).isoformat())
-        create_relation(issue_id=a.id, related_issue_id=b.id, relation_type="blocks",
-                        actor_id=env["owner"].id)
-        create_relation(issue_id=b.id, related_issue_id=c.id, relation_type="blocks",
-                        actor_id=env["owner"].id)
+        create_relation(issue_id=a.id, related_issue_id=b.id, relation_type="blocks", actor_id=env["owner"].id)
+        create_relation(issue_id=b.id, related_issue_id=c.id, relation_type="blocks", actor_id=env["owner"].id)
         return a, b, c
 
     def test_critical_path_endpoint(self, env):
         from django.core.cache import cache as dj_cache
+
         self._rel_net(env)
         dj_cache.delete(f"cpm:run:{env['proj'].id}")
         resp = _client(env["owner"]).get(self._base(env) + "critical-path/")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert len(data["rows"]) == 3                    # 三链任务（未完成未取消全在）
+        assert len(data["rows"]) == 3  # 三链任务（未完成未取消全在）
         assert any(r["is_critical"] for r in data["rows"])
         assert data["approximate"] is False
 
     def test_viewport_filters_rows_only(self, env):
         from django.core.cache import cache as dj_cache
+
         a, b, c = self._rel_net(env)
         dj_cache.delete(f"cpm:run:{env['proj'].id}")
         t = timezone.localdate()
         resp = _client(env["owner"]).get(
-            self._base(env) +
-            f"critical-path/?viewport_start={t.isoformat()}&viewport_end={(t + timedelta(days=6)).isoformat()}")
+            self._base(env)
+            + f"critical-path/?viewport_start={t.isoformat()}&viewport_end={(t + timedelta(days=6)).isoformat()}"
+        )
         rows = resp.json()["data"]["rows"]
         # 视口只裁下发集：C（es ≥ t+7）被裁——float 判定不变
         assert all(r["es"] <= (t + timedelta(days=6)).isoformat() for r in rows)
@@ -215,7 +226,8 @@ class TestEndpoints:
 
     def test_viewport_invalid_range_400(self, env):
         resp = _client(env["owner"]).get(
-            self._base(env) + "critical-path/?viewport_start=2026-09-10&viewport_end=2026-09-01")
+            self._base(env) + "critical-path/?viewport_start=2026-09-10&viewport_end=2026-09-01"
+        )
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "VALIDATION_INVALID_PARAM"
 
@@ -229,14 +241,14 @@ class TestEndpoints:
         assert _client(env["owner"]).get(base).json()["data"] == {
             "overdue_alert_enabled": True,
             "float_consumed_alert_enabled": True,
-            "target_completion_date": None}
+            "target_completion_date": None,
+        }
         resp = _client(env["owner"]).patch(
-            base, {"target_completion_date": "2026-12-31",
-                   "overdue_alert_enabled": False}, format="json")
+            base, {"target_completion_date": "2026-12-31", "overdue_alert_enabled": False}, format="json"
+        )
         assert resp.status_code == 200
         assert CPMAlertConfig.objects.get(project=env["proj"]).overdue_alert_enabled is False
         past = (timezone.localdate() - timedelta(days=1)).isoformat()
-        bad = _client(env["owner"]).patch(
-            base, {"target_completion_date": past}, format="json")
+        bad = _client(env["owner"]).patch(base, {"target_completion_date": past}, format="json")
         assert bad.status_code == 400
         assert bad.json()["error"]["code"] == "VALIDATION_INVALID_DATE_RANGE"

@@ -9,7 +9,7 @@ import { useParams } from "react-router";
 import { unwrap } from "../services/api";
 import { api } from "../services/axios";
 import { Topbar } from "../components/Topbar";
-import { Sidebar } from "../components/Sidebar";
+import { SystemSidebar } from "../components/SystemSidebar";
 import { toast } from "../components/Toast";
 
 type Config = Record<string, unknown> & {
@@ -106,7 +106,7 @@ export default function SSOConfigPage() {
     <div className="flex h-screen flex-col">
       <Topbar />
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar workspaceSlug={ws ?? ""} />
+        <SystemSidebar workspaceSlug={ws ?? ""} />
         <main className="flex-1 overflow-auto p-5" data-sb-scope="sso-config">
           <div className="mb-[18px]">
             <div className="text-[17px] font-semibold">SSO 单点登录</div>

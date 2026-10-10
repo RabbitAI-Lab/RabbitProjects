@@ -16,6 +16,10 @@ class AuditLog(models.Model):
     event_key = models.CharField(max_length=80)  # 幂等锚（sha256 hex；全局幂等由应用层三层去重保证，BR-06）
     workspace = models.ForeignKey("Workspace", on_delete=models.CASCADE,
                                   null=True, related_name="+")  # 仅租户边界；NULL=系统级
+    # AUTH-012（P4 R1）§4.1：风控 ingest 直读依赖的租户列——列 DDL 由 0039 迁移
+    # RunSQL 交付（分区表 managed=False，无 ORM 迁移）；不建 FK 系 AUTH-010 零外键
+    # 原则之引申。recorder 写入侧为 AUTH-010 待回改项，过渡期按 workspace→tenant 映射兜底。
+    tenant_id = models.UUIDField(null=True, editable=False)
     category = models.CharField(max_length=24)
     action = models.CharField(max_length=48)
     actor_id = models.CharField(max_length=64, null=True)  # UUID v4 / "system" / None

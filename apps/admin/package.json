@@ -17,7 +17,7 @@
     "@rp/tailwind-config": "workspace:*",
     "@rp/types": "workspace:*",
     "@rp/ui": "workspace:*",
-    "axios": "1.18.x",
+    "axios": "1.20.0",
     "isbot": "^5",
     "lucide-react": "0.511.x",
     "mobx": "6.13.x",

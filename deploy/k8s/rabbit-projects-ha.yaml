@@ -1,0 +1,69 @@
+# RabbitProjects 高可用档清单（INFRA-006 §2.1，P4 R9）
+# 形态：3 副本 API（PDB minAvailable=2、maxUnavailable=0 滚动 BR-02）+
+#       worker 按队列拆分；数据层外置（PG 主从 repmgrd/Redis Sentinel/
+#       RabbitMQ 镜像队列/MinIO 分布式）——标准档见 compose 与 install.sh。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rp-api
+  labels: {app: rp-api}
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}   # BR-02 发布零停机
+  selector: {matchLabels: {app: rp-api}}
+  template:
+    metadata: {labels: {app: rp-api}}
+    spec:
+      affinity:
+        podAntiAffinity:                              # BR-09 跨节点打散
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector: {matchLabels: {app: rp-api}}
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: api
+          image: rabbitprojects/api:latest
+          ports: [{containerPort: 8000}]
+          env:
+            - {name: DATABASE_URL, valueFrom: {secretKeyRef: {name: rp-secrets, key: database_url}}}
+            - {name: REDIS_URL, value: "redis://rp-redis:6379/0"}
+            - {name: CELERY_BROKER_URL, value: "amqp://rp-mq:5672//"}
+            - {name: TENANT_GOVERNANCE_ENABLED, value: "true"}
+            - {name: LICENSE_FILE, value: /etc/rp-license/license.json}
+            - {name: MAINTENANCE_MODE, value: "false"}
+          resources:                                   # BR-09 资源护栏
+            requests: {cpu: "500m", memory: 512Mi}
+            limits: {cpu: "2", memory: 2Gi}
+          readinessProbe: {httpGet: {path: /api/v1/health/, port: 8000}, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /api/v1/health/, port: 8000}, periodSeconds: 20}
+          volumeMounts: [{name: license, mountPath: /etc/rp-license, readOnly: true}]
+      volumes:
+        - name: license
+          secret: {secretName: rp-license}             # BR-05 密封 secret
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: rp-api-pdb}
+spec:
+  minAvailable: 2                                     # BR-01 单点清零
+  selector: {matchLabels: {app: rp-api}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: rp-worker}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: rp-worker}}
+  template:
+    metadata: {labels: {app: rp-worker}}
+    spec:
+      containers:
+        - name: worker
+          image: rabbitprojects/api:latest
+          command: ["celery", "-A", "plane", "worker", "-Q", "default,governance,directory,reports,integration"]
+          resources:
+            requests: {cpu: "250m", memory: 256Mi}
+            limits: {cpu: "1", memory: 1Gi}

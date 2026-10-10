@@ -5,6 +5,7 @@ layout / 扁平 filters / group_by 白名单 / card_fields 键域 / icon 预设�
 resolve_view（BR-08 条件剔除 + 分组回退）、默认视图偏好合并（BR-10）。
 HTTP 全矩阵（CRUD/409/403/404/204）在 sprint-3-flow.py（Phase 4）。
 """
+
 from __future__ import annotations
 
 import pytest
@@ -64,9 +65,12 @@ def _payload(**over) -> dict:
         "name": "救火看板",
         "layout": "kanban",
         "access": "personal",
-        "filters": {"op": "AND", "conditions": [
-            {"field": "priority", "operator": "in", "value": ["high", "urgent"]},
-        ]},
+        "filters": {
+            "op": "AND",
+            "conditions": [
+                {"field": "priority", "operator": "in", "value": ["high", "urgent"]},
+            ],
+        },
         "display_props": {"icon": "🚒", "group_by": "priority"},
     }
     p.update(over)
@@ -117,12 +121,17 @@ class TestValidatePayload:
         validate_view_payload(project=env["proj"], payload=_payload(), instance=None)
 
     def test_placeholder_conditions_pass(self, env):
-        payload = _payload(filters={"op": "AND", "conditions": [
-            {"field": "assignees", "operator": "in", "value": ["@me"]},
-            {"field": "state.group", "operator": "in", "value": ["unstarted", "started"]},
-            {"field": "issue_type", "operator": "in", "value": ["__bug__"]},
-            {"field": "target_date", "operator": "between", "value": ["this_week"]},
-        ]})
+        payload = _payload(
+            filters={
+                "op": "AND",
+                "conditions": [
+                    {"field": "assignees", "operator": "in", "value": ["@me"]},
+                    {"field": "state.group", "operator": "in", "value": ["unstarted", "started"]},
+                    {"field": "issue_type", "operator": "in", "value": ["__bug__"]},
+                    {"field": "target_date", "operator": "between", "value": ["this_week"]},
+                ],
+            }
+        )
         validate_view_payload(project=env["proj"], payload=payload, instance=None)
 
     def test_access_shared_rejected(self, env):
@@ -133,14 +142,23 @@ class TestValidatePayload:
 
     def test_nested_conditions_allowed(self, env):
         """TASK-011 超集接管：嵌套 ≤3 放开（P2 扁平限制废止）；4 层仍拒。"""
-        nested = {"op": "AND", "conditions": [
-            {"op": "OR", "conditions": [
-                {"field": "priority", "operator": "in", "value": ["high"]},
-                {"op": "AND", "conditions": [
-                    {"field": "name", "operator": "contains", "value": "x"},
-                ]},
-            ]},
-        ]}
+        nested = {
+            "op": "AND",
+            "conditions": [
+                {
+                    "op": "OR",
+                    "conditions": [
+                        {"field": "priority", "operator": "in", "value": ["high"]},
+                        {
+                            "op": "AND",
+                            "conditions": [
+                                {"field": "name", "operator": "contains", "value": "x"},
+                            ],
+                        },
+                    ],
+                },
+            ],
+        }
         validate_view_payload(project=env["proj"], payload=_payload(filters=nested), instance=None)
         depth4 = {"op": "AND", "conditions": [nested]}  # 包一层 → 4 层，拒
         exc = _raises_code(_payload(filters=depth4), env, "VALIDATION_INVALID_PARAM")
@@ -165,8 +183,13 @@ class TestValidatePayload:
 
     def test_active_cf_field_passes(self, env):
         CustomFieldDefinition.objects.create(
-            workspace=env["ws"], project=env["proj"], name="严重等级",
-            field_key="cf_severity", field_type="select", options=OPTS, created_by=env["owner"],
+            workspace=env["ws"],
+            project=env["proj"],
+            name="严重等级",
+            field_key="cf_severity",
+            field_type="select",
+            options=OPTS,
+            created_by=env["owner"],
         )
         conds = [{"field": "cf_severity", "operator": "in", "value": ["critical"]}]
         payload = _payload(filters={"op": "AND", "conditions": conds})
@@ -182,24 +205,35 @@ class TestValidatePayload:
 
     def test_group_by_nongroupable_rejected(self, env):
         CustomFieldDefinition.objects.create(
-            workspace=env["ws"], project=env["proj"], name="根因",
-            field_key="cf_rca", field_type="text", created_by=env["owner"],
+            workspace=env["ws"],
+            project=env["proj"],
+            name="根因",
+            field_key="cf_rca",
+            field_type="text",
+            created_by=env["owner"],
         )
         _raises_code(_payload(display_props={"group_by": "cf_rca"}), env, "VALIDATION_ERROR")
 
     def test_group_by_builtin_and_select_pass(self, env):
         CustomFieldDefinition.objects.create(
-            workspace=env["ws"], project=env["proj"], name="严重等级",
-            field_key="cf_severity", field_type="select", options=OPTS, created_by=env["owner"],
+            workspace=env["ws"],
+            project=env["proj"],
+            name="严重等级",
+            field_key="cf_severity",
+            field_type="select",
+            options=OPTS,
+            created_by=env["owner"],
         )
         for dim in ("state_id", "priority", "assignee_id", "label_id", "cf_severity"):
             validate_view_payload(project=env["proj"], payload=_payload(display_props={"group_by": dim}), instance=None)
 
     def test_card_fields_unknown_keys_stripped(self, env):
-        payload = _payload(display_props={
-            "group_by": "priority",
-            "card_fields": {"labels": True, "sub_issues": True, "ghost_key": True, "timer": False},
-        })
+        payload = _payload(
+            display_props={
+                "group_by": "priority",
+                "card_fields": {"labels": True, "sub_issues": True, "ghost_key": True, "timer": False},
+            }
+        )
         validate_view_payload(project=env["proj"], payload=payload, instance=None)
         assert payload["display_props"]["card_fields"] == {"labels": True, "sub_issues": True, "timer": False}
 
@@ -228,17 +262,28 @@ class TestValidatePayload:
 class TestResolveView:
     def _cf(self, env, key, ftype, active=True, **kw):
         CustomFieldDefinition.objects.create(
-            workspace=env["ws"], project=env["proj"], name=kw.pop("name", key),
-            field_key=key, field_type=ftype, options=OPTS if ftype in ("select", "multi_select") else [],
-            is_active=active, created_by=env["owner"],
+            workspace=env["ws"],
+            project=env["proj"],
+            name=kw.pop("name", key),
+            field_key=key,
+            field_type=ftype,
+            options=OPTS if ftype in ("select", "multi_select") else [],
+            is_active=active,
+            created_by=env["owner"],
         )
 
     def test_inactive_cf_condition_dropped(self, env):
         self._cf(env, "cf_severity", "select", active=False)
-        view = _mk_view(env, filters={"op": "AND", "conditions": [
-            {"field": "priority", "operator": "in", "value": ["high"]},
-            {"field": "cf_severity", "operator": "in", "value": ["critical"]},
-        ]})
+        view = _mk_view(
+            env,
+            filters={
+                "op": "AND",
+                "conditions": [
+                    {"field": "priority", "operator": "in", "value": ["high"]},
+                    {"field": "cf_severity", "operator": "in", "value": ["critical"]},
+                ],
+            },
+        )
         filters, degraded = resolve_view(view, project=env["proj"], user=env["owner"])
         assert [c["field"] for c in filters["conditions"]] == ["priority"]
         assert degraded and "已停用" in degraded["filters"]
@@ -251,9 +296,16 @@ class TestResolveView:
 
     def test_active_view_no_degradation(self, env):
         self._cf(env, "cf_severity", "select")
-        view = _mk_view(env, filters={"op": "AND", "conditions": [
-            {"field": "cf_severity", "operator": "in", "value": ["critical"]},
-        ]}, display_props={"group_by": "cf_severity"})
+        view = _mk_view(
+            env,
+            filters={
+                "op": "AND",
+                "conditions": [
+                    {"field": "cf_severity", "operator": "in", "value": ["critical"]},
+                ],
+            },
+            display_props={"group_by": "cf_severity"},
+        )
         filters, degraded = resolve_view(view, project=env["proj"], user=env["owner"])
         assert degraded is None
         assert len(filters["conditions"]) == 1

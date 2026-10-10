@@ -19,7 +19,9 @@ import sys
 import urllib.request
 
 sys.path.insert(0, "tests/jmeter")
-from _contract import HTTP, Client, q
+sys.path.insert(0, "scripts")
+from _contract import HTTP, Client, q  # noqa: E402
+from _psql_env import psql_args  # noqa: E402
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
 TAG = "S5 验收演示"
@@ -32,9 +34,8 @@ MOCK_500 = "http://127.0.0.1:8091/rp"
 
 
 def psql(sql: str) -> str:
-    r = subprocess.run(
-        ["docker", "exec", "-i", "rp-pg", "psql", "-U", "rp", "-d", "rabbit_projects", "-Atc", sql],
-        capture_output=True, text=True, timeout=120, check=False)
+    r = subprocess.run(psql_args(["-Atc", sql]),
+                       capture_output=True, text=True, timeout=120, check=False)
     if r.returncode != 0:
         raise RuntimeError(r.stderr[:200])
     return r.stdout.strip()

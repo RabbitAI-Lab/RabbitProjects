@@ -11,6 +11,7 @@
 file.read（PROJ_VIEWER+）；delete 需 file.delete（PROJ_ADMIN 全量；PROJ_CONTRIBUTOR
 仅本人上传，对应 FILE-001 §2.4 BR-10 / R1 受限项）。
 """
+
 from __future__ import annotations
 
 from rest_framework import status
@@ -50,8 +51,7 @@ class _ScopedHelper:
         return project, issue
 
     @staticmethod
-    def get_asset(*, project, issue, asset_id,
-                  entity_types: list[str] | None = None):
+    def get_asset(*, project, issue, asset_id, entity_types: list[str] | None = None):
         """按 entity_type 分派归属校验（COLLAB-002 §4.2 注）。
 
         - ``issue``：任务附件域（FILE-001 原语义）；
@@ -62,10 +62,14 @@ class _ScopedHelper:
         try:
             asset = FileAsset.objects.get(
                 pk=asset_id,
-                entity_type__in=(entity_types if entity_types is not None else [
-                    FileAsset.EntityType.ISSUE,
-                    FileAsset.EntityType.COMMENT_IMAGE,
-                ]),
+                entity_type__in=(
+                    entity_types
+                    if entity_types is not None
+                    else [
+                        FileAsset.EntityType.ISSUE,
+                        FileAsset.EntityType.COMMENT_IMAGE,
+                    ]
+                ),
                 entity_id=issue.id,
             )
         except FileAsset.DoesNotExist as exc:
@@ -82,10 +86,17 @@ class AttachmentPresignView(APIView):
 
     def post(self, request, *args, **kwargs):
         project, issue = _ScopedHelper.resolve(
-            kwargs["slug"], kwargs["project_id"], kwargs["issue_id"], request.user,
+            kwargs["slug"],
+            kwargs["project_id"],
+            kwargs["issue_id"],
+            request.user,
         )
         s = PresignSerializer(data=request.data)
         s.is_valid(raise_exception=True)
+        # AUTH-012 §4.5 第 1 强制点：租户层存储硬上限（BR-11 门控内置）
+        from plane.governance.enforcement import check_storage_quota
+
+        check_storage_quota(project.workspace, int(s.validated_data["file_size"]))
         svc = AssetService()
         data = svc.presign(issue=issue, payload=s.validated_data, actor=request.user)
         return success_response(
@@ -107,12 +118,17 @@ class AttachmentCompleteView(APIView):
 
     def post(self, request, *args, **kwargs):
         project, issue = _ScopedHelper.resolve(
-            kwargs["slug"], kwargs["project_id"], kwargs["issue_id"], request.user,
+            kwargs["slug"],
+            kwargs["project_id"],
+            kwargs["issue_id"],
+            request.user,
         )
         s = CompleteSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         asset = _ScopedHelper.get_asset(
-            project=project, issue=issue, asset_id=kwargs["asset_id"],
+            project=project,
+            issue=issue,
+            asset_id=kwargs["asset_id"],
         )
         # 校验 actor == 上传人（防止 B 拿 A 的 asset_id 来完成）
         if asset.uploaded_by_id != request.user.id:
@@ -129,7 +145,10 @@ class AttachmentListView(ListAPIView):
 
     def list(self, request, *args, **kwargs):
         project, issue = _ScopedHelper.resolve(
-            kwargs["slug"], kwargs["project_id"], kwargs["issue_id"], request.user,
+            kwargs["slug"],
+            kwargs["project_id"],
+            kwargs["issue_id"],
+            request.user,
         )
         svc = AssetService()
         rows = svc.list_for_issue(issue=issue)
@@ -156,10 +175,15 @@ class AttachmentDownloadView(APIView):
 
     def get(self, request, *args, **kwargs):
         project, issue = _ScopedHelper.resolve(
-            kwargs["slug"], kwargs["project_id"], kwargs["issue_id"], request.user,
+            kwargs["slug"],
+            kwargs["project_id"],
+            kwargs["issue_id"],
+            request.user,
         )
         asset = _ScopedHelper.get_asset(
-            project=project, issue=issue, asset_id=kwargs["asset_id"],
+            project=project,
+            issue=issue,
+            asset_id=kwargs["asset_id"],
         )
         if asset.status != FileAsset.Status.UPLOADED:
             raise NotFound("RESOURCE_NOT_FOUND")
@@ -168,8 +192,7 @@ class AttachmentDownloadView(APIView):
             raise AppException(
                 "VALIDATION_INVALID_PARAM",
                 message="请求参数不合法",
-                details=[{"field": "variant", "code": "NOT_A_CHOICE",
-                          "message": "variant 仅支持 thumb"}],
+                details=[{"field": "variant", "code": "NOT_A_CHOICE", "message": "variant 仅支持 thumb"}],
             )
         svc = AssetService()
         url = svc.download_url(asset=asset, variant=variant)
@@ -183,24 +206,24 @@ class AttachmentDeleteView(APIView):
 
     def delete(self, request, *args, **kwargs):
         project, issue = _ScopedHelper.resolve(
-            kwargs["slug"], kwargs["project_id"], kwargs["issue_id"], request.user,
+            kwargs["slug"],
+            kwargs["project_id"],
+            kwargs["issue_id"],
+            request.user,
         )
         asset = _ScopedHelper.get_asset(
-            project=project, issue=issue, asset_id=kwargs["asset_id"],
+            project=project,
+            issue=issue,
+            asset_id=kwargs["asset_id"],
             # 评论图片与评论同生共死（COLLAB-002 §1.4）：不开放独立删除
             entity_types=[FileAsset.EntityType.ISSUE],
         )
         # BR-10 R1 受限项：CONTRIBUTOR 仅本人上传可删；ADMIN 全量
-        if (
-            project.current_user_role < ProjectRole.ADMIN
-            and asset.uploaded_by_id != request.user.id
-        ):
+        if project.current_user_role < ProjectRole.ADMIN and asset.uploaded_by_id != request.user.id:
             raise AppException(
                 "PERM_DENIED",
                 message="仅本人上传可删除（PROJ_CONTRIBUTOR 受限项）",
             )
         svc = AssetService()
         new_count = svc.delete(asset=asset, issue=issue, actor=request.user)
-        return success_response(
-            {"id": str(asset.id), "attachment_count": new_count}
-        )
+        return success_response({"id": str(asset.id), "attachment_count": new_count})

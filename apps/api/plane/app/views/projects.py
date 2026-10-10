@@ -41,6 +41,7 @@ class ProjectListCreateView(ListCreateAPIView):
         ws, _ = _get_workspace_or_404(kwargs["slug"], request.user)
         # PROJ-002 §4.2.1：搜索（?q=）+ 状态筛选（?status=）+ 收藏过滤 / 置顶（?favorite / ?favorite_first）
         from plane.db.services.project_query import list_for_user
+
         s = ProjectSearchQuerySerializer(data=request.query_params)
         s.is_valid(raise_exception=True)
         q = s.validated_data.get("q") or None
@@ -66,10 +67,8 @@ class ProjectListCreateView(ListCreateAPIView):
             offset = max(int(request.query_params.get("offset", 0)), 0)
         except (TypeError, ValueError):
             offset = 0
-        page_qs = qs[offset: offset + per_page]
-        data = [_serialize_project(p, request.user,
-                                   is_favorite=str(p.id) in favorite_ids)
-                for p in page_qs]
+        page_qs = qs[offset : offset + per_page]
+        data = [_serialize_project(p, request.user, is_favorite=str(p.id) in favorite_ids) for p in page_qs]
         meta = {
             "count": len(data),
             "total_count": qs.count(),
@@ -86,6 +85,10 @@ class ProjectListCreateView(ListCreateAPIView):
 
     def create(self, request, *args, **kwargs):
         ws, member = _get_workspace_or_404(kwargs["slug"], request.user)
+        # AUTH-012 §4.5 项目数配额（UT-26；standard+ 档不限，BR-11 门控内置）
+        from plane.governance.enforcement import check_project_quota
+
+        check_project_quota(ws)
         if member.role < WorkspaceRole.MEMBER:
             # sprint-0 用了不存在的 PERM_WORKSPACE_MEMBER_REQUIRED；注册表 §8.3 无此码，
             # 收口到 PERM_ROLE_INSUFFICIENT（详见 INFRA-004 §4.2 角色不足映射）。
@@ -104,20 +107,25 @@ class ProjectListCreateView(ListCreateAPIView):
             raise AppException(
                 "RESOURCE_ALREADY_EXISTS",
                 message=f"标识符 {identifier} 已被占用，请换一个",
-                details=[{
+                details=[
+                    {
                         "field": "identifier",
                         "code": "UNIQUE",
                         "message": f"标识符 {identifier} 已被占用",
                         "suggestion": suggestion,
-                    }],
+                    }
+                ],
             )
         # ── Sprint-5（PROJ-003 §1.4.1/§4.2.5）：可选初态 + 模板实例化 ──
         initial_status = request.data.get("initial_status", "active")
         if initial_status not in ("draft", "active"):
             raise AppException(
-                "VALIDATION_ERROR", message="initial_status 非法",
-                details=[{"field": "initial_status", "code": "NOT_A_CHOICE",
-                          "message": "must be one of: draft, active"}])
+                "VALIDATION_ERROR",
+                message="initial_status 非法",
+                details=[
+                    {"field": "initial_status", "code": "NOT_A_CHOICE", "message": "must be one of: draft, active"}
+                ],
+            )
         template_id = request.data.get("template_id")
         template = None
         if template_id:
@@ -157,24 +165,40 @@ class ProjectListCreateView(ListCreateAPIView):
             from plane.db.models import ProjectStatusLog
 
             ProjectStatusLog.objects.create(
-                project=project, from_status="", to_status=initial_status,
-                operator=request.user)
+                project=project, from_status="", to_status=initial_status, operator=request.user
+            )
             if initial_status == "active":
                 from plane.bgtasks.project_activity import enqueue_project_activity
 
-                transaction.on_commit(lambda: enqueue_project_activity(
-                    project_id=project.id, actor_id=request.user.id, verb="created",
-                    field=None, new_value="active", comment="milestone"))
+                transaction.on_commit(
+                    lambda: enqueue_project_activity(
+                        project_id=project.id,
+                        actor_id=request.user.id,
+                        verb="created",
+                        field=None,
+                        new_value="active",
+                        comment="milestone",
+                    )
+                )
+
                 # INTG-002：project.created（draft 静默 BR-03——draft 初态不扇出）
                 def _wh_created(p=project):
                     from plane.db.services.webhook_outbound import dispatch_events
 
-                    dispatch_events("project.created", {
-                        "event_id": None,
-                        "data": {"id": str(p.id), "identifier": p.identifier,
-                                 "name": p.name, "status": "active",
-                                 "transitioned_at": None},
-                    }, project_id=p.id)
+                    dispatch_events(
+                        "project.created",
+                        {
+                            "event_id": None,
+                            "data": {
+                                "id": str(p.id),
+                                "identifier": p.identifier,
+                                "name": p.name,
+                                "status": "active",
+                                "transitioned_at": None,
+                            },
+                        },
+                        project_id=p.id,
+                    )
 
                 transaction.on_commit(_wh_created)
         return created_response(
@@ -192,15 +216,17 @@ class ProjectTransitionView(APIView):
     def post(self, request, *args, **kwargs):
         from plane.db.services.project_lifecycle import ProjectLifecycleService
 
-        project, _, _ = _get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user)
+        project, _, _ = _get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         if (project.current_user_role or 0) < ProjectRole.ADMIN:
             raise AppException("PERM_ROLE_INSUFFICIENT", message="需要项目管理员权限")
         to_status = request.data.get("to_status")
         data = ProjectLifecycleService().transition(
-            project, to_status=to_status, actor=request.user,
+            project,
+            to_status=to_status,
+            actor=request.user,
             force=bool(request.data.get("force")),
-            reason=str(request.data.get("reason") or ""))
+            reason=str(request.data.get("reason") or ""),
+        )
         return success_response(data)
 
 
@@ -212,8 +238,7 @@ class ProjectStatusLogView(APIView):
     def get(self, request, *args, **kwargs):
         from plane.db.services.project_lifecycle import ProjectLifecycleService
 
-        project, _, _ = _get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user)
+        project, _, _ = _get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         rows = ProjectLifecycleService.status_logs(project)
         return success_response(rows, meta={"count": len(rows), "total_count": len(rows)})
 
@@ -226,15 +251,13 @@ class ProjectDuplicateView(APIView):
     def post(self, request, *args, **kwargs):
         from plane.db.services.project_lifecycle import ProjectLifecycleService
 
-        project, _, _ = _get_project_or_404(
-            kwargs["slug"], kwargs["project_id"], request.user)
+        project, _, _ = _get_project_or_404(kwargs["slug"], kwargs["project_id"], request.user)
         if (project.current_user_role or 0) < ProjectRole.ADMIN:
             raise AppException("PERM_ROLE_INSUFFICIENT", message="需要项目管理员权限")
         copy = ProjectLifecycleService().duplicate(source=project, actor=request.user)
         return created_response(
             _serialize_project(copy, request.user),
-            location=request.build_absolute_uri(
-                f"/api/v1/workspaces/{kwargs['slug']}/projects/{copy.id}/"),
+            location=request.build_absolute_uri(f"/api/v1/workspaces/{kwargs['slug']}/projects/{copy.id}/"),
         )
 
 

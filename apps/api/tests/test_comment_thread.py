@@ -6,6 +6,7 @@ ADMIN，成员显式 ProjectMember；APIClient + force_authenticate）。
 通知三互斥走 fanout_comment 服务层直测（API 路径的 Celery 投递在无 worker
 环境下不确定，服务层是分派规则的唯一实现点）。
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -43,26 +44,22 @@ pytestmark = pytest.mark.django_db
 # ────────────────────────────────────────────────────────────────
 @pytest.fixture()
 def env(db):
-    owner = User.objects.create_user(email="t3-owner@rabbit.dev", password="Rabbit123!",
-                                     display_name="王五")
-    member = User.objects.create_user(email="t3-member@rabbit.dev", password="Rabbit123!",
-                                      display_name="李四")
-    third = User.objects.create_user(email="t3-third@rabbit.dev", password="Rabbit123!",
-                                     display_name="张三")
-    viewer = User.objects.create_user(email="t3-viewer@rabbit.dev", password="Rabbit123!",
-                                      display_name="只读")
-    ws = Workspace.objects.create(name="W", slug=f"w-t3-{owner.id.hex[:8]}",
-                                  owner=owner, created_by=owner)
-    for u, ws_role in ((owner, WorkspaceRole.OWNER), (member, WorkspaceRole.MEMBER),
-                       (third, WorkspaceRole.MEMBER), (viewer, WorkspaceRole.MEMBER)):
+    owner = User.objects.create_user(email="t3-owner@rabbit.dev", password="Rabbit123!", display_name="王五")
+    member = User.objects.create_user(email="t3-member@rabbit.dev", password="Rabbit123!", display_name="李四")
+    third = User.objects.create_user(email="t3-third@rabbit.dev", password="Rabbit123!", display_name="张三")
+    viewer = User.objects.create_user(email="t3-viewer@rabbit.dev", password="Rabbit123!", display_name="只读")
+    ws = Workspace.objects.create(name="W", slug=f"w-t3-{owner.id.hex[:8]}", owner=owner, created_by=owner)
+    for u, ws_role in (
+        (owner, WorkspaceRole.OWNER),
+        (member, WorkspaceRole.MEMBER),
+        (third, WorkspaceRole.MEMBER),
+        (viewer, WorkspaceRole.MEMBER),
+    ):
         WorkspaceMember.objects.create(workspace=ws, member=u, role=ws_role, created_by=owner)
     proj = Project.objects.create(name="P", identifier="T3", workspace=ws, created_by=owner)
-    ProjectMember.objects.create(project=proj, member=member, role=ProjectRole.COMMENTER,
-                                 created_by=owner)
-    ProjectMember.objects.create(project=proj, member=third, role=ProjectRole.CONTRIBUTOR,
-                                 created_by=owner)
-    ProjectMember.objects.create(project=proj, member=viewer, role=ProjectRole.VIEWER,
-                                 created_by=owner)
+    ProjectMember.objects.create(project=proj, member=member, role=ProjectRole.COMMENTER, created_by=owner)
+    ProjectMember.objects.create(project=proj, member=third, role=ProjectRole.CONTRIBUTOR, created_by=owner)
+    ProjectMember.objects.create(project=proj, member=viewer, role=ProjectRole.VIEWER, created_by=owner)
     seed_project_states(proj)
     IssueType.objects.create(workspace=ws, name="需求", is_default=True, created_by=owner)
     todo = State.objects.get(project=proj, group=State.Group.UNSTARTED)
@@ -71,16 +68,27 @@ def env(db):
 
     def mk_issue(name):
         return Issue.objects.create(
-            name=name, project=proj, state=todo, priority="none",
-            sequence_id=next(seq), sort_order=next(seq) * 100, created_by=owner,
+            name=name,
+            project=proj,
+            state=todo,
+            priority="none",
+            sequence_id=next(seq),
+            sort_order=next(seq) * 100,
+            created_by=owner,
         )
 
     issue = mk_issue("主任务")
     other_issue = mk_issue("他任务")
 
     return {
-        "owner": owner, "member": member, "third": third, "viewer": viewer,
-        "ws": ws, "proj": proj, "issue": issue, "other_issue": other_issue,
+        "owner": owner,
+        "member": member,
+        "third": third,
+        "viewer": viewer,
+        "ws": ws,
+        "proj": proj,
+        "issue": issue,
+        "other_issue": other_issue,
     }
 
 
@@ -104,14 +112,15 @@ class _Client:
 
 def _comments_url(env, issue=None):
     issue = issue or env["issue"]
-    return (f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}"
-            f"/issues/{issue.id}/comments/")
+    return f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}/issues/{issue.id}/comments/"
 
 
 def _asset_src(env, asset_id, *, variant=True, issue=None):
     issue = issue or env["issue"]
-    base = (f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}"
-            f"/issues/{issue.id}/attachments/{asset_id}/download/")
+    base = (
+        f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}"
+        f"/issues/{issue.id}/attachments/{asset_id}/download/"
+    )
     return f"{base}?variant=thumb" if variant else base
 
 
@@ -119,34 +128,43 @@ def _mk_comment(env, actor, html, *, parent=None, t=None, issue=None):
     """直建评论（绕过 API）；t 控制时间序（auto_now_add 覆盖入参，创建后 update）。"""
     issue = issue or env["issue"]
     c = IssueComment.objects.create(
-        issue=issue, actor=actor, parent=parent,
-        comment_html=html, comment_json={}, accessory={},
-        created_by=actor, updated_by=actor,
+        issue=issue,
+        actor=actor,
+        parent=parent,
+        comment_html=html,
+        comment_json={},
+        accessory={},
+        created_by=actor,
+        updated_by=actor,
     )
     if t is not None:
-        IssueComment.objects.filter(pk=c.pk).update(
-            created_at=timezone.now() - timedelta(minutes=t))
+        IssueComment.objects.filter(pk=c.pk).update(created_at=timezone.now() - timedelta(minutes=t))
         c.refresh_from_db()
     return c
 
 
-def _mk_image_asset(env, *, actor=None, issue=None, status=FileAsset.Status.UPLOADED,
-                    entity_type=FileAsset.EntityType.COMMENT_IMAGE):
+def _mk_image_asset(
+    env, *, actor=None, issue=None, status=FileAsset.Status.UPLOADED, entity_type=FileAsset.EntityType.COMMENT_IMAGE
+):
     """直建评论图域 asset（域校验是纯 DB 判定，不依赖对象存储）。"""
     issue = issue or env["issue"]
     return FileAsset.objects.create(
-        workspace=env["ws"], project=env["proj"],
-        entity_type=entity_type, entity_id=issue.id,
+        workspace=env["ws"],
+        project=env["proj"],
+        entity_type=entity_type,
+        entity_id=issue.id,
         attributes={"name": "shot.png", "size": 1024, "mime": "image/png", "ext": ".png"},
-        size=1024, storage_path=f"test/{issue.id}/{issue.id.hex}.png",
-        status=status, is_uploaded=(status == FileAsset.Status.UPLOADED),
-        uploaded_by=actor or env["owner"], created_by=actor or env["owner"],
+        size=1024,
+        storage_path=f"test/{issue.id}/{issue.id.hex}.png",
+        status=status,
+        is_uploaded=(status == FileAsset.Status.UPLOADED),
+        uploaded_by=actor or env["owner"],
+        created_by=actor or env["owner"],
     )
 
 
 def _mention(user) -> str:
-    return (f'<span data-mention-id="{user.id}" class="mention">'
-            f"@{user.display_name}</span>")
+    return f'<span data-mention-id="{user.id}" class="mention">@{user.display_name}</span>'
 
 
 def _post_comment(env, user, html, parent_id=None, extra=None):
@@ -192,8 +210,11 @@ class TestThreadReply:
         assert resp.status_code == 400
         err = resp.json()["error"]
         assert err["code"] == "VALIDATION_ERROR"
-        assert err["details"][0] == {"field": "parent_id", "code": "DOES_NOT_EXIST",
-                                     "message": "回复目标不存在或已删除"}
+        assert err["details"][0] == {
+            "field": "parent_id",
+            "code": "DOES_NOT_EXIST",
+            "message": "回复目标不存在或已删除",
+        }
 
     def test_deleted_parent_rejected(self, env):
         """UT-03：已软删父 → 400（占位行无回复按钮）。"""
@@ -209,15 +230,13 @@ class TestThreadReply:
         top = _mk_comment(env, env["owner"], "<p>顶层</p>", t=120)
         for i in range(100):
             _mk_comment(env, env["member"], f"<p>回复 {i}</p>", parent=top, t=100 - i)
-        assert _post_comment(env, env["third"], "<p>第 101 条</p>",
-                             parent_id=top.id).status_code == 409
+        assert _post_comment(env, env["third"], "<p>第 101 条</p>", parent_id=top.id).status_code == 409
         # 造出空位（软删一条）后可再回复 —— 上限只数存活回复
         IssueComment.objects.filter(parent=top).first().delete()
         resp = _post_comment(env, env["third"], "<p>补位回复</p>", parent_id=top.id)
         assert resp.status_code == 201
         # 再次超限
-        assert _post_comment(env, env["third"], "<p>又超了</p>",
-                             parent_id=top.id).status_code == 409
+        assert _post_comment(env, env["third"], "<p>又超了</p>", parent_id=top.id).status_code == 409
 
     def test_reply_limit_error_shape(self, env):
         top = _mk_comment(env, env["owner"], "<p>顶层</p>", t=120)
@@ -236,8 +255,7 @@ class TestThreadReply:
 class TestTwoLevelList:
     def _build_thread(self, env):
         top1 = _mk_comment(env, env["owner"], "<p>顶层一</p>", t=30)
-        _mk_comment(env, env["member"], f"<p>{_mention(env['owner'])} 回复一</p>",
-                    parent=top1, t=20)
+        _mk_comment(env, env["member"], f"<p>{_mention(env['owner'])} 回复一</p>", parent=top1, t=20)
         _mk_comment(env, env["third"], "<p>回复二</p>", parent=top1, t=10)
         top2 = _mk_comment(env, env["member"], "<p>顶层二</p>", t=5)
         _mk_comment(env, env["owner"], "<p>顶层二回复</p>", parent=top2, t=1)
@@ -269,8 +287,8 @@ class TestTwoLevelList:
             for j in range(3):
                 r = _mk_comment(env, env["member"], f"<p>r{i}-{j}</p>", parent=top, t=90 - j)
                 CommentReaction.objects.create(
-                    comment=r, actor=env["third"], emoji="👍",
-                    created_by=env["third"], updated_by=env["third"])
+                    comment=r, actor=env["third"], emoji="👍", created_by=env["third"], updated_by=env["third"]
+                )
         client = _Client(env["owner"])
         url = _comments_url(env)
         client.get(url)  # 预热
@@ -314,7 +332,7 @@ class TestTwoLevelList:
         assert len(data) == 1
         row = data[0]
         assert row["is_deleted"] is True
-        assert row["comment_html"] == ""               # 软删后正文不再可见
+        assert row["comment_html"] == ""  # 软删后正文不再可见
         assert len(row["replies"]) == 2
         assert row["replies"][0]["id"] == str(r1.id)
         assert row["reply_count"] == 2
@@ -340,8 +358,11 @@ class TestReactions:
         assert resp.status_code == 400
         err = resp.json()["error"]
         assert err["code"] == "VALIDATION_ERROR"
-        assert err["details"][0] == {"field": "emoji", "code": "NOT_A_CHOICE",
-                                     "message": "不支持的表情，请从选择器中选择"}
+        assert err["details"][0] == {
+            "field": "emoji",
+            "code": "NOT_A_CHOICE",
+            "message": "不支持的表情，请从选择器中选择",
+        }
         assert len(EMOJI_WHITELIST) == 24
 
     def test_toggle_on_idempotent(self, env):
@@ -361,8 +382,8 @@ class TestReactions:
         assert r["count"] == 2
         with pytest.raises(IntegrityError), transaction.atomic():
             CommentReaction.objects.create(
-                comment=c, actor=env["member"], emoji="👍",
-                created_by=env["member"], updated_by=env["member"])
+                comment=c, actor=env["member"], emoji="👍", created_by=env["member"], updated_by=env["member"]
+            )
 
     def test_soft_deleted_row_revives_or_recreates(self, env):
         """BR-10 / §4.3.2：撤销后软删行留存，重按 get_or_create 复活。"""
@@ -409,10 +430,10 @@ class TestReactions:
         """BR-09：点表情不产通知、不写 IssueActivity（断言按任务域收窄——
         dev PG 为共享库，全局计数含既有数据）。"""
         from plane.db.models import IssueActivity
+
         c = _mk_comment(env, env["owner"], "<p>c</p>")
         _Client(env["member"]).post(self._url(env, c), {"emoji": "👍"})
-        assert Notification.objects.filter(
-            data__issue_id=str(env["issue"].id)).count() == 0
+        assert Notification.objects.filter(data__issue_id=str(env["issue"].id)).count() == 0
         assert IssueActivity.objects.filter(issue=env["issue"]).count() == 0
 
     def test_viewer_cannot_react(self, env):
@@ -446,8 +467,7 @@ class TestReactions:
         _Client(env["third"]).post(self._url(env, c), {"emoji": "😂"})
         base = _Client(env["owner"]).get(_comments_url(env)).json()["data"][0]["reactions"]
         assert all("user_ids" not in r for r in base)
-        expanded = _Client(env["owner"]).get(
-            f"{_comments_url(env)}?expand=reactions").json()["data"][0]["reactions"]
+        expanded = _Client(env["owner"]).get(f"{_comments_url(env)}?expand=reactions").json()["data"][0]["reactions"]
         by_emoji = {r["emoji"]: r for r in expanded}
         assert set(by_emoji["👍"]["user_ids"]) == {str(env["member"].id), str(env["third"].id)}
         assert by_emoji["👍"]["count"] == 2
@@ -459,8 +479,7 @@ class TestReactions:
         r1 = _mk_comment(env, env["member"], "<p>回复</p>", parent=top, t=20)
         _Client(env["third"]).post(f"{_comments_url(env)}{r1.id}/reactions/", {"emoji": "😂"})
         data = _Client(env["third"]).get(_comments_url(env)).json()["data"][0]
-        assert data["replies"][0]["reactions"] == [
-            {"emoji": "😂", "count": 1, "reacted_by_me": True}]
+        assert data["replies"][0]["reactions"] == [{"emoji": "😂", "count": 1, "reacted_by_me": True}]
         data_owner = _Client(env["owner"]).get(_comments_url(env)).json()["data"][0]
         assert data_owner["replies"][0]["reactions"][0]["reacted_by_me"] is False
 
@@ -473,24 +492,24 @@ class TestImageComments:
         """UT-18：images 服务端聚合进 accessory，客户端直传 accessory 被忽略。"""
         a1 = _mk_image_asset(env, actor=env["member"])
         a2 = _mk_image_asset(env, actor=env["member"])
-        html = (f"<p>两张图：</p>"
-                f'<img src="{_asset_src(env, a1.id)}" alt="a.png">'
-                f'<img src="{_asset_src(env, a2.id, variant=False)}" alt="b.png">')
-        resp = _post_comment(env, env["member"], html,
-                             extra={"accessory": {"images": ["spoof"], "hack": True}})
+        html = (
+            f"<p>两张图：</p>"
+            f'<img src="{_asset_src(env, a1.id)}" alt="a.png">'
+            f'<img src="{_asset_src(env, a2.id, variant=False)}" alt="b.png">'
+        )
+        resp = _post_comment(env, env["member"], html, extra={"accessory": {"images": ["spoof"], "hack": True}})
         assert resp.status_code == 201
         data = resp.json()["data"]
         assert data["images"] == [str(a1.id), str(a2.id)]
         cid = data["id"]
         stored = IssueComment.objects.get(id=cid)
         assert stored.accessory["images"] == [str(a1.id), str(a2.id)]
-        assert stored.accessory.get("hack") is None       # 客户端 accessory 全忽略
+        assert stored.accessory.get("hack") is None  # 客户端 accessory 全忽略
 
     def test_cross_issue_asset_replaced_with_placeholder(self, env):
         """UT-13 / BR-07：引用他任务 asset（src 路径指向他任务）→ 「图片不可用」占位，不 500。"""
         foreign = _mk_image_asset(env, actor=env["member"], issue=env["other_issue"])
-        html = (f'<p>x</p>'
-                f'<img src="{_asset_src(env, foreign.id, issue=env["other_issue"])}" alt="x.png">')
+        html = f'<p>x</p><img src="{_asset_src(env, foreign.id, issue=env["other_issue"])}" alt="x.png">'
         resp = _post_comment(env, env["member"], html)
         assert resp.status_code == 201
         data = resp.json()["data"]
@@ -500,9 +519,9 @@ class TestImageComments:
 
     def test_foreign_uploader_asset_replaced(self, env):
         """BR-07：uploaded_by 非当前用户（他人上传）→ 占位。"""
-        asset = _mk_image_asset(env, actor=env["owner"])     # owner 上传
+        asset = _mk_image_asset(env, actor=env["owner"])  # owner 上传
         html = f'<img src="{_asset_src(env, asset.id)}" alt="x.png">'
-        resp = _post_comment(env, env["member"], html)        # member 发评论
+        resp = _post_comment(env, env["member"], html)  # member 发评论
         assert resp.status_code == 201
         assert "图片不可用" in resp.json()["data"]["comment_html"]
 
@@ -514,8 +533,7 @@ class TestImageComments:
 
     def test_issue_attachment_asset_replaced(self, env):
         """BR-07：entity_type=issue 的附件不在评论图域 → 占位。"""
-        asset = _mk_image_asset(env, actor=env["member"],
-                                entity_type=FileAsset.EntityType.ISSUE)
+        asset = _mk_image_asset(env, actor=env["member"], entity_type=FileAsset.EntityType.ISSUE)
         html = f'<img src="{_asset_src(env, asset.id)}" alt="x.png">'
         resp = _post_comment(env, env["member"], html)
         assert "图片不可用" in resp.json()["data"]["comment_html"]
@@ -530,8 +548,7 @@ class TestImageComments:
         assert '<a href="http://evil.example/x.png">http://evil.example/x.png</a>' in out
 
     def test_data_uri_and_garbage_src_replaced(self, env):
-        html = ('<p>x</p><img src="data:image/png;base64,AAAA" alt="d">'
-                '<img src="/not/allowed/x.png" alt="n">')
+        html = '<p>x</p><img src="data:image/png;base64,AAAA" alt="d"><img src="/not/allowed/x.png" alt="n">'
         resp = _post_comment(env, env["member"], html)
         out = resp.json()["data"]["comment_html"]
         assert "<img" not in out
@@ -541,8 +558,8 @@ class TestImageComments:
         """UT-15 / BR-08：第 10 张 → 409 RESOURCE_LIMIT_EXCEEDED + LIMIT。"""
         assets = [_mk_image_asset(env, actor=env["member"]) for _ in range(10)]
         html = "<p>十张</p>" + "".join(
-            f'<img src="{_asset_src(env, a.id)}" alt="{i}.png">'
-            for i, a in enumerate(assets))
+            f'<img src="{_asset_src(env, a.id)}" alt="{i}.png">' for i, a in enumerate(assets)
+        )
         resp = _post_comment(env, env["member"], html)
         assert resp.status_code == 409
         err = resp.json()["error"]
@@ -551,31 +568,30 @@ class TestImageComments:
         assert err["details"][0]["code"] == "LIMIT"
         # 9 张合法
         html9 = "<p>九张</p>" + "".join(
-            f'<img src="{_asset_src(env, a.id)}" alt="{i}.png">'
-            for i, a in enumerate(assets[:9]))
+            f'<img src="{_asset_src(env, a.id)}" alt="{i}.png">' for i, a in enumerate(assets[:9])
+        )
         assert _post_comment(env, env["member"], html9).status_code == 201
 
     def test_img_alt_attr_injection_escaped(self, env):
         """安全：alt 属性值转义，防属性注入（onerror 载体不成为真属性）。"""
         asset = _mk_image_asset(env, actor=env["member"])
-        html = (f"<p>x</p>"
-                f'<img src="{_asset_src(env, asset.id)}" alt=\'x" onerror="alert(1)\'>')
+        html = f'<p>x</p><img src="{_asset_src(env, asset.id)}" alt=\'x" onerror="alert(1)\'>'
         resp = _post_comment(env, env["member"], html)
         assert resp.status_code == 201
         out = resp.json()["data"]["comment_html"]
         assert "<img" in out
         assert out.count("alt=") == 1
-        assert 'onerror="' not in out       # 注入值整体落在被转义的 alt 值内
+        assert 'onerror="' not in out  # 注入值整体落在被转义的 alt 值内
 
     def test_update_rebuilds_images(self, env):
         """编辑窗口内换图：accessory.images 重建。"""
         a1 = _mk_image_asset(env, actor=env["member"])
         a2 = _mk_image_asset(env, actor=env["member"])
-        c = _mk_comment(env, env["member"],
-                        f'<img src="{_asset_src(env, a1.id)}" alt="1.png">')
+        c = _mk_comment(env, env["member"], f'<img src="{_asset_src(env, a1.id)}" alt="1.png">')
         url = f"{_comments_url(env)}{c.id}/"
         resp = _Client(env["member"]).patch(
-            url, {"comment_html": f'<p>换图</p><img src="{_asset_src(env, a2.id)}" alt="2.png">'})
+            url, {"comment_html": f'<p>换图</p><img src="{_asset_src(env, a2.id)}" alt="2.png">'}
+        )
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["images"] == [str(a2.id)]
@@ -588,16 +604,19 @@ class TestImageComments:
 class TestNotificationMutex:
     def _fanout(self, env, comment):
         from plane.app.comments.sanitize import extract_mention_ids
+
         return fanout_comment(
-            comment_id=str(comment.id), issue_id=str(env["issue"].id),
-            actor=comment.actor, mention_ids=extract_mention_ids(comment.comment_html),
+            comment_id=str(comment.id),
+            issue_id=str(env["issue"].id),
+            actor=comment.actor,
+            mention_ids=extract_mention_ids(comment.comment_html),
         )
 
     def test_replied_targets_top_level_author(self, env):
         """UT-17 / BR-12：回复（未 @ 顶层作者）→ 顶层作者收 comment.replied。"""
         from plane.db.models import IssueAssignee
-        IssueAssignee.objects.create(issue=env["issue"], assignee=env["third"],
-                                     created_by=env["owner"])
+
+        IssueAssignee.objects.create(issue=env["issue"], assignee=env["third"], created_by=env["owner"])
         top = _mk_comment(env, env["owner"], "<p>顶层</p>", t=30)
         reply = _mk_comment(env, env["member"], "<p>收到</p>", parent=top, t=20)
         count = self._fanout(env, reply)
@@ -616,8 +635,7 @@ class TestNotificationMutex:
     def test_mention_beats_replied_and_commented(self, env):
         """UT-16 / BR-11：回复且 @ 了顶层作者 → 该作者仅收 mentioned 一条。"""
         top = _mk_comment(env, env["owner"], "<p>顶层</p>", t=30)
-        reply = _mk_comment(env, env["member"],
-                            f"<p>{_mention(env['owner'])} 看下</p>", parent=top, t=20)
+        reply = _mk_comment(env, env["member"], f"<p>{_mention(env['owner'])} 看下</p>", parent=top, t=20)
         self._fanout(env, reply)
         events = [n.event for n in Notification.objects.filter(receiver=env["owner"])]
         assert events == ["issue.mentioned"]
@@ -628,8 +646,7 @@ class TestNotificationMutex:
         """顶层评论（无 parent）：沿用 COLLAB-001 两事件，顶层作者=操作者不收。"""
         c = _mk_comment(env, env["owner"], f"<p>hi {_mention(env['member'])}</p>", t=5)
         self._fanout(env, c)
-        events = list(Notification.objects.filter(receiver=env["member"])
-                      .values_list("event", flat=True))
+        events = list(Notification.objects.filter(receiver=env["member"]).values_list("event", flat=True))
         assert events == ["issue.mentioned"]
         # 作用域化：共享 dev PG 会被真栈 e2e/录屏的 comment.replied 残留污染（CLAUDE.md 坑 #18）
         env_uids = [u.id for u in (env["owner"], env["member"], env["third"], env["viewer"])]
@@ -638,14 +655,12 @@ class TestNotificationMutex:
     def test_operator_and_outside_domain_excluded(self, env):
         """BR-12：操作者本人 / 域外成员剔除；重复投递零重复（dedup_key）。
         （计数按任务域收窄——dev PG 为共享库。）"""
-        outsider = User.objects.create_user(email="t3-out@rabbit.dev",
-                                            password="Rabbit123!", display_name="域外")
+        outsider = User.objects.create_user(email="t3-out@rabbit.dev", password="Rabbit123!", display_name="域外")
         top = _mk_comment(env, env["owner"], "<p>顶层</p>", t=30)
-        reply = _mk_comment(env, env["owner"], f"<p>自答 {_mention(outsider)}</p>",
-                            parent=top, t=20)
+        reply = _mk_comment(env, env["owner"], f"<p>自答 {_mention(outsider)}</p>", parent=top, t=20)
         scoped = Notification.objects.filter(data__issue_id=str(env["issue"].id))
         count = self._fanout(env, reply)
-        assert count == 0                          # 作者=操作者；@ 域外被剔
+        assert count == 0  # 作者=操作者；@ 域外被剔
         assert scoped.count() == 0
         # 幂等重投（IT-07 语义）
         assert self._fanout(env, reply) == 0
@@ -660,13 +675,11 @@ class TestNotificationMutex:
         top = _mk_comment(env, env["owner"], "<p>顶层</p>", t=30)
         _mk_comment(env, env["member"], "<p>回复一</p>", parent=top, t=20)
         # 张三 回复 李四的回复（自动 @李四），落库归并挂 top
-        r2 = _mk_comment(env, env["third"],
-                         f"<p>{_mention(env['member'])} 同意</p>", parent=top, t=10)
+        r2 = _mk_comment(env, env["third"], f"<p>{_mention(env['member'])} 同意</p>", parent=top, t=10)
         assert r2.parent_id == top.id
         count = self._fanout(env, r2)
         assert count == 2
-        member_events = list(Notification.objects.filter(receiver=env["member"])
-                             .values_list("event", flat=True))
+        member_events = list(Notification.objects.filter(receiver=env["member"]).values_list("event", flat=True))
         assert member_events == ["issue.mentioned"]
         owner_notif = Notification.objects.get(receiver=env["owner"])
         assert owner_notif.event == "comment.replied"
@@ -678,55 +691,97 @@ class TestNotificationMutex:
 # ────────────────────────────────────────────────────────────────
 class TestCommentImagePresign:
     def _presign(self, env, user, body):
-        url = (f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}"
-               f"/issues/{env['issue'].id}/attachments/presign/")
+        url = (
+            f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}"
+            f"/issues/{env['issue'].id}/attachments/presign/"
+        )
         return _Client(user).post(url, body)
 
     def test_comment_image_size_and_type_tightened(self, env):
         """BR-08：comment_image ≤5MB + png/jpg/jpeg/gif/webp。"""
-        assert self._presign(env, env["third"], {
-            "file_name": "big.png", "file_size": 6 * 1024 * 1024,
-            "content_type": "image/png", "entity_type": "comment_image",
-        }).json()["error"]["code"] == "VALIDATION_FILE_SIZE_EXCEEDED"
-        assert self._presign(env, env["third"], {
-            "file_name": "doc.pdf", "file_size": 1024,
-            "content_type": "application/pdf", "entity_type": "comment_image",
-        }).json()["error"]["code"] == "VALIDATION_FILE_TYPE_NOT_ALLOWED"
+        assert (
+            self._presign(
+                env,
+                env["third"],
+                {
+                    "file_name": "big.png",
+                    "file_size": 6 * 1024 * 1024,
+                    "content_type": "image/png",
+                    "entity_type": "comment_image",
+                },
+            ).json()["error"]["code"]
+            == "VALIDATION_FILE_SIZE_EXCEEDED"
+        )
+        assert (
+            self._presign(
+                env,
+                env["third"],
+                {
+                    "file_name": "doc.pdf",
+                    "file_size": 1024,
+                    "content_type": "application/pdf",
+                    "entity_type": "comment_image",
+                },
+            ).json()["error"]["code"]
+            == "VALIDATION_FILE_TYPE_NOT_ALLOWED"
+        )
 
     def test_comment_image_does_not_consume_attachment_quota(self, env):
         """comment_image 不占 20 附件配额：满额后仍可 presign（存储 mock 掉）。"""
         from unittest.mock import patch
+
         for i in range(20):
             FileAsset.objects.create(
-                workspace=env["ws"], project=env["proj"],
-                entity_type=FileAsset.EntityType.ISSUE, entity_id=env["issue"].id,
-                attributes={"name": f"a{i}.txt"}, size=1,
-                storage_path=f"p/{i}", status=FileAsset.Status.UPLOADED,
-                is_uploaded=True, uploaded_by=env["third"], created_by=env["third"],
+                workspace=env["ws"],
+                project=env["proj"],
+                entity_type=FileAsset.EntityType.ISSUE,
+                entity_id=env["issue"].id,
+                attributes={"name": f"a{i}.txt"},
+                size=1,
+                storage_path=f"p/{i}",
+                status=FileAsset.Status.UPLOADED,
+                is_uploaded=True,
+                uploaded_by=env["third"],
+                created_by=env["third"],
             )
         with patch("plane.storage.minio.presigned_put_url") as mock:
             mock.return_value = "http://minio/uploads/x"
-            resp = self._presign(env, env["third"], {
-                "file_name": "shot.webp", "file_size": 2048,
-                "content_type": "image/webp", "entity_type": "comment_image",
-            })
+            resp = self._presign(
+                env,
+                env["third"],
+                {
+                    "file_name": "shot.webp",
+                    "file_size": 2048,
+                    "content_type": "image/webp",
+                    "entity_type": "comment_image",
+                },
+            )
         assert resp.status_code == 201
         asset = FileAsset.objects.get(id=resp.json()["data"]["asset_id"])
         assert asset.entity_type == "comment_image"
         assert asset.entity_id == env["issue"].id
         assert "comment_image" in asset.storage_path
         # 缺省 entity_type 仍占配额：满额 → 409
-        resp2 = self._presign(env, env["third"], {
-            "file_name": "a.txt", "file_size": 1, "content_type": "text/plain",
-        })
+        resp2 = self._presign(
+            env,
+            env["third"],
+            {
+                "file_name": "a.txt",
+                "file_size": 1,
+                "content_type": "text/plain",
+            },
+        )
         assert resp2.status_code == 409
 
     def test_download_variant_validation_and_entity_dispatch(self, env):
         """download：?variant 非法 400；comment_image 可达（存储 mock）。"""
         from unittest.mock import patch
+
         asset = _mk_image_asset(env, actor=env["member"])
-        url = (f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}"
-               f"/issues/{env['issue'].id}/attachments/{asset.id}/download/")
+        url = (
+            f"/api/v1/workspaces/{env['ws'].slug}/projects/{env['proj'].id}"
+            f"/issues/{env['issue'].id}/attachments/{asset.id}/download/"
+        )
         bad = _Client(env["member"]).get(f"{url}?variant=huge")
         assert bad.status_code == 400
         assert bad.json()["error"]["code"] == "VALIDATION_INVALID_PARAM"
@@ -740,13 +795,15 @@ class TestCommentImagePresign:
         import io
 
         from PIL import Image
+
         buf = io.BytesIO()
         Image.new("RGB", (960, 480), "red").save(buf, format="PNG")
-        with patch("plane.storage.minio.presigned_get_url") as mock_get, \
-                patch("plane.storage.minio.get_object_bytes") as mock_bytes, \
-                patch("plane.storage.minio.put_object") as mock_put, \
-                patch("plane.storage.minio.head_object_size",
-                      side_effect=storage_not_found):
+        with (
+            patch("plane.storage.minio.presigned_get_url") as mock_get,
+            patch("plane.storage.minio.get_object_bytes") as mock_bytes,
+            patch("plane.storage.minio.put_object") as mock_put,
+            patch("plane.storage.minio.head_object_size", side_effect=storage_not_found),
+        ):
             mock_get.return_value = "http://minio/uploads/thumb"
             mock_bytes.return_value = buf.getvalue()
             resp = _Client(env["member"]).get(f"{url}?variant=thumb")
@@ -760,4 +817,5 @@ class TestCommentImagePresign:
 def storage_not_found(*, bucket, key):
     """head_object_size 的「缩略不存在」桩（触发首取生成路径）。"""
     from plane.storage import minio as storage
+
     raise storage.StorageObjectNotFound(key)

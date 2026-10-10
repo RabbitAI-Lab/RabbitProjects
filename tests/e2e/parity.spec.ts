@@ -56,7 +56,7 @@ test("C.1-C.8 全屏字段级 parity 扫描", async ({ page }) => {
   // 顶栏 + 工作区侧栏（置灰项）
   await expect.soft(page.getByRole("navigation").getByText("首页")).toBeVisible();
   await expect.soft(page.getByRole("navigation").getByText("我的任务")).toBeVisible();
-  await expect.soft(page.getByRole("navigation").getByText("团队设置")).toBeVisible();
+  await expect.soft(page.getByRole("navigation").getByText("成员与角色")).toBeVisible();
   await expect.soft(page.getByRole("navigation").getByRole("link", { name: "项目", exact: true })).toBeVisible();
   await expect.soft(page.getByText("还没有项目")).toBeVisible();
 
